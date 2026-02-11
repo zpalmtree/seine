@@ -1,0 +1,134 @@
+use std::time::Duration;
+
+use anyhow::{anyhow, Context, Result};
+use reqwest::blocking::{Client, Response};
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+use serde_json::Value;
+
+use crate::types::{BlockTemplateResponse, SubmitBlockResponse};
+
+pub struct ApiClient {
+    client: Client,
+    base_url: String,
+}
+
+impl ApiClient {
+    pub fn new(base_url: String, token: String, timeout: Duration) -> Result<Self> {
+        let mut headers = HeaderMap::new();
+
+        let auth_value = format!("Bearer {token}");
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_str(&auth_value).context("invalid authorization header")?,
+        );
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+
+        let client = Client::builder()
+            .default_headers(headers)
+            .timeout(timeout)
+            .build()
+            .context("failed to build HTTP client")?;
+
+        Ok(Self { client, base_url })
+    }
+
+    pub fn get_block_template(&self) -> Result<BlockTemplateResponse> {
+        let url = format!("{}/api/mining/blocktemplate", self.base_url);
+        let resp = self
+            .client
+            .get(url)
+            .send()
+            .context("request to blocktemplate endpoint failed")?;
+
+        decode_json_response(resp, "blocktemplate")
+    }
+
+    pub fn submit_block(&self, block: &Value) -> Result<SubmitBlockResponse> {
+        let url = format!("{}/api/mining/submitblock", self.base_url);
+        let resp = self
+            .client
+            .post(url)
+            .json(block)
+            .send()
+            .context("request to submitblock endpoint failed")?;
+
+        decode_json_response(resp, "submitblock")
+    }
+}
+
+fn decode_json_response<T: serde::de::DeserializeOwned>(
+    resp: Response,
+    endpoint: &str,
+) -> Result<T> {
+    if resp.status().is_success() {
+        return resp
+            .json::<T>()
+            .with_context(|| format!("failed to decode {endpoint} response JSON"));
+    }
+
+    let status = resp.status();
+    let body = resp.text().unwrap_or_default();
+    if let Ok(value) = serde_json::from_str::<Value>(&body) {
+        if let Some(msg) = value.get("error").and_then(Value::as_str) {
+            return Err(anyhow!("{endpoint} failed ({status}): {msg}"));
+        }
+    }
+
+    Err(anyhow!("{endpoint} failed ({status}): {body}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use httpmock::prelude::*;
+    use serde_json::json;
+
+    fn test_client(server: &MockServer) -> ApiClient {
+        let base = server.url("").trim_end_matches('/').to_string();
+        ApiClient::new(base, "testtoken".to_string(), Duration::from_secs(5)).unwrap()
+    }
+
+    #[test]
+    fn get_block_template_success() {
+        let server = MockServer::start();
+        let expected_target =
+            "000000000000f424000000000000000000000000000000000000000000000000".to_string();
+        let expected_header = "11".repeat(92);
+
+        let mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/api/mining/blocktemplate")
+                .header("authorization", "Bearer testtoken");
+            then.status(200).json_body(json!({
+                "block": {"header": {"height": 123, "difficulty": 999, "nonce": 0}},
+                "target": expected_target,
+                "header_base": expected_header
+            }));
+        });
+
+        let client = test_client(&server);
+        let resp = client.get_block_template().unwrap();
+        assert_eq!(resp.target.len(), 64);
+        assert_eq!(resp.header_base.len(), 184);
+        mock.assert();
+    }
+
+    #[test]
+    fn submit_block_surfaces_json_error() {
+        let server = MockServer::start();
+
+        let mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/api/mining/submitblock")
+                .header("authorization", "Bearer testtoken");
+            then.status(400).json_body(json!({"error": "invalid_pow"}));
+        });
+
+        let client = test_client(&server);
+        let err = client
+            .submit_block(&json!({"header": {"nonce": 1}}))
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("invalid_pow"));
+        mock.assert();
+    }
+}
