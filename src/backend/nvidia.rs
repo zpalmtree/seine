@@ -1,8 +1,8 @@
-use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::atomic::AtomicBool;
 
 use anyhow::{bail, Result};
 
-use crate::backend::{MiningJob, MiningSolution, PowBackend};
+use crate::backend::{MiningSolution, MiningWork, PowBackend};
 
 pub struct NvidiaBackend;
 
@@ -17,12 +17,29 @@ impl PowBackend for NvidiaBackend {
         "nvidia"
     }
 
-    fn mine(
-        &self,
-        _job: &MiningJob,
-        _shutdown: &AtomicBool,
-        _total_hashes: &AtomicU64,
-    ) -> Result<Option<MiningSolution>> {
-        bail!("NVIDIA backend is scaffolded but not implemented yet. Use --backend cpu for now.")
+    fn lanes(&self) -> usize {
+        1
+    }
+
+    fn start(&mut self) -> Result<()> {
+        bail!("NVIDIA backend is scaffolded but not implemented yet")
+    }
+
+    fn stop(&mut self) {}
+
+    fn set_work(&self, _work: MiningWork) -> Result<()> {
+        Ok(())
+    }
+
+    fn try_recv_solution(&self) -> Option<MiningSolution> {
+        None
+    }
+
+    fn drain_hashes(&self) -> u64 {
+        0
+    }
+
+    fn kernel_bench(&self, _seconds: u64, _shutdown: &AtomicBool) -> Result<u64> {
+        bail!("kernel benchmark is not implemented for nvidia backend")
     }
 }

@@ -7,8 +7,10 @@ use serde_json::Value;
 
 use crate::types::{BlockTemplateResponse, SubmitBlockResponse};
 
+#[derive(Clone)]
 pub struct ApiClient {
-    client: Client,
+    json_client: Client,
+    stream_client: Client,
     base_url: String,
 }
 
@@ -23,19 +25,29 @@ impl ApiClient {
         );
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
-        let client = Client::builder()
-            .default_headers(headers)
+        let json_client = Client::builder()
+            .default_headers(headers.clone())
             .timeout(timeout)
             .build()
-            .context("failed to build HTTP client")?;
+            .context("failed to build HTTP JSON client")?;
 
-        Ok(Self { client, base_url })
+        // Dedicated SSE client without global request timeout.
+        let stream_client = Client::builder()
+            .default_headers(headers)
+            .build()
+            .context("failed to build HTTP stream client")?;
+
+        Ok(Self {
+            json_client,
+            stream_client,
+            base_url,
+        })
     }
 
     pub fn get_block_template(&self) -> Result<BlockTemplateResponse> {
         let url = format!("{}/api/mining/blocktemplate", self.base_url);
         let resp = self
-            .client
+            .json_client
             .get(url)
             .send()
             .context("request to blocktemplate endpoint failed")?;
@@ -46,13 +58,21 @@ impl ApiClient {
     pub fn submit_block(&self, block: &Value) -> Result<SubmitBlockResponse> {
         let url = format!("{}/api/mining/submitblock", self.base_url);
         let resp = self
-            .client
+            .json_client
             .post(url)
             .json(block)
             .send()
             .context("request to submitblock endpoint failed")?;
 
         decode_json_response(resp, "submitblock")
+    }
+
+    pub fn open_events_stream(&self) -> Result<Response> {
+        let url = format!("{}/api/events", self.base_url);
+        self.stream_client
+            .get(url)
+            .send()
+            .context("request to events endpoint failed")
     }
 }
 
@@ -85,7 +105,8 @@ mod tests {
 
     fn test_client(server: &MockServer) -> ApiClient {
         let base = server.url("").trim_end_matches('/').to_string();
-        ApiClient::new(base, "testtoken".to_string(), Duration::from_secs(5)).unwrap()
+        ApiClient::new(base, "testtoken".to_string(), Duration::from_secs(5))
+            .expect("test client should be created")
     }
 
     #[test]
@@ -107,7 +128,9 @@ mod tests {
         });
 
         let client = test_client(&server);
-        let resp = client.get_block_template().unwrap();
+        let resp = client
+            .get_block_template()
+            .expect("block template request should succeed");
         assert_eq!(resp.target.len(), 64);
         assert_eq!(resp.header_base.len(), 184);
         mock.assert();
@@ -127,7 +150,7 @@ mod tests {
         let client = test_client(&server);
         let err = client
             .submit_block(&json!({"header": {"nonce": 1}}))
-            .unwrap_err();
+            .expect_err("submit should fail");
         assert!(format!("{err:#}").contains("invalid_pow"));
         mock.assert();
     }

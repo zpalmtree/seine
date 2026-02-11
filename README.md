@@ -5,6 +5,7 @@ External Blocknet miner with a pluggable backend architecture.
 Current status:
 - CPU backend: implemented (Argon2id, consensus-compatible params).
 - NVIDIA backend: scaffolded interface only (not implemented yet).
+- Runtime architecture: supports multiple backends in one process with persistent workers and per-template work updates.
 
 ## Test
 
@@ -42,23 +43,35 @@ Or pass token directly:
 ./target/release/bnminer --api-url http://127.0.0.1:8332 --token <hex_token>
 ```
 
+Select multiple backends (comma-separated or repeated flag). Unavailable backends are skipped:
+
+```bash
+./target/release/bnminer --backend cpu,nvidia --threads 1
+```
+
 ## Notes
 
 - Each CPU thread needs roughly 2GB RAM due to Argon2id parameters.
+- By default, bnminer refuses to start if configured CPU lanes exceed detected system RAM. Override with `--allow-oversubscribe` if needed.
 - The miner fetches block templates from `/api/mining/blocktemplate` and submits solved blocks to `/api/mining/submitblock`.
+- The miner listens to `/api/events` and refreshes work immediately on `new_block` events (disable with `--disable-sse`).
 - This miner is intentionally external so consensus-critical validation remains in the daemon.
 
 ## Performance Benchmarking
 
 Run deterministic local benchmarking (no API connection needed):
 
+- `--bench-kind kernel`: hash kernel only (single backend).
+- `--bench-kind backend`: persistent backend workers (steady-state throughput).
+- `--bench-kind end-to-end`: includes backend start/stop per round.
+
 ```bash
 cd bnminer
-cargo run --release -- --bench --backend cpu --threads 1 --bench-secs 20 --bench-rounds 3 --bench-output bench.json
+cargo run --release -- --bench --bench-kind backend --backend cpu --threads 1 --bench-secs 20 --bench-rounds 3 --bench-output bench.json
 ```
 
 Compare against a previous baseline:
 
 ```bash
-cargo run --release -- --bench --backend cpu --threads 1 --bench-secs 20 --bench-rounds 3 --bench-baseline bench.json
+cargo run --release -- --bench --bench-kind backend --backend cpu --threads 1 --bench-secs 20 --bench-rounds 3 --bench-baseline bench.json
 ```
