@@ -3,12 +3,14 @@ mod mining;
 mod scheduler;
 mod stats;
 
+use std::collections::BTreeMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
-use crossbeam_channel::{bounded, Receiver};
+use blocknet_pow_spec::CPU_LANE_MEMORY_BYTES;
+use crossbeam_channel::{unbounded, Receiver};
 
 use crate::api::ApiClient;
 use crate::backend::cpu::CpuBackend;
@@ -19,13 +21,12 @@ use crate::backend::{
 };
 use crate::config::{BackendKind, Config};
 use scheduler::NonceReservation;
-use stats::Stats;
+use stats::{format_hashrate, Stats};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const TEMPLATE_RETRY_DELAY: Duration = Duration::from_secs(2);
 const MIN_EVENT_WAIT: Duration = Duration::from_millis(1);
 const HASH_POLL_INTERVAL: Duration = Duration::from_millis(200);
-const BACKEND_EVENT_BUFFER: usize = 1024;
 
 struct BackendSlot {
     id: BackendInstanceId,
@@ -48,12 +49,15 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
     let backend_instances = build_backend_instances(cfg);
     let (mut backends, backend_events) = activate_backends(backend_instances)?;
     let total_lanes = total_lanes(&backends);
+    let cpu_lanes = cpu_lane_count(&backends);
+    let cpu_ram_gib =
+        (cpu_lanes as f64 * CPU_LANE_MEMORY_BYTES as f64) / (1024.0 * 1024.0 * 1024.0);
 
     println!(
-        "starting bnminer | backends={} | cpu_threads={} (~{}GB RAM for CPU lanes) | lanes={} | nonce_iters_per_lane={} | api={} | sse={}",
+        "starting bnminer | backends={} | cpu_lanes={} (~{:.1}GiB RAM) | lanes={} | nonce_iters_per_lane={} | api={} | sse={}",
         backend_names(&backends),
-        cfg.threads,
-        cfg.threads * 2,
+        cpu_lanes,
+        cpu_ram_gib,
         total_lanes,
         cfg.nonce_iters_per_lane,
         cfg.api_url,
@@ -96,7 +100,7 @@ fn activate_backends(
     mut backends: Vec<Box<dyn PowBackend>>,
 ) -> Result<(Vec<BackendSlot>, Receiver<BackendEvent>)> {
     let mut active = Vec::new();
-    let (event_tx, event_rx) = bounded::<BackendEvent>(BACKEND_EVENT_BUFFER);
+    let (event_tx, event_rx) = unbounded::<BackendEvent>();
     let mut next_backend_id: BackendInstanceId = 1;
 
     for mut backend in backends.drain(..) {
@@ -128,6 +132,7 @@ fn activate_backends(
                     "[backend] {}#{} unavailable: {err:#}",
                     backend_name, backend_id
                 );
+                backend.stop();
             }
         }
     }
@@ -231,10 +236,23 @@ fn distribute_work(
     }
 }
 
-fn collect_backend_hashes(backends: &[BackendSlot], stats: Option<&Stats>, round_hashes: &mut u64) {
+fn collect_backend_hashes(
+    backends: &[BackendSlot],
+    stats: Option<&Stats>,
+    round_hashes: &mut u64,
+    mut round_backend_hashes: Option<&mut BTreeMap<BackendInstanceId, u64>>,
+) {
     let mut collected = 0u64;
     for slot in backends {
-        collected = collected.saturating_add(slot.backend.take_hashes());
+        let slot_hashes = slot.backend.take_hashes();
+        if slot_hashes == 0 {
+            continue;
+        }
+        collected = collected.saturating_add(slot_hashes);
+        if let Some(per_backend) = round_backend_hashes.as_deref_mut() {
+            let entry = per_backend.entry(slot.id).or_insert(0);
+            *entry = entry.saturating_add(slot_hashes);
+        }
     }
 
     if collected == 0 {
@@ -280,6 +298,44 @@ fn backend_name_list(backends: &[BackendSlot]) -> Vec<String> {
 
 fn backend_names(backends: &[BackendSlot]) -> String {
     backend_name_list(backends).join(",")
+}
+
+fn cpu_lane_count(backends: &[BackendSlot]) -> u64 {
+    backends
+        .iter()
+        .filter(|slot| slot.backend.name() == "cpu")
+        .map(|slot| slot.lanes)
+        .sum()
+}
+
+fn format_round_backend_hashrate(
+    backends: &[BackendSlot],
+    round_backend_hashes: &BTreeMap<BackendInstanceId, u64>,
+    elapsed_secs: f64,
+) -> String {
+    let elapsed_secs = elapsed_secs.max(0.001);
+    let mut parts = Vec::new();
+    for (backend_id, hashes) in round_backend_hashes {
+        if *hashes == 0 {
+            continue;
+        }
+        let backend_name = backends
+            .iter()
+            .find(|slot| slot.id == *backend_id)
+            .map(|slot| slot.backend.name())
+            .unwrap_or("unknown");
+        let hps = (*hashes as f64) / elapsed_secs;
+        parts.push(format!(
+            "{backend_name}#{backend_id}={hashes} ({})",
+            format_hashrate(hps)
+        ));
+    }
+
+    if parts.is_empty() {
+        "none".to_string()
+    } else {
+        parts.join(", ")
+    }
 }
 
 fn recalculate_lane_offsets(backends: &mut [BackendSlot]) {
@@ -329,6 +385,7 @@ mod tests {
 
     #[derive(Default)]
     struct MockState {
+        fail_start: AtomicBool,
         fail_next_assign: AtomicBool,
         assign_calls: AtomicUsize,
         stop_calls: AtomicUsize,
@@ -361,6 +418,9 @@ mod tests {
         fn set_event_sink(&mut self, _sink: Sender<BackendEvent>) {}
 
         fn start(&mut self) -> Result<()> {
+            if self.state.fail_start.load(Ordering::Acquire) {
+                return Err(anyhow!("injected start failure"));
+            }
             Ok(())
         }
 
@@ -496,5 +556,24 @@ mod tests {
         assert_eq!(third_lease.global_stride, 3);
         assert_eq!(third_lease.lane_offset, 2);
         assert_eq!(failed_state.stop_calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn activate_backends_stops_backend_when_start_fails() {
+        let failed_state = Arc::new(MockState::default());
+        let healthy_state = Arc::new(MockState::default());
+        failed_state.fail_start.store(true, Ordering::Relaxed);
+
+        let instances: Vec<Box<dyn PowBackend>> = vec![
+            Box::new(MockBackend::new("cpu", 1, Arc::clone(&failed_state))),
+            Box::new(MockBackend::new("cpu", 1, Arc::clone(&healthy_state))),
+        ];
+
+        let (active, _events) = activate_backends(instances)
+            .expect("activation should continue with the healthy backend");
+
+        assert_eq!(active.len(), 1);
+        assert_eq!(failed_state.stop_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(healthy_state.stop_calls.load(Ordering::Relaxed), 0);
     }
 }

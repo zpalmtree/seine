@@ -1,8 +1,9 @@
+use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
 use blocknet_pow_spec::POW_HEADER_BASE_LEN;
@@ -19,8 +20,9 @@ use crate::types::{
 use super::scheduler::NonceScheduler;
 use super::stats::Stats;
 use super::{
-    collect_backend_hashes, distribute_work, next_event_wait, next_work_id, quiesce_backend_slots,
-    remove_backend_by_id, total_lanes, BackendSlot, TEMPLATE_RETRY_DELAY,
+    collect_backend_hashes, distribute_work, format_round_backend_hashrate, next_event_wait,
+    next_work_id, quiesce_backend_slots, remove_backend_by_id, total_lanes, BackendSlot,
+    TEMPLATE_RETRY_DELAY,
 };
 
 pub(super) struct TipSignal {
@@ -37,6 +39,12 @@ impl TipSignal {
     fn take_stale(&self) -> bool {
         self.stale.swap(false, Ordering::AcqRel)
     }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum BackendEventAction {
+    None,
+    TopologyChanged,
 }
 
 pub(super) fn run_mining_loop(
@@ -87,6 +95,7 @@ pub(super) fn run_mining_loop(
                 continue;
             }
         };
+        let header_base: Arc<[u8]> = Arc::from(header_base);
 
         let height = template_height(&template.block)
             .map(|h| h.to_string())
@@ -116,7 +125,7 @@ pub(super) fn run_mining_loop(
             backends,
             epoch,
             work_id,
-            Arc::from(header_base),
+            Arc::clone(&header_base),
             target,
             reservation,
             stop_at,
@@ -126,13 +135,20 @@ pub(super) fn run_mining_loop(
         let mut solved: Option<MiningSolution> = None;
         let mut stale_tip_event = false;
         let mut round_hashes = 0u64;
+        let mut round_backend_hashes = BTreeMap::new();
+        let mut topology_changed = false;
 
         while !shutdown.load(Ordering::Relaxed)
             && Instant::now() < stop_at
             && solved.is_none()
             && !stale_tip_event
         {
-            collect_backend_hashes(backends, Some(&stats), &mut round_hashes);
+            collect_backend_hashes(
+                backends,
+                Some(&stats),
+                &mut round_hashes,
+                Some(&mut round_backend_hashes),
+            );
 
             if last_stats_print.elapsed() >= cfg.stats_interval {
                 stats.print();
@@ -149,16 +165,60 @@ pub(super) fn run_mining_loop(
             crossbeam_channel::select! {
                 recv(backend_events) -> event => {
                     let event = event.map_err(|_| anyhow!("backend event channel closed"))?;
-                    handle_mining_backend_event(event, epoch, &mut solved, backends)?;
+                    if handle_mining_backend_event(event, epoch, &mut solved, backends)?
+                        == BackendEventAction::TopologyChanged
+                    {
+                        topology_changed = true;
+                    }
                 }
                 recv(after(wait_for)) -> _ => {}
+            }
+
+            if topology_changed
+                && !shutdown.load(Ordering::Relaxed)
+                && solved.is_none()
+                && !stale_tip_event
+                && Instant::now() < stop_at
+                && !backends.is_empty()
+            {
+                let reservation = nonce_scheduler.reserve(total_lanes(backends));
+                eprintln!(
+                    "[backend] topology changed; redistributing work epoch={} work_id={} nonce_seed={} backends={}",
+                    epoch,
+                    work_id,
+                    reservation.start_nonce,
+                    super::backend_names(backends),
+                );
+                distribute_work(
+                    backends,
+                    epoch,
+                    work_id,
+                    Arc::clone(&header_base),
+                    target,
+                    reservation,
+                    stop_at,
+                )?;
+                topology_changed = false;
             }
         }
 
         quiesce_backend_slots(backends)?;
-        drain_mining_backend_events(backend_events, epoch, &mut solved, backends)?;
-        collect_backend_hashes(backends, Some(&stats), &mut round_hashes);
+        let _ = drain_mining_backend_events(backend_events, epoch, &mut solved, backends)?;
+        collect_backend_hashes(
+            backends,
+            Some(&stats),
+            &mut round_hashes,
+            Some(&mut round_backend_hashes),
+        );
         stale_tip_event |= tip_signal.is_some_and(TipSignal::take_stale);
+        println!(
+            "[template] backend_throughput {}",
+            format_round_backend_hashrate(
+                backends,
+                &round_backend_hashes,
+                round_start.elapsed().as_secs_f64()
+            )
+        );
 
         if let Some(solution) = solved {
             println!(
@@ -216,13 +276,14 @@ fn handle_mining_backend_event(
     epoch: u64,
     solved: &mut Option<MiningSolution>,
     backends: &mut Vec<BackendSlot>,
-) -> Result<()> {
+) -> Result<BackendEventAction> {
     match event {
         BackendEvent::Solution(solution) => {
             let backend_active = backends.iter().any(|slot| slot.id == solution.backend_id);
             if solution.epoch == epoch && backend_active {
                 *solved = Some(solution);
             }
+            Ok(BackendEventAction::None)
         }
         BackendEvent::Error {
             backend_id,
@@ -239,14 +300,15 @@ fn handle_mining_backend_event(
                 eprintln!(
                     "[backend] quarantined {backend}#{backend_id}; continuing with {remaining}"
                 );
+                Ok(BackendEventAction::TopologyChanged)
             } else {
                 eprintln!(
                     "[backend] ignoring error from unavailable backend '{backend}#{backend_id}'"
                 );
+                Ok(BackendEventAction::None)
             }
         }
     }
-    Ok(())
 }
 
 fn drain_mining_backend_events(
@@ -254,11 +316,16 @@ fn drain_mining_backend_events(
     epoch: u64,
     solved: &mut Option<MiningSolution>,
     backends: &mut Vec<BackendSlot>,
-) -> Result<()> {
+) -> Result<BackendEventAction> {
+    let mut action = BackendEventAction::None;
     while let Ok(event) = backend_events.try_recv() {
-        handle_mining_backend_event(event, epoch, solved, backends)?;
+        if handle_mining_backend_event(event, epoch, solved, backends)?
+            == BackendEventAction::TopologyChanged
+        {
+            action = BackendEventAction::TopologyChanged;
+        }
     }
-    Ok(())
+    Ok(action)
 }
 
 pub(super) fn spawn_tip_listener(client: ApiClient, shutdown: Arc<AtomicBool>) -> TipSignal {
@@ -333,7 +400,9 @@ fn fetch_template_with_retry(
             Ok(template) => return Some(template),
             Err(err) => {
                 eprintln!("blocktemplate request failed: {err:#}");
-                thread::sleep(TEMPLATE_RETRY_DELAY);
+                if !sleep_with_shutdown(shutdown, TEMPLATE_RETRY_DELAY) {
+                    break;
+                }
             }
         }
     }
@@ -341,16 +410,69 @@ fn fetch_template_with_retry(
     None
 }
 
+fn sleep_with_shutdown(shutdown: &AtomicBool, duration: Duration) -> bool {
+    let deadline = Instant::now() + duration;
+    while !shutdown.load(Ordering::Relaxed) {
+        let now = Instant::now();
+        if now >= deadline {
+            return true;
+        }
+        let sleep_for = deadline
+            .saturating_duration_since(now)
+            .min(Duration::from_millis(100));
+        thread::sleep(sleep_for);
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
+    use crossbeam_channel::Sender;
+
     use super::*;
+    use crate::backend::{BackendInstanceId, PowBackend, WorkAssignment};
+    use anyhow::Result;
+
+    struct NoopBackend {
+        name: &'static str,
+    }
+
+    impl NoopBackend {
+        fn new(name: &'static str) -> Self {
+            Self { name }
+        }
+    }
+
+    impl PowBackend for NoopBackend {
+        fn name(&self) -> &'static str {
+            self.name
+        }
+
+        fn lanes(&self) -> usize {
+            1
+        }
+
+        fn set_instance_id(&mut self, _id: BackendInstanceId) {}
+
+        fn set_event_sink(&mut self, _sink: Sender<BackendEvent>) {}
+
+        fn start(&mut self) -> Result<()> {
+            Ok(())
+        }
+
+        fn stop(&mut self) {}
+
+        fn assign_work(&self, _work: WorkAssignment) -> Result<()> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn stale_solution_is_ignored_for_current_epoch() {
         let mut solved = None;
         let mut backends = Vec::new();
 
-        handle_mining_backend_event(
+        let action = handle_mining_backend_event(
             BackendEvent::Solution(MiningSolution {
                 epoch: 41,
                 nonce: 9,
@@ -363,6 +485,50 @@ mod tests {
         )
         .expect("stale solution handling should succeed");
 
+        assert_eq!(action, BackendEventAction::None);
         assert!(solved.is_none());
+    }
+
+    #[test]
+    fn backend_error_reports_topology_change_when_backend_is_removed() {
+        let mut solved = None;
+        let mut backends = vec![
+            BackendSlot {
+                id: 1,
+                backend: Box::new(NoopBackend::new("cpu")),
+                lane_offset: 0,
+                lanes: 1,
+            },
+            BackendSlot {
+                id: 2,
+                backend: Box::new(NoopBackend::new("cpu")),
+                lane_offset: 1,
+                lanes: 1,
+            },
+        ];
+
+        let action = handle_mining_backend_event(
+            BackendEvent::Error {
+                backend_id: 1,
+                backend: "cpu",
+                message: "test failure".to_string(),
+            },
+            1,
+            &mut solved,
+            &mut backends,
+        )
+        .expect("backend removal should be handled");
+
+        assert_eq!(action, BackendEventAction::TopologyChanged);
+        assert_eq!(backends.len(), 1);
+        assert_eq!(backends[0].id, 2);
+    }
+
+    #[test]
+    fn sleep_with_shutdown_stops_early_when_shutdown_requested() {
+        let shutdown = AtomicBool::new(true);
+        let start = Instant::now();
+        assert!(!sleep_with_shutdown(&shutdown, Duration::from_secs(1)));
+        assert!(start.elapsed() < Duration::from_millis(20));
     }
 }
