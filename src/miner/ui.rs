@@ -166,7 +166,10 @@ fn log(level: Level, tag: &str, message: &str) {
 }
 
 fn suppress_in_tui(tag: &str, message: &str) -> bool {
-    matches!(tag, "BACKEND" | "BENCH") && message.starts_with("telemetry |")
+    if matches!(tag, "BACKEND" | "BENCH") && message.starts_with("telemetry |") {
+        return true;
+    }
+    tag == "MINER" && message.starts_with("template-history |")
 }
 
 fn frame_top(colors: bool) {
@@ -452,5 +455,10 @@ mod tests {
         assert!(suppress_in_tui("BENCH", "telemetry | cpu#1:active_peak=1"));
         assert!(!suppress_in_tui("BACKEND", "quarantined cpu#1"));
         assert!(!suppress_in_tui("MINER", "telemetry | cpu#1:active_peak=1"));
+        assert!(suppress_in_tui(
+            "MINER",
+            "template-history | max=16 retention=81.25s"
+        ));
+        assert!(!suppress_in_tui("MINER", "connected and mining"));
     }
 }
