@@ -221,9 +221,7 @@ fn collect_due_backend_hashes(
     *round_hashes = round_hashes.saturating_add(collected);
 }
 
-fn next_backend_poll_deadline(
-    poll_state: &BackendPollState,
-) -> Instant {
+fn next_backend_poll_deadline(poll_state: &BackendPollState) -> Instant {
     poll_state
         .values()
         .map(|(_, next_poll)| *next_poll)
@@ -625,8 +623,7 @@ fn run_worker_benchmark_inner(
             RuntimeMode::Bench,
             cfg.backend_control_timeout,
             backend_executor,
-        )?
-            == BackendEventAction::TopologyChanged
+        )? == BackendEventAction::TopologyChanged
         {
             ensure_worker_topology_identity(
                 backends,

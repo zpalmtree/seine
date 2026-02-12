@@ -188,13 +188,12 @@ fn control_backend_slots(
     merge_backend_failures(&mut failures, cancel_failures);
 
     if include_fence && !survivors.is_empty() {
-        let (after_fence, fence_failures) =
-            run_backend_control_phase(
-                survivors,
-                BackendControlPhase::Fence,
-                timeout,
-                backend_executor,
-            );
+        let (after_fence, fence_failures) = run_backend_control_phase(
+            survivors,
+            BackendControlPhase::Fence,
+            timeout,
+            backend_executor,
+        );
         survivors = after_fence;
         merge_backend_failures(&mut failures, fence_failures);
     }

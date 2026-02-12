@@ -44,8 +44,7 @@ pub(super) fn redistribute_for_topology_change(
             options.mode,
             options.control_timeout,
             options.backend_executor,
-        )?
-            == RuntimeBackendEventAction::TopologyChanged
+        )? == RuntimeBackendEventAction::TopologyChanged
         && backends.is_empty()
     {
         return Ok(());

@@ -67,7 +67,9 @@ const TUI_RENDER_INTERVAL: Duration = Duration::from_secs(1);
 const TUI_QUIT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const TUI_RENDER_SIGNAL_CAPACITY: usize = 8;
 const RETRY_LOG_INTERVAL: Duration = Duration::from_secs(10);
-const RECENT_TEMPLATE_CACHE_SIZE: usize = 4;
+const RECENT_TEMPLATE_CACHE_MIN: usize = 16;
+const RECENT_TEMPLATE_CACHE_MAX: usize = 512;
+const RECENT_TEMPLATE_CACHE_HEADROOM_ROUNDS: usize = 4;
 static PROMPT_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 #[derive(Default)]
@@ -499,6 +501,7 @@ pub(super) fn run_mining_loop(
     let mut tui = init_tui_display(tui_state, Arc::clone(&shutdown));
     let mut backend_weights = seed_backend_weights(backends);
     let mut control_plane = MiningControlPlane::new(client, cfg, Arc::clone(&shutdown), tip_signal);
+    let recent_template_cache_size = recent_template_cache_size(cfg);
     let mut recent_templates = VecDeque::<(u64, BlockTemplateResponse)>::new();
     let mut deferred_solutions = Vec::<MiningSolution>::new();
 
@@ -511,6 +514,13 @@ pub(super) fn run_mining_loop(
         }
     };
     success("MINER", "connected and mining");
+    info(
+        "MINER",
+        format!(
+            "template-history | {} epochs (timeout-aware)",
+            recent_template_cache_size
+        ),
+    );
 
     while !shutdown.load(Ordering::Relaxed) {
         if backends.is_empty() {
@@ -643,25 +653,23 @@ pub(super) fn run_mining_loop(
         let append_semantics_active = super::backends_have_append_assignment_semantics(backends);
 
         if cfg.strict_round_accounting {
-            let _ =
-                quiesce_backend_slots(
-                    backends,
-                    RuntimeMode::Mining,
-                    cfg.backend_control_timeout,
-                    backend_executor,
-                )?;
+            let _ = quiesce_backend_slots(
+                backends,
+                RuntimeMode::Mining,
+                cfg.backend_control_timeout,
+                backend_executor,
+            )?;
         } else if should_cancel_relaxed_round(
             round_state.stale_tip_event,
             solved_found,
             append_semantics_active,
         ) {
-            let _ =
-                cancel_backend_slots(
-                    backends,
-                    RuntimeMode::Mining,
-                    cfg.backend_control_timeout,
-                    backend_executor,
-                )?;
+            let _ = cancel_backend_slots(
+                backends,
+                RuntimeMode::Mining,
+                cfg.backend_control_timeout,
+                backend_executor,
+            )?;
         }
         let _ = drain_mining_backend_events(
             backend_events,
@@ -791,7 +799,12 @@ pub(super) fn run_mining_loop(
         let Some(next_template) = control_plane.resolve_next_template(&mut tui) else {
             break;
         };
-        remember_recent_template(&mut recent_templates, epoch, template);
+        remember_recent_template(
+            &mut recent_templates,
+            epoch,
+            template,
+            recent_template_cache_size,
+        );
         template = next_template;
     }
 
@@ -1284,7 +1297,7 @@ fn dedupe_queued_solutions(queued: Vec<MiningSolution>) -> Vec<MiningSolution> {
 
     let mut deduped = Vec::with_capacity(queued.len());
     for solution in queued {
-        if seen.insert((solution.epoch, solution.backend_id, solution.nonce)) {
+        if seen.insert((solution.epoch, solution.nonce)) {
             deduped.push(solution);
         }
     }
@@ -1299,9 +1312,7 @@ fn drop_solution_from_deferred(
         return;
     };
     deferred_solutions.retain(|candidate| {
-        !(candidate.epoch == solution.epoch
-            && candidate.backend_id == solution.backend_id
-            && candidate.nonce == solution.nonce)
+        !(candidate.epoch == solution.epoch && candidate.nonce == solution.nonce)
     });
 }
 
@@ -1326,11 +1337,43 @@ fn remember_recent_template(
     recent_templates: &mut VecDeque<(u64, BlockTemplateResponse)>,
     epoch: u64,
     template: BlockTemplateResponse,
+    max_entries: usize,
 ) {
+    let max_entries = max_entries.max(1);
     recent_templates.push_back((epoch, template));
-    while recent_templates.len() > RECENT_TEMPLATE_CACHE_SIZE {
+    while recent_templates.len() > max_entries {
         recent_templates.pop_front();
     }
+}
+
+fn recent_template_cache_size(cfg: &Config) -> usize {
+    recent_template_cache_size_from_timeouts(
+        cfg.refresh_interval,
+        cfg.backend_control_timeout,
+        cfg.backend_assign_timeout,
+        cfg.prefetch_wait,
+    )
+}
+
+fn recent_template_cache_size_from_timeouts(
+    refresh_interval: Duration,
+    backend_control_timeout: Duration,
+    backend_assign_timeout: Duration,
+    prefetch_wait: Duration,
+) -> usize {
+    let refresh_millis = refresh_interval.max(Duration::from_millis(1)).as_millis();
+    let grace_millis = backend_control_timeout
+        .as_millis()
+        .saturating_add(backend_assign_timeout.as_millis())
+        .saturating_add(prefetch_wait.as_millis())
+        .saturating_add(refresh_millis);
+    let rounds_needed = grace_millis
+        .saturating_div(refresh_millis)
+        .saturating_add(RECENT_TEMPLATE_CACHE_HEADROOM_ROUNDS as u128);
+    rounds_needed.clamp(
+        RECENT_TEMPLATE_CACHE_MIN as u128,
+        RECENT_TEMPLATE_CACHE_MAX as u128,
+    ) as usize
 }
 
 fn fetch_template_with_retry(
@@ -1815,16 +1858,15 @@ mod tests {
             }))
             .expect("enqueue additional current solution");
 
-        let action =
-            drain_mining_backend_events(
-                &event_rx,
-                42,
-                &mut solved,
-                &mut deferred,
-                &mut backends,
-                &backend_executor,
-            )
-            .expect("drain should succeed");
+        let action = drain_mining_backend_events(
+            &event_rx,
+            42,
+            &mut solved,
+            &mut deferred,
+            &mut backends,
+            &backend_executor,
+        )
+        .expect("drain should succeed");
 
         assert_eq!(action, BackendEventAction::None);
         assert_eq!(solved.as_ref().map(|solution| solution.nonce), Some(3));
@@ -1856,6 +1898,12 @@ mod tests {
                 epoch: 4,
                 nonce: 7,
                 backend_id: 1,
+                backend: "cpu",
+            },
+            MiningSolution {
+                epoch: 4,
+                nonce: 7,
+                backend_id: 2,
                 backend: "cpu",
             },
             MiningSolution {
@@ -1899,6 +1947,12 @@ mod tests {
             },
             MiningSolution {
                 epoch: 5,
+                nonce: 42,
+                backend_id: 2,
+                backend: "cpu",
+            },
+            MiningSolution {
+                epoch: 5,
                 nonce: 9,
                 backend_id: 1,
                 backend: "cpu",
@@ -1924,17 +1978,45 @@ mod tests {
 
     #[test]
     fn remember_recent_template_keeps_bounded_history() {
+        let max_entries = 6usize;
         let mut recent = VecDeque::new();
-        for epoch in 1..=(RECENT_TEMPLATE_CACHE_SIZE as u64 + 2) {
-            remember_recent_template(&mut recent, epoch, sample_template("tmpl"));
+        for epoch in 1..=(max_entries as u64 + 2) {
+            remember_recent_template(&mut recent, epoch, sample_template("tmpl"), max_entries);
         }
 
-        assert_eq!(recent.len(), RECENT_TEMPLATE_CACHE_SIZE);
+        assert_eq!(recent.len(), max_entries);
         assert_eq!(recent.front().map(|entry| entry.0), Some(3));
         assert_eq!(
             recent.back().map(|entry| entry.0),
-            Some(RECENT_TEMPLATE_CACHE_SIZE as u64 + 2)
+            Some(max_entries as u64 + 2)
         );
+    }
+
+    #[test]
+    fn recent_template_cache_size_uses_timeout_window_and_bounds() {
+        let min_entries = recent_template_cache_size_from_timeouts(
+            Duration::from_secs(20),
+            Duration::from_secs(60),
+            Duration::from_secs(1),
+            Duration::from_millis(250),
+        );
+        assert_eq!(min_entries, RECENT_TEMPLATE_CACHE_MIN);
+
+        let scaled_entries = recent_template_cache_size_from_timeouts(
+            Duration::from_secs(1),
+            Duration::from_secs(120),
+            Duration::from_secs(2),
+            Duration::from_millis(500),
+        );
+        assert!(scaled_entries > RECENT_TEMPLATE_CACHE_MIN);
+
+        let capped_entries = recent_template_cache_size_from_timeouts(
+            Duration::from_millis(1),
+            Duration::from_secs(3_600),
+            Duration::from_secs(60),
+            Duration::from_secs(60),
+        );
+        assert_eq!(capped_entries, RECENT_TEMPLATE_CACHE_MAX);
     }
 
     #[test]

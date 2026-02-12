@@ -150,7 +150,11 @@ impl BackendExecutor {
         }
     }
 
-    pub(super) fn quarantine_backend(&self, backend_id: BackendInstanceId, backend: Arc<dyn PowBackend>) {
+    pub(super) fn quarantine_backend(
+        &self,
+        backend_id: BackendInstanceId,
+        backend: Arc<dyn PowBackend>,
+    ) {
         let key = backend_worker_key(backend_id, &backend);
         let should_quarantine = match self.quarantined.lock() {
             Ok(mut inflight) => inflight.insert(key),
@@ -255,7 +259,8 @@ impl BackendExecutor {
             if task_deadline > recv_deadline {
                 recv_deadline = task_deadline;
             }
-            let Some(worker_tx) = self.worker_sender_for_backend(backend_id, backend, &backend_handle)
+            let Some(worker_tx) =
+                self.worker_sender_for_backend(backend_id, backend, &backend_handle)
             else {
                 let _ = outcome_tx.send(BackendTaskOutcome {
                     idx,

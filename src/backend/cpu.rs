@@ -18,7 +18,6 @@ use crate::types::hash_meets_target;
 
 const HASH_BATCH_SIZE: u64 = 64;
 const HASH_FLUSH_INTERVAL: Duration = Duration::from_millis(50);
-const STOP_CHECK_INTERVAL_HASHES: u64 = 64;
 const CRITICAL_EVENT_RETRY_WAIT: Duration = Duration::from_millis(5);
 const EVENT_DISPATCH_CAPACITY: usize = 1024;
 const SOLVED_MASK: u64 = 1u64 << 63;
@@ -539,7 +538,6 @@ fn cpu_worker_loop(shared: Arc<Shared>, thread_idx: usize, core_id: Option<core_
     let mut lane_quota = 0u64;
     let mut pending_hashes = 0u64;
     let mut last_flush = Instant::now();
-    let mut next_stop_check = STOP_CHECK_INTERVAL_HASHES;
 
     loop {
         let global_generation = shared.work_generation.load(Ordering::Acquire);
@@ -557,7 +555,6 @@ fn cpu_worker_loop(shared: Arc<Shared>, thread_idx: usize, core_id: Option<core_
                         thread_idx as u64,
                         lane_stride,
                     );
-                    next_stop_check = STOP_CHECK_INTERVAL_HASHES.min(lane_quota.max(1));
                     last_flush = Instant::now();
                     local_generation = generation;
                     local_work = Some(work);
@@ -592,14 +589,11 @@ fn cpu_worker_loop(shared: Arc<Shared>, thread_idx: usize, core_id: Option<core_
             continue;
         }
 
-        if lane_iters >= next_stop_check {
-            if Instant::now() >= template.stop_at {
-                flush_hashes(&shared, thread_idx, &mut pending_hashes);
-                mark_worker_inactive(&shared, &mut worker_active);
-                local_work = None;
-                continue;
-            }
-            next_stop_check = next_stop_check.saturating_add(STOP_CHECK_INTERVAL_HASHES);
+        if Instant::now() >= template.stop_at {
+            flush_hashes(&shared, thread_idx, &mut pending_hashes);
+            mark_worker_inactive(&shared, &mut worker_active);
+            local_work = None;
+            continue;
         }
 
         if shared.solution_state.load(Ordering::Acquire) != template.work_id {

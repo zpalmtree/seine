@@ -90,13 +90,12 @@ pub(super) fn distribute_work(
             chunk_start = chunk_start.wrapping_add(nonce_count);
         }
 
-        let (survivors, failures) =
-            dispatch_assignment_tasks(
-                dispatch_tasks,
-                slots_by_idx,
-                options.assignment_timeout,
-                backend_executor,
-            );
+        let (survivors, failures) = dispatch_assignment_tasks(
+            dispatch_tasks,
+            slots_by_idx,
+            options.assignment_timeout,
+            backend_executor,
+        );
         *backends = survivors;
         backend_executor.prune(backends);
 

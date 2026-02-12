@@ -106,6 +106,8 @@ Run headless/plain logs (no fullscreen TUI):
   - `--events-idle-timeout-secs` (default `90`) bounds one SSE stream request lifetime before reconnect to avoid liveness stalls.
   - `--prefetch-wait-ms` (default `250`) bounds how long mining waits for prefetched templates before falling back to direct fetch.
   - `--tip-listener-join-wait-ms` (default `250`) bounds shutdown wait for SSE listener thread before detaching.
+  - Late-solution template retention is timeout-aware (derived from refresh/control/assign/prefetch timing) to reduce stale drops during backend lag.
+  - Deferred solution submission now deduplicates by `(epoch, nonce)` across backends to avoid duplicate submit attempts.
   - `--cpu-affinity` (`auto` or `off`) controls CPU worker pinning policy for better repeatability on NUMA/SMT hosts.
   - `--ui` (`auto`, `tui`, `plain`) controls rendering mode. `auto` enables TUI only when stdout/stderr are terminals.
   - Relaxed accounting is now the default (higher throughput, less exact round attribution).

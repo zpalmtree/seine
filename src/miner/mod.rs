@@ -1824,14 +1824,13 @@ mod tests {
             ),
         ];
 
-        let action =
-            quiesce_backend_slots(
-                &mut backends,
-                RuntimeMode::Mining,
-                Duration::from_secs(1),
-                &backend_executor,
-            )
-            .expect("quiesce should quarantine only the failing backend");
+        let action = quiesce_backend_slots(
+            &mut backends,
+            RuntimeMode::Mining,
+            Duration::from_secs(1),
+            &backend_executor,
+        )
+        .expect("quiesce should quarantine only the failing backend");
 
         assert_eq!(action, RuntimeBackendEventAction::TopologyChanged);
         assert_eq!(backends.len(), 1);
@@ -1871,14 +1870,13 @@ mod tests {
             ),
         ];
 
-        let action =
-            quiesce_backend_slots(
-                &mut backends,
-                RuntimeMode::Mining,
-                Duration::from_secs(1),
-                &backend_executor,
-            )
-            .expect("quiesce should quarantine panicing backend");
+        let action = quiesce_backend_slots(
+            &mut backends,
+            RuntimeMode::Mining,
+            Duration::from_secs(1),
+            &backend_executor,
+        )
+        .expect("quiesce should quarantine panicing backend");
 
         assert_eq!(action, RuntimeBackendEventAction::TopologyChanged);
         assert_eq!(backends.len(), 1);
