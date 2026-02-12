@@ -659,9 +659,7 @@ fn enforce_deadline_policy(
         return Ok(());
     }
 
-    let probe_timeout = control_timeout
-        .min(Duration::from_millis(250))
-        .max(Duration::from_millis(1));
+    let probe_timeout = control_timeout.max(Duration::from_millis(1));
     let action = quiesce_backend_slots(backends, mode, probe_timeout, backend_executor)?;
     if action == RuntimeBackendEventAction::TopologyChanged {
         warn(

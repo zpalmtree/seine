@@ -237,7 +237,9 @@ impl BackendExecutor {
             std::iter::repeat_with(|| None).take(outcomes_len).collect();
         let mut task_contexts = BTreeMap::<usize, TimeoutTaskContext>::new();
         let (outcome_tx, outcome_rx) = bounded::<BackendTaskOutcome>(expected.max(1));
-        let mut recv_deadline = Instant::now();
+        let recv_deadline = Instant::now()
+            .checked_add(timeout)
+            .unwrap_or_else(Instant::now);
 
         for task in tasks {
             let backend_id = task.backend_id;
@@ -245,9 +247,7 @@ impl BackendExecutor {
             let action = task.kind.action_label();
             let backend_handle = Arc::clone(&task.backend_handle);
             let idx = task.idx;
-            let task_deadline = Instant::now()
-                .checked_add(timeout)
-                .unwrap_or_else(Instant::now);
+            let task_deadline = recv_deadline;
             task_contexts.insert(
                 idx,
                 TimeoutTaskContext {
@@ -258,9 +258,6 @@ impl BackendExecutor {
                     deadline: task_deadline,
                 },
             );
-            if task_deadline > recv_deadline {
-                recv_deadline = task_deadline;
-            }
             let Some(worker_tx) =
                 self.worker_sender_for_backend(backend_id, backend, &backend_handle)
             else {
@@ -434,7 +431,7 @@ mod tests {
     use super::*;
     use crossbeam_channel::Sender;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     use std::thread;
     use std::time::Duration;
 
@@ -708,5 +705,112 @@ mod tests {
             interrupts.load(Ordering::Relaxed) > 0,
             "timeout path should request backend interrupt"
         );
+    }
+
+    struct DeadlineCaptureBackend {
+        deadlines: Arc<Mutex<Vec<Instant>>>,
+    }
+
+    impl DeadlineCaptureBackend {
+        fn new(deadlines: Arc<Mutex<Vec<Instant>>>) -> Self {
+            Self { deadlines }
+        }
+    }
+
+    impl PowBackend for DeadlineCaptureBackend {
+        fn name(&self) -> &'static str {
+            "deadline-capture"
+        }
+
+        fn lanes(&self) -> usize {
+            1
+        }
+
+        fn set_instance_id(&self, _id: BackendInstanceId) {}
+
+        fn set_event_sink(&self, _sink: Sender<BackendEvent>) {}
+
+        fn start(&self) -> Result<()> {
+            Ok(())
+        }
+
+        fn stop(&self) {}
+
+        fn assign_work(&self, _work: WorkAssignment) -> Result<()> {
+            Ok(())
+        }
+
+        fn assign_work_with_deadline(
+            &self,
+            _work: &WorkAssignment,
+            deadline: Instant,
+        ) -> Result<()> {
+            self.deadlines
+                .lock()
+                .expect("deadline capture lock should not be poisoned")
+                .push(deadline);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn dispatch_uses_shared_deadline_for_all_tasks() {
+        let executor = BackendExecutor::new();
+        let first_deadlines = Arc::new(Mutex::new(Vec::new()));
+        let second_deadlines = Arc::new(Mutex::new(Vec::new()));
+
+        let first = Arc::new(DeadlineCaptureBackend::new(Arc::clone(&first_deadlines)))
+            as Arc<dyn PowBackend>;
+        let second = Arc::new(DeadlineCaptureBackend::new(Arc::clone(&second_deadlines)))
+            as Arc<dyn PowBackend>;
+
+        let work = || WorkAssignment {
+            template: Arc::new(WorkTemplate {
+                work_id: 1,
+                epoch: 1,
+                header_base: Arc::from(vec![0u8; blocknet_pow_spec::POW_HEADER_BASE_LEN]),
+                target: [0xFF; 32],
+                stop_at: Instant::now() + Duration::from_secs(1),
+            }),
+            nonce_chunk: NonceChunk {
+                start_nonce: 0,
+                nonce_count: 1,
+            },
+        };
+
+        let outcomes = executor.dispatch_backend_tasks(
+            vec![
+                BackendTask {
+                    idx: 0,
+                    backend_id: 1,
+                    backend: "deadline-capture",
+                    backend_handle: first,
+                    kind: BackendTaskKind::Assign(work()),
+                },
+                BackendTask {
+                    idx: 1,
+                    backend_id: 2,
+                    backend: "deadline-capture",
+                    backend_handle: second,
+                    kind: BackendTaskKind::Assign(work()),
+                },
+            ],
+            Duration::from_millis(25),
+        );
+
+        assert!(outcomes[0]
+            .as_ref()
+            .is_some_and(|outcome| outcome.result.is_ok()));
+        assert!(outcomes[1]
+            .as_ref()
+            .is_some_and(|outcome| outcome.result.is_ok()));
+
+        let first_deadline = first_deadlines
+            .lock()
+            .expect("deadline capture lock should not be poisoned")[0];
+        let second_deadline = second_deadlines
+            .lock()
+            .expect("deadline capture lock should not be poisoned")[0];
+        assert_eq!(first_deadline, second_deadline);
     }
 }
