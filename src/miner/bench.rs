@@ -15,9 +15,7 @@ use sysinfo::System;
 use crate::backend::{BackendEvent, BackendInstanceId, DeadlineSupport, PowBackend};
 use crate::config::{BenchBaselinePolicy, BenchKind, Config, CpuAffinityMode, WorkAllocation};
 
-use super::hash_poll::{
-    build_backend_poll_state, collect_due_backend_samples, next_backend_poll_deadline,
-};
+use super::hash_poll::{build_backend_poll_state, next_backend_poll_deadline};
 use super::runtime::{
     seed_backend_weights, update_backend_weights, work_distribution_weights, RoundEndReason,
     WeightUpdateInputs,
@@ -26,9 +24,10 @@ use super::scheduler::NonceScheduler;
 use super::stats::{format_hashrate, median};
 use super::ui::{info, startup_banner, success, warn};
 use super::{
-    activate_backends, collect_backend_hashes, distribute_work, format_round_backend_telemetry,
-    next_work_id, quiesce_backend_slots, start_backend_slots, stop_backend_slots, total_lanes,
-    BackendRoundTelemetry, BackendSlot, RuntimeBackendEventAction, RuntimeMode, MIN_EVENT_WAIT,
+    activate_backends, collect_backend_hashes, collect_round_backend_samples, distribute_work,
+    format_round_backend_telemetry, next_work_id, quiesce_backend_slots, start_backend_slots,
+    stop_backend_slots, total_lanes, BackendRoundTelemetry, BackendSlot, RuntimeBackendEventAction,
+    RuntimeMode, MIN_EVENT_WAIT,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -360,6 +359,8 @@ fn run_worker_benchmark(
     super::enforce_deadline_policy(
         &mut backends,
         cfg.allow_best_effort_deadlines,
+        cfg.backend_control_timeout,
+        RuntimeMode::Bench,
         backend_executor,
     )?;
     let identity = worker_benchmark_identity(&backends);
@@ -497,25 +498,12 @@ fn run_worker_benchmark_inner(
         let mut round_backend_telemetry = BTreeMap::new();
         let mut backend_poll_state = build_backend_poll_state(backends, cfg.hash_poll_interval);
         while Instant::now() < stop_at && !shutdown.load(Ordering::Relaxed) {
-            let mut collected = 0u64;
-            collect_due_backend_samples(
+            let collected = collect_round_backend_samples(
                 backends,
                 cfg.hash_poll_interval,
                 &mut backend_poll_state,
-                |sample| {
-                    merge_round_telemetry(
-                        &mut round_backend_telemetry,
-                        sample.backend_id,
-                        super::backend_round_telemetry_delta(sample.telemetry),
-                    );
-                    if sample.hashes > 0 {
-                        collected = collected.saturating_add(sample.hashes);
-                        let entry = round_backend_hashes
-                            .entry(sample.backend_id)
-                            .or_insert(0u64);
-                        *entry = (*entry).saturating_add(sample.hashes);
-                    }
-                },
+                &mut round_backend_hashes,
+                &mut round_backend_telemetry,
             );
             round_hashes = round_hashes.saturating_add(collected);
             let now = Instant::now();

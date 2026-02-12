@@ -46,15 +46,23 @@ pub(super) fn handle_runtime_backend_event(
     match event {
         BackendEvent::Solution(solution) => {
             let backend_active = backends.iter().any(|slot| slot.id == solution.backend_id);
-            if !backend_active {
-                return Ok((RuntimeBackendEventAction::None, None));
-            }
-
             match mode {
                 RuntimeMode::Mining => {
+                    if !backend_active {
+                        warn(
+                            "BACKEND",
+                            format!(
+                                "received late solution from unavailable backend {}#{} (epoch={} nonce={})",
+                                solution.backend, solution.backend_id, solution.epoch, solution.nonce
+                            ),
+                        );
+                    }
                     return Ok((RuntimeBackendEventAction::None, Some(solution)));
                 }
                 RuntimeMode::Bench => {
+                    if !backend_active {
+                        return Ok((RuntimeBackendEventAction::None, None));
+                    }
                     if solution.epoch == epoch {
                         info(
                             "BENCH",

@@ -17,9 +17,7 @@ use crate::types::{
 };
 
 use super::auth::{refresh_api_token_from_cookie, TokenRefreshOutcome};
-use super::hash_poll::{
-    build_backend_poll_state, collect_due_backend_samples, next_backend_poll_deadline,
-};
+use super::hash_poll::{build_backend_poll_state, next_backend_poll_deadline};
 use super::mining_tui::{
     init_tui_display, render_tui_now, set_tui_state_label, update_tui, RoundUiView, TuiDisplay,
 };
@@ -36,9 +34,10 @@ use super::tui::TuiState;
 use super::ui::{error, info, mined, success, warn};
 use super::wallet::auto_load_wallet;
 use super::{
-    cancel_backend_slots, collect_backend_hashes, distribute_work, format_round_backend_telemetry,
-    next_event_wait, next_work_id, quiesce_backend_slots, total_lanes, BackendRoundTelemetry,
-    BackendSlot, RuntimeBackendEventAction, RuntimeMode, TEMPLATE_RETRY_DELAY,
+    cancel_backend_slots, collect_backend_hashes, collect_round_backend_samples, distribute_work,
+    format_round_backend_telemetry, next_event_wait, next_work_id, quiesce_backend_slots,
+    total_lanes, BackendRoundTelemetry, BackendSlot, RuntimeBackendEventAction, RuntimeMode,
+    TEMPLATE_RETRY_DELAY,
 };
 
 type BackendEventAction = RuntimeBackendEventAction;
@@ -707,23 +706,12 @@ impl<'a> RoundRuntime<'a> {
             && !stale_tip_event
         {
             let hashes_before = round_hashes;
-            let mut collected = 0u64;
-            collect_due_backend_samples(
+            let collected = collect_round_backend_samples(
                 self.backends,
                 self.cfg.hash_poll_interval,
                 &mut backend_poll_state,
-                |sample| {
-                    super::merge_backend_telemetry(
-                        &mut round_backend_telemetry,
-                        sample.backend_id,
-                        sample.telemetry,
-                    );
-                    if sample.hashes > 0 {
-                        collected = collected.saturating_add(sample.hashes);
-                        let entry = round_backend_hashes.entry(sample.backend_id).or_insert(0);
-                        *entry = entry.saturating_add(sample.hashes);
-                    }
-                },
+                &mut round_backend_hashes,
+                &mut round_backend_telemetry,
             );
             if collected > 0 {
                 self.stats.add_hashes(collected);
@@ -1352,7 +1340,7 @@ mod tests {
     }
 
     #[test]
-    fn stale_solution_is_ignored_for_current_epoch() {
+    fn stale_solution_from_unavailable_backend_is_deferred() {
         let backend_executor = super::super::backend_executor::BackendExecutor::new();
         let mut solved = None;
         let mut deferred = Vec::new();
@@ -1375,7 +1363,8 @@ mod tests {
 
         assert_eq!(action, BackendEventAction::None);
         assert!(solved.is_none());
-        assert!(deferred.is_empty());
+        assert_eq!(deferred.len(), 1);
+        assert_eq!(deferred[0].epoch, 41);
     }
 
     #[test]

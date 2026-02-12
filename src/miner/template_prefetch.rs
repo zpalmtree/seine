@@ -82,8 +82,9 @@ impl TemplatePrefetch {
                 true
             }
             Err(TrySendError::Full(_)) => {
-                self.inflight_tip_sequence = Some(tip_sequence);
-                true
+                // Keep the existing inflight marker so we do not claim the newest
+                // tip sequence is queued when channel backpressure rejected it.
+                false
             }
             Err(TrySendError::Disconnected(_)) => {
                 self.request_tx = None;
@@ -219,7 +220,7 @@ mod tests {
     }
 
     #[test]
-    fn prefetch_full_queue_marks_request_pending() {
+    fn prefetch_full_queue_does_not_overstate_inflight_tip() {
         let (request_tx, _request_rx) = bounded::<PrefetchRequest>(1);
         request_tx
             .try_send(PrefetchRequest { tip_sequence: 1 })
@@ -236,7 +237,28 @@ mod tests {
         };
 
         prefetch.request_if_idle(2);
-        assert_eq!(prefetch.inflight_tip_sequence, Some(2));
+        assert_eq!(prefetch.inflight_tip_sequence, None);
+    }
+
+    #[test]
+    fn prefetch_full_queue_preserves_existing_inflight_marker() {
+        let (request_tx, _request_rx) = bounded::<PrefetchRequest>(1);
+        request_tx
+            .try_send(PrefetchRequest { tip_sequence: 1 })
+            .expect("prefill request channel should succeed");
+        let (_result_tx, result_rx) = unbounded::<PrefetchResult>();
+        let (_done_tx, done_rx) = bounded::<()>(1);
+        let mut prefetch = TemplatePrefetch {
+            handle: None,
+            request_tx: Some(request_tx),
+            result_rx,
+            done_rx,
+            inflight_tip_sequence: Some(1),
+            desired_tip_sequence: Some(1),
+        };
+
+        prefetch.request_if_idle(2);
+        assert_eq!(prefetch.inflight_tip_sequence, Some(1));
     }
 
     #[test]

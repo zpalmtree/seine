@@ -96,6 +96,8 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
     enforce_deadline_policy(
         &mut backends,
         cfg.allow_best_effort_deadlines,
+        cfg.backend_control_timeout,
+        RuntimeMode::Mining,
         &backend_executor,
     )?;
     let total_lanes = total_lanes(&backends);
@@ -488,6 +490,30 @@ fn collect_backend_hashes(
     *round_hashes = round_hashes.saturating_add(collected);
 }
 
+fn collect_round_backend_samples(
+    backends: &[BackendSlot],
+    configured_hash_poll_interval: Duration,
+    poll_state: &mut hash_poll::BackendPollState,
+    round_backend_hashes: &mut BTreeMap<BackendInstanceId, u64>,
+    round_backend_telemetry: &mut BTreeMap<BackendInstanceId, BackendRoundTelemetry>,
+) -> u64 {
+    let mut collected = 0u64;
+    hash_poll::collect_due_backend_samples(
+        backends,
+        configured_hash_poll_interval,
+        poll_state,
+        |sample| {
+            merge_backend_telemetry(round_backend_telemetry, sample.backend_id, sample.telemetry);
+            if sample.hashes > 0 {
+                collected = collected.saturating_add(sample.hashes);
+                let entry = round_backend_hashes.entry(sample.backend_id).or_insert(0);
+                *entry = entry.saturating_add(sample.hashes);
+            }
+        },
+    );
+    collected
+}
+
 fn merge_backend_telemetry(
     per_backend_telemetry: &mut BTreeMap<BackendInstanceId, BackendRoundTelemetry>,
     backend_id: BackendInstanceId,
@@ -591,44 +617,59 @@ enum RuntimeBackendEventAction {
 fn enforce_deadline_policy(
     backends: &mut Vec<BackendSlot>,
     allow_best_effort_deadlines: bool,
+    control_timeout: Duration,
+    mode: RuntimeMode,
     backend_executor: &backend_executor::BackendExecutor,
 ) -> Result<()> {
-    if allow_best_effort_deadlines {
-        return Ok(());
-    }
+    if !allow_best_effort_deadlines {
+        let mut best_effort = Vec::new();
+        let mut survivors = Vec::with_capacity(backends.len());
+        for slot in std::mem::take(backends) {
+            let capabilities = backend_capabilities(&slot);
+            if capabilities.deadline_support == DeadlineSupport::BestEffort {
+                best_effort.push(slot);
+            } else {
+                survivors.push(slot);
+            }
+        }
+        *backends = survivors;
 
-    let mut best_effort = Vec::new();
-    let mut survivors = Vec::with_capacity(backends.len());
-    for slot in std::mem::take(backends) {
-        let capabilities = backend_capabilities(&slot);
-        if capabilities.deadline_support == DeadlineSupport::BestEffort {
-            best_effort.push(slot);
-        } else {
-            survivors.push(slot);
+        for slot in best_effort {
+            let backend_name = slot.backend.name();
+            let backend_id = slot.id;
+            backend_executor.quarantine_backend(backend_id, Arc::clone(&slot.backend));
+            backend_executor.remove_backend_worker(backend_id, &slot.backend);
+            warn(
+                "BACKEND",
+                format!(
+                    "quarantined {backend_name}#{backend_id}: best-effort deadlines disabled (pass --allow-best-effort-deadlines to allow)"
+                ),
+            );
+        }
+
+        backend_executor.prune(backends);
+        if backends.is_empty() {
+            bail!(
+                "all active backends report best-effort deadlines; pass --allow-best-effort-deadlines to continue"
+            );
         }
     }
-    *backends = survivors;
 
-    if best_effort.is_empty() {
+    if backends.is_empty() {
         return Ok(());
     }
 
-    for slot in best_effort {
-        let backend_name = slot.backend.name();
-        let backend_id = slot.id;
-        backend_executor.quarantine_backend(backend_id, Arc::clone(&slot.backend));
-        backend_executor.remove_backend_worker(backend_id, &slot.backend);
+    let probe_timeout = control_timeout
+        .min(Duration::from_millis(250))
+        .max(Duration::from_millis(1));
+    let action = quiesce_backend_slots(backends, mode, probe_timeout, backend_executor)?;
+    if action == RuntimeBackendEventAction::TopologyChanged {
         warn(
             "BACKEND",
             format!(
-                "quarantined {backend_name}#{backend_id}: best-effort deadlines disabled (pass --allow-best-effort-deadlines to allow)"
+                "deadline probe quarantined backend(s); remaining={}",
+                backend_names(backends)
             ),
-        );
-    }
-    backend_executor.prune(backends);
-    if backends.is_empty() {
-        bail!(
-            "all active backends report best-effort deadlines; pass --allow-best-effort-deadlines to continue"
         );
     }
     Ok(())
@@ -1527,8 +1568,14 @@ mod tests {
             ),
         )];
 
-        let err = enforce_deadline_policy(&mut backends, false, &backend_executor)
-            .expect_err("best-effort backend should be rejected by default");
+        let err = enforce_deadline_policy(
+            &mut backends,
+            false,
+            Duration::from_secs(1),
+            RuntimeMode::Mining,
+            &backend_executor,
+        )
+        .expect_err("best-effort backend should be rejected by default");
         assert!(format!("{err:#}").contains("--allow-best-effort-deadlines"));
     }
 
@@ -1556,8 +1603,14 @@ mod tests {
             ),
         ];
 
-        enforce_deadline_policy(&mut backends, false, &backend_executor)
-            .expect("cooperative backend should remain available");
+        enforce_deadline_policy(
+            &mut backends,
+            false,
+            Duration::from_secs(1),
+            RuntimeMode::Mining,
+            &backend_executor,
+        )
+        .expect("cooperative backend should remain available");
 
         assert_eq!(backends.len(), 1);
         assert_eq!(backends[0].id, 2);
