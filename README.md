@@ -6,6 +6,7 @@ Current status:
 - CPU backend: implemented (Argon2id, consensus-compatible params).
 - NVIDIA backend: scaffolded interface only (not implemented yet).
 - Runtime architecture: supports multiple backends in one process with persistent workers, event-driven solution/error reporting, and polled per-backend hash counters for low-overhead throughput accounting.
+  - Runtime is split into `src/miner/{mining,bench,scheduler,stats}.rs` to keep orchestration, benchmarking, nonce scheduling, and telemetry isolated for faster iteration.
 
 ## Test
 
@@ -56,6 +57,7 @@ Select multiple backends (comma-separated or repeated flag). Unavailable backend
 - The miner fetches block templates from `/api/mining/blocktemplate` and submits solved blocks to `/api/mining/submitblock` using compact `{template_id, nonce}` payloads when available.
 - The miner listens to `/api/events` and refreshes work immediately on `new_block` events (disable with `--disable-sse`).
 - This miner is intentionally external so consensus-critical validation remains in the daemon.
+- Nonce space is reserved deterministically per epoch via `--nonce-iters-per-lane` (default `2^36` iterations per lane), avoiding overlap between refresh rounds without relying on sampled hash counters.
 
 ## Performance Benchmarking
 

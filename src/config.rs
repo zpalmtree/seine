@@ -69,6 +69,10 @@ struct Cli {
     #[arg(long)]
     start_nonce: Option<u64>,
 
+    /// Maximum iterations each lane will scan before switching to next reservation.
+    #[arg(long, default_value_t = 1u64 << 36)]
+    nonce_iters_per_lane: u64,
+
     /// Disable SSE tip notifications (/api/events) and rely only on refresh timer.
     #[arg(long, action = ArgAction::SetTrue)]
     disable_sse: bool,
@@ -107,6 +111,7 @@ pub struct Config {
     pub refresh_interval: Duration,
     pub stats_interval: Duration,
     pub start_nonce: u64,
+    pub nonce_iters_per_lane: u64,
     pub sse_enabled: bool,
     pub bench: bool,
     pub bench_kind: BenchKind,
@@ -121,6 +126,9 @@ impl Config {
         let cli = Cli::parse();
         if cli.threads == 0 {
             bail!("threads must be >= 1");
+        }
+        if cli.nonce_iters_per_lane == 0 {
+            bail!("nonce-iters-per-lane must be >= 1");
         }
 
         let backends = dedupe_backends(&cli.backends);
@@ -145,6 +153,7 @@ impl Config {
             refresh_interval: Duration::from_secs(cli.refresh_secs.max(1)),
             stats_interval: Duration::from_secs(cli.stats_secs.max(1)),
             start_nonce: cli.start_nonce.unwrap_or_else(default_nonce_seed),
+            nonce_iters_per_lane: cli.nonce_iters_per_lane,
             sse_enabled: !cli.disable_sse,
             bench: cli.bench,
             bench_kind: cli.bench_kind,
@@ -282,6 +291,7 @@ mod tests {
             refresh_secs: 20,
             stats_secs: 10,
             start_nonce: None,
+            nonce_iters_per_lane: 1u64 << 36,
             disable_sse: false,
             bench: false,
             bench_kind: BenchKind::Backend,

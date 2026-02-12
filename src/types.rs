@@ -1,14 +1,39 @@
-use anyhow::{anyhow, bail, Context, Result};
-use serde::Deserialize;
-use serde_json::{json, Value};
+use anyhow::{bail, Context, Result};
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BlockTemplateResponse {
-    pub block: Value,
+    pub block: TemplateBlock,
     pub target: String,
     pub header_base: String,
     #[serde(default)]
     pub template_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TemplateBlock {
+    pub header: TemplateHeader,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TemplateHeader {
+    #[serde(default)]
+    pub nonce: Option<u64>,
+    #[serde(default, rename = "Nonce")]
+    pub nonce_upper: Option<u64>,
+    #[serde(default)]
+    pub height: Option<u64>,
+    #[serde(default, rename = "Height")]
+    pub height_upper: Option<u64>,
+    #[serde(default)]
+    pub difficulty: Option<u64>,
+    #[serde(default, rename = "Difficulty")]
+    pub difficulty_upper: Option<u64>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -48,35 +73,22 @@ pub fn hash_meets_target(hash: &[u8; 32], target: &[u8; 32]) -> bool {
     true
 }
 
-pub fn set_block_nonce(block: &mut Value, nonce: u64) -> Result<()> {
-    let header = block
-        .get_mut("header")
-        .and_then(Value::as_object_mut)
-        .ok_or_else(|| anyhow!("template block is missing object field 'header'"))?;
-
-    if header.contains_key("nonce") {
-        header.insert("nonce".to_string(), json!(nonce));
-        return Ok(());
+pub fn set_block_nonce(block: &mut TemplateBlock, nonce: u64) {
+    if block.header.nonce.is_some() || block.header.nonce_upper.is_none() {
+        block.header.nonce = Some(nonce);
+        block.header.nonce_upper = None;
+    } else {
+        block.header.nonce_upper = Some(nonce);
+        block.header.nonce = None;
     }
-
-    header.insert("Nonce".to_string(), json!(nonce));
-    Ok(())
 }
 
-pub fn template_height(block: &Value) -> Option<u64> {
-    let header = block.get("header")?;
-    header
-        .get("height")
-        .and_then(Value::as_u64)
-        .or_else(|| header.get("Height").and_then(Value::as_u64))
+pub fn template_height(block: &TemplateBlock) -> Option<u64> {
+    block.header.height.or(block.header.height_upper)
 }
 
-pub fn template_difficulty(block: &Value) -> Option<u64> {
-    let header = block.get("header")?;
-    header
-        .get("difficulty")
-        .and_then(Value::as_u64)
-        .or_else(|| header.get("Difficulty").and_then(Value::as_u64))
+pub fn template_difficulty(block: &TemplateBlock) -> Option<u64> {
+    block.header.difficulty.or(block.header.difficulty_upper)
 }
 
 #[cfg(test)]
@@ -101,25 +113,35 @@ mod tests {
 
     #[test]
     fn set_block_nonce_supports_lower_and_upper_keys() {
-        let mut lower = json!({"header": {"nonce": 0u64}});
-        set_block_nonce(&mut lower, 42).unwrap();
-        assert_eq!(lower["header"]["nonce"].as_u64(), Some(42));
+        let mut lower: TemplateBlock = serde_json::from_value(json!({
+            "header": {"nonce": 0u64},
+            "txns": []
+        }))
+        .expect("lower block should deserialize");
+        set_block_nonce(&mut lower, 42);
+        let out = serde_json::to_value(lower).expect("lower block should serialize");
+        assert_eq!(out["header"]["nonce"].as_u64(), Some(42));
 
-        let mut upper = json!({"header": {"Nonce": 0u64}});
-        set_block_nonce(&mut upper, 9).unwrap();
-        assert_eq!(upper["header"]["Nonce"].as_u64(), Some(9));
+        let mut upper: TemplateBlock = serde_json::from_value(json!({
+            "header": {"Nonce": 0u64},
+            "txns": []
+        }))
+        .expect("upper block should deserialize");
+        set_block_nonce(&mut upper, 9);
+        let out = serde_json::to_value(upper).expect("upper block should serialize");
+        assert_eq!(out["header"]["Nonce"].as_u64(), Some(9));
     }
 
     #[test]
     fn parse_target_requires_32_bytes() {
-        let err = parse_target("00ff").unwrap_err();
+        let err = parse_target("00ff").expect_err("short target should fail");
         assert!(format!("{err:#}").contains("target must be 32 bytes"));
     }
 
     #[test]
-    fn set_block_nonce_requires_header() {
-        let mut bad = json!({"not_header": {}});
-        let err = set_block_nonce(&mut bad, 7).unwrap_err();
-        assert!(format!("{err:#}").contains("missing object field 'header'"));
+    fn template_block_requires_header() {
+        let err = serde_json::from_value::<TemplateBlock>(json!({"not_header": {}}))
+            .expect_err("missing header should fail");
+        assert!(err.to_string().contains("missing field `header`"));
     }
 }

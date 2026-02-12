@@ -8,14 +8,18 @@ use crossbeam_channel::Sender;
 pub mod cpu;
 pub mod nvidia;
 
+pub const WORK_ID_MAX: u64 = (1u64 << 63) - 1;
+
 #[derive(Debug, Clone)]
 pub struct MiningWork {
+    pub work_id: u64,
     pub epoch: u64,
     pub header_base: Arc<[u8]>,
     pub target: [u8; 32],
     pub start_nonce: u64,
     pub lane_offset: u64,
     pub global_stride: u64,
+    pub max_iters_per_lane: u64,
     pub stop_at: Instant,
 }
 

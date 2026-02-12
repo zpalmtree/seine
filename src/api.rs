@@ -3,9 +3,16 @@ use std::time::Duration;
 use anyhow::{anyhow, Context, Result};
 use reqwest::blocking::{Client, Response};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
-use serde_json::{json, Value};
+use serde::Serialize;
+use serde_json::Value;
 
 use crate::types::{BlockTemplateResponse, SubmitBlockResponse};
+
+#[derive(Debug, Serialize)]
+struct CompactSubmitPayload<'a> {
+    template_id: &'a str,
+    nonce: u64,
+}
 
 #[derive(Clone)]
 pub struct ApiClient {
@@ -55,25 +62,20 @@ impl ApiClient {
         decode_json_response(resp, "blocktemplate")
     }
 
-    pub fn submit_block(
+    pub fn submit_block<T: Serialize>(
         &self,
-        block: &Value,
+        block: &T,
         template_id: Option<&str>,
         nonce: u64,
     ) -> Result<SubmitBlockResponse> {
         let url = format!("{}/api/mining/submitblock", self.base_url);
-        let payload = if let Some(template_id) = template_id {
-            json!({
-                "template_id": template_id,
-                "nonce": nonce,
-            })
+        let request = self.json_client.post(url);
+        let request = if let Some(template_id) = template_id {
+            request.json(&CompactSubmitPayload { template_id, nonce })
         } else {
-            block.clone()
+            request.json(block)
         };
-        let resp = self
-            .json_client
-            .post(url)
-            .json(&payload)
+        let resp = request
             .send()
             .context("request to submitblock endpoint failed")?;
 
