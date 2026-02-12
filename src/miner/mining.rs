@@ -143,7 +143,7 @@ impl WalletPasswordSource {
 pub(super) fn run_mining_loop(
     cfg: &Config,
     client: &ApiClient,
-    shutdown: &AtomicBool,
+    shutdown: Arc<AtomicBool>,
     backends: &mut Vec<BackendSlot>,
     backend_events: &Receiver<BackendEvent>,
     tip_signal: Option<&TipSignal>,
@@ -153,24 +153,35 @@ pub(super) fn run_mining_loop(
     let mut work_id_cursor = 1u64;
     let mut epoch = 0u64;
     let mut last_stats_print = Instant::now();
+    let mut prefetch: Option<TemplatePrefetch> = None;
+
+    let mut template = match fetch_template_with_retry(client, cfg, shutdown.as_ref()) {
+        Some(t) => t,
+        None => {
+            stats.print();
+            println!("bnminer stopped");
+            return Ok(());
+        }
+    };
 
     while !shutdown.load(Ordering::Relaxed) {
         if backends.is_empty() {
             bail!("all mining backends are unavailable");
         }
 
-        let template = match fetch_template_with_retry(client, cfg, shutdown) {
-            Some(t) => t,
-            None => break,
-        };
-
         let header_base = match decode_hex(&template.header_base, "header_base") {
             Ok(v) => v,
             Err(err) => {
                 eprintln!("template decode error: {err:#}");
-                if !sleep_with_shutdown(shutdown, TEMPLATE_RETRY_DELAY) {
+                if !sleep_with_shutdown(shutdown.as_ref(), TEMPLATE_RETRY_DELAY) {
                     break;
                 }
+                let Some(next_template) =
+                    resolve_next_template(&mut prefetch, client, cfg, &shutdown)
+                else {
+                    break;
+                };
+                template = next_template;
                 continue;
             }
         };
@@ -181,9 +192,14 @@ pub(super) fn run_mining_loop(
                 POW_HEADER_BASE_LEN,
                 header_base.len()
             );
-            if !sleep_with_shutdown(shutdown, TEMPLATE_RETRY_DELAY) {
+            if !sleep_with_shutdown(shutdown.as_ref(), TEMPLATE_RETRY_DELAY) {
                 break;
             }
+            let Some(next_template) = resolve_next_template(&mut prefetch, client, cfg, &shutdown)
+            else {
+                break;
+            };
+            template = next_template;
             continue;
         }
 
@@ -191,9 +207,15 @@ pub(super) fn run_mining_loop(
             Ok(t) => t,
             Err(err) => {
                 eprintln!("target parse error: {err:#}");
-                if !sleep_with_shutdown(shutdown, TEMPLATE_RETRY_DELAY) {
+                if !sleep_with_shutdown(shutdown.as_ref(), TEMPLATE_RETRY_DELAY) {
                     break;
                 }
+                let Some(next_template) =
+                    resolve_next_template(&mut prefetch, client, cfg, &shutdown)
+                else {
+                    break;
+                };
+                template = next_template;
                 continue;
             }
         };
@@ -238,6 +260,13 @@ pub(super) fn run_mining_loop(
             reservation,
             stop_at,
         )?;
+        if prefetch.is_none() {
+            prefetch = Some(TemplatePrefetch::spawn(
+                client.clone(),
+                cfg.clone(),
+                Arc::clone(&shutdown),
+            ));
+        }
 
         let round_start = Instant::now();
         let mut solved: Option<MiningSolution> = None;
@@ -385,11 +414,62 @@ pub(super) fn run_mining_loop(
             stats.print();
             last_stats_print = Instant::now();
         }
+
+        if shutdown.load(Ordering::Relaxed) {
+            break;
+        }
+
+        let Some(next_template) = resolve_next_template(&mut prefetch, client, cfg, &shutdown)
+        else {
+            break;
+        };
+        template = next_template;
+    }
+
+    if let Some(prefetch_task) = prefetch {
+        let _ = prefetch_task.join();
     }
 
     stats.print();
     println!("bnminer stopped");
     Ok(())
+}
+
+struct TemplatePrefetch {
+    handle: JoinHandle<Option<BlockTemplateResponse>>,
+}
+
+impl TemplatePrefetch {
+    fn spawn(client: ApiClient, cfg: Config, shutdown: Arc<AtomicBool>) -> Self {
+        let handle =
+            thread::spawn(move || fetch_template_with_retry(&client, &cfg, shutdown.as_ref()));
+        Self { handle }
+    }
+
+    fn join(self) -> Option<BlockTemplateResponse> {
+        match self.handle.join() {
+            Ok(template) => template,
+            Err(_) => {
+                eprintln!("template prefetch thread panicked");
+                None
+            }
+        }
+    }
+}
+
+fn resolve_next_template(
+    prefetch: &mut Option<TemplatePrefetch>,
+    client: &ApiClient,
+    cfg: &Config,
+    shutdown: &Arc<AtomicBool>,
+) -> Option<BlockTemplateResponse> {
+    if let Some(task) = prefetch.take() {
+        if let Some(template) = task.join() {
+            return Some(template);
+        }
+    }
+
+    fetch_template_with_retry(client, cfg, shutdown.as_ref())
 }
 
 fn handle_mining_backend_event(

@@ -5,7 +5,7 @@ External Blocknet miner with a pluggable backend architecture.
 Current status:
 - CPU backend: implemented (Argon2id, consensus-compatible params).
 - NVIDIA backend: scaffolded interface only (not implemented yet).
-- Runtime architecture: supports multiple backends in one process with persistent workers, configurable bounded backend event queues, coalesced tip notifications (deduped across SSE reconnects), and optional strict quiesce barriers for round-accurate hash accounting.
+- Runtime architecture: supports multiple backends in one process with persistent workers, configurable bounded backend event queues, coalesced tip notifications (deduped across SSE reconnects), template prefetch overlap to reduce round-boundary idle, and optional strict quiesce barriers for round-accurate hash accounting.
   - Runtime is split into `src/miner/{mining,bench,scheduler,stats}.rs` to keep orchestration, benchmarking, nonce scheduling, and telemetry isolated for faster iteration.
 
 ## Test
@@ -68,6 +68,7 @@ Select multiple backends (comma-separated or repeated flag). Unavailable backend
 - Runtime tuning knobs for performance iteration:
   - `--backend-event-capacity` (default `1024`) controls bounded backend event queue size.
   - `--hash-poll-ms` (default `200`) controls backend hash counter polling cadence.
+  - `--cpu-affinity` (`auto` or `off`) controls CPU worker pinning policy for better repeatability on NUMA/SMT hosts.
   - `--relaxed-accounting` disables per-round quiesce barriers (higher throughput, less exact round accounting).
 - A backend runtime fault quarantines only that backend; mining continues on remaining active backends when possible.
 - This miner is intentionally external so consensus-critical validation remains in the daemon.
@@ -80,6 +81,7 @@ Run deterministic local benchmarking (no API connection needed):
 - `--bench-kind kernel`: hash kernel only (single backend).
 - `--bench-kind backend`: persistent backend workers (steady-state throughput).
 - `--bench-kind end-to-end`: includes backend start/stop per round.
+- Worker benchmarks always apply a round-end measurement fence so round H/s is comparable across strict/relaxed accounting modes.
 
 ```bash
 cd bnminer

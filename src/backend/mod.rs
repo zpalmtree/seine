@@ -67,8 +67,19 @@ pub trait PowBackend: Send {
 
     fn assign_work(&self, work: WorkAssignment) -> Result<()>;
 
-    fn quiesce(&self) -> Result<()> {
+    /// Request the backend to stop processing the current assignment.
+    fn cancel_work(&self) -> Result<()> {
         Ok(())
+    }
+
+    /// Wait until all backend workers have observed the most recent control action.
+    fn fence(&self) -> Result<()> {
+        Ok(())
+    }
+
+    fn quiesce(&self) -> Result<()> {
+        self.cancel_work()?;
+        self.fence()
     }
 
     /// Return and reset hashes completed since the previous call.

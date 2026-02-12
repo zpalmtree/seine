@@ -10,6 +10,7 @@ argon2 = "0.5"
 clap = { version = "4.5", features = ["derive"] }
 ctrlc = "3.4"
 crossbeam-channel = "0.5"
+core_affinity = "0.8"
 hex = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 rpassword = "7.3"

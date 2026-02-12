@@ -34,6 +34,8 @@ struct BenchRun {
     round: u32,
     hashes: u64,
     elapsed_secs: f64,
+    #[serde(default)]
+    fence_secs: f64,
     hps: f64,
     #[serde(default)]
     backend_runs: Vec<BenchBackendRun>,
@@ -133,6 +135,7 @@ fn run_kernel_benchmark(
             round: round + 1,
             hashes,
             elapsed_secs: elapsed,
+            fence_secs: 0.0,
             hps,
             backend_runs: Vec::new(),
         });
@@ -171,7 +174,7 @@ fn run_worker_benchmark(
     };
 
     println!(
-        "benchmark mode | kind={} | backends={} | lanes={} | rounds={} | seconds_per_round={} | hash_poll={}ms | accounting={}",
+        "benchmark mode | kind={} | backends={} | lanes={} | rounds={} | seconds_per_round={} | hash_poll={}ms | accounting={} | measurement_fence=on",
         bench_kind,
         backend_names(&backends),
         total_lanes(&backends),
@@ -303,9 +306,14 @@ fn run_worker_benchmark_inner(
             }
         }
 
-        if cfg.strict_round_accounting {
-            quiesce_backend_slots(backends)?;
-        }
+        let counted_until = std::cmp::min(Instant::now(), stop_at);
+        let counted_elapsed = counted_until
+            .saturating_duration_since(round_start)
+            .as_secs_f64()
+            .max(0.001);
+        let fence_start = Instant::now();
+        quiesce_backend_slots(backends)?;
+        let fence_elapsed = fence_start.elapsed().as_secs_f64();
         collect_backend_hashes(
             backends,
             None,
@@ -314,24 +322,26 @@ fn run_worker_benchmark_inner(
         );
         drain_benchmark_backend_events(backend_events, epoch, backends)?;
 
-        let elapsed = round_start.elapsed().as_secs_f64().max(0.001);
-        let hps = round_hashes as f64 / elapsed;
-        let backend_runs = build_backend_round_stats(backends, &round_backend_hashes, elapsed);
+        let hps = round_hashes as f64 / counted_elapsed;
+        let backend_runs =
+            build_backend_round_stats(backends, &round_backend_hashes, counted_elapsed);
 
         println!(
-            "[bench] round {}/{} | hashes={} | elapsed={:.2}s | {} | per_backend={}",
+            "[bench] round {}/{} | hashes={} | counted={:.2}s | fence={:.3}s | {} | per_backend={}",
             round + 1,
             cfg.bench_rounds,
             round_hashes,
-            elapsed,
+            counted_elapsed,
+            fence_elapsed,
             format_hashrate(hps),
-            format_round_backend_hashrate(backends, &round_backend_hashes, elapsed),
+            format_round_backend_hashrate(backends, &round_backend_hashes, counted_elapsed),
         );
 
         runs.push(BenchRun {
             round: round + 1,
             hashes: round_hashes,
-            elapsed_secs: elapsed,
+            elapsed_secs: counted_elapsed,
+            fence_secs: fence_elapsed,
             hps,
             backend_runs,
         });

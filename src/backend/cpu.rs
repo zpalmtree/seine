@@ -4,13 +4,14 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
-use argon2::{Algorithm, Argon2, Version};
+use argon2::{Algorithm, Argon2, Block, Version};
 use blocknet_pow_spec::{pow_params, POW_OUTPUT_LEN};
 use crossbeam_channel::Sender;
 
 use crate::backend::{
     BackendEvent, BackendInstanceId, MiningSolution, PowBackend, WorkAssignment, WORK_ID_MAX,
 };
+use crate::config::CpuAffinityMode;
 use crate::types::hash_meets_target;
 
 const HASH_BATCH_SIZE: u64 = 64;
@@ -39,15 +40,17 @@ struct Shared {
 
 pub struct CpuBackend {
     threads: usize,
+    affinity_mode: CpuAffinityMode,
     shared: Arc<Shared>,
     worker_handles: Vec<JoinHandle<()>>,
 }
 
 impl CpuBackend {
-    pub fn new(threads: usize) -> Self {
+    pub fn new(threads: usize, affinity_mode: CpuAffinityMode) -> Self {
         let lanes = threads.max(1);
         Self {
             threads,
+            affinity_mode,
             shared: Arc::new(Shared {
                 started: AtomicBool::new(false),
                 instance_id: AtomicU64::new(0),
@@ -110,10 +113,20 @@ impl PowBackend for CpuBackend {
             control.work = None;
         }
 
+        let core_ids = match self.affinity_mode {
+            CpuAffinityMode::Off => None,
+            CpuAffinityMode::Auto => core_affinity::get_core_ids().filter(|ids| !ids.is_empty()),
+        };
+
         for thread_idx in 0..self.threads.max(1) {
             let shared = Arc::clone(&self.shared);
-            self.worker_handles
-                .push(thread::spawn(move || cpu_worker_loop(shared, thread_idx)));
+            let core_id = core_ids
+                .as_ref()
+                .and_then(|ids| ids.get(thread_idx % ids.len()))
+                .copied();
+            self.worker_handles.push(thread::spawn(move || {
+                cpu_worker_loop(shared, thread_idx, core_id)
+            }));
         }
 
         Ok(())
@@ -174,11 +187,17 @@ impl PowBackend for CpuBackend {
         Ok(())
     }
 
-    fn quiesce(&self) -> Result<()> {
+    fn cancel_work(&self) -> Result<()> {
         if !self.shared.started.load(Ordering::SeqCst) {
             return Ok(());
         }
-        request_work_pause(&self.shared)?;
+        request_work_pause(&self.shared)
+    }
+
+    fn fence(&self) -> Result<()> {
+        if !self.shared.started.load(Ordering::SeqCst) {
+            return Ok(());
+        }
         wait_for_idle(&self.shared)
     }
 
@@ -203,6 +222,7 @@ impl PowBackend for CpuBackend {
                         Ok(p) => p,
                         Err(_) => return,
                     };
+                    let mut memory_blocks = vec![Block::default(); params.block_count()];
                     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
 
                     let mut header_base = [0u8; blocknet_pow_spec::POW_HEADER_BASE_LEN];
@@ -218,7 +238,12 @@ impl PowBackend for CpuBackend {
                     while Instant::now() < stop_at && !shutdown.load(Ordering::Relaxed) {
                         let nonce_bytes = nonce.to_le_bytes();
                         if argon2
-                            .hash_password_into(&nonce_bytes, &header_base, &mut output)
+                            .hash_password_into_with_memory(
+                                &nonce_bytes,
+                                &header_base,
+                                &mut output,
+                                &mut memory_blocks,
+                            )
                             .is_err()
                         {
                             break;
@@ -236,7 +261,11 @@ impl PowBackend for CpuBackend {
     }
 }
 
-fn cpu_worker_loop(shared: Arc<Shared>, thread_idx: usize) {
+fn cpu_worker_loop(shared: Arc<Shared>, thread_idx: usize, core_id: Option<core_affinity::CoreId>) {
+    if let Some(core_id) = core_id {
+        let _ = core_affinity::set_for_current(core_id);
+    }
+
     let params = match pow_params() {
         Ok(p) => p,
         Err(_) => {
@@ -249,6 +278,7 @@ fn cpu_worker_loop(shared: Arc<Shared>, thread_idx: usize) {
         }
     };
 
+    let mut memory_blocks = vec![Block::default(); params.block_count()];
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let mut output = [0u8; POW_OUTPUT_LEN];
     let mut local_generation = 0u64;
@@ -314,12 +344,17 @@ fn cpu_worker_loop(shared: Arc<Shared>, thread_idx: usize) {
 
         let nonce_bytes = nonce.to_le_bytes();
         if argon2
-            .hash_password_into(&nonce_bytes, &template.header_base, &mut output)
+            .hash_password_into_with_memory(
+                &nonce_bytes,
+                &template.header_base,
+                &mut output,
+                &mut memory_blocks,
+            )
             .is_err()
         {
             emit_error(
                 &shared,
-                format!("cpu thread {thread_idx}: hash_password_into failed"),
+                format!("cpu thread {thread_idx}: hash_password_into_with_memory failed"),
             );
             request_shutdown(&shared);
             break;

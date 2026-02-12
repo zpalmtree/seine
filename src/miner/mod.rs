@@ -83,7 +83,7 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
     let result = mining::run_mining_loop(
         cfg,
         &client,
-        shutdown.as_ref(),
+        Arc::clone(&shutdown),
         &mut backends,
         &backend_events,
         tip_listener.as_ref().map(mining::TipListener::signal),
@@ -101,7 +101,9 @@ fn build_backend_instances(cfg: &Config) -> Vec<Box<dyn PowBackend>> {
     cfg.backends
         .iter()
         .map(|backend_kind| match backend_kind {
-            BackendKind::Cpu => Box::new(CpuBackend::new(cfg.threads)) as Box<dyn PowBackend>,
+            BackendKind::Cpu => {
+                Box::new(CpuBackend::new(cfg.threads, cfg.cpu_affinity)) as Box<dyn PowBackend>
+            }
             BackendKind::Nvidia => Box::new(NvidiaBackend::new()) as Box<dyn PowBackend>,
         })
         .collect()

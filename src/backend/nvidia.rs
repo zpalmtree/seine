@@ -40,6 +40,14 @@ impl PowBackend for NvidiaBackend {
         Ok(())
     }
 
+    fn cancel_work(&self) -> Result<()> {
+        Ok(())
+    }
+
+    fn fence(&self) -> Result<()> {
+        Ok(())
+    }
+
     fn kernel_bench(&self, _seconds: u64, _shutdown: &AtomicBool) -> Result<u64> {
         bail!("kernel benchmark is not implemented for nvidia backend")
     }

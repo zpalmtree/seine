@@ -20,6 +20,12 @@ pub enum BenchKind {
     EndToEnd,
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+pub enum CpuAffinityMode {
+    Off,
+    Auto,
+}
+
 #[derive(Debug, Parser)]
 #[command(name = "bnminer", version, about = "External Blocknet miner")]
 struct Cli {
@@ -60,6 +66,10 @@ struct Cli {
     /// Number of CPU mining threads (each uses ~2GB RAM for Argon2id).
     #[arg(long, alias = "cpu-threads", default_value_t = 1)]
     threads: usize,
+
+    /// CPU pinning policy for CPU mining workers.
+    #[arg(long, value_enum, default_value_t = CpuAffinityMode::Auto)]
+    cpu_affinity: CpuAffinityMode,
 
     /// Allow starting when configured CPU lanes exceed detected system RAM.
     #[arg(long, default_value_t = false)]
@@ -130,6 +140,7 @@ pub struct Config {
     pub wallet_password_file: Option<PathBuf>,
     pub backends: Vec<BackendKind>,
     pub threads: usize,
+    pub cpu_affinity: CpuAffinityMode,
     pub refresh_interval: Duration,
     pub stats_interval: Duration,
     pub backend_event_capacity: usize,
@@ -183,6 +194,7 @@ impl Config {
             wallet_password_file: cli.wallet_password_file,
             backends,
             threads: cli.threads,
+            cpu_affinity: cli.cpu_affinity,
             refresh_interval: Duration::from_secs(cli.refresh_secs.max(1)),
             stats_interval: Duration::from_secs(cli.stats_secs.max(1)),
             backend_event_capacity: cli.backend_event_capacity,
@@ -361,6 +373,7 @@ mod tests {
             data_dir: PathBuf::from("./data"),
             backends: vec![BackendKind::Cpu],
             threads: 1,
+            cpu_affinity: CpuAffinityMode::Auto,
             allow_oversubscribe: false,
             refresh_secs: 20,
             stats_secs: 10,
