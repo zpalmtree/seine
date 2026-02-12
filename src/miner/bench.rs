@@ -156,6 +156,7 @@ struct WorkerBenchmarkIdentity {
 
 type BackendEventAction = RuntimeBackendEventAction;
 const BENCH_REPORT_SCHEMA_VERSION: u32 = 3;
+const BENCH_REPORT_COMPAT_MIN_SCHEMA_VERSION: u32 = 2;
 
 pub(super) fn run_benchmark(cfg: &Config, shutdown: &AtomicBool) -> Result<()> {
     let instances = super::build_backend_instances(cfg);
@@ -828,11 +829,17 @@ fn baseline_compatibility_issues(
     policy: BenchBaselinePolicy,
 ) -> Vec<String> {
     let mut issues = Vec::new();
+    let schema_compatible = baseline.schema_version >= BENCH_REPORT_COMPAT_MIN_SCHEMA_VERSION
+        && baseline.schema_version <= BENCH_REPORT_SCHEMA_VERSION
+        && current.schema_version >= BENCH_REPORT_COMPAT_MIN_SCHEMA_VERSION;
 
-    if baseline.schema_version != current.schema_version {
+    if !schema_compatible {
         issues.push(format!(
-            "schema mismatch baseline={} current={}",
-            baseline.schema_version, current.schema_version
+            "schema mismatch baseline={} current={} (compatible baseline schemas {}-{})",
+            baseline.schema_version,
+            current.schema_version,
+            BENCH_REPORT_COMPAT_MIN_SCHEMA_VERSION,
+            BENCH_REPORT_SCHEMA_VERSION
         ));
     }
 
@@ -875,9 +882,7 @@ fn baseline_compatibility_issues(
         ));
     }
 
-    if baseline.schema_version >= BENCH_REPORT_SCHEMA_VERSION
-        && current.schema_version >= BENCH_REPORT_SCHEMA_VERSION
-    {
+    if schema_compatible {
         if baseline.config_fingerprint.backend_event_capacity
             != current.config_fingerprint.backend_event_capacity
         {
@@ -976,8 +981,6 @@ fn baseline_compatibility_issues(
         if baseline.pow_fingerprint != current.pow_fingerprint {
             issues.push("pow parameter fingerprint mismatch".to_string());
         }
-    } else {
-        issues.push("baseline benchmark report schema is too old".to_string());
     }
 
     if policy == BenchBaselinePolicy::Strict {
@@ -1448,11 +1451,22 @@ mod tests {
     fn baseline_compatibility_detects_schema_mismatch() {
         let current = sample_report();
         let mut baseline = sample_report();
-        baseline.schema_version = 1;
+        baseline.schema_version = BENCH_REPORT_SCHEMA_VERSION.saturating_add(1);
 
         let issues =
             baseline_compatibility_issues(&current, &baseline, BenchBaselinePolicy::Strict);
         assert!(issues.iter().any(|issue| issue.contains("schema mismatch")));
+    }
+
+    #[test]
+    fn baseline_compatibility_accepts_previous_schema_when_compatible() {
+        let current = sample_report();
+        let mut baseline = sample_report();
+        baseline.schema_version = BENCH_REPORT_SCHEMA_VERSION - 1;
+
+        let issues =
+            baseline_compatibility_issues(&current, &baseline, BenchBaselinePolicy::Strict);
+        assert!(!issues.iter().any(|issue| issue.contains("schema mismatch")));
     }
 
     #[test]
@@ -1481,7 +1495,6 @@ mod tests {
             .iter()
             .any(|issue| issue.contains("git mismatch")));
     }
-
     #[test]
     fn baseline_compatibility_detects_warmup_round_mismatch() {
         let current = sample_report();
