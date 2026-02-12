@@ -120,6 +120,9 @@ fn level_to_tui(level: Level) -> LogLevel {
 
 fn log(level: Level, tag: &str, message: &str) {
     if let Some(tui_state) = TUI_STATE.get() {
+        if suppress_in_tui(tag, message) {
+            return;
+        }
         let entry = LogEntry {
             elapsed_secs: log_elapsed().as_secs_f64(),
             level: level_to_tui(level),
@@ -160,6 +163,10 @@ fn log(level: Level, tag: &str, message: &str) {
     } else {
         println!("{prefix} {body}");
     }
+}
+
+fn suppress_in_tui(tag: &str, message: &str) -> bool {
+    matches!(tag, "BACKEND" | "BENCH") && message.starts_with("telemetry |")
 }
 
 fn frame_top(colors: bool) {
@@ -430,4 +437,17 @@ fn lock<T>(mutex: &'static Mutex<T>) -> MutexGuard<'static, T> {
     mutex
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::suppress_in_tui;
+
+    #[test]
+    fn suppresses_telemetry_lines_in_tui() {
+        assert!(suppress_in_tui("BACKEND", "telemetry | cpu#1:active_peak=1"));
+        assert!(suppress_in_tui("BENCH", "telemetry | cpu#1:active_peak=1"));
+        assert!(!suppress_in_tui("BACKEND", "quarantined cpu#1"));
+        assert!(!suppress_in_tui("MINER", "telemetry | cpu#1:active_peak=1"));
+    }
 }
