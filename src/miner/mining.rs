@@ -734,14 +734,6 @@ fn resolve_next_template(
             if let Some(template) = prefetched_template {
                 return Some(template);
             }
-        } else if prefetched_template.is_some() {
-            warn(
-                "TEMPLATE",
-                format!(
-                    "discarding stale prefetched template (tip-seq {} -> {})",
-                    spawned_tip_sequence, latest_tip_sequence
-                ),
-            );
         }
     }
 
