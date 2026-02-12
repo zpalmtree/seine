@@ -45,7 +45,7 @@ pub(super) struct BackendTaskOutcome {
 enum BackendWorkerCommand {
     Run {
         task: BackendTask,
-        timeout: Duration,
+        deadline: Instant,
         outcome_tx: Sender<BackendTaskOutcome>,
     },
 }
@@ -215,6 +215,7 @@ pub(super) fn dispatch_backend_tasks(
     let mut outcomes: Vec<Option<BackendTaskOutcome>> =
         std::iter::repeat_with(|| None).take(outcomes_len).collect();
     let (outcome_tx, outcome_rx) = bounded::<BackendTaskOutcome>(expected.max(1));
+    let deadline = Instant::now() + timeout;
 
     for task in tasks {
         let backend_id = task.backend_id;
@@ -235,7 +236,7 @@ pub(super) fn dispatch_backend_tasks(
 
         let command = BackendWorkerCommand::Run {
             task,
-            timeout,
+            deadline,
             outcome_tx: outcome_tx.clone(),
         };
         match worker_tx.try_send(command) {
@@ -264,7 +265,6 @@ pub(super) fn dispatch_backend_tasks(
     }
     drop(outcome_tx);
 
-    let deadline = Instant::now() + timeout;
     let mut received = 0usize;
     while received < expected {
         let now = Instant::now();
@@ -297,7 +297,7 @@ pub(super) fn dispatch_backend_tasks(
 fn run_backend_command(command: BackendWorkerCommand) {
     let BackendWorkerCommand::Run {
         task,
-        timeout,
+        deadline,
         outcome_tx,
     } = command;
 
@@ -309,7 +309,6 @@ fn run_backend_command(command: BackendWorkerCommand) {
         kind,
         ..
     } = task;
-    let deadline = Instant::now() + timeout.max(Duration::from_millis(1));
     let action_label = kind.action_label();
     let result = run_backend_call(Arc::clone(&backend_handle), kind, deadline)
         .map_err(|err| anyhow!("{action_label} failed for {backend}#{backend_id}: {err:#}"));

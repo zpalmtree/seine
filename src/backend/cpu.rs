@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, Result};
 use argon2::{Algorithm, Argon2, Block, Version};
 use blocknet_pow_spec::{pow_params, POW_OUTPUT_LEN};
-use crossbeam_channel::{SendTimeoutError, Sender};
+use crossbeam_channel::{unbounded, SendTimeoutError, Sender};
 
 use crate::backend::{
     AssignmentSemantics, BackendCapabilities, BackendEvent, BackendInstanceId, BackendTelemetry,
@@ -69,6 +69,7 @@ struct Shared {
     completed_assignment_hashes: AtomicU64,
     completed_assignment_micros: AtomicU64,
     dropped_events: AtomicU64,
+    event_dispatch_tx: RwLock<Option<Sender<BackendEvent>>>,
     event_sink: RwLock<Option<Sender<BackendEvent>>>,
 }
 
@@ -77,6 +78,7 @@ pub struct CpuBackend {
     affinity_mode: CpuAffinityMode,
     shared: Arc<Shared>,
     worker_handles: Mutex<Vec<JoinHandle<()>>>,
+    event_forward_handle: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl CpuBackend {
@@ -109,9 +111,84 @@ impl CpuBackend {
                 completed_assignment_hashes: AtomicU64::new(0),
                 completed_assignment_micros: AtomicU64::new(0),
                 dropped_events: AtomicU64::new(0),
+                event_dispatch_tx: RwLock::new(None),
                 event_sink: RwLock::new(None),
             }),
             worker_handles: Mutex::new(Vec::new()),
+            event_forward_handle: Mutex::new(None),
+        }
+    }
+
+    fn reset_runtime_state(&self) {
+        self.shared.solution_state.store(0, Ordering::SeqCst);
+        self.shared.error_emitted.store(false, Ordering::SeqCst);
+        self.shared.work_generation.store(0, Ordering::SeqCst);
+        self.shared.active_workers.store(0, Ordering::SeqCst);
+        self.shared.assignment_hashes.store(0, Ordering::SeqCst);
+        self.shared.assignment_generation.store(0, Ordering::SeqCst);
+        self.shared
+            .assignment_reported_generation
+            .store(0, Ordering::SeqCst);
+        self.shared.completed_assignments.store(0, Ordering::SeqCst);
+        self.shared
+            .completed_assignment_hashes
+            .store(0, Ordering::SeqCst);
+        self.shared
+            .completed_assignment_micros
+            .store(0, Ordering::SeqCst);
+        self.shared.dropped_events.store(0, Ordering::SeqCst);
+        reset_hash_slots(&self.shared.hash_slots);
+        if let Ok(mut started_at) = self.shared.assignment_started_at.lock() {
+            *started_at = None;
+        }
+        if let Ok(mut control) = self.shared.work_control.lock() {
+            control.shutdown = false;
+            control.generation = 0;
+            control.work = None;
+        }
+    }
+
+    fn start_event_forwarder(&self) -> Result<()> {
+        let instance_id = self.shared.instance_id.load(Ordering::Acquire);
+        let (dispatch_tx, dispatch_rx) = unbounded::<BackendEvent>();
+        if let Ok(mut slot) = self.shared.event_dispatch_tx.write() {
+            *slot = Some(dispatch_tx);
+        } else {
+            return Err(anyhow!("CPU event dispatch lock poisoned"));
+        }
+
+        let shared = Arc::clone(&self.shared);
+        let handle = thread::Builder::new()
+            .name(format!("seine-cpu-events-{instance_id}"))
+            .spawn(move || {
+                while let Ok(event) = dispatch_rx.recv() {
+                    forward_event(&shared, event);
+                }
+            })
+            .map_err(|err| anyhow!("failed to spawn CPU event forwarder: {err}"))?;
+        if let Ok(mut slot) = self.event_forward_handle.lock() {
+            *slot = Some(handle);
+            Ok(())
+        } else {
+            if let Ok(mut tx_slot) = self.shared.event_dispatch_tx.write() {
+                *tx_slot = None;
+            }
+            let _ = handle.join();
+            Err(anyhow!("CPU event forwarder handle lock poisoned"))
+        }
+    }
+
+    fn stop_event_forwarder(&self) {
+        if let Ok(mut slot) = self.shared.event_dispatch_tx.write() {
+            *slot = None;
+        }
+        let handle = self
+            .event_forward_handle
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take());
+        if let Some(handle) = handle {
+            let _ = handle.join();
         }
     }
 }
@@ -140,37 +217,13 @@ impl PowBackend for CpuBackend {
             return Ok(());
         }
 
-        self.shared.solution_state.store(0, Ordering::SeqCst);
-        self.shared.error_emitted.store(false, Ordering::SeqCst);
-        self.shared.work_generation.store(0, Ordering::SeqCst);
-        self.shared.active_workers.store(0, Ordering::SeqCst);
-        self.shared.assignment_hashes.store(0, Ordering::SeqCst);
-        self.shared.assignment_generation.store(0, Ordering::SeqCst);
-        self.shared
-            .assignment_reported_generation
-            .store(0, Ordering::SeqCst);
-        self.shared.completed_assignments.store(0, Ordering::SeqCst);
-        self.shared
-            .completed_assignment_hashes
-            .store(0, Ordering::SeqCst);
-        self.shared
-            .completed_assignment_micros
-            .store(0, Ordering::SeqCst);
-        self.shared.dropped_events.store(0, Ordering::SeqCst);
-        reset_hash_slots(&self.shared.hash_slots);
-        if let Ok(mut started_at) = self.shared.assignment_started_at.lock() {
-            *started_at = None;
-        }
-
-        {
-            let mut control = self
-                .shared
-                .work_control
-                .lock()
-                .map_err(|_| anyhow!("CPU control lock poisoned"))?;
-            control.shutdown = false;
-            control.generation = 0;
-            control.work = None;
+        self.stop_event_forwarder();
+        self.reset_runtime_state();
+        if let Err(err) = self.start_event_forwarder() {
+            self.shared.started.store(false, Ordering::SeqCst);
+            self.stop_event_forwarder();
+            self.reset_runtime_state();
+            return Err(err);
         }
 
         let core_ids = match self.affinity_mode {
@@ -178,25 +231,53 @@ impl PowBackend for CpuBackend {
             CpuAffinityMode::Auto => core_affinity::get_core_ids().filter(|ids| !ids.is_empty()),
         };
 
-        let mut handles = match self.worker_handles.lock() {
-            Ok(guard) => guard,
-            Err(_) => {
-                self.shared.started.store(false, Ordering::SeqCst);
-                return Err(anyhow!("CPU worker handle lock poisoned"));
-            }
-        };
-        handles.clear();
+        let mut spawned_handles = Vec::with_capacity(self.threads.max(1));
+        let mut spawn_error = None;
         for thread_idx in 0..self.threads.max(1) {
             let shared = Arc::clone(&self.shared);
             let core_id = core_ids
                 .as_ref()
                 .and_then(|ids| ids.get(thread_idx % ids.len()))
                 .copied();
-            handles.push(thread::spawn(move || {
-                cpu_worker_loop(shared, thread_idx, core_id)
-            }));
+            let handle = thread::Builder::new()
+                .name(format!("seine-cpu-worker-{thread_idx}"))
+                .spawn(move || cpu_worker_loop(shared, thread_idx, core_id));
+            match handle {
+                Ok(handle) => spawned_handles.push(handle),
+                Err(err) => {
+                    spawn_error = Some((thread_idx, err));
+                    break;
+                }
+            }
         }
 
+        if let Some((thread_idx, err)) = spawn_error {
+            request_shutdown(&self.shared);
+            for handle in spawned_handles {
+                let _ = handle.join();
+            }
+            self.shared.started.store(false, Ordering::SeqCst);
+            self.stop_event_forwarder();
+            self.reset_runtime_state();
+            return Err(anyhow!(
+                "failed to spawn CPU worker thread {thread_idx}: {err}"
+            ));
+        }
+
+        let mut handles = match self.worker_handles.lock() {
+            Ok(guard) => guard,
+            Err(_) => {
+                request_shutdown(&self.shared);
+                for handle in spawned_handles {
+                    let _ = handle.join();
+                }
+                self.shared.started.store(false, Ordering::SeqCst);
+                self.stop_event_forwarder();
+                self.reset_runtime_state();
+                return Err(anyhow!("CPU worker handle lock poisoned"));
+            }
+        };
+        *handles = spawned_handles;
         Ok(())
     }
 
@@ -217,33 +298,8 @@ impl PowBackend for CpuBackend {
             let _ = handle.join();
         }
 
-        self.shared.solution_state.store(0, Ordering::SeqCst);
-        self.shared.error_emitted.store(false, Ordering::SeqCst);
-        self.shared.work_generation.store(0, Ordering::SeqCst);
-        self.shared.active_workers.store(0, Ordering::SeqCst);
-        self.shared.assignment_hashes.store(0, Ordering::SeqCst);
-        self.shared.assignment_generation.store(0, Ordering::SeqCst);
-        self.shared
-            .assignment_reported_generation
-            .store(0, Ordering::SeqCst);
-        self.shared.completed_assignments.store(0, Ordering::SeqCst);
-        self.shared
-            .completed_assignment_hashes
-            .store(0, Ordering::SeqCst);
-        self.shared
-            .completed_assignment_micros
-            .store(0, Ordering::SeqCst);
-        self.shared.dropped_events.store(0, Ordering::SeqCst);
-        reset_hash_slots(&self.shared.hash_slots);
-        if let Ok(mut started_at) = self.shared.assignment_started_at.lock() {
-            *started_at = None;
-        }
-
-        if let Ok(mut control) = self.shared.work_control.lock() {
-            control.shutdown = false;
-            control.generation = 0;
-            control.work = None;
-        }
+        self.stop_event_forwarder();
+        self.reset_runtime_state();
     }
 
     fn assign_work(&self, work: WorkAssignment) -> Result<()> {
@@ -847,6 +903,20 @@ fn emit_error(shared: &Shared, message: String) {
 }
 
 fn emit_event(shared: &Shared, event: BackendEvent) {
+    let dispatch_tx = match shared.event_dispatch_tx.read() {
+        Ok(slot) => slot.clone(),
+        Err(_) => None,
+    };
+    let Some(dispatch_tx) = dispatch_tx else {
+        shared.dropped_events.fetch_add(1, Ordering::Relaxed);
+        return;
+    };
+    if dispatch_tx.send(event).is_err() {
+        shared.dropped_events.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+fn forward_event(shared: &Shared, event: BackendEvent) {
     let tx = match shared.event_sink.read() {
         Ok(slot) => slot.clone(),
         Err(_) => None,
@@ -902,8 +972,8 @@ fn send_critical_event(shared: &Shared, tx: &Sender<BackendEvent>, event: Backen
 #[cfg(test)]
 mod tests {
     use super::{
-        emit_error, lane_quota_for_chunk, start_assignment, BackendEvent, CpuBackend,
-        MiningSolution,
+        emit_error, forward_event, lane_quota_for_chunk, start_assignment, BackendEvent,
+        CpuBackend, MiningSolution,
     };
     use crate::backend::PowBackend;
     use crate::config::CpuAffinityMode;
@@ -934,6 +1004,10 @@ mod tests {
         backend.set_instance_id(7);
         let (event_tx, event_rx) = crossbeam_channel::bounded(1);
         backend.set_event_sink(event_tx.clone());
+        let (dispatch_tx, dispatch_rx) = crossbeam_channel::unbounded::<BackendEvent>();
+        if let Ok(mut slot) = backend.shared.event_dispatch_tx.write() {
+            *slot = Some(dispatch_tx);
+        }
 
         event_tx
             .send(BackendEvent::Solution(MiningSolution {
@@ -944,6 +1018,12 @@ mod tests {
             }))
             .expect("prefill should succeed");
 
+        let shared = Arc::clone(&backend.shared);
+        let forwarder = thread::spawn(move || {
+            while let Ok(event) = dispatch_rx.recv() {
+                forward_event(&shared, event);
+            }
+        });
         let shared = Arc::clone(&backend.shared);
         let emit_thread = thread::spawn(move || {
             emit_error(&shared, "synthetic failure".to_string());
@@ -976,6 +1056,12 @@ mod tests {
         emit_thread
             .join()
             .expect("error emitter thread should finish once queued");
+        if let Ok(mut slot) = backend.shared.event_dispatch_tx.write() {
+            *slot = None;
+        }
+        forwarder
+            .join()
+            .expect("forwarder thread should stop after queue closes");
     }
 
     #[test]

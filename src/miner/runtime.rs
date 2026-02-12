@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use crate::config::WorkAllocation;
 
 use super::stats::Stats;
-use super::BackendSlot;
+use super::{BackendRoundTelemetry, BackendSlot};
 
 const MIN_ADAPTIVE_WEIGHT: f64 = 1e-9;
 
@@ -51,6 +51,7 @@ pub(super) fn work_distribution_weights(
 pub(super) struct WeightUpdateInputs<'a> {
     pub backends: &'a [BackendSlot],
     pub round_backend_hashes: &'a BTreeMap<u64, u64>,
+    pub round_backend_telemetry: Option<&'a BTreeMap<u64, BackendRoundTelemetry>>,
     pub round_elapsed_secs: f64,
     pub mode: WorkAllocation,
     pub round_end_reason: RoundEndReason,
@@ -100,8 +101,20 @@ pub(super) fn update_backend_weights(
             .get(&slot.id)
             .copied()
             .unwrap_or(0);
-        // Use round wall-clock elapsed time to avoid assignment-boundary attribution skew.
-        let observed_secs = elapsed;
+        let observed_secs = inputs
+            .round_backend_telemetry
+            .and_then(|telemetry| telemetry.get(&slot.id))
+            .and_then(|telemetry| {
+                let completed_secs = telemetry.completed_assignment_micros as f64 / 1_000_000.0;
+                let inflight_secs = telemetry.peak_inflight_assignment_micros as f64 / 1_000_000.0;
+                let active_secs = completed_secs.max(inflight_secs);
+                if active_secs > 0.0 {
+                    Some(active_secs.min(elapsed).max(0.001))
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(elapsed);
         let observed_hps = observed_hashes as f64 / observed_secs;
         let next = if observed_hps > 0.0 {
             ((1.0 - alpha) * prior) + (alpha * observed_hps)

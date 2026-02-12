@@ -16,6 +16,10 @@ use crate::backend::{BackendEvent, BackendInstanceId, DeadlineSupport, PowBacken
 use crate::config::{BenchBaselinePolicy, BenchKind, Config, CpuAffinityMode, WorkAllocation};
 
 use super::round_control::{redistribute_for_topology_change, TopologyRedistributionOptions};
+use super::runtime::{
+    seed_backend_weights, update_backend_weights, work_distribution_weights, RoundEndReason,
+    WeightUpdateInputs,
+};
 use super::scheduler::NonceScheduler;
 use super::stats::{format_hashrate, median};
 use super::ui::{info, startup_banner, success, warn};
@@ -357,6 +361,7 @@ fn run_worker_benchmark_inner(
     let mut epoch = 0u64;
     let mut work_id_cursor = 1u64;
     let mut scheduler = NonceScheduler::new(cfg.start_nonce, cfg.nonce_iters_per_lane);
+    let mut backend_weights = seed_backend_weights(backends);
 
     for round in 0..cfg.bench_rounds {
         if shutdown.load(Ordering::Relaxed) {
@@ -387,7 +392,7 @@ fn run_worker_benchmark_inner(
                 reservation,
                 stop_at,
                 assignment_timeout: cfg.backend_assign_timeout,
-                backend_weights: None,
+                backend_weights: work_distribution_weights(cfg.work_allocation, &backend_weights),
             },
         )?;
         scheduler.consume_additional_span(additional_span);
@@ -445,8 +450,11 @@ fn run_worker_benchmark_inner(
                         assignment_timeout: cfg.backend_assign_timeout,
                         control_timeout: cfg.backend_control_timeout,
                         mode: RuntimeMode::Bench,
-                        work_allocation: WorkAllocation::Static,
-                        backend_weights: None,
+                        work_allocation: cfg.work_allocation,
+                        backend_weights: work_distribution_weights(
+                            cfg.work_allocation,
+                            &backend_weights,
+                        ),
                         nonce_scheduler: &mut scheduler,
                         log_tag: "BENCH",
                     },
@@ -538,6 +546,24 @@ fn run_worker_benchmark_inner(
             hps,
             backend_runs,
         });
+
+        let round_end_reason = if shutdown.load(Ordering::Relaxed) {
+            RoundEndReason::Shutdown
+        } else {
+            RoundEndReason::Refresh
+        };
+        update_backend_weights(
+            &mut backend_weights,
+            WeightUpdateInputs {
+                backends,
+                round_backend_hashes: &round_backend_hashes,
+                round_backend_telemetry: Some(&round_backend_telemetry),
+                round_elapsed_secs: measured_elapsed,
+                mode: cfg.work_allocation,
+                round_end_reason,
+                refresh_interval: cfg.refresh_interval,
+            },
+        );
 
         if restart_each_round {
             stop_backend_slots(backends);

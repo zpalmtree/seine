@@ -618,8 +618,15 @@ pub(super) fn run_mining_loop(
             target,
         })?;
         let mut submitted_solution = None;
-        let solved_found = round_state.solved.is_some();
         let mut pending_solution = round_state.solved.take();
+        let _ = drain_mining_backend_events(
+            backend_events,
+            epoch,
+            &mut pending_solution,
+            &mut deferred_solutions,
+            backends,
+        )?;
+        let solved_found = pending_solution.is_some();
         let append_semantics_active = super::backends_have_append_assignment_semantics(backends);
 
         if cfg.strict_round_accounting {
@@ -677,6 +684,7 @@ pub(super) fn run_mining_loop(
             WeightUpdateInputs {
                 backends,
                 round_backend_hashes: &round_state.round_backend_hashes,
+                round_backend_telemetry: Some(&round_state.round_backend_telemetry),
                 round_elapsed_secs,
                 mode: cfg.work_allocation,
                 round_end_reason,
@@ -1873,6 +1881,7 @@ mod tests {
             WeightUpdateInputs {
                 backends: &backends,
                 round_backend_hashes: &round_hashes,
+                round_backend_telemetry: None,
                 round_elapsed_secs: 1.0,
                 mode: WorkAllocation::Adaptive,
                 round_end_reason: RoundEndReason::Refresh,
@@ -1899,6 +1908,7 @@ mod tests {
             WeightUpdateInputs {
                 backends: &backends,
                 round_backend_hashes: &round_hashes,
+                round_backend_telemetry: None,
                 round_elapsed_secs: 1.0,
                 mode: WorkAllocation::Adaptive,
                 round_end_reason: RoundEndReason::Solved,
@@ -1925,6 +1935,7 @@ mod tests {
             WeightUpdateInputs {
                 backends: &backends,
                 round_backend_hashes: &round_hashes,
+                round_backend_telemetry: None,
                 round_elapsed_secs: 100.0,
                 mode: WorkAllocation::Adaptive,
                 round_end_reason: RoundEndReason::Refresh,
@@ -1935,6 +1946,44 @@ mod tests {
         let updated = weights.get(&5).copied().unwrap_or_default();
         assert!(updated > 0.0);
         assert!(updated < 1.0);
+    }
+
+    #[test]
+    fn adaptive_weight_update_prefers_active_assignment_time_when_available() {
+        let backends = vec![BackendSlot {
+            id: 3,
+            backend: Arc::new(NoopBackend::new("cpu")),
+            lanes: 1,
+        }];
+        let mut weights = seed_backend_weights(&backends);
+        let mut round_hashes = BTreeMap::new();
+        round_hashes.insert(3, 100);
+        let mut round_telemetry = BTreeMap::new();
+        round_telemetry.insert(
+            3,
+            super::BackendRoundTelemetry {
+                completed_assignment_micros: 100_000,
+                ..super::BackendRoundTelemetry::default()
+            },
+        );
+
+        update_backend_weights(
+            &mut weights,
+            WeightUpdateInputs {
+                backends: &backends,
+                round_backend_hashes: &round_hashes,
+                round_backend_telemetry: Some(&round_telemetry),
+                round_elapsed_secs: 1.0,
+                mode: WorkAllocation::Adaptive,
+                round_end_reason: RoundEndReason::Refresh,
+                refresh_interval: Duration::from_secs(1),
+            },
+        );
+
+        assert!(
+            weights.get(&3).copied().unwrap_or_default() > 100.0,
+            "active assignment timing should produce a stronger throughput signal than wall-clock"
+        );
     }
 
     #[test]
@@ -1953,6 +2002,7 @@ mod tests {
             WeightUpdateInputs {
                 backends: &backends,
                 round_backend_hashes: &round_hashes,
+                round_backend_telemetry: None,
                 round_elapsed_secs: 1.0,
                 mode: WorkAllocation::Static,
                 round_end_reason: RoundEndReason::Refresh,

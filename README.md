@@ -127,6 +127,7 @@ Run deterministic local benchmarking (no API connection needed):
 - `--bench-kind backend`: persistent backend workers (steady-state throughput).
 - `--bench-kind end-to-end`: includes backend start/stop per round.
 - Worker benchmarks always apply a round-end measurement fence so round H/s is comparable across strict/relaxed accounting modes.
+  - Worker benchmarks now honor `--work-allocation` (`adaptive`/`static`) so scheduler tuning can be measured without mining mode.
   - Benchmark reports now expose `counted_hashes` and `late_hashes` per round; throughput uses measured elapsed + fence time to avoid inflation when backend preemption is coarse.
   - Baseline comparison validates benchmark/config/environment compatibility (including report schema, runtime fingerprint, and PoW fingerprint) before computing deltas.
   - In benchmark mode, default `start_nonce` is deterministic (`0`) unless `--start-nonce` is explicitly provided.
