@@ -323,6 +323,9 @@ fn run_backend_call(
     kind: BackendTaskKind,
     deadline: Instant,
 ) -> Result<()> {
+    if Instant::now() >= deadline {
+        return Err(anyhow!("task deadline elapsed before backend call"));
+    }
     match panic::catch_unwind(AssertUnwindSafe(|| match kind {
         BackendTaskKind::Assign(work) => backend_handle.assign_work_with_deadline(&work, deadline),
         BackendTaskKind::AssignBatch(batch) => {
@@ -345,7 +348,7 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
-    use crate::backend::{BackendEvent, PowBackend};
+    use crate::backend::{BackendEvent, NonceChunk, PowBackend, WorkTemplate};
 
     struct NoopBackend;
 
@@ -463,5 +466,70 @@ mod tests {
 
         thread::sleep(Duration::from_millis(140));
         assert_eq!(stops.load(Ordering::Relaxed), 1);
+    }
+
+    struct CountingBackend {
+        assign_calls: AtomicUsize,
+    }
+
+    impl CountingBackend {
+        fn new() -> Self {
+            Self {
+                assign_calls: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    impl PowBackend for CountingBackend {
+        fn name(&self) -> &'static str {
+            "counting"
+        }
+
+        fn lanes(&self) -> usize {
+            1
+        }
+
+        fn set_instance_id(&self, _id: BackendInstanceId) {}
+
+        fn set_event_sink(&self, _sink: Sender<BackendEvent>) {}
+
+        fn start(&self) -> Result<()> {
+            Ok(())
+        }
+
+        fn stop(&self) {}
+
+        fn assign_work(&self, _work: WorkAssignment) -> Result<()> {
+            self.assign_calls.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn run_backend_call_rejects_expired_deadline_before_invoking_backend() {
+        let backend = Arc::new(CountingBackend::new());
+        let backend_dyn = Arc::clone(&backend) as Arc<dyn PowBackend>;
+        let work = WorkAssignment {
+            template: Arc::new(WorkTemplate {
+                work_id: 1,
+                epoch: 1,
+                header_base: Arc::from(vec![0u8; blocknet_pow_spec::POW_HEADER_BASE_LEN]),
+                target: [0xFF; 32],
+                stop_at: Instant::now() + Duration::from_secs(1),
+            }),
+            nonce_chunk: NonceChunk {
+                start_nonce: 0,
+                nonce_count: 1,
+            },
+        };
+
+        let err = run_backend_call(
+            backend_dyn,
+            BackendTaskKind::Assign(work),
+            Instant::now() - Duration::from_millis(1),
+        )
+        .expect_err("expired deadline should fail fast");
+        assert!(format!("{err:#}").contains("deadline elapsed"));
+        assert_eq!(backend.assign_calls.load(Ordering::Relaxed), 0);
     }
 }
