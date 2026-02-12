@@ -153,8 +153,12 @@ struct Cli {
     #[arg(long, default_value_t = 250)]
     tip_listener_join_wait_ms: u64,
 
-    /// Disable strict round quiesce barriers to favor peak throughput over exact per-round accounting.
+    /// Enable strict per-round quiesce barriers for exact accounting (lower throughput).
     #[arg(long, action = ArgAction::SetTrue)]
+    strict_round_accounting: bool,
+
+    /// Deprecated alias kept for compatibility; relaxed accounting is now the default.
+    #[arg(long, action = ArgAction::SetTrue, hide = true)]
     relaxed_accounting: bool,
 
     /// Optional nonce seed.
@@ -281,6 +285,9 @@ impl Config {
         if cli.tip_listener_join_wait_ms == 0 {
             bail!("tip-listener-join-wait-ms must be >= 1");
         }
+        if cli.strict_round_accounting && cli.relaxed_accounting {
+            bail!("cannot use both --strict-round-accounting and --relaxed-accounting");
+        }
         if let Some(threshold) = cli.bench_fail_below_pct {
             if !cli.bench {
                 bail!("--bench-fail-below-pct can only be used with --bench");
@@ -330,7 +337,7 @@ impl Config {
             allow_best_effort_deadlines: cli.allow_best_effort_deadlines,
             prefetch_wait: Duration::from_millis(cli.prefetch_wait_ms),
             tip_listener_join_wait: Duration::from_millis(cli.tip_listener_join_wait_ms),
-            strict_round_accounting: !cli.relaxed_accounting,
+            strict_round_accounting: cli.strict_round_accounting && !cli.relaxed_accounting,
             start_nonce: cli.start_nonce.unwrap_or_else(|| {
                 if cli.bench {
                     0
@@ -593,6 +600,7 @@ mod tests {
             allow_best_effort_deadlines: false,
             prefetch_wait_ms: 250,
             tip_listener_join_wait_ms: 250,
+            strict_round_accounting: false,
             relaxed_accounting: false,
             start_nonce: None,
             nonce_iters_per_lane: 1u64 << 36,

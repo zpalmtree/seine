@@ -264,6 +264,23 @@ pub trait PowBackend: Send + Sync {
     /// (or produce equivalent stale-safe behavior keyed by `work.template.work_id`).
     fn assign_work(&self, work: WorkAssignment) -> Result<()>;
 
+    /// Assign exactly one work chunk before a soft deadline.
+    ///
+    /// Default behavior executes the assignment call then reports timeout if the
+    /// backend did not return before the deadline.
+    fn assign_work_with_deadline(&self, work: &WorkAssignment, deadline: Instant) -> Result<()> {
+        self.assign_work(work.clone())?;
+        if Instant::now() > deadline {
+            return Err(anyhow!(
+                "assignment call exceeded deadline by {}ms",
+                Instant::now()
+                    .saturating_duration_since(deadline)
+                    .as_millis()
+            ));
+        }
+        Ok(())
+    }
+
     /// Whether this backend can accept true multi-chunk assignment batches.
     ///
     /// If false, runtime clamps `max_inflight_assignments` to `1` and the default
@@ -297,16 +314,22 @@ pub trait PowBackend: Send + Sync {
         work: &[WorkAssignment],
         deadline: Instant,
     ) -> Result<()> {
-        self.assign_work_batch(work)?;
-        if Instant::now() > deadline {
-            return Err(anyhow!(
-                "assignment call exceeded deadline by {}ms",
-                Instant::now()
-                    .saturating_duration_since(deadline)
-                    .as_millis()
-            ));
+        match work {
+            [] => Ok(()),
+            [single] => self.assign_work_with_deadline(single, deadline),
+            _ => {
+                self.assign_work_batch(work)?;
+                if Instant::now() > deadline {
+                    return Err(anyhow!(
+                        "assignment call exceeded deadline by {}ms",
+                        Instant::now()
+                            .saturating_duration_since(deadline)
+                            .as_millis()
+                    ));
+                }
+                Ok(())
+            }
         }
-        Ok(())
     }
 
     /// Request the backend to stop processing the current assignment.

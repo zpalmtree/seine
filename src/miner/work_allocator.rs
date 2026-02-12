@@ -10,12 +10,17 @@ use super::backend_executor::{self, BackendTask, BackendTaskKind};
 use super::ui::warn;
 use super::{backend_capabilities, backend_names, total_lanes, BackendSlot, DistributeWorkOptions};
 
+enum DispatchAssignments {
+    Single(WorkAssignment),
+    Batch(Vec<WorkAssignment>),
+}
+
 struct DispatchTask {
     idx: usize,
     backend_id: BackendInstanceId,
     backend: &'static str,
     backend_handle: Arc<dyn PowBackend>,
-    batch: Vec<WorkAssignment>,
+    assignments: DispatchAssignments,
 }
 
 struct DispatchFailure {
@@ -57,7 +62,7 @@ pub(super) fn distribute_work(
         for (idx, slot) in std::mem::take(backends).into_iter().enumerate() {
             let nonce_count = *nonce_counts.get(idx).unwrap_or(&slot.lanes.max(1));
             let capabilities = backend_capabilities(&slot);
-            let batch = build_assignment_batch(
+            let assignments = build_assignment_batch(
                 Arc::clone(&template),
                 chunk_start,
                 nonce_count,
@@ -69,7 +74,7 @@ pub(super) fn distribute_work(
                 backend_id: slot.id,
                 backend: slot.backend.name(),
                 backend_handle: Arc::clone(&slot.backend),
-                batch,
+                assignments,
             });
             slots_by_idx.push(Some(slot));
             chunk_start = chunk_start.wrapping_add(nonce_count);
@@ -138,7 +143,10 @@ fn dispatch_assignment_tasks(
             backend_id: task.backend_id,
             backend: task.backend,
             backend_handle: task.backend_handle,
-            kind: BackendTaskKind::Assign(task.batch),
+            kind: match task.assignments {
+                DispatchAssignments::Single(work) => BackendTaskKind::Assign(work),
+                DispatchAssignments::Batch(batch) => BackendTaskKind::AssignBatch(batch),
+            },
         })
         .collect();
     let mut outcomes = backend_executor::dispatch_backend_tasks(backend_tasks, timeout);
@@ -156,35 +164,18 @@ fn dispatch_assignment_tasks(
         let backend_id = slot.id;
         let backend = slot.backend.name();
         match outcome_slot.take() {
-            Some(outcome) => {
-                if outcome.elapsed > timeout {
+            Some(outcome) => match outcome.result {
+                Ok(()) => survivors.push((idx, slot)),
+                Err(err) => {
                     backend_executor::quarantine_backend(Arc::clone(&slot.backend));
                     backend_executor::remove_backend_worker(backend_id);
                     failures.push(DispatchFailure {
                         backend_id,
                         backend,
-                        reason: format!(
-                            "assignment timed out after {}ms (limit={}ms)",
-                            outcome.elapsed.as_millis(),
-                            timeout.as_millis()
-                        ),
+                        reason: format!("{err:#}"),
                     });
-                    continue;
                 }
-
-                match outcome.result {
-                    Ok(()) => survivors.push((idx, slot)),
-                    Err(err) => {
-                        backend_executor::quarantine_backend(Arc::clone(&slot.backend));
-                        backend_executor::remove_backend_worker(backend_id);
-                        failures.push(DispatchFailure {
-                            backend_id,
-                            backend,
-                            reason: format!("{err:#}"),
-                        });
-                    }
-                }
-            }
+            },
             None => {
                 backend_executor::quarantine_backend(Arc::clone(&slot.backend));
                 backend_executor::remove_backend_worker(backend_id);
@@ -330,9 +321,19 @@ fn build_assignment_batch(
     start_nonce: u64,
     nonce_count: u64,
     max_inflight_assignments: u32,
-) -> Vec<WorkAssignment> {
+) -> DispatchAssignments {
     let nonce_count = nonce_count.max(1);
     let parts = (max_inflight_assignments.max(1) as u64).min(nonce_count);
+    if parts == 1 {
+        return DispatchAssignments::Single(WorkAssignment {
+            template,
+            nonce_chunk: NonceChunk {
+                start_nonce,
+                nonce_count,
+            },
+        });
+    }
+
     let chunks = split_nonce_chunks(start_nonce, nonce_count, parts);
     let mut batch = Vec::with_capacity(chunks.len());
     for nonce_chunk in chunks {
@@ -341,7 +342,7 @@ fn build_assignment_batch(
             nonce_chunk,
         });
     }
-    batch
+    DispatchAssignments::Batch(batch)
 }
 
 fn split_nonce_chunks(start_nonce: u64, nonce_count: u64, parts: u64) -> Vec<NonceChunk> {

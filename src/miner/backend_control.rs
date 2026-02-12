@@ -313,35 +313,18 @@ fn run_backend_control_phase(
         let backend_id = slot.id;
         let backend = slot.backend.name();
         match outcome_slot.take() {
-            Some(outcome) => {
-                if outcome.elapsed > timeout {
+            Some(outcome) => match outcome.result {
+                Ok(()) => survivors.push((idx, slot)),
+                Err(err) => {
                     backend_executor::quarantine_backend(Arc::clone(&slot.backend));
                     backend_executor::remove_backend_worker(backend_id);
                     failures
                         .entry(backend_id)
                         .or_insert_with(|| (backend, Vec::new()))
                         .1
-                        .push(format!(
-                            "{action_label} timed out after {}ms (limit={}ms)",
-                            outcome.elapsed.as_millis(),
-                            timeout.as_millis()
-                        ));
-                    continue;
+                        .push(format!("{action_label} failed: {err:#}"));
                 }
-
-                match outcome.result {
-                    Ok(()) => survivors.push((idx, slot)),
-                    Err(err) => {
-                        backend_executor::quarantine_backend(Arc::clone(&slot.backend));
-                        backend_executor::remove_backend_worker(backend_id);
-                        failures
-                            .entry(backend_id)
-                            .or_insert_with(|| (backend, Vec::new()))
-                            .1
-                            .push(format!("{action_label} failed: {err:#}"));
-                    }
-                }
-            }
+            },
             None => {
                 backend_executor::quarantine_backend(Arc::clone(&slot.backend));
                 backend_executor::remove_backend_worker(backend_id);

@@ -1062,7 +1062,10 @@ impl TemplatePrefetch {
             Ok(()) => {
                 self.pending_tip_sequence = Some(tip_sequence);
             }
-            Err(TrySendError::Full(_)) => {}
+            Err(TrySendError::Full(_)) => {
+                // The worker already has a queued request; treat as pending to avoid spin.
+                self.pending_tip_sequence = Some(tip_sequence);
+            }
             Err(TrySendError::Disconnected(_)) => {
                 self.request_tx = None;
                 self.pending_tip_sequence = None;
@@ -1077,7 +1080,11 @@ impl TemplatePrefetch {
                 self.pending_tip_sequence = None;
                 Some(result)
             }
-            Err(RecvTimeoutError::Timeout) => None,
+            Err(RecvTimeoutError::Timeout) => {
+                // Release the pending marker so callers can enqueue a fresher request.
+                self.pending_tip_sequence = None;
+                None
+            }
             Err(RecvTimeoutError::Disconnected) => {
                 self.pending_tip_sequence = None;
                 None
@@ -1913,6 +1920,43 @@ mod tests {
         );
 
         assert_eq!(weights.get(&9).copied(), Some(3.0));
+    }
+
+    #[test]
+    fn prefetch_timeout_clears_pending_marker() {
+        let (request_tx, _request_rx) = bounded::<PrefetchRequest>(1);
+        let (_result_tx, result_rx) = bounded::<PrefetchResult>(1);
+        let (_done_tx, done_rx) = bounded::<()>(1);
+        let mut prefetch = TemplatePrefetch {
+            handle: None,
+            request_tx: Some(request_tx),
+            result_rx,
+            done_rx,
+            pending_tip_sequence: Some(7),
+        };
+
+        assert!(prefetch.wait_for_result(Duration::from_millis(1)).is_none());
+        assert!(prefetch.pending_tip_sequence.is_none());
+    }
+
+    #[test]
+    fn prefetch_full_queue_marks_request_pending() {
+        let (request_tx, _request_rx) = bounded::<PrefetchRequest>(1);
+        request_tx
+            .try_send(PrefetchRequest { tip_sequence: 1 })
+            .expect("prefill request channel should succeed");
+        let (_result_tx, result_rx) = bounded::<PrefetchResult>(1);
+        let (_done_tx, done_rx) = bounded::<()>(1);
+        let mut prefetch = TemplatePrefetch {
+            handle: None,
+            request_tx: Some(request_tx),
+            result_rx,
+            done_rx,
+            pending_tip_sequence: None,
+        };
+
+        prefetch.request_if_idle(2);
+        assert_eq!(prefetch.pending_tip_sequence, Some(2));
     }
 
     #[test]

@@ -13,7 +13,8 @@ use super::ui::warn;
 use super::BackendSlot;
 
 pub(super) enum BackendTaskKind {
-    Assign(Vec<WorkAssignment>),
+    Assign(WorkAssignment),
+    AssignBatch(Vec<WorkAssignment>),
     Cancel,
     Fence,
 }
@@ -21,7 +22,7 @@ pub(super) enum BackendTaskKind {
 impl BackendTaskKind {
     fn action_label(&self) -> &'static str {
         match self {
-            Self::Assign(_) => "assignment",
+            Self::Assign(_) | Self::AssignBatch(_) => "assignment",
             Self::Cancel => "cancel",
             Self::Fence => "fence",
         }
@@ -38,7 +39,6 @@ pub(super) struct BackendTask {
 
 pub(super) struct BackendTaskOutcome {
     pub idx: usize,
-    pub elapsed: Duration,
     pub result: Result<()>,
 }
 
@@ -161,7 +161,6 @@ pub(super) fn dispatch_backend_tasks(
         let Some(worker_tx) = worker_sender_for_backend(backend_id, backend) else {
             let _ = outcome_tx.send(BackendTaskOutcome {
                 idx,
-                elapsed: Duration::ZERO,
                 result: Err(anyhow!(
                     "{action} dispatch failed: could not spawn worker for {backend}#{backend_id}"
                 )),
@@ -180,7 +179,6 @@ pub(super) fn dispatch_backend_tasks(
             }
             let _ = outcome_tx.send(BackendTaskOutcome {
                 idx,
-                elapsed: Duration::ZERO,
                 result: Err(anyhow!(
                     "{action} dispatch failed: worker channel closed for {backend}#{backend_id}"
                 )),
@@ -223,29 +221,77 @@ pub(super) fn dispatch_backend_tasks(
 fn run_backend_task(task: BackendTask, timeout: Duration, outcome_tx: Sender<BackendTaskOutcome>) {
     let BackendTask {
         idx,
+        backend_id,
+        backend,
         backend_handle,
         kind,
         ..
     } = task;
     let started = Instant::now();
-    let deadline = started + timeout;
-    let result = match panic::catch_unwind(AssertUnwindSafe(|| match &kind {
-        BackendTaskKind::Assign(batch) => {
-            backend_handle.assign_work_batch_with_deadline(batch, deadline)
+    let deadline = started + timeout.max(Duration::from_millis(1));
+    let action_label = kind.action_label();
+    let (result_tx, result_rx) = bounded::<Result<()>>(1);
+    let call_backend = Arc::clone(&backend_handle);
+    let call_kind = kind;
+    let call_thread_name = format!("seine-backend-call-{backend}-{backend_id}");
+    let result = match thread::Builder::new()
+        .name(call_thread_name)
+        .spawn(move || {
+            let result = run_backend_call(call_backend, call_kind, deadline);
+            let _ = result_tx.send(result);
+        }) {
+        Ok(call_handle) => match result_rx.recv_timeout(timeout) {
+            Ok(result) => {
+                let _ = call_handle.join();
+                result
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                // Detached by design: backend may be stuck in an uninterruptible call.
+                drop(call_handle);
+                Err(anyhow!(
+                    "{} call exceeded {}ms deadline; backend quarantined",
+                    action_label,
+                    timeout.as_millis()
+                ))
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                if call_handle.join().is_err() {
+                    Err(anyhow!("{} task panicked", action_label))
+                } else {
+                    Err(anyhow!(
+                        "{} worker exited without returning an outcome",
+                        action_label
+                    ))
+                }
+            }
+        },
+        Err(_) => Err(anyhow!(
+            "{} dispatch failed: could not spawn call worker for {}#{}",
+            action_label,
+            backend,
+            backend_id
+        )),
+    };
+    let send_result = outcome_tx.send(BackendTaskOutcome { idx, result });
+    if send_result.is_err() {
+        quarantine_backend(backend_handle);
+    }
+}
+
+fn run_backend_call(
+    backend_handle: Arc<dyn PowBackend>,
+    kind: BackendTaskKind,
+    deadline: Instant,
+) -> Result<()> {
+    match panic::catch_unwind(AssertUnwindSafe(|| match kind {
+        BackendTaskKind::Assign(work) => backend_handle.assign_work_with_deadline(&work, deadline),
+        BackendTaskKind::AssignBatch(batch) => {
+            backend_handle.assign_work_batch_with_deadline(&batch, deadline)
         }
         BackendTaskKind::Cancel => backend_handle.cancel_work_with_deadline(deadline),
         BackendTaskKind::Fence => backend_handle.fence_with_deadline(deadline),
     })) {
         Ok(result) => result,
-        Err(_) => Err(anyhow!("{} task panicked", kind.action_label())),
-    };
-    let elapsed = started.elapsed();
-    let send_result = outcome_tx.send(BackendTaskOutcome {
-        idx,
-        elapsed,
-        result,
-    });
-    if send_result.is_err() {
-        quarantine_backend(backend_handle);
+        Err(_) => Err(anyhow!("backend task panicked")),
     }
 }

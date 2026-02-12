@@ -108,7 +108,8 @@ Run headless/plain logs (no fullscreen TUI):
   - `--tip-listener-join-wait-ms` (default `250`) bounds shutdown wait for SSE listener thread before detaching.
   - `--cpu-affinity` (`auto` or `off`) controls CPU worker pinning policy for better repeatability on NUMA/SMT hosts.
   - `--ui` (`auto`, `tui`, `plain`) controls rendering mode. `auto` enables TUI only when stdout/stderr are terminals.
-  - `--relaxed-accounting` disables per-round quiesce barriers (higher throughput, less exact round accounting).
+  - Relaxed accounting is now the default (higher throughput, less exact round attribution).
+  - `--strict-round-accounting` enables per-round quiesce barriers for exact accounting.
     - If any backend reports append assignment semantics, relaxed mode still issues round-boundary cancels to prevent stale queue carry-over.
   - `--refresh-on-same-height` forces immediate refresh on same-height `new_block` hash changes.
 - A backend runtime fault quarantines only that backend; mining continues on remaining active backends when possible.
