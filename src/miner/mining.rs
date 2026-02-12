@@ -21,8 +21,10 @@ use crate::types::{
 };
 
 use super::scheduler::NonceScheduler;
-use super::stats::Stats;
-use super::ui::{error, info, success, warn};
+use super::stats::{format_hashrate, Stats};
+use super::ui::{
+    clear_status_line, error, info, set_status_line, status_line_enabled, success, warn,
+};
 use super::{
     collect_backend_hashes, distribute_work, format_round_backend_hashrate, next_event_wait,
     next_work_id, quiesce_backend_slots, total_lanes, BackendSlot, RuntimeBackendEventAction,
@@ -141,6 +143,32 @@ impl WalletPasswordSource {
     }
 }
 
+struct StatusLineGuard {
+    enabled: bool,
+}
+
+impl StatusLineGuard {
+    fn new() -> Self {
+        let enabled = status_line_enabled();
+        if enabled {
+            set_status_line("state=initializing");
+        }
+        Self { enabled }
+    }
+
+    fn enabled(&self) -> bool {
+        self.enabled
+    }
+}
+
+impl Drop for StatusLineGuard {
+    fn drop(&mut self) {
+        if self.enabled {
+            clear_status_line();
+        }
+    }
+}
+
 pub(super) fn run_mining_loop(
     cfg: &Config,
     client: &ApiClient,
@@ -155,6 +183,8 @@ pub(super) fn run_mining_loop(
     let mut epoch = 0u64;
     let mut last_stats_print = Instant::now();
     let mut prefetch: Option<TemplatePrefetch> = None;
+    let _status_guard = StatusLineGuard::new();
+    let live_status = _status_guard.enabled();
 
     let mut template = match fetch_template_with_retry(client, cfg, shutdown.as_ref()) {
         Some(t) => t,
@@ -248,12 +278,11 @@ pub(super) fn run_mining_loop(
         info(
             "WORK",
             format!(
-                "template height={} difficulty={} epoch={} work_id={} nonce_seed={} refresh={}s",
+                "template h={} diff={} e={} id={} refresh={}s",
                 height,
                 difficulty,
                 epoch,
                 work_id,
-                reservation.start_nonce,
                 cfg.refresh_interval.as_secs(),
             ),
         );
@@ -282,6 +311,20 @@ pub(super) fn run_mining_loop(
         let mut round_backend_hashes = BTreeMap::new();
         let mut topology_changed = false;
         let mut next_hash_poll_at = Instant::now();
+        if live_status {
+            update_status_line(
+                &stats,
+                backends,
+                &round_backend_hashes,
+                round_hashes,
+                round_start,
+                &height,
+                &difficulty,
+                epoch,
+                work_id,
+                "working",
+            );
+        }
 
         while !shutdown.load(Ordering::Relaxed)
             && Instant::now() < stop_at
@@ -297,15 +340,45 @@ pub(super) fn run_mining_loop(
                     Some(&mut round_backend_hashes),
                 );
                 next_hash_poll_at = now + cfg.hash_poll_interval;
+                if live_status {
+                    update_status_line(
+                        &stats,
+                        backends,
+                        &round_backend_hashes,
+                        round_hashes,
+                        round_start,
+                        &height,
+                        &difficulty,
+                        epoch,
+                        work_id,
+                        "working",
+                    );
+                }
             }
 
             if last_stats_print.elapsed() >= cfg.stats_interval {
-                stats.print();
+                if !live_status {
+                    stats.print();
+                }
                 last_stats_print = Instant::now();
             }
 
             if tip_signal.is_some_and(TipSignal::take_stale) {
                 stale_tip_event = true;
+                if live_status {
+                    update_status_line(
+                        &stats,
+                        backends,
+                        &round_backend_hashes,
+                        round_hashes,
+                        round_start,
+                        &height,
+                        &difficulty,
+                        epoch,
+                        work_id,
+                        "stale-tip",
+                    );
+                }
                 continue;
             }
 
@@ -339,10 +412,9 @@ pub(super) fn run_mining_loop(
                 warn(
                     "BACKEND",
                     format!(
-                        "topology changed; redistributing epoch={} work_id={} nonce_seed={} backends={}",
+                        "topology change; redistributing e={} id={} backends={}",
                         epoch,
                         work_id,
-                        reservation.start_nonce,
                         super::backend_names(backends),
                     ),
                 );
@@ -357,6 +429,20 @@ pub(super) fn run_mining_loop(
                 )?;
                 next_hash_poll_at = Instant::now();
                 topology_changed = false;
+                if live_status {
+                    update_status_line(
+                        &stats,
+                        backends,
+                        &round_backend_hashes,
+                        round_hashes,
+                        round_start,
+                        &height,
+                        &difficulty,
+                        epoch,
+                        work_id,
+                        "rebalanced",
+                    );
+                }
             }
         }
 
@@ -371,19 +457,35 @@ pub(super) fn run_mining_loop(
             Some(&mut round_backend_hashes),
         );
         stale_tip_event |= tip_signal.is_some_and(TipSignal::take_stale);
-        info(
-            "WORK",
-            format!(
-                "backend throughput {}",
-                format_round_backend_hashrate(
-                    backends,
-                    &round_backend_hashes,
-                    round_start.elapsed().as_secs_f64()
-                )
-            ),
-        );
+        if !live_status {
+            info(
+                "WORK",
+                format!(
+                    "backend throughput {}",
+                    format_round_backend_hashrate(
+                        backends,
+                        &round_backend_hashes,
+                        round_start.elapsed().as_secs_f64()
+                    )
+                ),
+            );
+        }
 
         if let Some(solution) = solved {
+            if live_status {
+                update_status_line(
+                    &stats,
+                    backends,
+                    &round_backend_hashes,
+                    round_hashes,
+                    round_start,
+                    &height,
+                    &difficulty,
+                    epoch,
+                    work_id,
+                    "solved",
+                );
+            }
             success(
                 "SOLVE",
                 format!(
@@ -424,13 +526,43 @@ pub(super) fn run_mining_loop(
                 }
             }
         } else if stale_tip_event {
+            if live_status {
+                update_status_line(
+                    &stats,
+                    backends,
+                    &round_backend_hashes,
+                    round_hashes,
+                    round_start,
+                    &height,
+                    &difficulty,
+                    epoch,
+                    work_id,
+                    "stale-refresh",
+                );
+            }
             info("WORK", "stale tip event received; refreshing template");
         } else {
+            if live_status {
+                update_status_line(
+                    &stats,
+                    backends,
+                    &round_backend_hashes,
+                    round_hashes,
+                    round_start,
+                    &height,
+                    &difficulty,
+                    epoch,
+                    work_id,
+                    "refresh",
+                );
+            }
             info("WORK", "no solution before refresh/shutdown");
         }
 
         if last_stats_print.elapsed() >= cfg.stats_interval {
-            stats.print();
+            if !live_status {
+                stats.print();
+            }
             last_stats_print = Instant::now();
         }
 
@@ -452,6 +584,34 @@ pub(super) fn run_mining_loop(
     stats.print();
     info("MINER", "stopped");
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn update_status_line(
+    stats: &Stats,
+    backends: &[BackendSlot],
+    round_backend_hashes: &BTreeMap<u64, u64>,
+    round_hashes: u64,
+    round_start: Instant,
+    height: &str,
+    difficulty: &str,
+    epoch: u64,
+    work_id: u64,
+    state: &str,
+) {
+    let snapshot = stats.snapshot();
+    let round_elapsed = round_start.elapsed().as_secs_f64().max(0.001);
+    let round_rate = format_hashrate(round_hashes as f64 / round_elapsed);
+    let backend_rate = format_round_backend_hashrate(backends, round_backend_hashes, round_elapsed);
+
+    set_status_line(format!(
+        "state={state} h={height} diff={difficulty} e={epoch} id={work_id} round={round_rate} total={} avg={} tpl={} sub={} ok={} backends={backend_rate}",
+        snapshot.hashes,
+        format_hashrate(snapshot.hps),
+        snapshot.templates,
+        snapshot.submitted,
+        snapshot.accepted,
+    ));
 }
 
 struct TemplatePrefetch {

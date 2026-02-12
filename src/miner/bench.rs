@@ -112,7 +112,7 @@ fn run_kernel_benchmark(
         ("Rounds", cfg.bench_rounds.to_string()),
         ("Seconds/Round", cfg.bench_secs.to_string()),
     ];
-    startup_banner("SEINE", "Seine Net Benchmark", &lines);
+    startup_banner(&lines);
 
     let mut runs = Vec::with_capacity(cfg.bench_rounds as usize);
     let environment = benchmark_environment();
@@ -202,7 +202,7 @@ fn run_worker_benchmark(
         ),
         ("Measurement", "counted window + end fence".to_string()),
     ];
-    startup_banner("SEINE", "Seine Net Benchmark", &lines);
+    startup_banner(&lines);
 
     if restart_each_round {
         stop_backend_slots(&mut backends);
@@ -304,10 +304,9 @@ fn run_worker_benchmark_inner(
                 warn(
                     "BENCH",
                     format!(
-                        "topology changed; redistributing epoch={} work_id={} nonce_seed={} backends={}",
+                        "topology change; redistributing e={} id={} backends={}",
                         epoch,
                         work_id,
-                        reservation.start_nonce,
                         backend_names(backends),
                     ),
                 );
@@ -348,7 +347,7 @@ fn run_worker_benchmark_inner(
         info(
             "BENCH",
             format!(
-                "round {}/{} | hashes={} | counted={:.2}s | fence={:.3}s | {} | per_backend={}",
+                "round {}/{} hashes={} t={:.2}s fence={:.3}s rate={} backends={}",
                 round + 1,
                 cfg.bench_rounds,
                 round_hashes,

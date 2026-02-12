@@ -87,11 +87,7 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
         ),
         ("Nonce Span/Lane", cfg.nonce_iters_per_lane.to_string()),
     ];
-    startup_banner(
-        "SEINE",
-        "A Seine Net That Catches Blocks",
-        &startup_lines,
-    );
+    startup_banner(&startup_lines);
 
     let tip_listener = if cfg.sse_enabled {
         Some(mining::spawn_tip_listener(
@@ -511,7 +507,7 @@ fn format_round_backend_hashrate(
             .unwrap_or("unknown");
         let hps = (*hashes as f64) / elapsed_secs;
         parts.push(format!(
-            "{backend_name}#{backend_id}={hashes} ({})",
+            "{backend_name}#{backend_id}={}",
             format_hashrate(hps)
         ));
     }
