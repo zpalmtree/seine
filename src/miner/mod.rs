@@ -284,8 +284,9 @@ fn stop_backend_slots(backends: &mut [BackendSlot]) {
 fn distribute_work(
     backends: &mut Vec<BackendSlot>,
     options: DistributeWorkOptions<'_>,
-) -> Result<()> {
+) -> Result<u64> {
     let mut attempt_start_nonce = options.reservation.start_nonce;
+    let mut total_span_consumed = 0u64;
     loop {
         if backends.is_empty() {
             bail!("all mining backends are unavailable");
@@ -298,6 +299,7 @@ fn distribute_work(
         );
         let total_lanes = total_lanes(backends);
         let attempt_span = nonce_counts.iter().copied().sum::<u64>().max(total_lanes);
+        total_span_consumed = total_span_consumed.wrapping_add(attempt_span);
         let template = Arc::new(WorkTemplate {
             work_id: options.work_id,
             epoch: options.epoch,
@@ -332,7 +334,7 @@ fn distribute_work(
         }
 
         if failed_indices.is_empty() {
-            return Ok(());
+            return Ok(total_span_consumed.saturating_sub(options.reservation.reserved_span));
         }
 
         for idx in failed_indices.into_iter().rev() {
@@ -863,7 +865,7 @@ mod tests {
                 Box::new(MockBackend::new("nvidia", 1, Arc::clone(&third_state))),
             ),
         ];
-        distribute_work(
+        let additional_span = distribute_work(
             &mut backends,
             DistributeWorkOptions {
                 epoch: 1,
@@ -873,12 +875,14 @@ mod tests {
                 reservation: NonceReservation {
                     start_nonce: 100,
                     max_iters_per_lane: 10,
+                    reserved_span: 40,
                 },
                 stop_at: Instant::now() + Duration::from_secs(1),
                 backend_weights: None,
             },
         )
         .expect("distribution should continue after quarantining failing backend");
+        assert_eq!(additional_span, 30);
 
         assert_eq!(backends.len(), 2);
         assert_eq!(backends[0].id, 1);

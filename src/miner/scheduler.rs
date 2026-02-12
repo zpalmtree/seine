@@ -2,6 +2,7 @@
 pub struct NonceReservation {
     pub start_nonce: u64,
     pub max_iters_per_lane: u64,
+    pub reserved_span: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -20,13 +21,21 @@ impl NonceScheduler {
 
     pub fn reserve(&mut self, total_lanes: u64) -> NonceReservation {
         let lanes = total_lanes.max(1);
+        let reserved_span = lanes.saturating_mul(self.max_iters_per_lane).max(lanes);
         let reservation = NonceReservation {
             start_nonce: self.next_start_nonce,
             max_iters_per_lane: self.max_iters_per_lane,
+            reserved_span,
         };
-        let span = lanes.saturating_mul(self.max_iters_per_lane);
-        self.next_start_nonce = self.next_start_nonce.wrapping_add(span.max(lanes));
+        self.next_start_nonce = self.next_start_nonce.wrapping_add(reserved_span);
         reservation
+    }
+
+    pub fn consume_additional_span(&mut self, span: u64) {
+        if span == 0 {
+            return;
+        }
+        self.next_start_nonce = self.next_start_nonce.wrapping_add(span);
     }
 }
 
@@ -41,6 +50,7 @@ mod tests {
         let second = scheduler.reserve(4);
         assert_eq!(first.start_nonce, 100);
         assert_eq!(first.max_iters_per_lane, 10);
+        assert_eq!(first.reserved_span, 40);
         assert_eq!(second.start_nonce, 140);
     }
 
@@ -54,5 +64,16 @@ mod tests {
         assert_eq!(first.start_nonce, 50);
         assert_eq!(second.start_nonce, 90);
         assert_eq!(third.start_nonce, 100);
+    }
+
+    #[test]
+    fn additional_span_consumption_skips_retry_windows() {
+        let mut scheduler = NonceScheduler::new(1_000, 10);
+        let first = scheduler.reserve(4);
+        scheduler.consume_additional_span(40);
+        let second = scheduler.reserve(4);
+
+        assert_eq!(first.start_nonce, 1_000);
+        assert_eq!(second.start_nonce, 1_080);
     }
 }

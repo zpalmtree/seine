@@ -282,7 +282,7 @@ fn run_worker_benchmark_inner(
         let header_base = benchmark_header_base(round);
         let reservation = scheduler.reserve(total_lanes(backends));
 
-        distribute_work(
+        let additional_span = distribute_work(
             backends,
             super::DistributeWorkOptions {
                 epoch,
@@ -294,6 +294,7 @@ fn run_worker_benchmark_inner(
                 backend_weights: None,
             },
         )?;
+        scheduler.consume_additional_span(additional_span);
 
         let mut round_hashes = 0u64;
         let mut round_backend_hashes = BTreeMap::new();
@@ -343,7 +344,7 @@ fn run_worker_benchmark_inner(
                         backend_names(backends),
                     ),
                 );
-                distribute_work(
+                let additional_span = distribute_work(
                     backends,
                     super::DistributeWorkOptions {
                         epoch,
@@ -355,6 +356,7 @@ fn run_worker_benchmark_inner(
                         backend_weights: None,
                     },
                 )?;
+                scheduler.consume_additional_span(additional_span);
                 next_hash_poll_at = Instant::now();
                 topology_changed = false;
             }

@@ -5,7 +5,7 @@
 Current status:
 - CPU backend: implemented (Argon2id, consensus-compatible params).
 - NVIDIA backend: scaffolded interface only (not implemented yet).
-- Runtime architecture: supports multiple backends in one process with persistent workers, configurable bounded backend event queues with lossless `Solution`/`Error` delivery (backpressure instead of silent drop), coalesced tip notifications (deduped across SSE reconnects), template prefetch overlap to reduce round-boundary idle, and optional strict quiesce barriers for round-accurate hash accounting.
+- Runtime architecture: supports multiple backends in one process with persistent workers, configurable bounded backend event queues with lossless `Solution` delivery and deduplicated backend `Error` events (prevents multi-thread error storms from stalling worker teardown), coalesced tip notifications (deduped across SSE reconnects), template prefetch overlap to reduce round-boundary idle, and optional strict quiesce barriers for round-accurate hash accounting.
   - Runtime assigns disjoint nonce chunks per backend per round (backend-local scheduling inside each chunk) so CPU and future GPU implementations can iterate independently without nonce overlap.
   - Mining mode supports adaptive weighted nonce allocation (`--work-allocation adaptive`) based on observed backend throughput, with `--work-allocation static` available for fixed lane-based splitting.
   - Runtime is split into `src/miner/{mining,tip,bench,scheduler,stats}.rs` to keep orchestration, tip-stream control, benchmarking, nonce scheduling, and telemetry isolated for faster iteration.
@@ -87,8 +87,10 @@ Run headless/plain logs (no fullscreen TUI):
   - `--relaxed-accounting` disables per-round quiesce barriers (higher throughput, less exact round accounting).
   - `--refresh-on-same-height` forces immediate refresh on same-height `new_block` hash changes.
 - A backend runtime fault quarantines only that backend; mining continues on remaining active backends when possible.
+- CPU backend runtime errors are latched per assignment so only the first fault event is emitted, avoiding queue saturation during shutdown.
 - This miner is intentionally external so consensus-critical validation remains in the daemon.
 - Nonce space is reserved deterministically per epoch via `--nonce-iters-per-lane` (default `2^36` iterations per lane), avoiding overlap between refresh rounds without relying on sampled hash counters.
+  - Assignment retry windows now consume additional scheduler span so backend quarantine/retry paths also stay non-overlapping across future rounds.
   - The runtime logs backend preemption granularity on startup so strict round-accounting fence behavior is visible (`per-hash`, `every N hashes`, or `unknown`).
 
 ## Performance Benchmarking

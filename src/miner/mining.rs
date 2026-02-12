@@ -397,7 +397,7 @@ pub(super) fn run_mining_loop(
 
         stats.bump_templates();
 
-        distribute_work(
+        let additional_span = distribute_work(
             backends,
             super::DistributeWorkOptions {
                 epoch,
@@ -409,6 +409,7 @@ pub(super) fn run_mining_loop(
                 backend_weights: work_distribution_weights(cfg.work_allocation, &backend_weights),
             },
         )?;
+        nonce_scheduler.consume_additional_span(additional_span);
         if prefetch.is_none() {
             prefetch = Some(TemplatePrefetch::spawn(
                 client.clone(),
@@ -532,7 +533,7 @@ pub(super) fn run_mining_loop(
                         super::backend_names(backends),
                     ),
                 );
-                distribute_work(
+                let additional_span = distribute_work(
                     backends,
                     super::DistributeWorkOptions {
                         epoch,
@@ -547,6 +548,7 @@ pub(super) fn run_mining_loop(
                         ),
                     },
                 )?;
+                nonce_scheduler.consume_additional_span(additional_span);
                 next_hash_poll_at = Instant::now();
                 topology_changed = false;
                 update_tui(

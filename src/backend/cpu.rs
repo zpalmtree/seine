@@ -17,6 +17,7 @@ use crate::types::hash_meets_target;
 
 const HASH_BATCH_SIZE: u64 = 64;
 const HASH_FLUSH_INTERVAL: Duration = Duration::from_millis(50);
+const STOP_CHECK_INTERVAL_HASHES: u64 = 64;
 const SOLVED_MASK: u64 = 1u64 << 63;
 
 struct ControlState {
@@ -29,6 +30,7 @@ struct Shared {
     started: AtomicBool,
     instance_id: AtomicU64,
     solution_state: AtomicU64,
+    error_emitted: AtomicBool,
     work_generation: AtomicU64,
     active_workers: AtomicUsize,
     work_control: Mutex<ControlState>,
@@ -56,6 +58,7 @@ impl CpuBackend {
                 started: AtomicBool::new(false),
                 instance_id: AtomicU64::new(0),
                 solution_state: AtomicU64::new(0),
+                error_emitted: AtomicBool::new(false),
                 work_generation: AtomicU64::new(0),
                 active_workers: AtomicUsize::new(0),
                 work_control: Mutex::new(ControlState {
@@ -99,6 +102,7 @@ impl PowBackend for CpuBackend {
         }
 
         self.shared.solution_state.store(0, Ordering::SeqCst);
+        self.shared.error_emitted.store(false, Ordering::SeqCst);
         self.shared.work_generation.store(0, Ordering::SeqCst);
         self.shared.active_workers.store(0, Ordering::SeqCst);
         reset_hash_slots(&self.shared.hash_slots);
@@ -146,6 +150,7 @@ impl PowBackend for CpuBackend {
         }
 
         self.shared.solution_state.store(0, Ordering::SeqCst);
+        self.shared.error_emitted.store(false, Ordering::SeqCst);
         self.shared.work_generation.store(0, Ordering::SeqCst);
         self.shared.active_workers.store(0, Ordering::SeqCst);
         reset_hash_slots(&self.shared.hash_slots);
@@ -169,6 +174,7 @@ impl PowBackend for CpuBackend {
         let work = Arc::new(work);
 
         self.shared.solution_state.store(work_id, Ordering::Release);
+        self.shared.error_emitted.store(false, Ordering::Release);
 
         let generation = {
             let mut control = self
@@ -301,6 +307,7 @@ fn cpu_worker_loop(shared: Arc<Shared>, thread_idx: usize, core_id: Option<core_
     let mut lane_quota = 0u64;
     let mut pending_hashes = 0u64;
     let mut last_flush = Instant::now();
+    let mut next_stop_check = STOP_CHECK_INTERVAL_HASHES;
 
     loop {
         let global_generation = shared.work_generation.load(Ordering::Acquire);
@@ -318,6 +325,7 @@ fn cpu_worker_loop(shared: Arc<Shared>, thread_idx: usize, core_id: Option<core_
                         thread_idx as u64,
                         lane_stride,
                     );
+                    next_stop_check = STOP_CHECK_INTERVAL_HASHES.min(lane_quota.max(1));
                     last_flush = Instant::now();
                     local_generation = generation;
                     local_work = Some(work);
@@ -345,11 +353,21 @@ fn cpu_worker_loop(shared: Arc<Shared>, thread_idx: usize, core_id: Option<core_
         };
         let template = &work.template;
 
-        if lane_iters >= lane_quota || Instant::now() >= template.stop_at {
+        if lane_iters >= lane_quota {
             flush_hashes(&shared, thread_idx, &mut pending_hashes);
             mark_worker_inactive(&shared, &mut worker_active);
             local_work = None;
             continue;
+        }
+
+        if lane_iters >= next_stop_check {
+            if Instant::now() >= template.stop_at {
+                flush_hashes(&shared, thread_idx, &mut pending_hashes);
+                mark_worker_inactive(&shared, &mut worker_active);
+                local_work = None;
+                continue;
+            }
+            next_stop_check = next_stop_check.saturating_add(STOP_CHECK_INTERVAL_HASHES);
         }
 
         if shared.solution_state.load(Ordering::Acquire) != template.work_id {
@@ -535,6 +553,9 @@ fn flush_hashes(shared: &Shared, thread_idx: usize, pending_hashes: &mut u64) {
 }
 
 fn emit_error(shared: &Shared, message: String) {
+    if shared.error_emitted.swap(true, Ordering::AcqRel) {
+        return;
+    }
     emit_event(
         shared,
         BackendEvent::Error {
