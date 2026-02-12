@@ -92,7 +92,7 @@ Run headless/plain logs (no fullscreen TUI):
 - Runtime tuning knobs for performance iteration:
   - `--backend-event-capacity` (default `1024`) controls bounded backend event queue size.
   - `--backend-assign-timeout-ms` (default `1000`) bounds per-backend assignment dispatch calls; timed-out backends are quarantined.
-  - `--backend-control-timeout-ms` (default `1000`) bounds `cancel/fence` control calls; timed-out backends are quarantined.
+  - `--backend-control-timeout-ms` (default `60000`) bounds `cancel/fence` control calls; timed-out backends are quarantined.
   - `--hash-poll-ms` (default `200`) controls backend hash counter polling cadence.
     - Runtime may tighten this cadence based on backend capability hints (for example future GPU backends) while preserving the configured upper bound.
   - `--stats-secs` (default `10`) controls periodic stats log emission cadence.

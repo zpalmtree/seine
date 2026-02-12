@@ -1119,7 +1119,7 @@ mod tests {
                 backend_event_capacity: 1024,
                 hash_poll_ms: 200,
                 backend_assign_timeout_ms: 1000,
-                backend_control_timeout_ms: 1000,
+                backend_control_timeout_ms: 60_000,
                 prefetch_wait_ms: 250,
                 tip_listener_join_wait_ms: 250,
                 strict_round_accounting: true,

@@ -138,7 +138,7 @@ struct Cli {
     backend_assign_timeout_ms: u64,
 
     /// Maximum time to wait for backend cancel/fence control calls, in milliseconds.
-    #[arg(long, default_value_t = 1000)]
+    #[arg(long, default_value_t = 60_000)]
     backend_control_timeout_ms: u64,
 
     /// Maximum time to wait for a prefetched block template before falling back.
@@ -583,7 +583,7 @@ mod tests {
             backend_event_capacity: 1024,
             hash_poll_ms: 200,
             backend_assign_timeout_ms: 1000,
-            backend_control_timeout_ms: 1000,
+            backend_control_timeout_ms: 60_000,
             prefetch_wait_ms: 250,
             tip_listener_join_wait_ms: 250,
             relaxed_accounting: false,
