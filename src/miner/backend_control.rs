@@ -43,12 +43,16 @@ pub(super) fn handle_runtime_backend_event(
     match event {
         BackendEvent::Solution(solution) => {
             let backend_active = backends.iter().any(|slot| slot.id == solution.backend_id);
-            if solution.epoch == epoch && backend_active {
-                match mode {
-                    RuntimeMode::Mining => {
-                        return Ok((RuntimeBackendEventAction::None, Some(solution)));
-                    }
-                    RuntimeMode::Bench => {
+            if !backend_active {
+                return Ok((RuntimeBackendEventAction::None, None));
+            }
+
+            match mode {
+                RuntimeMode::Mining => {
+                    return Ok((RuntimeBackendEventAction::None, Some(solution)));
+                }
+                RuntimeMode::Bench => {
+                    if solution.epoch == epoch {
                         info(
                             "BENCH",
                             format!(
@@ -59,6 +63,7 @@ pub(super) fn handle_runtime_backend_event(
                     }
                 }
             }
+
             Ok((RuntimeBackendEventAction::None, None))
         }
         BackendEvent::Error {

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::env;
 use std::fs;
 use std::io::IsTerminal;
@@ -16,7 +16,7 @@ use crossterm::terminal::is_raw_mode_enabled;
 use crate::api::{
     is_no_wallet_loaded_error, is_unauthorized_error, is_wallet_already_loaded_error, ApiClient,
 };
-use crate::backend::{AssignmentSemantics, BackendEvent, MiningSolution};
+use crate::backend::{BackendEvent, MiningSolution};
 use crate::config::Config;
 use crate::types::{
     decode_hex, parse_target, set_block_nonce, template_difficulty, template_height,
@@ -24,6 +24,7 @@ use crate::types::{
 };
 
 use super::auth::{refresh_api_token_from_cookie, TokenRefreshOutcome};
+use super::round_control::{redistribute_for_topology_change, TopologyRedistributionOptions};
 use super::runtime::{
     maybe_print_stats, seed_backend_weights, update_backend_weights, work_distribution_weights,
     RoundEndReason, WeightUpdateInputs,
@@ -486,6 +487,8 @@ pub(super) fn run_mining_loop(
     let mut tui = init_tui_display(tui_state, Arc::clone(&shutdown));
     let mut backend_weights = seed_backend_weights(backends);
     let mut control_plane = MiningControlPlane::new(client, cfg, Arc::clone(&shutdown), tip_signal);
+    let mut previous_template: Option<(u64, BlockTemplateResponse)> = None;
+    let mut deferred_solutions = Vec::<MiningSolution>::new();
 
     let mut template = match control_plane.fetch_initial_template(&mut tui) {
         Some(t) => t,
@@ -600,6 +603,7 @@ pub(super) fn run_mining_loop(
             last_stats_print: &mut last_stats_print,
             nonce_scheduler: &mut nonce_scheduler,
             backend_weights: &backend_weights,
+            deferred_solutions: &mut deferred_solutions,
         };
         let mut round_state = round_runtime.run(RoundInput {
             epoch,
@@ -614,7 +618,7 @@ pub(super) fn run_mining_loop(
         let mut submitted_solution = None;
         let solved_found = round_state.solved.is_some();
         let mut pending_solution = round_state.solved.take();
-        let append_semantics_active = has_append_assignment_semantics(backends);
+        let append_semantics_active = super::backends_have_append_assignment_semantics(backends);
 
         if cfg.strict_round_accounting {
             let _ =
@@ -627,12 +631,26 @@ pub(super) fn run_mining_loop(
             let _ =
                 cancel_backend_slots(backends, RuntimeMode::Mining, cfg.backend_control_timeout)?;
         }
-        let _ =
-            drain_mining_backend_events(backend_events, epoch, &mut pending_solution, backends)?;
+        let _ = drain_mining_backend_events(
+            backend_events,
+            epoch,
+            &mut pending_solution,
+            &mut deferred_solutions,
+            backends,
+        )?;
         if let Some(solution) = pending_solution.take() {
             control_plane.submit_solution(&template, solution.clone(), &stats, &mut tui);
             submitted_solution = Some(solution);
         }
+        submit_deferred_solutions(
+            &control_plane,
+            epoch,
+            &template,
+            previous_template.as_ref().map(|(e, t)| (*e, t)),
+            &mut deferred_solutions,
+            &stats,
+            &mut tui,
+        );
         collect_backend_hashes(
             backends,
             Some(&stats),
@@ -738,6 +756,7 @@ pub(super) fn run_mining_loop(
         let Some(next_template) = control_plane.resolve_next_template(&mut tui) else {
             break;
         };
+        previous_template = Some((epoch, template));
         template = next_template;
     }
 
@@ -754,12 +773,6 @@ fn should_cancel_relaxed_round(
     append_semantics_active: bool,
 ) -> bool {
     stale_tip_event || solved_found || append_semantics_active
-}
-
-fn has_append_assignment_semantics(backends: &[BackendSlot]) -> bool {
-    backends.iter().any(|slot| {
-        super::backend_capabilities(slot).assignment_semantics == AssignmentSemantics::Append
-    })
 }
 
 struct RoundInput<'a> {
@@ -784,6 +797,7 @@ struct RoundRuntime<'a> {
     last_stats_print: &'a mut Instant,
     nonce_scheduler: &'a mut NonceScheduler,
     backend_weights: &'a BTreeMap<u64, f64>,
+    deferred_solutions: &'a mut Vec<MiningSolution>,
 }
 
 impl<'a> RoundRuntime<'a> {
@@ -880,8 +894,13 @@ impl<'a> RoundRuntime<'a> {
             crossbeam_channel::select! {
                 recv(self.backend_events) -> event => {
                     let event = event.map_err(|_| anyhow!("backend event channel closed"))?;
-                    if handle_mining_backend_event(event, input.epoch, &mut solved, self.backends)?
-                        == BackendEventAction::TopologyChanged
+                    if handle_mining_backend_event(
+                        event,
+                        input.epoch,
+                        &mut solved,
+                        self.deferred_solutions,
+                        self.backends,
+                    )? == BackendEventAction::TopologyChanged
                     {
                         topology_changed = true;
                     }
@@ -896,46 +915,23 @@ impl<'a> RoundRuntime<'a> {
                 && Instant::now() < input.stop_at
                 && !self.backends.is_empty()
             {
-                if has_append_assignment_semantics(self.backends)
-                    && cancel_backend_slots(
-                        self.backends,
-                        RuntimeMode::Mining,
-                        self.cfg.backend_control_timeout,
-                    )? == BackendEventAction::TopologyChanged
-                {
-                    topology_changed = true;
-                    if self.backends.is_empty() {
-                        continue;
-                    }
-                }
-                let reservation = self.nonce_scheduler.reserve(total_lanes(self.backends));
-                warn(
-                    "BACKEND",
-                    format!(
-                        "topology change; redistributing e={} id={} backends={}",
-                        input.epoch,
-                        input.work_id,
-                        super::backend_names(self.backends),
-                    ),
-                );
-                let additional_span = distribute_work(
+                redistribute_for_topology_change(
                     self.backends,
-                    super::DistributeWorkOptions {
+                    TopologyRedistributionOptions {
                         epoch: input.epoch,
                         work_id: input.work_id,
                         header_base: Arc::clone(input.header_base),
                         target: input.target,
-                        reservation,
                         stop_at: input.stop_at,
                         assignment_timeout: self.cfg.backend_assign_timeout,
-                        backend_weights: work_distribution_weights(
-                            self.cfg.work_allocation,
-                            self.backend_weights,
-                        ),
+                        control_timeout: self.cfg.backend_control_timeout,
+                        mode: RuntimeMode::Mining,
+                        work_allocation: self.cfg.work_allocation,
+                        backend_weights: Some(self.backend_weights),
+                        nonce_scheduler: self.nonce_scheduler,
+                        log_tag: "BACKEND",
                     },
                 )?;
-                self.nonce_scheduler
-                    .consume_additional_span(additional_span);
                 hash_poll_interval =
                     super::effective_hash_poll_interval(self.backends, self.cfg.hash_poll_interval);
                 next_hash_poll_at = Instant::now() + hash_poll_interval;
@@ -1131,12 +1127,27 @@ fn handle_mining_backend_event(
     event: BackendEvent,
     epoch: u64,
     solved: &mut Option<MiningSolution>,
+    deferred_solutions: &mut Vec<MiningSolution>,
     backends: &mut Vec<BackendSlot>,
 ) -> Result<BackendEventAction> {
     let (action, maybe_solution) =
         super::handle_runtime_backend_event(event, epoch, backends, RuntimeMode::Mining)?;
-    if solved.is_none() {
-        *solved = maybe_solution;
+    if let Some(solution) = maybe_solution {
+        if solution.epoch == epoch {
+            if solved.is_none() {
+                *solved = Some(solution);
+            }
+        } else if solution.epoch < epoch {
+            deferred_solutions.push(solution);
+        } else {
+            warn(
+                "BACKEND",
+                format!(
+                    "ignoring future solution from {}#{} epoch={} current_epoch={}",
+                    solution.backend, solution.backend_id, solution.epoch, epoch
+                ),
+            );
+        }
     }
     Ok(action)
 }
@@ -1145,14 +1156,86 @@ fn drain_mining_backend_events(
     backend_events: &Receiver<BackendEvent>,
     epoch: u64,
     solved: &mut Option<MiningSolution>,
+    deferred_solutions: &mut Vec<MiningSolution>,
     backends: &mut Vec<BackendSlot>,
 ) -> Result<BackendEventAction> {
     let (action, maybe_solution) =
         super::drain_runtime_backend_events(backend_events, epoch, backends, RuntimeMode::Mining)?;
-    if solved.is_none() {
-        *solved = maybe_solution;
+    if let Some(solution) = maybe_solution {
+        if solution.epoch == epoch {
+            if solved.is_none() {
+                *solved = Some(solution);
+            }
+        } else if solution.epoch < epoch {
+            deferred_solutions.push(solution);
+        } else {
+            warn(
+                "BACKEND",
+                format!(
+                    "ignoring future solution from {}#{} epoch={} current_epoch={}",
+                    solution.backend, solution.backend_id, solution.epoch, epoch
+                ),
+            );
+        }
     }
     Ok(action)
+}
+
+fn submit_deferred_solutions(
+    control_plane: &MiningControlPlane<'_>,
+    current_epoch: u64,
+    current_template: &BlockTemplateResponse,
+    previous_template: Option<(u64, &BlockTemplateResponse)>,
+    deferred_solutions: &mut Vec<MiningSolution>,
+    stats: &Stats,
+    tui: &mut Option<TuiDisplay>,
+) {
+    if deferred_solutions.is_empty() {
+        return;
+    }
+
+    let mut queued = Vec::new();
+    std::mem::swap(&mut queued, deferred_solutions);
+    let mut seen = HashSet::new();
+    for solution in queued {
+        if !seen.insert((solution.epoch, solution.backend_id, solution.nonce)) {
+            continue;
+        }
+
+        let Some(template) = template_for_solution_epoch(
+            current_epoch,
+            current_template,
+            previous_template,
+            solution.epoch,
+        ) else {
+            warn(
+                "BACKEND",
+                format!(
+                    "dropping stale solution from {}#{} epoch={} (current_epoch={})",
+                    solution.backend, solution.backend_id, solution.epoch, current_epoch
+                ),
+            );
+            continue;
+        };
+        control_plane.submit_solution(template, solution, stats, tui);
+    }
+}
+
+fn template_for_solution_epoch<'a>(
+    current_epoch: u64,
+    current_template: &'a BlockTemplateResponse,
+    previous_template: Option<(u64, &'a BlockTemplateResponse)>,
+    solution_epoch: u64,
+) -> Option<&'a BlockTemplateResponse> {
+    if solution_epoch == current_epoch {
+        return Some(current_template);
+    }
+    if let Some((previous_epoch, previous_template)) = previous_template {
+        if solution_epoch == previous_epoch {
+            return Some(previous_template);
+        }
+    }
+    None
 }
 
 fn fetch_template_with_retry(
@@ -1487,6 +1570,7 @@ fn prompt_wallet_password_raw_mode() -> Result<Option<String>> {
 #[cfg(test)]
 mod tests {
     use crossbeam_channel::Sender;
+    use serde_json::json;
 
     use super::*;
     use crate::backend::{BackendInstanceId, PowBackend, WorkAssignment};
@@ -1530,6 +1614,7 @@ mod tests {
     #[test]
     fn stale_solution_is_ignored_for_current_epoch() {
         let mut solved = None;
+        let mut deferred = Vec::new();
         let mut backends = Vec::new();
 
         let action = handle_mining_backend_event(
@@ -1541,12 +1626,54 @@ mod tests {
             }),
             42,
             &mut solved,
+            &mut deferred,
             &mut backends,
         )
         .expect("stale solution handling should succeed");
 
         assert_eq!(action, BackendEventAction::None);
         assert!(solved.is_none());
+        assert!(deferred.is_empty());
+    }
+
+    #[test]
+    fn stale_solution_from_active_backend_is_deferred() {
+        let mut solved = None;
+        let mut deferred = Vec::new();
+        let mut backends = vec![BackendSlot {
+            id: 1,
+            backend: Arc::new(NoopBackend::new("cpu")),
+            lanes: 1,
+        }];
+
+        let action = handle_mining_backend_event(
+            BackendEvent::Solution(MiningSolution {
+                epoch: 41,
+                nonce: 9,
+                backend_id: 1,
+                backend: "cpu",
+            }),
+            42,
+            &mut solved,
+            &mut deferred,
+            &mut backends,
+        )
+        .expect("stale solution should be deferred");
+
+        assert_eq!(action, BackendEventAction::None);
+        assert!(solved.is_none());
+        assert_eq!(deferred.len(), 1);
+        assert_eq!(deferred[0].epoch, 41);
+    }
+
+    #[test]
+    fn template_selection_matches_current_or_previous_epoch() {
+        let current = sample_template("curr");
+        let previous = sample_template("prev");
+
+        assert!(template_for_solution_epoch(10, &current, Some((9, &previous)), 10).is_some());
+        assert!(template_for_solution_epoch(10, &current, Some((9, &previous)), 9).is_some());
+        assert!(template_for_solution_epoch(10, &current, Some((9, &previous)), 8).is_none());
     }
 
     #[test]
@@ -1560,6 +1687,7 @@ mod tests {
     #[test]
     fn backend_error_reports_topology_change_when_backend_is_removed() {
         let mut solved = None;
+        let mut deferred = Vec::new();
         let mut backends = vec![
             BackendSlot {
                 id: 1,
@@ -1581,6 +1709,7 @@ mod tests {
             },
             1,
             &mut solved,
+            &mut deferred,
             &mut backends,
         )
         .expect("backend removal should be handled");
@@ -1588,6 +1717,19 @@ mod tests {
         assert_eq!(action, BackendEventAction::TopologyChanged);
         assert_eq!(backends.len(), 1);
         assert_eq!(backends[0].id, 2);
+    }
+
+    fn sample_template(template_id: &str) -> BlockTemplateResponse {
+        BlockTemplateResponse {
+            block: serde_json::from_value(json!({
+                "header": {"nonce": 0u64},
+                "txns": []
+            }))
+            .expect("sample template block should deserialize"),
+            target: "00".repeat(32),
+            header_base: "11".repeat(92),
+            template_id: Some(template_id.to_string()),
+        }
     }
 
     #[test]

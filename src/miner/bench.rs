@@ -15,6 +15,7 @@ use sysinfo::System;
 use crate::backend::{BackendEvent, BackendInstanceId, DeadlineSupport, PowBackend};
 use crate::config::{BenchBaselinePolicy, BenchKind, Config, CpuAffinityMode, WorkAllocation};
 
+use super::round_control::{redistribute_for_topology_change, TopologyRedistributionOptions};
 use super::scheduler::NonceScheduler;
 use super::stats::{format_hashrate, median};
 use super::ui::{info, startup_banner, success, warn};
@@ -433,30 +434,23 @@ fn run_worker_benchmark_inner(
                 && Instant::now() < stop_at
                 && !backends.is_empty()
             {
-                let reservation = scheduler.reserve(total_lanes(backends));
-                warn(
-                    "BENCH",
-                    format!(
-                        "topology change; redistributing e={} id={} backends={}",
-                        epoch,
-                        work_id,
-                        backend_names(backends),
-                    ),
-                );
-                let additional_span = distribute_work(
+                redistribute_for_topology_change(
                     backends,
-                    super::DistributeWorkOptions {
+                    TopologyRedistributionOptions {
                         epoch,
                         work_id,
-                        header_base: std::sync::Arc::clone(&header_base),
+                        header_base: Arc::clone(&header_base),
                         target: impossible_target,
-                        reservation,
                         stop_at,
                         assignment_timeout: cfg.backend_assign_timeout,
+                        control_timeout: cfg.backend_control_timeout,
+                        mode: RuntimeMode::Bench,
+                        work_allocation: WorkAllocation::Static,
                         backend_weights: None,
+                        nonce_scheduler: &mut scheduler,
+                        log_tag: "BENCH",
                     },
                 )?;
-                scheduler.consume_additional_span(additional_span);
                 hash_poll_interval =
                     super::effective_hash_poll_interval(backends, cfg.hash_poll_interval);
                 next_hash_poll_at = Instant::now() + hash_poll_interval;

@@ -3,6 +3,7 @@ mod backend_control;
 mod backend_executor;
 mod bench;
 mod mining;
+mod round_control;
 mod runtime;
 mod scheduler;
 mod stats;
@@ -722,6 +723,13 @@ fn cpu_lane_count(backends: &[BackendSlot]) -> u64 {
         .filter(|slot| slot.backend.name() == "cpu")
         .map(|slot| slot.lanes)
         .sum()
+}
+
+fn backends_have_append_assignment_semantics(backends: &[BackendSlot]) -> bool {
+    backends.iter().any(|slot| {
+        backend_capabilities(slot).assignment_semantics
+            == crate::backend::AssignmentSemantics::Append
+    })
 }
 
 fn format_round_backend_hashrate(
