@@ -1,17 +1,16 @@
 use std::collections::BTreeMap;
 use std::panic::{self, AssertUnwindSafe};
-use std::sync::Arc;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Result};
-use crossbeam_channel::{bounded, RecvTimeoutError};
+use crossbeam_channel::{bounded, unbounded, RecvTimeoutError, Sender};
 
 use crate::backend::{BackendInstanceId, NonceChunk, WorkAssignment, WorkTemplate};
 
 use super::ui::warn;
-use super::{backend_names, total_lanes, BackendSlot, DistributeWorkOptions};
+use super::{backend_capabilities, backend_names, total_lanes, BackendSlot, DistributeWorkOptions};
 
 struct DispatchTask {
     idx: usize,
@@ -32,6 +31,92 @@ struct DispatchFailure {
     backend_id: BackendInstanceId,
     backend: &'static str,
     reason: String,
+}
+
+enum AssignWorkerCommand {
+    Run {
+        task: DispatchTask,
+        timeout: Duration,
+        outcome_tx: Sender<DispatchOutcome>,
+    },
+}
+
+#[derive(Clone)]
+struct AssignWorker {
+    tx: Sender<AssignWorkerCommand>,
+}
+
+static ASSIGN_WORKERS: OnceLock<Mutex<BTreeMap<BackendInstanceId, AssignWorker>>> = OnceLock::new();
+
+fn assign_worker_registry() -> &'static Mutex<BTreeMap<BackendInstanceId, AssignWorker>> {
+    ASSIGN_WORKERS.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+fn spawn_assign_worker(
+    backend_id: BackendInstanceId,
+    backend: &'static str,
+) -> Option<AssignWorker> {
+    let (cmd_tx, cmd_rx) = unbounded::<AssignWorkerCommand>();
+    let thread_name = format!("seine-assign-{backend}-{backend_id}");
+    let spawn_result = thread::Builder::new().name(thread_name).spawn(move || {
+        while let Ok(command) = cmd_rx.recv() {
+            match command {
+                AssignWorkerCommand::Run {
+                    task,
+                    timeout,
+                    outcome_tx,
+                } => run_assignment_task(task, timeout, outcome_tx),
+            }
+        }
+    });
+
+    if spawn_result.is_err() {
+        return None;
+    }
+    Some(AssignWorker { tx: cmd_tx })
+}
+
+fn worker_sender_for_backend(
+    backend_id: BackendInstanceId,
+    backend: &'static str,
+) -> Option<Sender<AssignWorkerCommand>> {
+    let mut registry = assign_worker_registry().lock().ok()?;
+    if let Some(worker) = registry.get(&backend_id) {
+        return Some(worker.tx.clone());
+    }
+    let worker = spawn_assign_worker(backend_id, backend)?;
+    let sender = worker.tx.clone();
+    registry.insert(backend_id, worker);
+    Some(sender)
+}
+
+fn dispatch_to_assign_worker(
+    task: DispatchTask,
+    timeout: Duration,
+    outcome_tx: Sender<DispatchOutcome>,
+) -> std::result::Result<(), DispatchTask> {
+    let backend_id = task.slot.id;
+    let backend = task.slot.backend.name();
+    let Some(worker_tx) = worker_sender_for_backend(backend_id, backend) else {
+        return Err(task);
+    };
+
+    let command = AssignWorkerCommand::Run {
+        task,
+        timeout,
+        outcome_tx,
+    };
+    match worker_tx.send(command) {
+        Ok(()) => Ok(()),
+        Err(send_err) => {
+            if let Ok(mut registry) = assign_worker_registry().lock() {
+                registry.remove(&backend_id);
+            }
+            match send_err.0 {
+                AssignWorkerCommand::Run { task, .. } => Err(task),
+            }
+        }
+    }
 }
 
 pub(super) fn distribute_work(
@@ -69,7 +154,7 @@ pub(super) fn distribute_work(
                 Arc::clone(&template),
                 chunk_start,
                 nonce_count,
-                slot.backend.capabilities().max_inflight_assignments,
+                backend_capabilities(&slot).max_inflight_assignments,
             );
 
             dispatch_tasks.push(DispatchTask { idx, slot, batch });
@@ -128,12 +213,9 @@ fn dispatch_assignment_tasks(
     let timeout = timeout.max(Duration::from_millis(1));
     let expected = tasks.len();
     let mut metadata_by_idx = vec![(0u64, "unknown"); expected];
-    let mut immediate_failures: Vec<Option<DispatchFailure>> =
-        std::iter::repeat_with(|| None).take(expected).collect();
     let mut outcomes: Vec<Option<DispatchOutcome>> =
         std::iter::repeat_with(|| None).take(expected).collect();
     let (outcome_tx, outcome_rx) = bounded::<DispatchOutcome>(expected.max(1));
-    let mut pre_resolved = 0usize;
 
     for task in tasks {
         let idx = task.idx;
@@ -142,41 +224,14 @@ fn dispatch_assignment_tasks(
         if idx < metadata_by_idx.len() {
             metadata_by_idx[idx] = (backend_id, backend);
         }
-
-        let task_slot = Arc::new(Mutex::new(Some(task)));
-        let task_slot_for_thread = Arc::clone(&task_slot);
-        let outcome_tx_for_thread = outcome_tx.clone();
-        let thread_name = format!("seine-assign-{backend}-{backend_id}");
-        let spawn_result = thread::Builder::new().name(thread_name).spawn(move || {
-            let task = task_slot_for_thread
-                .lock()
-                .ok()
-                .and_then(|mut pending| pending.take());
-            if let Some(task) = task {
-                run_assignment_task(task, timeout, outcome_tx_for_thread);
-            }
-        });
-
-        if let Err(spawn_err) = spawn_result {
-            let task = task_slot.lock().ok().and_then(|mut pending| pending.take());
-            if let Some(task) = task {
-                run_assignment_task(task, timeout, outcome_tx.clone());
-            } else {
-                if idx < immediate_failures.len() {
-                    immediate_failures[idx] = Some(DispatchFailure {
-                        backend_id,
-                        backend,
-                        reason: format!("failed to spawn assignment task thread: {spawn_err}"),
-                    });
-                    pre_resolved = pre_resolved.saturating_add(1);
-                }
-            }
+        if let Err(task) = dispatch_to_assign_worker(task, timeout, outcome_tx.clone()) {
+            run_assignment_task(task, timeout, outcome_tx.clone());
         }
     }
     drop(outcome_tx);
 
     let deadline = Instant::now() + timeout;
-    let mut received = pre_resolved;
+    let mut received = 0usize;
     while received < expected {
         let now = Instant::now();
         if now >= deadline {
@@ -206,10 +261,6 @@ fn dispatch_assignment_tasks(
     let mut failures = Vec::new();
 
     for (idx, outcome_slot) in outcomes.iter_mut().enumerate().take(expected) {
-        if let Some(failure) = immediate_failures[idx].take() {
-            failures.push(failure);
-            continue;
-        }
         match outcome_slot.take() {
             Some(mut outcome) => {
                 if outcome.elapsed > timeout {
@@ -387,8 +438,7 @@ pub(super) fn compute_backend_nonce_counts(
 
 pub(super) fn backend_iters_per_lane(slot: &BackendSlot, default_iters_per_lane: u64) -> u64 {
     let default_iters_per_lane = default_iters_per_lane.max(1);
-    slot.backend
-        .capabilities()
+    backend_capabilities(slot)
         .preferred_iters_per_lane
         .unwrap_or(default_iters_per_lane)
         .max(1)

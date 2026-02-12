@@ -2,6 +2,7 @@ mod auth;
 mod backend_control;
 mod bench;
 mod mining;
+mod runtime;
 mod scheduler;
 mod stats;
 mod tip;
@@ -23,8 +24,8 @@ use crate::api::ApiClient;
 use crate::backend::cpu::CpuBackend;
 use crate::backend::nvidia::NvidiaBackend;
 use crate::backend::{
-    BackendEvent, BackendInstanceId, BackendTelemetry, DeadlineSupport, PowBackend,
-    PreemptionGranularity, WORK_ID_MAX,
+    BackendCapabilities, BackendEvent, BackendInstanceId, BackendTelemetry, DeadlineSupport,
+    PowBackend, PreemptionGranularity, WORK_ID_MAX,
 };
 use crate::config::{BackendKind, Config, UiMode, WorkAllocation};
 use scheduler::NonceReservation;
@@ -128,7 +129,7 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
     let append_semantics = backends
         .iter()
         .filter_map(|slot| {
-            let semantics = slot.backend.capabilities().assignment_semantics;
+            let semantics = backend_capabilities(slot).assignment_semantics;
             if semantics == crate::backend::AssignmentSemantics::Append {
                 Some(format!("{}#{}", slot.backend.name(), slot.id))
             } else {
@@ -192,7 +193,7 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
         let best_effort_deadlines: Vec<String> = backends
             .iter()
             .filter_map(|slot| {
-                let capabilities = slot.backend.capabilities();
+                let capabilities = backend_capabilities(slot);
                 if capabilities.deadline_support == DeadlineSupport::BestEffort {
                     Some(format!("{}#{}", slot.backend.name(), slot.id))
                 } else {
@@ -317,6 +318,21 @@ fn activate_backends(
         backend.set_event_sink(event_tx.clone());
         match backend.start() {
             Ok(()) => {
+                let capabilities =
+                    backend_capabilities_for_start(backend.as_ref(), backend_name, backend_id);
+                if capabilities.max_inflight_assignments > 1
+                    && !backend.supports_assignment_batching()
+                {
+                    warn(
+                        "BACKEND",
+                        format!(
+                            "{}#{} reports inflight={} but does not support batched assignment dispatch; clamping runtime inflight to 1",
+                            backend_name,
+                            backend_id,
+                            capabilities.max_inflight_assignments
+                        ),
+                    );
+                }
                 let lanes = backend.lanes() as u64;
                 if lanes == 0 {
                     warn(
@@ -580,7 +596,7 @@ fn backend_chunk_profiles(backends: &[BackendSlot], default_iters_per_lane: u64)
         .iter()
         .map(|slot| {
             let hinted = backend_iters_per_lane(slot, default_iters_per_lane);
-            let capabilities = slot.backend.capabilities();
+            let capabilities = backend_capabilities(slot);
             let inflight = capabilities.max_inflight_assignments.max(1);
             let poll_hint = capabilities
                 .preferred_hash_poll_interval
@@ -606,13 +622,42 @@ fn backend_chunk_profiles(backends: &[BackendSlot], default_iters_per_lane: u64)
 fn effective_hash_poll_interval(backends: &[BackendSlot], configured: Duration) -> Duration {
     let mut effective = configured.max(Duration::from_millis(1));
     for slot in backends {
-        if let Some(hint) = slot.backend.capabilities().preferred_hash_poll_interval {
+        if let Some(hint) = backend_capabilities(slot).preferred_hash_poll_interval {
             if hint > Duration::from_millis(0) {
                 effective = effective.min(hint);
             }
         }
     }
     effective
+}
+
+fn backend_capabilities_for_start(
+    backend: &dyn PowBackend,
+    _backend_name: &'static str,
+    _backend_id: BackendInstanceId,
+) -> BackendCapabilities {
+    normalize_backend_capabilities(
+        backend.capabilities(),
+        backend.supports_assignment_batching(),
+    )
+}
+
+fn backend_capabilities(slot: &BackendSlot) -> BackendCapabilities {
+    normalize_backend_capabilities(
+        slot.backend.capabilities(),
+        slot.backend.supports_assignment_batching(),
+    )
+}
+
+fn normalize_backend_capabilities(
+    mut capabilities: BackendCapabilities,
+    supports_assignment_batching: bool,
+) -> BackendCapabilities {
+    capabilities.max_inflight_assignments = capabilities.max_inflight_assignments.max(1);
+    if capabilities.max_inflight_assignments > 1 && !supports_assignment_batching {
+        capabilities.max_inflight_assignments = 1;
+    }
+    capabilities
 }
 
 fn cpu_lane_count(backends: &[BackendSlot]) -> u64 {
@@ -702,11 +747,16 @@ fn next_event_wait(
     last_stats_print: Instant,
     stats_interval: Duration,
     next_hash_poll_at: Instant,
+    stats_enabled: bool,
 ) -> Duration {
     let now = Instant::now();
     let until_stop = stop_at.saturating_duration_since(now);
-    let next_stats_at = last_stats_print + stats_interval;
-    let until_stats = next_stats_at.saturating_duration_since(now);
+    let until_stats = if stats_enabled {
+        let next_stats_at = last_stats_print + stats_interval;
+        next_stats_at.saturating_duration_since(now)
+    } else {
+        until_stop
+    };
     let until_hash_poll = next_hash_poll_at.saturating_duration_since(now);
     until_stop
         .min(until_stats)
@@ -753,6 +803,7 @@ mod tests {
         preferred_iters_per_lane: Option<u64>,
         preferred_hash_poll_interval: Option<Duration>,
         max_inflight_assignments: u32,
+        supports_assignment_batching: bool,
         assign_delay: Option<Duration>,
     }
 
@@ -765,6 +816,7 @@ mod tests {
                 preferred_iters_per_lane: None,
                 preferred_hash_poll_interval: None,
                 max_inflight_assignments: 1,
+                supports_assignment_batching: false,
                 assign_delay: None,
             }
         }
@@ -781,6 +833,7 @@ mod tests {
 
         fn with_max_inflight_assignments(mut self, max_inflight_assignments: u32) -> Self {
             self.max_inflight_assignments = max_inflight_assignments.max(1);
+            self.supports_assignment_batching = self.max_inflight_assignments > 1;
             self
         }
 
@@ -849,6 +902,10 @@ mod tests {
                 self.assign_work(assignment.clone())?;
             }
             Ok(())
+        }
+
+        fn supports_assignment_batching(&self) -> bool {
+            self.supports_assignment_batching
         }
 
         fn capabilities(&self) -> crate::backend::BackendCapabilities {

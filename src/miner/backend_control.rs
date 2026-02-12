@@ -1,12 +1,11 @@
 use std::collections::BTreeMap;
 use std::panic::{self, AssertUnwindSafe};
-use std::sync::Arc;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Result};
-use crossbeam_channel::{bounded, Receiver, RecvTimeoutError};
+use crossbeam_channel::{bounded, unbounded, Receiver, RecvTimeoutError, Sender};
 
 use crate::backend::{BackendEvent, BackendInstanceId};
 
@@ -272,6 +271,102 @@ struct BackendControlOutcome {
     result: Result<()>,
 }
 
+enum BackendControlCommand {
+    Run {
+        idx: usize,
+        slot: BackendSlot,
+        phase: BackendControlPhase,
+        timeout: Duration,
+        outcome_tx: Sender<BackendControlOutcome>,
+    },
+}
+
+#[derive(Clone)]
+struct BackendControlWorker {
+    tx: Sender<BackendControlCommand>,
+}
+
+static BACKEND_CONTROL_WORKERS: OnceLock<Mutex<BTreeMap<BackendInstanceId, BackendControlWorker>>> =
+    OnceLock::new();
+
+fn backend_control_worker_registry(
+) -> &'static Mutex<BTreeMap<BackendInstanceId, BackendControlWorker>> {
+    BACKEND_CONTROL_WORKERS.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+fn spawn_backend_control_worker(
+    backend_id: BackendInstanceId,
+    backend: &'static str,
+) -> Option<BackendControlWorker> {
+    let (cmd_tx, cmd_rx) = unbounded::<BackendControlCommand>();
+    let thread_name = format!("seine-control-{backend}-{backend_id}");
+    let spawn_result = thread::Builder::new().name(thread_name).spawn(move || {
+        while let Ok(command) = cmd_rx.recv() {
+            match command {
+                BackendControlCommand::Run {
+                    idx,
+                    slot,
+                    phase,
+                    timeout,
+                    outcome_tx,
+                } => run_backend_control_task(idx, slot, phase, timeout, outcome_tx),
+            }
+        }
+    });
+
+    if spawn_result.is_err() {
+        return None;
+    }
+    Some(BackendControlWorker { tx: cmd_tx })
+}
+
+fn worker_sender_for_backend_control(
+    backend_id: BackendInstanceId,
+    backend: &'static str,
+) -> Option<Sender<BackendControlCommand>> {
+    let mut registry = backend_control_worker_registry().lock().ok()?;
+    if let Some(worker) = registry.get(&backend_id) {
+        return Some(worker.tx.clone());
+    }
+    let worker = spawn_backend_control_worker(backend_id, backend)?;
+    let sender = worker.tx.clone();
+    registry.insert(backend_id, worker);
+    Some(sender)
+}
+
+fn dispatch_backend_control_task(
+    idx: usize,
+    slot: BackendSlot,
+    phase: BackendControlPhase,
+    timeout: Duration,
+    outcome_tx: Sender<BackendControlOutcome>,
+) -> std::result::Result<(), (usize, BackendSlot)> {
+    let backend_id = slot.id;
+    let backend = slot.backend.name();
+    let Some(worker_tx) = worker_sender_for_backend_control(backend_id, backend) else {
+        return Err((idx, slot));
+    };
+
+    let command = BackendControlCommand::Run {
+        idx,
+        slot,
+        phase,
+        timeout,
+        outcome_tx,
+    };
+    match worker_tx.send(command) {
+        Ok(()) => Ok(()),
+        Err(send_err) => {
+            if let Ok(mut registry) = backend_control_worker_registry().lock() {
+                registry.remove(&backend_id);
+            }
+            match send_err.0 {
+                BackendControlCommand::Run { idx, slot, .. } => Err((idx, slot)),
+            }
+        }
+    }
+}
+
 fn run_backend_control_phase(
     slots: Vec<BackendSlot>,
     phase: BackendControlPhase,
@@ -284,12 +379,9 @@ fn run_backend_control_phase(
     let timeout = timeout.max(Duration::from_millis(1));
     let expected = slots.len();
     let mut metadata_by_idx = vec![(0u64, "unknown"); expected];
-    let mut immediate_failures: Vec<Option<String>> =
-        std::iter::repeat_with(|| None).take(expected).collect();
     let mut outcomes: Vec<Option<BackendControlOutcome>> =
         std::iter::repeat_with(|| None).take(expected).collect();
     let (outcome_tx, outcome_rx) = bounded::<BackendControlOutcome>(expected.max(1));
-    let mut pre_resolved = 0usize;
 
     for (idx, slot) in slots.into_iter().enumerate() {
         let backend_id = slot.id;
@@ -297,41 +389,16 @@ fn run_backend_control_phase(
         if idx < metadata_by_idx.len() {
             metadata_by_idx[idx] = (backend_id, backend);
         }
-
-        let slot_cell = Arc::new(Mutex::new(Some(slot)));
-        let slot_cell_for_thread = Arc::clone(&slot_cell);
-        let outcome_tx_for_thread = outcome_tx.clone();
-        let thread_name = format!(
-            "seine-control-{}-{backend}-{backend_id}",
-            phase.action_label()
-        );
-        let spawn_result = thread::Builder::new().name(thread_name).spawn(move || {
-            let slot = slot_cell_for_thread
-                .lock()
-                .ok()
-                .and_then(|mut pending| pending.take());
-            if let Some(slot) = slot {
-                run_backend_control_task(idx, slot, phase, timeout, outcome_tx_for_thread);
-            }
-        });
-
-        if let Err(spawn_err) = spawn_result {
-            let slot = slot_cell.lock().ok().and_then(|mut pending| pending.take());
-            if let Some(slot) = slot {
-                run_backend_control_task(idx, slot, phase, timeout, outcome_tx.clone());
-            } else if idx < immediate_failures.len() {
-                immediate_failures[idx] = Some(format!(
-                    "{} failed to spawn control task thread: {spawn_err}",
-                    phase.action_label()
-                ));
-                pre_resolved = pre_resolved.saturating_add(1);
-            }
+        if let Err((idx, slot)) =
+            dispatch_backend_control_task(idx, slot, phase, timeout, outcome_tx.clone())
+        {
+            run_backend_control_task(idx, slot, phase, timeout, outcome_tx.clone());
         }
     }
     drop(outcome_tx);
 
     let deadline = Instant::now() + timeout;
-    let mut received = pre_resolved;
+    let mut received = 0usize;
     while received < expected {
         let now = Instant::now();
         if now >= deadline {
@@ -363,14 +430,6 @@ fn run_backend_control_phase(
 
     for idx in 0..expected {
         let (backend_id, backend) = metadata_by_idx[idx];
-        if let Some(message) = immediate_failures[idx].take() {
-            failures
-                .entry(backend_id)
-                .or_insert_with(|| (backend, Vec::new()))
-                .1
-                .push(message);
-            continue;
-        }
         match outcomes[idx].take() {
             Some(mut outcome) => {
                 if outcome.elapsed > timeout {

@@ -2,7 +2,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use crossbeam_channel::Sender;
 
 pub mod cpu;
@@ -83,7 +83,7 @@ pub mod nvidia {
             BackendCapabilities {
                 preferred_iters_per_lane: Some(1),
                 preferred_hash_poll_interval: Some(Duration::from_millis(50)),
-                max_inflight_assignments: 2,
+                max_inflight_assignments: 1,
                 deadline_support: DeadlineSupport::BestEffort,
                 assignment_semantics: AssignmentSemantics::Replace,
             }
@@ -259,19 +259,28 @@ pub trait PowBackend: Send {
     /// (or produce equivalent stale-safe behavior keyed by `work.template.work_id`).
     fn assign_work(&self, work: WorkAssignment) -> Result<()>;
 
+    /// Whether this backend can accept true multi-chunk assignment batches.
+    ///
+    /// If false, runtime clamps `max_inflight_assignments` to `1` and the default
+    /// `assign_work_batch` implementation rejects batches longer than one chunk.
+    fn supports_assignment_batching(&self) -> bool {
+        false
+    }
+
     /// Assign one or more work chunks to the backend as one assignment generation.
     ///
-    /// Runtime expects this call to replace prior generation work. Backends may queue
-    /// the provided chunks internally when `max_inflight_assignments > 1`.
-    ///
-    /// Default behavior preserves single-assignment semantics.
-    /// Backends that can queue multiple chunks (for example GPUs) should
-    /// override this for lower control-plane overhead.
+    /// Runtime expects one call to represent one generation replacement boundary.
+    /// Backends that can queue multiple chunks internally should override this and
+    /// return `true` from `supports_assignment_batching`.
     fn assign_work_batch(&self, work: &[WorkAssignment]) -> Result<()> {
-        for assignment in work {
-            self.assign_work(assignment.clone())?;
+        match work {
+            [] => Ok(()),
+            [single] => self.assign_work(single.clone()),
+            _ => bail!(
+                "backend {} does not support batched assignment dispatch",
+                self.name()
+            ),
         }
-        Ok(())
     }
 
     /// Assign one or more work chunks before a soft deadline.

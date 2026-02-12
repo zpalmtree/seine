@@ -71,7 +71,7 @@ impl PowBackend for NvidiaBackend {
         BackendCapabilities {
             preferred_iters_per_lane: Some(1),
             preferred_hash_poll_interval: Some(std::time::Duration::from_millis(50)),
-            max_inflight_assignments: 2,
+            max_inflight_assignments: 1,
             deadline_support: DeadlineSupport::BestEffort,
             assignment_semantics: AssignmentSemantics::Replace,
         }
