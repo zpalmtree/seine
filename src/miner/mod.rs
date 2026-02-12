@@ -4,13 +4,13 @@ mod scheduler;
 mod stats;
 
 use std::collections::BTreeMap;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
 use blocknet_pow_spec::CPU_LANE_MEMORY_BYTES;
-use crossbeam_channel::{unbounded, Receiver};
+use crossbeam_channel::{bounded, Receiver};
 
 use crate::api::ApiClient;
 use crate::backend::cpu::CpuBackend;
@@ -26,7 +26,6 @@ use stats::{format_hashrate, Stats};
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const TEMPLATE_RETRY_DELAY: Duration = Duration::from_secs(2);
 const MIN_EVENT_WAIT: Duration = Duration::from_millis(1);
-const HASH_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
 struct BackendSlot {
     id: BackendInstanceId,
@@ -47,24 +46,32 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
     let client = ApiClient::new(cfg.api_url.clone(), token, REQUEST_TIMEOUT)?;
 
     let backend_instances = build_backend_instances(cfg);
-    let (mut backends, backend_events) = activate_backends(backend_instances)?;
+    let (mut backends, backend_events) =
+        activate_backends(backend_instances, cfg.backend_event_capacity)?;
     let total_lanes = total_lanes(&backends);
     let cpu_lanes = cpu_lane_count(&backends);
     let cpu_ram_gib =
         (cpu_lanes as f64 * CPU_LANE_MEMORY_BYTES as f64) / (1024.0 * 1024.0 * 1024.0);
 
     println!(
-        "starting bnminer | backends={} | cpu_lanes={} (~{:.1}GiB RAM) | lanes={} | nonce_iters_per_lane={} | api={} | sse={}",
+        "starting bnminer | backends={} | cpu_lanes={} (~{:.1}GiB RAM) | lanes={} | nonce_iters_per_lane={} | event_queue={} | hash_poll={}ms | accounting={} | api={} | sse={}",
         backend_names(&backends),
         cpu_lanes,
         cpu_ram_gib,
         total_lanes,
         cfg.nonce_iters_per_lane,
+        cfg.backend_event_capacity,
+        cfg.hash_poll_interval.as_millis(),
+        if cfg.strict_round_accounting {
+            "strict"
+        } else {
+            "relaxed"
+        },
         cfg.api_url,
         if cfg.sse_enabled { "on" } else { "off" }
     );
 
-    let tip_events = if cfg.sse_enabled {
+    let tip_listener = if cfg.sse_enabled {
         Some(mining::spawn_tip_listener(
             client.clone(),
             Arc::clone(&shutdown),
@@ -79,10 +86,14 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
         shutdown.as_ref(),
         &mut backends,
         &backend_events,
-        tip_events.as_ref(),
+        tip_listener.as_ref().map(mining::TipListener::signal),
     );
 
     stop_backend_slots(&mut backends);
+    shutdown.store(true, Ordering::SeqCst);
+    if let Some(listener) = tip_listener {
+        listener.join();
+    }
     result
 }
 
@@ -98,9 +109,10 @@ fn build_backend_instances(cfg: &Config) -> Vec<Box<dyn PowBackend>> {
 
 fn activate_backends(
     mut backends: Vec<Box<dyn PowBackend>>,
+    event_capacity: usize,
 ) -> Result<(Vec<BackendSlot>, Receiver<BackendEvent>)> {
     let mut active = Vec::new();
-    let (event_tx, event_rx) = unbounded::<BackendEvent>();
+    let (event_tx, event_rx) = bounded::<BackendEvent>(event_capacity.max(1));
     let mut next_backend_id: BackendInstanceId = 1;
 
     for mut backend in backends.drain(..) {
@@ -289,6 +301,127 @@ fn remove_backend_by_id(backends: &mut Vec<BackendSlot>, backend_id: BackendInst
     true
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum RuntimeMode {
+    Mining,
+    Bench,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum RuntimeBackendEventAction {
+    None,
+    TopologyChanged,
+}
+
+fn handle_runtime_backend_event(
+    event: BackendEvent,
+    epoch: u64,
+    backends: &mut Vec<BackendSlot>,
+    mode: RuntimeMode,
+) -> Result<(
+    RuntimeBackendEventAction,
+    Option<crate::backend::MiningSolution>,
+)> {
+    match event {
+        BackendEvent::Solution(solution) => {
+            let backend_active = backends.iter().any(|slot| slot.id == solution.backend_id);
+            if solution.epoch == epoch && backend_active {
+                match mode {
+                    RuntimeMode::Mining => {
+                        return Ok((RuntimeBackendEventAction::None, Some(solution)));
+                    }
+                    RuntimeMode::Bench => {
+                        println!(
+                            "[bench] unexpected solution found by {}#{} at nonce={}",
+                            solution.backend, solution.backend_id, solution.nonce
+                        );
+                    }
+                }
+            }
+            Ok((RuntimeBackendEventAction::None, None))
+        }
+        BackendEvent::Error {
+            backend_id,
+            backend,
+            message,
+        } => {
+            match mode {
+                RuntimeMode::Mining => {
+                    eprintln!("[backend] {backend}#{backend_id} runtime error: {message}");
+                }
+                RuntimeMode::Bench => {
+                    eprintln!("[bench] backend '{backend}#{backend_id}' runtime error: {message}");
+                }
+            }
+
+            let removed = remove_backend_by_id(backends, backend_id);
+            if removed {
+                if backends.is_empty() {
+                    match mode {
+                        RuntimeMode::Mining => {
+                            bail!(
+                                "all mining backends are unavailable after failure in '{backend}#{backend_id}'"
+                            );
+                        }
+                        RuntimeMode::Bench => {
+                            bail!(
+                                "all benchmark backends are unavailable after failure in '{backend}#{backend_id}'"
+                            );
+                        }
+                    }
+                }
+
+                match mode {
+                    RuntimeMode::Mining => {
+                        eprintln!(
+                            "[backend] quarantined {backend}#{backend_id}; continuing with {}",
+                            backend_names(backends)
+                        );
+                    }
+                    RuntimeMode::Bench => {
+                        eprintln!(
+                            "[bench] quarantined {backend}#{backend_id}; remaining backends={}",
+                            backend_names(backends)
+                        );
+                    }
+                }
+                Ok((RuntimeBackendEventAction::TopologyChanged, None))
+            } else {
+                if mode == RuntimeMode::Mining {
+                    eprintln!(
+                        "[backend] ignoring error from unavailable backend '{backend}#{backend_id}'"
+                    );
+                }
+                Ok((RuntimeBackendEventAction::None, None))
+            }
+        }
+    }
+}
+
+fn drain_runtime_backend_events(
+    backend_events: &Receiver<BackendEvent>,
+    epoch: u64,
+    backends: &mut Vec<BackendSlot>,
+    mode: RuntimeMode,
+) -> Result<(
+    RuntimeBackendEventAction,
+    Option<crate::backend::MiningSolution>,
+)> {
+    let mut action = RuntimeBackendEventAction::None;
+    let mut solution = None;
+    while let Ok(event) = backend_events.try_recv() {
+        let (event_action, maybe_solution) =
+            handle_runtime_backend_event(event, epoch, backends, mode)?;
+        if event_action == RuntimeBackendEventAction::TopologyChanged {
+            action = RuntimeBackendEventAction::TopologyChanged;
+        }
+        if solution.is_none() {
+            solution = maybe_solution;
+        }
+    }
+    Ok((action, solution))
+}
+
 fn backend_name_list(backends: &[BackendSlot]) -> Vec<String> {
     backends
         .iter()
@@ -354,14 +487,16 @@ fn next_event_wait(
     stop_at: Instant,
     last_stats_print: Instant,
     stats_interval: Duration,
+    next_hash_poll_at: Instant,
 ) -> Duration {
     let now = Instant::now();
     let until_stop = stop_at.saturating_duration_since(now);
     let next_stats_at = last_stats_print + stats_interval;
     let until_stats = next_stats_at.saturating_duration_since(now);
+    let until_hash_poll = next_hash_poll_at.saturating_duration_since(now);
     until_stop
         .min(until_stats)
-        .min(HASH_POLL_INTERVAL)
+        .min(until_hash_poll)
         .max(MIN_EVENT_WAIT)
 }
 
@@ -569,7 +704,7 @@ mod tests {
             Box::new(MockBackend::new("cpu", 1, Arc::clone(&healthy_state))),
         ];
 
-        let (active, _events) = activate_backends(instances)
+        let (active, _events) = activate_backends(instances, 16)
             .expect("activation should continue with the healthy backend");
 
         assert_eq!(active.len(), 1);

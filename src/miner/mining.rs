@@ -2,9 +2,9 @@ use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::io::{BufRead, BufReader, IsTerminal};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::thread;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -24,31 +24,102 @@ use super::scheduler::NonceScheduler;
 use super::stats::Stats;
 use super::{
     collect_backend_hashes, distribute_work, format_round_backend_hashrate, next_event_wait,
-    next_work_id, quiesce_backend_slots, remove_backend_by_id, total_lanes, BackendSlot,
-    TEMPLATE_RETRY_DELAY,
+    next_work_id, quiesce_backend_slots, total_lanes, BackendSlot, RuntimeBackendEventAction,
+    RuntimeMode, TEMPLATE_RETRY_DELAY,
 };
 
 pub(super) struct TipSignal {
     stale: Arc<AtomicBool>,
+    current_template_height: Arc<AtomicU64>,
+    last_new_block: Arc<Mutex<Option<LastNewBlock>>>,
+}
+
+struct LastNewBlock {
+    hash: String,
+    height: Option<u64>,
 }
 
 impl TipSignal {
     fn new() -> Self {
         Self {
             stale: Arc::new(AtomicBool::new(false)),
+            current_template_height: Arc::new(AtomicU64::new(0)),
+            last_new_block: Arc::new(Mutex::new(None)),
         }
     }
 
     fn take_stale(&self) -> bool {
         self.stale.swap(false, Ordering::AcqRel)
     }
+
+    fn set_current_template_height(&self, height: u64) {
+        self.current_template_height
+            .store(height, Ordering::Release);
+        let should_clear_stale = if let Ok(last_event) = self.last_new_block.lock() {
+            matches!(
+                last_event.as_ref(),
+                Some(last) if last.height.is_some_and(|h| h.saturating_add(1) < height)
+            )
+        } else {
+            false
+        };
+        if should_clear_stale {
+            self.stale.store(false, Ordering::Release);
+        }
+    }
+
+    fn mark_stale_for_new_block(&self, hash: &str, event_height: Option<u64>) {
+        if let Some(height) = event_height {
+            let template_height = self.current_template_height.load(Ordering::Acquire);
+            if template_height != 0 && height.saturating_add(1) < template_height {
+                return;
+            }
+        }
+
+        let mut changed = false;
+        if let Ok(mut last_event) = self.last_new_block.lock() {
+            if !matches!(
+                last_event.as_ref(),
+                Some(last) if last.hash == hash && last.height == event_height
+            ) {
+                *last_event = Some(LastNewBlock {
+                    hash: hash.to_string(),
+                    height: event_height,
+                });
+                changed = true;
+            }
+        } else {
+            // If lock state is poisoned, err on the side of refreshing work.
+            changed = true;
+        }
+        if changed {
+            self.stale.store(true, Ordering::Release);
+        }
+    }
+
+    fn mark_stale_on_unparsed_event(&self) {
+        self.stale.store(true, Ordering::Release);
+    }
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum BackendEventAction {
-    None,
-    TopologyChanged,
+pub(super) struct TipListener {
+    signal: TipSignal,
+    handle: Option<JoinHandle<()>>,
 }
+
+impl TipListener {
+    pub(super) fn signal(&self) -> &TipSignal {
+        &self.signal
+    }
+
+    pub(super) fn join(mut self) {
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+type BackendEventAction = RuntimeBackendEventAction;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum WalletPasswordSource {
@@ -97,6 +168,9 @@ pub(super) fn run_mining_loop(
             Ok(v) => v,
             Err(err) => {
                 eprintln!("template decode error: {err:#}");
+                if !sleep_with_shutdown(shutdown, TEMPLATE_RETRY_DELAY) {
+                    break;
+                }
                 continue;
             }
         };
@@ -107,6 +181,9 @@ pub(super) fn run_mining_loop(
                 POW_HEADER_BASE_LEN,
                 header_base.len()
             );
+            if !sleep_with_shutdown(shutdown, TEMPLATE_RETRY_DELAY) {
+                break;
+            }
             continue;
         }
 
@@ -114,12 +191,21 @@ pub(super) fn run_mining_loop(
             Ok(t) => t,
             Err(err) => {
                 eprintln!("target parse error: {err:#}");
+                if !sleep_with_shutdown(shutdown, TEMPLATE_RETRY_DELAY) {
+                    break;
+                }
                 continue;
             }
         };
         let header_base: Arc<[u8]> = Arc::from(header_base);
 
-        let height = template_height(&template.block)
+        let template_height_u64 = template_height(&template.block);
+        if let Some(height) = template_height_u64 {
+            if let Some(signal) = tip_signal {
+                signal.set_current_template_height(height);
+            }
+        }
+        let height = template_height_u64
             .map(|h| h.to_string())
             .unwrap_or_else(|| "unknown".to_string());
         let difficulty = template_difficulty(&template.block)
@@ -159,18 +245,23 @@ pub(super) fn run_mining_loop(
         let mut round_hashes = 0u64;
         let mut round_backend_hashes = BTreeMap::new();
         let mut topology_changed = false;
+        let mut next_hash_poll_at = Instant::now();
 
         while !shutdown.load(Ordering::Relaxed)
             && Instant::now() < stop_at
             && solved.is_none()
             && !stale_tip_event
         {
-            collect_backend_hashes(
-                backends,
-                Some(&stats),
-                &mut round_hashes,
-                Some(&mut round_backend_hashes),
-            );
+            let now = Instant::now();
+            if now >= next_hash_poll_at {
+                collect_backend_hashes(
+                    backends,
+                    Some(&stats),
+                    &mut round_hashes,
+                    Some(&mut round_backend_hashes),
+                );
+                next_hash_poll_at = now + cfg.hash_poll_interval;
+            }
 
             if last_stats_print.elapsed() >= cfg.stats_interval {
                 stats.print();
@@ -182,7 +273,12 @@ pub(super) fn run_mining_loop(
                 continue;
             }
 
-            let wait_for = next_event_wait(stop_at, last_stats_print, cfg.stats_interval);
+            let wait_for = next_event_wait(
+                stop_at,
+                last_stats_print,
+                cfg.stats_interval,
+                next_hash_poll_at,
+            );
 
             crossbeam_channel::select! {
                 recv(backend_events) -> event => {
@@ -220,11 +316,14 @@ pub(super) fn run_mining_loop(
                     reservation,
                     stop_at,
                 )?;
+                next_hash_poll_at = Instant::now();
                 topology_changed = false;
             }
         }
 
-        quiesce_backend_slots(backends)?;
+        if cfg.strict_round_accounting {
+            quiesce_backend_slots(backends)?;
+        }
         let _ = drain_mining_backend_events(backend_events, epoch, &mut solved, backends)?;
         collect_backend_hashes(
             backends,
@@ -299,38 +398,12 @@ fn handle_mining_backend_event(
     solved: &mut Option<MiningSolution>,
     backends: &mut Vec<BackendSlot>,
 ) -> Result<BackendEventAction> {
-    match event {
-        BackendEvent::Solution(solution) => {
-            let backend_active = backends.iter().any(|slot| slot.id == solution.backend_id);
-            if solution.epoch == epoch && backend_active {
-                *solved = Some(solution);
-            }
-            Ok(BackendEventAction::None)
-        }
-        BackendEvent::Error {
-            backend_id,
-            backend,
-            message,
-        } => {
-            eprintln!("[backend] {backend}#{backend_id} runtime error: {message}");
-            let removed = remove_backend_by_id(backends, backend_id);
-            if removed {
-                let remaining = super::backend_names(backends);
-                if backends.is_empty() {
-                    bail!("all mining backends are unavailable after failure in '{backend}#{backend_id}'");
-                }
-                eprintln!(
-                    "[backend] quarantined {backend}#{backend_id}; continuing with {remaining}"
-                );
-                Ok(BackendEventAction::TopologyChanged)
-            } else {
-                eprintln!(
-                    "[backend] ignoring error from unavailable backend '{backend}#{backend_id}'"
-                );
-                Ok(BackendEventAction::None)
-            }
-        }
+    let (action, maybe_solution) =
+        super::handle_runtime_backend_event(event, epoch, backends, RuntimeMode::Mining)?;
+    if solved.is_none() {
+        *solved = maybe_solution;
     }
+    Ok(action)
 }
 
 fn drain_mining_backend_events(
@@ -339,33 +412,34 @@ fn drain_mining_backend_events(
     solved: &mut Option<MiningSolution>,
     backends: &mut Vec<BackendSlot>,
 ) -> Result<BackendEventAction> {
-    let mut action = BackendEventAction::None;
-    while let Ok(event) = backend_events.try_recv() {
-        if handle_mining_backend_event(event, epoch, solved, backends)?
-            == BackendEventAction::TopologyChanged
-        {
-            action = BackendEventAction::TopologyChanged;
-        }
+    let (action, maybe_solution) =
+        super::drain_runtime_backend_events(backend_events, epoch, backends, RuntimeMode::Mining)?;
+    if solved.is_none() {
+        *solved = maybe_solution;
     }
     Ok(action)
 }
 
-pub(super) fn spawn_tip_listener(client: ApiClient, shutdown: Arc<AtomicBool>) -> TipSignal {
+pub(super) fn spawn_tip_listener(client: ApiClient, shutdown: Arc<AtomicBool>) -> TipListener {
     let tip_signal = TipSignal::new();
-    let signal = Arc::clone(&tip_signal.stale);
+    let signal = TipSignal {
+        stale: Arc::clone(&tip_signal.stale),
+        current_template_height: Arc::clone(&tip_signal.current_template_height),
+        last_new_block: Arc::clone(&tip_signal.last_new_block),
+    };
 
-    thread::spawn(move || {
+    let handle = thread::spawn(move || {
         while !shutdown.load(Ordering::Relaxed) {
             match client.open_events_stream() {
                 Ok(resp) => {
                     if let Err(err) = stream_tip_events(resp, &signal, &shutdown) {
-                        if !shutdown.load(Ordering::Relaxed) {
+                        if !shutdown.load(Ordering::Relaxed) && !is_stream_timeout_error(&err) {
                             eprintln!("events stream dropped: {err:#}");
                         }
                     }
                 }
                 Err(err) => {
-                    if !shutdown.load(Ordering::Relaxed) {
+                    if !shutdown.load(Ordering::Relaxed) && !is_stream_timeout_error(&err) {
                         eprintln!("failed to open events stream: {err:#}");
                     }
                 }
@@ -377,16 +451,18 @@ pub(super) fn spawn_tip_listener(client: ApiClient, shutdown: Arc<AtomicBool>) -
         }
     });
 
-    tip_signal
+    TipListener {
+        signal: tip_signal,
+        handle: Some(handle),
+    }
 }
 
 fn stream_tip_events(
     resp: reqwest::blocking::Response,
-    stale: &AtomicBool,
+    signal: &TipSignal,
     shutdown: &AtomicBool,
 ) -> Result<()> {
     let mut event_name = String::new();
-    let mut last_new_block_hash: Option<String> = None;
     let reader = BufReader::new(resp);
 
     for line_result in reader.lines() {
@@ -395,18 +471,13 @@ fn stream_tip_events(
         }
 
         let line = line_result.context("failed reading SSE event stream")?;
-        process_sse_line(&line, &mut event_name, &mut last_new_block_hash, stale);
+        process_sse_line(&line, &mut event_name, signal);
     }
 
     Ok(())
 }
 
-fn process_sse_line(
-    line: &str,
-    event_name: &mut String,
-    last_new_block_hash: &mut Option<String>,
-    stale: &AtomicBool,
-) {
+fn process_sse_line(line: &str, event_name: &mut String, signal: &TipSignal) {
     if let Some(name) = line.strip_prefix("event:") {
         *event_name = name.trim().to_string();
         return;
@@ -425,25 +496,44 @@ fn process_sse_line(
         .strip_prefix("data:")
         .map(str::trim)
         .unwrap_or_default();
-    if let Some(hash) = extract_new_block_hash(payload) {
-        if last_new_block_hash.as_deref() != Some(hash.as_str()) {
-            stale.store(true, Ordering::Release);
-        }
-        *last_new_block_hash = Some(hash);
+    if let Some(event) = extract_new_block_event(payload) {
+        signal.mark_stale_for_new_block(&event.hash, event.height);
         return;
     }
 
     // If parsing fails, preserve old behavior and refresh once.
-    stale.store(true, Ordering::Release);
-    *last_new_block_hash = None;
+    signal.mark_stale_on_unparsed_event();
 }
 
-fn extract_new_block_hash(payload: &str) -> Option<String> {
+struct NewBlockEvent {
+    hash: String,
+    height: Option<u64>,
+}
+
+fn extract_new_block_event(payload: &str) -> Option<NewBlockEvent> {
     let value: Value = serde_json::from_str(payload).ok()?;
-    value
+    let hash = value
         .get("hash")
         .and_then(Value::as_str)
-        .map(str::to_string)
+        .map(str::to_string)?;
+    let height = value.get("height").and_then(Value::as_u64);
+    Some(NewBlockEvent { hash, height })
+}
+
+fn is_stream_timeout_error(err: &anyhow::Error) -> bool {
+    for cause in err.chain() {
+        if let Some(req_err) = cause.downcast_ref::<reqwest::Error>() {
+            if req_err.is_timeout() {
+                return true;
+            }
+        }
+        if let Some(io_err) = cause.downcast_ref::<std::io::Error>() {
+            if io_err.kind() == std::io::ErrorKind::TimedOut {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn fetch_template_with_retry(
@@ -703,51 +793,108 @@ mod tests {
 
     #[test]
     fn duplicate_new_block_hashes_are_coalesced() {
-        let stale = AtomicBool::new(false);
+        let signal = TipSignal::new();
         let mut event_name = String::new();
-        let mut last_hash = None;
 
-        process_sse_line("event: new_block", &mut event_name, &mut last_hash, &stale);
+        process_sse_line("event: new_block", &mut event_name, &signal);
         process_sse_line(
             "data: {\"hash\":\"abc\",\"height\":1}",
             &mut event_name,
-            &mut last_hash,
-            &stale,
+            &signal,
         );
-        assert!(stale.swap(false, Ordering::AcqRel));
+        assert!(signal.take_stale());
 
-        process_sse_line("event: new_block", &mut event_name, &mut last_hash, &stale);
+        process_sse_line("event: new_block", &mut event_name, &signal);
         process_sse_line(
             "data: {\"hash\":\"abc\",\"height\":1}",
             &mut event_name,
-            &mut last_hash,
-            &stale,
+            &signal,
         );
-        assert!(!stale.swap(false, Ordering::AcqRel));
+        assert!(!signal.take_stale());
+    }
+
+    #[test]
+    fn duplicate_new_block_hashes_across_reconnects_are_coalesced() {
+        let signal = TipSignal::new();
+        let mut first_stream_event = String::new();
+
+        process_sse_line("event: new_block", &mut first_stream_event, &signal);
+        process_sse_line(
+            "data: {\"hash\":\"abc\",\"height\":1}",
+            &mut first_stream_event,
+            &signal,
+        );
+        assert!(signal.take_stale());
+
+        let mut second_stream_event = String::new();
+        process_sse_line("event: new_block", &mut second_stream_event, &signal);
+        process_sse_line(
+            "data: {\"hash\":\"abc\",\"height\":1}",
+            &mut second_stream_event,
+            &signal,
+        );
+        assert!(!signal.take_stale());
+    }
+
+    #[test]
+    fn historical_new_block_events_are_ignored() {
+        let signal = TipSignal::new();
+        signal.set_current_template_height(1761);
+        let mut event_name = String::new();
+
+        process_sse_line("event: new_block", &mut event_name, &signal);
+        process_sse_line(
+            "data: {\"hash\":\"old\",\"height\":1759}",
+            &mut event_name,
+            &signal,
+        );
+        assert!(!signal.take_stale());
+
+        process_sse_line("event: new_block", &mut event_name, &signal);
+        process_sse_line(
+            "data: {\"hash\":\"tip\",\"height\":1760}",
+            &mut event_name,
+            &signal,
+        );
+        assert!(signal.take_stale());
+    }
+
+    #[test]
+    fn setting_template_height_clears_only_historical_stale_state() {
+        let signal = TipSignal::new();
+        let mut event_name = String::new();
+
+        process_sse_line("event: new_block", &mut event_name, &signal);
+        process_sse_line(
+            "data: {\"hash\":\"old\",\"height\":1750}",
+            &mut event_name,
+            &signal,
+        );
+        assert!(signal.stale.load(Ordering::Acquire));
+
+        signal.set_current_template_height(1762);
+        assert!(!signal.take_stale());
     }
 
     #[test]
     fn new_block_hash_change_triggers_refresh() {
-        let stale = AtomicBool::new(false);
+        let signal = TipSignal::new();
         let mut event_name = String::new();
-        let mut last_hash = None;
 
-        process_sse_line("event: new_block", &mut event_name, &mut last_hash, &stale);
+        process_sse_line("event: new_block", &mut event_name, &signal);
         process_sse_line(
             "data: {\"hash\":\"abc\",\"height\":1}",
             &mut event_name,
-            &mut last_hash,
-            &stale,
+            &signal,
         );
-        let _ = stale.swap(false, Ordering::AcqRel);
+        let _ = signal.take_stale();
 
-        process_sse_line("event: new_block", &mut event_name, &mut last_hash, &stale);
+        process_sse_line("event: new_block", &mut event_name, &signal);
         process_sse_line(
             "data: {\"hash\":\"def\",\"height\":2}",
             &mut event_name,
-            &mut last_hash,
-            &stale,
+            &signal,
         );
-        assert!(stale.swap(false, Ordering::AcqRel));
+        assert!(signal.take_stale());
     }
 }

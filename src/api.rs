@@ -10,6 +10,8 @@ use serde_json::Value;
 
 use crate::types::{BlockTemplateResponse, SubmitBlockResponse};
 
+const EVENTS_STREAM_TIMEOUT: Duration = Duration::from_secs(45);
+
 #[derive(Debug, Serialize)]
 struct CompactSubmitPayload<'a> {
     template_id: &'a str,
@@ -81,6 +83,7 @@ impl ApiClient {
         // Dedicated SSE client without global request timeout.
         let stream_client = Client::builder()
             .default_headers(headers)
+            .connect_timeout(Duration::from_secs(10))
             .build()
             .context("failed to build HTTP stream client")?;
 
@@ -140,6 +143,7 @@ impl ApiClient {
         let url = format!("{}/api/events", self.base_url);
         self.stream_client
             .get(url)
+            .timeout(EVENTS_STREAM_TIMEOUT)
             .send()
             .context("request to events endpoint failed")
     }

@@ -16,8 +16,8 @@ use super::scheduler::NonceScheduler;
 use super::stats::{format_hashrate, median};
 use super::{
     activate_backends, backend_name_list, backend_names, collect_backend_hashes, distribute_work,
-    format_round_backend_hashrate, next_work_id, quiesce_backend_slots, remove_backend_by_id,
-    start_backend_slots, stop_backend_slots, total_lanes, BackendSlot, HASH_POLL_INTERVAL,
+    format_round_backend_hashrate, next_work_id, quiesce_backend_slots, start_backend_slots,
+    stop_backend_slots, total_lanes, BackendSlot, RuntimeBackendEventAction, RuntimeMode,
     MIN_EVENT_WAIT,
 };
 
@@ -75,11 +75,7 @@ struct BenchEnvironment {
     cgroup_free_memory_bytes: Option<u64>,
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum BackendEventAction {
-    None,
-    TopologyChanged,
-}
+type BackendEventAction = RuntimeBackendEventAction;
 
 pub(super) fn run_benchmark(cfg: &Config, shutdown: &AtomicBool) -> Result<()> {
     let instances = super::build_backend_instances(cfg);
@@ -167,7 +163,7 @@ fn run_worker_benchmark(
     instances: Vec<Box<dyn PowBackend>>,
     restart_each_round: bool,
 ) -> Result<()> {
-    let (mut backends, backend_events) = activate_backends(instances)?;
+    let (mut backends, backend_events) = activate_backends(instances, cfg.backend_event_capacity)?;
     let bench_kind = if restart_each_round {
         "end_to_end"
     } else {
@@ -175,12 +171,18 @@ fn run_worker_benchmark(
     };
 
     println!(
-        "benchmark mode | kind={} | backends={} | lanes={} | rounds={} | seconds_per_round={}",
+        "benchmark mode | kind={} | backends={} | lanes={} | rounds={} | seconds_per_round={} | hash_poll={}ms | accounting={}",
         bench_kind,
         backend_names(&backends),
         total_lanes(&backends),
         cfg.bench_rounds,
-        cfg.bench_secs
+        cfg.bench_secs,
+        cfg.hash_poll_interval.as_millis(),
+        if cfg.strict_round_accounting {
+            "strict"
+        } else {
+            "relaxed"
+        }
     );
 
     if restart_each_round {
@@ -244,16 +246,22 @@ fn run_worker_benchmark_inner(
         let mut round_hashes = 0u64;
         let mut round_backend_hashes = BTreeMap::new();
         let mut topology_changed = false;
+        let mut next_hash_poll_at = Instant::now();
         while Instant::now() < stop_at && !shutdown.load(Ordering::Relaxed) {
-            collect_backend_hashes(
-                backends,
-                None,
-                &mut round_hashes,
-                Some(&mut round_backend_hashes),
-            );
+            let now = Instant::now();
+            if now >= next_hash_poll_at {
+                collect_backend_hashes(
+                    backends,
+                    None,
+                    &mut round_hashes,
+                    Some(&mut round_backend_hashes),
+                );
+                next_hash_poll_at = now + cfg.hash_poll_interval;
+            }
+            let now = Instant::now();
             let wait_for = stop_at
-                .saturating_duration_since(Instant::now())
-                .min(HASH_POLL_INTERVAL)
+                .saturating_duration_since(now)
+                .min(next_hash_poll_at.saturating_duration_since(now))
                 .max(MIN_EVENT_WAIT);
 
             crossbeam_channel::select! {
@@ -290,11 +298,14 @@ fn run_worker_benchmark_inner(
                     reservation,
                     stop_at,
                 )?;
+                next_hash_poll_at = Instant::now();
                 topology_changed = false;
             }
         }
 
-        quiesce_backend_slots(backends)?;
+        if cfg.strict_round_accounting {
+            quiesce_backend_slots(backends)?;
+        }
         collect_backend_hashes(
             backends,
             None,
@@ -478,38 +489,9 @@ fn handle_benchmark_backend_event(
     epoch: u64,
     backends: &mut Vec<BackendSlot>,
 ) -> Result<BackendEventAction> {
-    match event {
-        BackendEvent::Solution(solution) => {
-            let backend_active = backends.iter().any(|slot| slot.id == solution.backend_id);
-            if solution.epoch == epoch && backend_active {
-                println!(
-                    "[bench] unexpected solution found by {}#{} at nonce={}",
-                    solution.backend, solution.backend_id, solution.nonce
-                );
-            }
-            Ok(BackendEventAction::None)
-        }
-        BackendEvent::Error {
-            backend_id,
-            backend,
-            message,
-        } => {
-            eprintln!("[bench] backend '{backend}#{backend_id}' runtime error: {message}");
-            let removed = remove_backend_by_id(backends, backend_id);
-            if removed {
-                if backends.is_empty() {
-                    bail!("all benchmark backends are unavailable after failure in '{backend}#{backend_id}'");
-                }
-                eprintln!(
-                    "[bench] quarantined {backend}#{backend_id}; remaining backends={}",
-                    backend_names(backends)
-                );
-                Ok(BackendEventAction::TopologyChanged)
-            } else {
-                Ok(BackendEventAction::None)
-            }
-        }
-    }
+    let (action, _) =
+        super::handle_runtime_backend_event(event, epoch, backends, RuntimeMode::Bench)?;
+    Ok(action)
 }
 
 fn drain_benchmark_backend_events(
@@ -517,14 +499,8 @@ fn drain_benchmark_backend_events(
     epoch: u64,
     backends: &mut Vec<BackendSlot>,
 ) -> Result<BackendEventAction> {
-    let mut action = BackendEventAction::None;
-    while let Ok(event) = backend_events.try_recv() {
-        if handle_benchmark_backend_event(event, epoch, backends)?
-            == BackendEventAction::TopologyChanged
-        {
-            action = BackendEventAction::TopologyChanged;
-        }
-    }
+    let (action, _) =
+        super::drain_runtime_backend_events(backend_events, epoch, backends, RuntimeMode::Bench)?;
     Ok(action)
 }
 

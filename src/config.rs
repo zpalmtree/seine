@@ -73,6 +73,18 @@ struct Cli {
     #[arg(long, default_value_t = 10)]
     stats_secs: u64,
 
+    /// Capacity of the bounded backend event queue.
+    #[arg(long, default_value_t = 1024)]
+    backend_event_capacity: usize,
+
+    /// Backend hash polling interval in milliseconds.
+    #[arg(long, default_value_t = 200)]
+    hash_poll_ms: u64,
+
+    /// Disable strict round quiesce barriers to favor peak throughput over exact per-round accounting.
+    #[arg(long, action = ArgAction::SetTrue)]
+    relaxed_accounting: bool,
+
     /// Optional nonce seed.
     #[arg(long)]
     start_nonce: Option<u64>,
@@ -120,6 +132,9 @@ pub struct Config {
     pub threads: usize,
     pub refresh_interval: Duration,
     pub stats_interval: Duration,
+    pub backend_event_capacity: usize,
+    pub hash_poll_interval: Duration,
+    pub strict_round_accounting: bool,
     pub start_nonce: u64,
     pub nonce_iters_per_lane: u64,
     pub sse_enabled: bool,
@@ -139,6 +154,12 @@ impl Config {
         }
         if cli.nonce_iters_per_lane == 0 {
             bail!("nonce-iters-per-lane must be >= 1");
+        }
+        if cli.backend_event_capacity == 0 {
+            bail!("backend-event-capacity must be >= 1");
+        }
+        if cli.hash_poll_ms == 0 {
+            bail!("hash-poll-ms must be >= 1");
         }
 
         let backends = dedupe_backends(&cli.backends);
@@ -164,6 +185,9 @@ impl Config {
             threads: cli.threads,
             refresh_interval: Duration::from_secs(cli.refresh_secs.max(1)),
             stats_interval: Duration::from_secs(cli.stats_secs.max(1)),
+            backend_event_capacity: cli.backend_event_capacity,
+            hash_poll_interval: Duration::from_millis(cli.hash_poll_ms),
+            strict_round_accounting: !cli.relaxed_accounting,
             start_nonce: cli.start_nonce.unwrap_or_else(default_nonce_seed),
             nonce_iters_per_lane: cli.nonce_iters_per_lane,
             sse_enabled: !cli.disable_sse,
@@ -340,6 +364,9 @@ mod tests {
             allow_oversubscribe: false,
             refresh_secs: 20,
             stats_secs: 10,
+            backend_event_capacity: 1024,
+            hash_poll_ms: 200,
+            relaxed_accounting: false,
             start_nonce: None,
             nonce_iters_per_lane: 1u64 << 36,
             disable_sse: false,
