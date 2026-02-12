@@ -142,6 +142,13 @@ pub struct BackendTelemetry {
     pub completed_assignment_micros: u64,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BackendCapabilities {
+    /// Preferred iterations per lane for one assignment chunk.
+    /// Runtime treats this as a scheduling hint, not a hard contract.
+    pub preferred_iters_per_lane: Option<u64>,
+}
+
 pub trait BenchBackend: Send {
     fn kernel_bench(&self, seconds: u64, shutdown: &AtomicBool) -> Result<u64>;
 }
@@ -201,6 +208,10 @@ pub trait PowBackend: Send {
 
     fn preemption_granularity(&self) -> PreemptionGranularity {
         PreemptionGranularity::Unknown
+    }
+
+    fn capabilities(&self) -> BackendCapabilities {
+        BackendCapabilities::default()
     }
 
     fn bench_backend(&self) -> Option<&dyn BenchBackend> {

@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, Result};
 use argon2::{Algorithm, Argon2, Block, Version};
 use blocknet_pow_spec::{pow_params, POW_OUTPUT_LEN};
-use crossbeam_channel::{Sender, TrySendError};
+use crossbeam_channel::{SendTimeoutError, Sender};
 
 use crate::backend::{
     BackendEvent, BackendInstanceId, BackendTelemetry, BenchBackend, MiningSolution, PowBackend,
@@ -18,8 +18,7 @@ use crate::types::hash_meets_target;
 const HASH_BATCH_SIZE: u64 = 64;
 const HASH_FLUSH_INTERVAL: Duration = Duration::from_millis(50);
 const STOP_CHECK_INTERVAL_HASHES: u64 = 64;
-const CRITICAL_EVENT_BACKOFF_EVERY: u64 = 64;
-const CRITICAL_EVENT_BACKOFF_SLEEP: Duration = Duration::from_micros(50);
+const CRITICAL_EVENT_RETRY_WAIT: Duration = Duration::from_millis(5);
 const SOLVED_MASK: u64 = 1u64 << 63;
 
 #[repr(align(64))]
@@ -756,22 +755,16 @@ fn emit_event(shared: &Shared, event: BackendEvent) {
 
 fn send_critical_event(shared: &Shared, tx: &Sender<BackendEvent>, event: BackendEvent) {
     let mut queued = event;
-    let mut attempts = 0u64;
     loop {
-        match tx.try_send(queued) {
+        if !shared.started.load(Ordering::Acquire) {
+            return;
+        }
+
+        match tx.send_timeout(queued, CRITICAL_EVENT_RETRY_WAIT) {
             Ok(()) => return,
-            Err(TrySendError::Disconnected(_)) => return,
-            Err(TrySendError::Full(returned)) => {
+            Err(SendTimeoutError::Disconnected(_)) => return,
+            Err(SendTimeoutError::Timeout(returned)) => {
                 queued = returned;
-                attempts = attempts.saturating_add(1);
-                if !shared.started.load(Ordering::Acquire) {
-                    return;
-                }
-                if attempts.is_multiple_of(CRITICAL_EVENT_BACKOFF_EVERY) {
-                    thread::sleep(CRITICAL_EVENT_BACKOFF_SLEEP);
-                } else {
-                    thread::yield_now();
-                }
             }
         }
     }

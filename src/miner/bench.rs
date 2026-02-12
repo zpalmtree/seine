@@ -425,7 +425,7 @@ fn run_worker_benchmark_inner(
             .as_secs_f64()
             .max(0.001);
         let fence_start = Instant::now();
-        quiesce_backend_slots(backends)?;
+        let _ = quiesce_backend_slots(backends, RuntimeMode::Bench)?;
         let fence_elapsed = fence_start.elapsed().as_secs_f64();
         let mut late_hashes = 0u64;
         let mut late_backend_hashes = BTreeMap::new();
