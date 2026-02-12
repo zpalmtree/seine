@@ -78,6 +78,16 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
     }
     set_tui_state(tui_state);
 
+    info(
+        "MINER",
+        format!(
+            "starting | {} | {} lanes | ~{:.1} GiB RAM",
+            backend_names(&backends),
+            total_lanes,
+            cpu_ram_gib
+        ),
+    );
+
     let tip_listener = if cfg.sse_enabled {
         Some(mining::spawn_tip_listener(
             client.clone(),

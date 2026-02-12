@@ -238,6 +238,7 @@ pub(super) fn run_mining_loop(
             return Ok(());
         }
     };
+    success("MINER", "connected and mining");
 
     while !shutdown.load(Ordering::Relaxed) {
         if backends.is_empty() {
