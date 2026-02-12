@@ -43,4 +43,16 @@ mod tests {
         assert_eq!(first.max_iters_per_lane, 10);
         assert_eq!(second.start_nonce, 140);
     }
+
+    #[test]
+    fn reservation_stays_non_overlapping_when_lane_count_changes() {
+        let mut scheduler = NonceScheduler::new(50, 10);
+        let first = scheduler.reserve(4);
+        let second = scheduler.reserve(1);
+        let third = scheduler.reserve(8);
+
+        assert_eq!(first.start_nonce, 50);
+        assert_eq!(second.start_nonce, 90);
+        assert_eq!(third.start_nonce, 100);
+    }
 }

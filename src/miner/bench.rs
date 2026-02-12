@@ -1,10 +1,12 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Context, Result};
 use blocknet_pow_spec::POW_HEADER_BASE_LEN;
 use crossbeam_channel::{after, Receiver};
 use serde::{Deserialize, Serialize};
+use sysinfo::System;
 
 use crate::backend::{BackendEvent, PowBackend};
 use crate::config::{BenchKind, Config};
@@ -13,7 +15,7 @@ use super::scheduler::NonceScheduler;
 use super::stats::{format_hashrate, median};
 use super::{
     activate_backends, backend_name_list, backend_names, collect_backend_hashes, distribute_work,
-    next_work_id, quiesce_backend_slots, remove_backend_by_name, start_backend_slots,
+    next_work_id, quiesce_backend_slots, remove_backend_by_id, start_backend_slots,
     stop_backend_slots, total_lanes, BackendSlot, HASH_POLL_INTERVAL, MIN_EVENT_WAIT,
 };
 
@@ -27,6 +29,8 @@ struct BenchRun {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct BenchReport {
+    #[serde(default)]
+    environment: BenchEnvironment,
     bench_kind: String,
     backends: Vec<String>,
     total_lanes: u64,
@@ -38,6 +42,25 @@ struct BenchReport {
     min_hps: f64,
     max_hps: f64,
     runs: Vec<BenchRun>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct BenchEnvironment {
+    timestamp_unix_secs: u64,
+    bnminer_version: String,
+    git_commit: Option<String>,
+    target_triple: String,
+    hostname: Option<String>,
+    os: Option<String>,
+    kernel_version: Option<String>,
+    cpu_arch: Option<String>,
+    cpu_brand: Option<String>,
+    logical_cores: usize,
+    physical_cores: Option<usize>,
+    total_memory_bytes: u64,
+    available_memory_bytes: u64,
+    cgroup_total_memory_bytes: Option<u64>,
+    cgroup_free_memory_bytes: Option<u64>,
 }
 
 pub(super) fn run_benchmark(cfg: &Config, shutdown: &AtomicBool) -> Result<()> {
@@ -72,6 +95,7 @@ fn run_kernel_benchmark(
     );
 
     let mut runs = Vec::with_capacity(cfg.bench_rounds as usize);
+    let environment = benchmark_environment();
     for round in 0..cfg.bench_rounds {
         if shutdown.load(Ordering::Relaxed) {
             break;
@@ -102,6 +126,7 @@ fn run_kernel_benchmark(
     summarize_benchmark(
         cfg,
         BenchReport {
+            environment,
             bench_kind: "kernel".to_string(),
             backends: vec![backend.name().to_string()],
             total_lanes: backend.lanes() as u64,
@@ -163,6 +188,7 @@ fn run_worker_benchmark_inner(
 ) -> Result<()> {
     let impossible_target = [0u8; 32];
     let mut runs = Vec::with_capacity(cfg.bench_rounds as usize);
+    let environment = benchmark_environment();
     let mut epoch = 0u64;
     let mut work_id_cursor = 1u64;
     let mut scheduler = NonceScheduler::new(cfg.start_nonce, cfg.nonce_iters_per_lane);
@@ -244,6 +270,7 @@ fn run_worker_benchmark_inner(
     summarize_benchmark(
         cfg,
         BenchReport {
+            environment,
             bench_kind: if restart_each_round {
                 "end_to_end".to_string()
             } else {
@@ -322,6 +349,44 @@ fn benchmark_header_base(round: u32) -> std::sync::Arc<[u8]> {
     std::sync::Arc::from(data.to_vec())
 }
 
+fn benchmark_environment() -> BenchEnvironment {
+    let mut sys = System::new();
+    sys.refresh_memory();
+    sys.refresh_cpu_all();
+    let cgroup = sys.cgroup_limits();
+
+    BenchEnvironment {
+        timestamp_unix_secs: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+        bnminer_version: env!("CARGO_PKG_VERSION").to_string(),
+        git_commit: std::env::var("BNMINER_GIT_COMMIT")
+            .ok()
+            .or_else(|| option_env!("BNMINER_GIT_COMMIT").map(str::to_string)),
+        target_triple: format!("{}/{}", std::env::consts::OS, std::env::consts::ARCH),
+        hostname: System::host_name(),
+        os: System::long_os_version().or_else(System::name),
+        kernel_version: System::kernel_version(),
+        cpu_arch: System::cpu_arch(),
+        cpu_brand: sys.cpus().first().map(|cpu| cpu.brand().to_string()),
+        logical_cores: std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(0),
+        physical_cores: sys.physical_core_count(),
+        total_memory_bytes: sys.total_memory(),
+        available_memory_bytes: sys.available_memory(),
+        cgroup_total_memory_bytes: cgroup
+            .as_ref()
+            .map(|limits| limits.total_memory)
+            .filter(|value| *value > 0),
+        cgroup_free_memory_bytes: cgroup
+            .as_ref()
+            .map(|limits| limits.free_memory)
+            .filter(|value| *value > 0),
+    }
+}
+
 fn handle_benchmark_backend_event(
     event: BackendEvent,
     epoch: u64,
@@ -329,25 +394,27 @@ fn handle_benchmark_backend_event(
 ) -> Result<()> {
     match event {
         BackendEvent::Solution(solution) => {
-            let backend_active = backends
-                .iter()
-                .any(|slot| slot.backend.name() == solution.backend);
+            let backend_active = backends.iter().any(|slot| slot.id == solution.backend_id);
             if solution.epoch == epoch && backend_active {
                 println!(
-                    "[bench] unexpected solution found by {} at nonce={}",
-                    solution.backend, solution.nonce
+                    "[bench] unexpected solution found by {}#{} at nonce={}",
+                    solution.backend, solution.backend_id, solution.nonce
                 );
             }
         }
-        BackendEvent::Error { backend, message } => {
-            eprintln!("[bench] backend '{backend}' runtime error: {message}");
-            let removed = remove_backend_by_name(backends, backend);
+        BackendEvent::Error {
+            backend_id,
+            backend,
+            message,
+        } => {
+            eprintln!("[bench] backend '{backend}#{backend_id}' runtime error: {message}");
+            let removed = remove_backend_by_id(backends, backend_id);
             if removed {
                 if backends.is_empty() {
-                    bail!("all benchmark backends are unavailable after failure in '{backend}'");
+                    bail!("all benchmark backends are unavailable after failure in '{backend}#{backend_id}'");
                 }
                 eprintln!(
-                    "[bench] quarantined {backend}; remaining backends={}",
+                    "[bench] quarantined {backend}#{backend_id}; remaining backends={}",
                     backend_names(backends)
                 );
             }
@@ -378,7 +445,8 @@ mod tests {
             BackendEvent::Solution(crate::backend::MiningSolution {
                 epoch: 99,
                 nonce: 123,
-                backend: "cpu".to_string(),
+                backend_id: 1,
+                backend: "cpu",
             }),
             100,
             &mut backends,

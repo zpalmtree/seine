@@ -20,7 +20,7 @@ use super::scheduler::NonceScheduler;
 use super::stats::Stats;
 use super::{
     collect_backend_hashes, distribute_work, next_event_wait, next_work_id, quiesce_backend_slots,
-    remove_backend_by_name, total_lanes, BackendSlot, TEMPLATE_RETRY_DELAY,
+    remove_backend_by_id, total_lanes, BackendSlot, TEMPLATE_RETRY_DELAY,
 };
 
 pub(super) struct TipSignal {
@@ -162,8 +162,9 @@ pub(super) fn run_mining_loop(
 
         if let Some(solution) = solved {
             println!(
-                "[solution] backend={} nonce={} elapsed={:.2}s",
+                "[solution] backend={}#{} nonce={} elapsed={:.2}s",
                 solution.backend,
+                solution.backend_id,
                 solution.nonce,
                 round_start.elapsed().as_secs_f64(),
             );
@@ -218,24 +219,30 @@ fn handle_mining_backend_event(
 ) -> Result<()> {
     match event {
         BackendEvent::Solution(solution) => {
-            let backend_active = backends
-                .iter()
-                .any(|slot| slot.backend.name() == solution.backend);
+            let backend_active = backends.iter().any(|slot| slot.id == solution.backend_id);
             if solution.epoch == epoch && backend_active {
                 *solved = Some(solution);
             }
         }
-        BackendEvent::Error { backend, message } => {
-            eprintln!("[backend] {backend} runtime error: {message}");
-            let removed = remove_backend_by_name(backends, backend);
+        BackendEvent::Error {
+            backend_id,
+            backend,
+            message,
+        } => {
+            eprintln!("[backend] {backend}#{backend_id} runtime error: {message}");
+            let removed = remove_backend_by_id(backends, backend_id);
             if removed {
                 let remaining = super::backend_names(backends);
                 if backends.is_empty() {
-                    bail!("all mining backends are unavailable after failure in '{backend}'");
+                    bail!("all mining backends are unavailable after failure in '{backend}#{backend_id}'");
                 }
-                eprintln!("[backend] quarantined {backend}; continuing with {remaining}");
+                eprintln!(
+                    "[backend] quarantined {backend}#{backend_id}; continuing with {remaining}"
+                );
             } else {
-                eprintln!("[backend] ignoring error from unavailable backend '{backend}'");
+                eprintln!(
+                    "[backend] ignoring error from unavailable backend '{backend}#{backend_id}'"
+                );
             }
         }
     }
@@ -347,7 +354,8 @@ mod tests {
             BackendEvent::Solution(MiningSolution {
                 epoch: 41,
                 nonce: 9,
-                backend: "cpu".to_string(),
+                backend_id: 1,
+                backend: "cpu",
             }),
             42,
             &mut solved,

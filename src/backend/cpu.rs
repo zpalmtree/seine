@@ -8,7 +8,9 @@ use argon2::{Algorithm, Argon2, Version};
 use blocknet_pow_spec::{pow_params, POW_OUTPUT_LEN};
 use crossbeam_channel::Sender;
 
-use crate::backend::{BackendEvent, MiningSolution, PowBackend, WorkAssignment, WORK_ID_MAX};
+use crate::backend::{
+    BackendEvent, BackendInstanceId, MiningSolution, PowBackend, WorkAssignment, WORK_ID_MAX,
+};
 use crate::types::hash_meets_target;
 
 const HASH_BATCH_SIZE: u64 = 64;
@@ -23,6 +25,7 @@ struct ControlState {
 
 struct Shared {
     started: AtomicBool,
+    instance_id: AtomicU64,
     solution_state: AtomicU64,
     work_generation: AtomicU64,
     active_workers: AtomicUsize,
@@ -47,6 +50,7 @@ impl CpuBackend {
             threads,
             shared: Arc::new(Shared {
                 started: AtomicBool::new(false),
+                instance_id: AtomicU64::new(0),
                 solution_state: AtomicU64::new(0),
                 work_generation: AtomicU64::new(0),
                 active_workers: AtomicUsize::new(0),
@@ -73,6 +77,10 @@ impl PowBackend for CpuBackend {
 
     fn lanes(&self) -> usize {
         self.threads.max(1)
+    }
+
+    fn set_instance_id(&mut self, id: BackendInstanceId) {
+        self.shared.instance_id.store(id, Ordering::Release);
     }
 
     fn set_event_sink(&mut self, sink: Sender<BackendEvent>) {
@@ -341,7 +349,8 @@ fn cpu_worker_loop(shared: Arc<Shared>, thread_idx: usize) {
                     BackendEvent::Solution(MiningSolution {
                         epoch: template.epoch,
                         nonce,
-                        backend: "cpu".to_string(),
+                        backend_id: shared.instance_id.load(Ordering::Acquire),
+                        backend: "cpu",
                     }),
                 );
             }
@@ -470,6 +479,7 @@ fn emit_error(shared: &Shared, message: String) {
     emit_event(
         shared,
         BackendEvent::Error {
+            backend_id: shared.instance_id.load(Ordering::Acquire),
             backend: "cpu",
             message,
         },
@@ -486,8 +496,16 @@ fn emit_event(shared: &Shared, event: BackendEvent) {
             BackendEvent::Solution(solution) => {
                 let _ = tx.send(BackendEvent::Solution(solution));
             }
-            BackendEvent::Error { backend, message } => {
-                let _ = tx.try_send(BackendEvent::Error { backend, message });
+            BackendEvent::Error {
+                backend_id,
+                backend,
+                message,
+            } => {
+                let _ = tx.try_send(BackendEvent::Error {
+                    backend_id,
+                    backend,
+                    message,
+                });
             }
         }
     }

@@ -14,7 +14,8 @@ use crate::api::ApiClient;
 use crate::backend::cpu::CpuBackend;
 use crate::backend::nvidia::NvidiaBackend;
 use crate::backend::{
-    BackendEvent, NonceLease, PowBackend, WorkAssignment, WorkTemplate, WORK_ID_MAX,
+    BackendEvent, BackendInstanceId, NonceLease, PowBackend, WorkAssignment, WorkTemplate,
+    WORK_ID_MAX,
 };
 use crate::config::{BackendKind, Config};
 use scheduler::NonceReservation;
@@ -27,6 +28,7 @@ const HASH_POLL_INTERVAL: Duration = Duration::from_millis(200);
 const BACKEND_EVENT_BUFFER: usize = 1024;
 
 struct BackendSlot {
+    id: BackendInstanceId,
     backend: Box<dyn PowBackend>,
     lane_offset: u64,
     lanes: u64,
@@ -95,26 +97,37 @@ fn activate_backends(
 ) -> Result<(Vec<BackendSlot>, Receiver<BackendEvent>)> {
     let mut active = Vec::new();
     let (event_tx, event_rx) = bounded::<BackendEvent>(BACKEND_EVENT_BUFFER);
+    let mut next_backend_id: BackendInstanceId = 1;
 
     for mut backend in backends.drain(..) {
+        let backend_id = next_backend_id;
+        next_backend_id = next_backend_id.saturating_add(1);
         let backend_name = backend.name();
+        backend.set_instance_id(backend_id);
         backend.set_event_sink(event_tx.clone());
         match backend.start() {
             Ok(()) => {
                 let lanes = backend.lanes() as u64;
                 if lanes == 0 {
-                    eprintln!("[backend] skipping {}: reported zero lanes", backend_name);
+                    eprintln!(
+                        "[backend] skipping {}#{}: reported zero lanes",
+                        backend_name, backend_id
+                    );
                     backend.stop();
                     continue;
                 }
                 active.push(BackendSlot {
+                    id: backend_id,
                     backend,
                     lane_offset: 0,
                     lanes,
                 });
             }
             Err(err) => {
-                eprintln!("[backend] {} unavailable: {err:#}", backend_name);
+                eprintln!(
+                    "[backend] {}#{} unavailable: {err:#}",
+                    backend_name, backend_id
+                );
             }
         }
     }
@@ -130,9 +143,13 @@ fn activate_backends(
 
 fn start_backend_slots(backends: &mut [BackendSlot]) -> Result<()> {
     for slot in backends {
-        slot.backend
-            .start()
-            .with_context(|| format!("failed to start backend {}", slot.backend.name()))?;
+        slot.backend.start().with_context(|| {
+            format!(
+                "failed to start backend {}#{}",
+                slot.backend.name(),
+                slot.id
+            )
+        })?;
     }
     Ok(())
 }
@@ -144,7 +161,7 @@ fn stop_backend_slots(backends: &mut [BackendSlot]) {
 }
 
 fn distribute_work(
-    backends: &[BackendSlot],
+    backends: &mut Vec<BackendSlot>,
     epoch: u64,
     work_id: u64,
     header_base: Arc<[u8]>,
@@ -152,30 +169,66 @@ fn distribute_work(
     reservation: NonceReservation,
     stop_at: Instant,
 ) -> Result<()> {
-    let stride = total_lanes(backends);
-    let template = Arc::new(WorkTemplate {
-        work_id,
-        epoch,
-        header_base,
-        target,
-        stop_at,
-    });
+    loop {
+        if backends.is_empty() {
+            bail!("all mining backends are unavailable");
+        }
 
-    for slot in backends {
-        let work = WorkAssignment {
-            template: Arc::clone(&template),
-            nonce_lease: NonceLease {
-                start_nonce: reservation.start_nonce,
-                lane_offset: slot.lane_offset,
-                global_stride: stride,
-                max_iters_per_lane: reservation.max_iters_per_lane,
-            },
-        };
-        slot.backend.assign_work(work).with_context(|| {
-            format!("failed to assign work for backend {}", slot.backend.name())
-        })?;
+        let stride = total_lanes(backends);
+        let template = Arc::new(WorkTemplate {
+            work_id,
+            epoch,
+            header_base: Arc::clone(&header_base),
+            target,
+            stop_at,
+        });
+        let mut failed_indices = Vec::new();
+
+        for (idx, slot) in backends.iter().enumerate() {
+            let work = WorkAssignment {
+                template: Arc::clone(&template),
+                nonce_lease: NonceLease {
+                    start_nonce: reservation.start_nonce,
+                    lane_offset: slot.lane_offset,
+                    global_stride: stride,
+                    max_iters_per_lane: reservation.max_iters_per_lane,
+                },
+            };
+            if let Err(err) = slot.backend.assign_work(work) {
+                eprintln!(
+                    "[backend] {}#{} failed work assignment: {err:#}",
+                    slot.backend.name(),
+                    slot.id
+                );
+                failed_indices.push(idx);
+            }
+        }
+
+        if failed_indices.is_empty() {
+            return Ok(());
+        }
+
+        for idx in failed_indices.into_iter().rev() {
+            let mut slot = backends.remove(idx);
+            let backend_name = slot.backend.name();
+            let backend_id = slot.id;
+            slot.backend.stop();
+            eprintln!(
+                "[backend] quarantined {}#{} due to assignment failure",
+                backend_name, backend_id
+            );
+        }
+
+        if backends.is_empty() {
+            bail!("all mining backends are unavailable after assignment failure");
+        }
+
+        recalculate_lane_offsets(backends);
+        eprintln!(
+            "[backend] retrying work assignment with remaining={}",
+            backend_names(backends)
+        );
     }
-    Ok(())
 }
 
 fn collect_backend_hashes(backends: &[BackendSlot], stats: Option<&Stats>, round_hashes: &mut u64) {
@@ -196,36 +249,32 @@ fn collect_backend_hashes(backends: &[BackendSlot], stats: Option<&Stats>, round
 
 fn quiesce_backend_slots(backends: &[BackendSlot]) -> Result<()> {
     for slot in backends {
-        slot.backend
-            .quiesce()
-            .with_context(|| format!("failed to quiesce backend {}", slot.backend.name()))?;
+        slot.backend.quiesce().with_context(|| {
+            format!(
+                "failed to quiesce backend {}#{}",
+                slot.backend.name(),
+                slot.id
+            )
+        })?;
     }
     Ok(())
 }
 
-fn remove_backend_by_name(backends: &mut Vec<BackendSlot>, backend_name: &str) -> bool {
-    let mut removed = false;
-    let mut idx = 0usize;
-    while idx < backends.len() {
-        if backends[idx].backend.name() == backend_name {
-            let mut slot = backends.remove(idx);
-            slot.backend.stop();
-            removed = true;
-            continue;
-        }
-        idx += 1;
-    }
+fn remove_backend_by_id(backends: &mut Vec<BackendSlot>, backend_id: BackendInstanceId) -> bool {
+    let Some(idx) = backends.iter().position(|slot| slot.id == backend_id) else {
+        return false;
+    };
 
-    if removed {
-        recalculate_lane_offsets(backends);
-    }
-    removed
+    let mut slot = backends.remove(idx);
+    slot.backend.stop();
+    recalculate_lane_offsets(backends);
+    true
 }
 
 fn backend_name_list(backends: &[BackendSlot]) -> Vec<String> {
     backends
         .iter()
-        .map(|slot| slot.backend.name().to_string())
+        .map(|slot| format!("{}#{}", slot.backend.name(), slot.id))
         .collect()
 }
 
@@ -272,7 +321,75 @@ fn next_work_id(next_id: &mut u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::anyhow;
     use blocknet_pow_spec::POW_HEADER_BASE_LEN;
+    use crossbeam_channel::Sender;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Default)]
+    struct MockState {
+        fail_next_assign: AtomicBool,
+        assign_calls: AtomicUsize,
+        stop_calls: AtomicUsize,
+        last_lease: Mutex<Option<NonceLease>>,
+    }
+
+    struct MockBackend {
+        name: &'static str,
+        lanes: usize,
+        state: Arc<MockState>,
+    }
+
+    impl MockBackend {
+        fn new(name: &'static str, lanes: usize, state: Arc<MockState>) -> Self {
+            Self { name, lanes, state }
+        }
+    }
+
+    impl PowBackend for MockBackend {
+        fn name(&self) -> &'static str {
+            self.name
+        }
+
+        fn lanes(&self) -> usize {
+            self.lanes
+        }
+
+        fn set_instance_id(&mut self, _id: BackendInstanceId) {}
+
+        fn set_event_sink(&mut self, _sink: Sender<BackendEvent>) {}
+
+        fn start(&mut self) -> Result<()> {
+            Ok(())
+        }
+
+        fn stop(&mut self) {
+            self.state.stop_calls.fetch_add(1, Ordering::Relaxed);
+        }
+
+        fn assign_work(&self, work: WorkAssignment) -> Result<()> {
+            self.state.assign_calls.fetch_add(1, Ordering::Relaxed);
+            if self.state.fail_next_assign.swap(false, Ordering::AcqRel) {
+                return Err(anyhow!("injected assign failure"));
+            }
+            *self
+                .state
+                .last_lease
+                .lock()
+                .expect("mock lease lock should not be poisoned") = Some(work.nonce_lease);
+            Ok(())
+        }
+    }
+
+    fn slot(id: BackendInstanceId, lanes: u64, backend: Box<dyn PowBackend>) -> BackendSlot {
+        BackendSlot {
+            id,
+            backend,
+            lane_offset: 0,
+            lanes,
+        }
+    }
 
     #[test]
     fn next_work_id_wraps_within_valid_range() {
@@ -289,5 +406,95 @@ mod tests {
     #[test]
     fn header_base_len_matches_pow_spec() {
         assert_eq!(POW_HEADER_BASE_LEN, 92);
+    }
+
+    #[test]
+    fn remove_backend_by_id_only_removes_target_instance() {
+        let first_state = Arc::new(MockState::default());
+        let second_state = Arc::new(MockState::default());
+
+        let mut backends = vec![
+            slot(
+                11,
+                1,
+                Box::new(MockBackend::new("nvidia", 1, Arc::clone(&first_state))),
+            ),
+            slot(
+                22,
+                1,
+                Box::new(MockBackend::new("nvidia", 1, Arc::clone(&second_state))),
+            ),
+        ];
+        recalculate_lane_offsets(&mut backends);
+
+        assert!(remove_backend_by_id(&mut backends, 22));
+        assert_eq!(backends.len(), 1);
+        assert_eq!(backends[0].id, 11);
+        assert_eq!(first_state.stop_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(second_state.stop_calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn distribute_work_quarantines_assignment_failures_and_reassigns_lanes() {
+        let first_state = Arc::new(MockState::default());
+        let failed_state = Arc::new(MockState::default());
+        let third_state = Arc::new(MockState::default());
+        failed_state.fail_next_assign.store(true, Ordering::Relaxed);
+
+        let mut backends = vec![
+            slot(
+                1,
+                2,
+                Box::new(MockBackend::new("cpu", 2, Arc::clone(&first_state))),
+            ),
+            slot(
+                2,
+                1,
+                Box::new(MockBackend::new("nvidia", 1, Arc::clone(&failed_state))),
+            ),
+            slot(
+                3,
+                1,
+                Box::new(MockBackend::new("nvidia", 1, Arc::clone(&third_state))),
+            ),
+        ];
+        recalculate_lane_offsets(&mut backends);
+
+        distribute_work(
+            &mut backends,
+            1,
+            1,
+            Arc::from(vec![7u8; POW_HEADER_BASE_LEN]),
+            [0xFF; 32],
+            NonceReservation {
+                start_nonce: 100,
+                max_iters_per_lane: 10,
+            },
+            Instant::now() + Duration::from_secs(1),
+        )
+        .expect("distribution should continue after quarantining failing backend");
+
+        assert_eq!(backends.len(), 2);
+        assert_eq!(backends[0].id, 1);
+        assert_eq!(backends[1].id, 3);
+        assert_eq!(backends[0].lane_offset, 0);
+        assert_eq!(backends[1].lane_offset, 2);
+
+        let first_lease = first_state
+            .last_lease
+            .lock()
+            .expect("first lease lock should not be poisoned")
+            .expect("first backend should receive work");
+        let third_lease = third_state
+            .last_lease
+            .lock()
+            .expect("third lease lock should not be poisoned")
+            .expect("third backend should receive work");
+
+        assert_eq!(first_lease.global_stride, 3);
+        assert_eq!(first_lease.lane_offset, 0);
+        assert_eq!(third_lease.global_stride, 3);
+        assert_eq!(third_lease.lane_offset, 2);
+        assert_eq!(failed_state.stop_calls.load(Ordering::Relaxed), 1);
     }
 }

@@ -226,30 +226,66 @@ fn validate_cpu_memory(
     }
 
     let required = CPU_LANE_MEMORY_BYTES.saturating_mul(threads as u64);
-    let Some(total) = detect_total_memory_bytes() else {
+    let Some(budget) = detect_memory_budget_bytes() else {
         return Ok(());
     };
 
-    if required > total && !allow_oversubscribe {
+    if required > budget.effective_total && !allow_oversubscribe {
         bail!(
-            "configured CPU lanes need ~{} RAM ({} thread(s) * 2GB), but detected system memory is ~{}. Use fewer threads or pass --allow-oversubscribe to bypass this safety check.",
+            "configured CPU lanes need ~{} RAM ({} thread(s) * 2GB), but effective memory limit is ~{}. Use fewer threads or pass --allow-oversubscribe to bypass this safety check.",
             human_bytes(required),
             threads,
-            human_bytes(total),
+            human_bytes(budget.effective_total),
+        );
+    }
+
+    if required > budget.effective_available && !allow_oversubscribe {
+        bail!(
+            "configured CPU lanes need ~{} RAM ({} thread(s) * 2GB), but currently available memory is ~{} (effective limit ~{}). Reduce threads or pass --allow-oversubscribe if you accept potential swap/OOM risk.",
+            human_bytes(required),
+            threads,
+            human_bytes(budget.effective_available),
+            human_bytes(budget.effective_total),
         );
     }
 
     Ok(())
 }
 
-fn detect_total_memory_bytes() -> Option<u64> {
+#[derive(Debug, Clone, Copy)]
+struct MemoryBudgetBytes {
+    effective_total: u64,
+    effective_available: u64,
+}
+
+fn detect_memory_budget_bytes() -> Option<MemoryBudgetBytes> {
     let mut sys = sysinfo::System::new();
     sys.refresh_memory();
+
     let total = sys.total_memory();
     if total == 0 {
         None
     } else {
-        Some(total)
+        let mut effective_total = total;
+        let mut effective_available = sys.available_memory();
+        if effective_available == 0 {
+            effective_available = total;
+        }
+
+        if let Some(cgroup) = sys.cgroup_limits() {
+            if cgroup.total_memory > 0 {
+                effective_total = effective_total.min(cgroup.total_memory);
+            }
+            if cgroup.free_memory > 0 {
+                effective_available = effective_available.min(cgroup.free_memory);
+            }
+        }
+
+        effective_available = effective_available.min(effective_total);
+        Some(MemoryBudgetBytes {
+            effective_total,
+            effective_available,
+        })
     }
 }
 

@@ -9,6 +9,7 @@ pub mod cpu;
 pub mod nvidia;
 
 pub const WORK_ID_MAX: u64 = (1u64 << 63) - 1;
+pub type BackendInstanceId = u64;
 
 #[derive(Debug, Clone)]
 pub struct WorkTemplate {
@@ -37,13 +38,15 @@ pub struct WorkAssignment {
 pub struct MiningSolution {
     pub epoch: u64,
     pub nonce: u64,
-    pub backend: String,
+    pub backend_id: BackendInstanceId,
+    pub backend: &'static str,
 }
 
 #[derive(Debug, Clone)]
 pub enum BackendEvent {
     Solution(MiningSolution),
     Error {
+        backend_id: BackendInstanceId,
         backend: &'static str,
         message: String,
     },
@@ -53,6 +56,8 @@ pub trait PowBackend: Send {
     fn name(&self) -> &'static str;
 
     fn lanes(&self) -> usize;
+
+    fn set_instance_id(&mut self, id: BackendInstanceId);
 
     fn set_event_sink(&mut self, sink: Sender<BackendEvent>);
 
