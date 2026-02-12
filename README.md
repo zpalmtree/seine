@@ -91,6 +91,7 @@ Run headless/plain logs (no fullscreen TUI):
 - Runtime tuning knobs for performance iteration:
   - `--backend-event-capacity` (default `1024`) controls bounded backend event queue size.
   - `--hash-poll-ms` (default `200`) controls backend hash counter polling cadence.
+    - Runtime may tighten this cadence based on backend capability hints (for example future GPU backends) while preserving the configured upper bound.
   - `--stats-secs` (default `10`) controls periodic stats log emission cadence.
   - `--work-allocation` (`adaptive` or `static`) controls backend nonce-chunk splitting policy in mining mode.
   - `--request-timeout-secs` (default `10`) controls JSON API request timeout for template/submit/wallet calls.
@@ -128,6 +129,12 @@ Compare against a previous baseline:
 
 ```bash
 cargo run --release -- --bench --bench-kind backend --backend cpu --threads 1 --bench-secs 20 --bench-rounds 3 --bench-baseline bench.json
+```
+
+Allow cross-build baseline comparison while keeping runtime/config/PoW compatibility checks:
+
+```bash
+cargo run --release -- --bench --bench-kind backend --backend cpu --threads 1 --bench-secs 20 --bench-rounds 3 --bench-baseline bench.json --bench-baseline-policy ignore-environment
 ```
 
 Fail CI on regression versus baseline (example: fail below `-5%`):

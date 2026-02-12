@@ -21,6 +21,12 @@ pub enum BenchKind {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+pub enum BenchBaselinePolicy {
+    Strict,
+    IgnoreEnvironment,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
 pub enum CpuAffinityMode {
     Off,
     Auto,
@@ -182,6 +188,11 @@ struct Cli {
     /// Fail benchmark run if average H/s regresses below baseline by more than this percent.
     #[arg(long)]
     bench_fail_below_pct: Option<f64>,
+
+    /// Baseline compatibility mode: strict validates environment/build identity;
+    /// ignore-environment allows cross-build comparisons while keeping runtime/config/PoW checks.
+    #[arg(long, value_enum, default_value_t = BenchBaselinePolicy::Strict)]
+    bench_baseline_policy: BenchBaselinePolicy,
 }
 
 #[derive(Debug, Clone)]
@@ -215,6 +226,7 @@ pub struct Config {
     pub bench_output: Option<PathBuf>,
     pub bench_baseline: Option<PathBuf>,
     pub bench_fail_below_pct: Option<f64>,
+    pub bench_baseline_policy: BenchBaselinePolicy,
 }
 
 impl Config {
@@ -296,6 +308,7 @@ impl Config {
             bench_output: cli.bench_output,
             bench_baseline: cli.bench_baseline,
             bench_fail_below_pct: cli.bench_fail_below_pct,
+            bench_baseline_policy: cli.bench_baseline_policy,
         })
     }
 }
@@ -547,6 +560,7 @@ mod tests {
             bench_output: None,
             bench_baseline: None,
             bench_fail_below_pct: None,
+            bench_baseline_policy: BenchBaselinePolicy::Strict,
         }
     }
 

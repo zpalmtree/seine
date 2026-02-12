@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
 use blocknet_pow_spec::POW_HEADER_BASE_LEN;
-use crossbeam_channel::Receiver;
+use crossbeam_channel::{bounded, Receiver, Sender, TrySendError};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::terminal::is_raw_mode_enabled;
 
@@ -59,6 +59,7 @@ impl WalletPasswordSource {
 
 const TUI_RENDER_INTERVAL: Duration = Duration::from_secs(1);
 const TUI_QUIT_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const TUI_RENDER_SIGNAL_CAPACITY: usize = 8;
 const RETRY_LOG_INTERVAL: Duration = Duration::from_secs(10);
 const MIN_ADAPTIVE_WEIGHT: f64 = 1e-9;
 static PROMPT_ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -120,12 +121,19 @@ struct MiningControlPlane<'a> {
 }
 
 struct TuiDisplay {
-    renderer: TuiRenderer,
     state: TuiState,
-    last_render: Instant,
+    last_render_request: Instant,
     last_state_label: String,
+    render_signal: Sender<RenderSignal>,
+    render_stop: Arc<AtomicBool>,
+    render_worker: Option<JoinHandle<()>>,
     quit_watcher_stop: Arc<AtomicBool>,
     quit_watcher: Option<JoinHandle<()>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum RenderSignal {
+    RenderNow,
 }
 
 struct RoundUiView<'a> {
@@ -149,26 +157,26 @@ struct RoundLoopState {
 
 impl TuiDisplay {
     fn new(tui_state: TuiState, shutdown: Arc<AtomicBool>) -> Result<Self> {
-        let renderer =
-            TuiRenderer::new().map_err(|err| anyhow!("TUI renderer init failed: {err}"))?;
+        let (render_signal, render_stop, render_worker) =
+            spawn_tui_render_worker(Arc::clone(&tui_state), Arc::clone(&shutdown))?;
         let (quit_watcher_stop, quit_watcher) = spawn_tui_quit_watcher(shutdown);
-        let mut display = Self {
-            renderer,
+        let display = Self {
             state: tui_state,
-            last_render: Instant::now() - TUI_RENDER_INTERVAL,
+            last_render_request: Instant::now() - TUI_RENDER_INTERVAL,
             last_state_label: String::new(),
+            render_signal,
+            render_stop,
+            render_worker: Some(render_worker),
             quit_watcher_stop,
             quit_watcher: Some(quit_watcher),
         };
-        if let Ok(locked) = display.state.lock() {
-            let _ = display.renderer.render(&locked);
-        }
+        display.request_render();
         Ok(display)
     }
 
     fn update(&mut self, stats: &Stats, view: RoundUiView<'_>) {
         let state_changed = self.last_state_label != view.state_label;
-        if !state_changed && self.last_render.elapsed() < TUI_RENDER_INTERVAL {
+        if !state_changed && self.last_render_request.elapsed() < TUI_RENDER_INTERVAL {
             return;
         }
 
@@ -192,10 +200,8 @@ impl TuiDisplay {
             s.backend_rates = backend_rate;
         }
 
-        if let Ok(locked) = self.state.lock() {
-            let _ = self.renderer.render(&locked);
-        }
-        self.last_render = Instant::now();
+        self.request_render();
+        self.last_render_request = Instant::now();
         self.last_state_label = view.state_label.to_string();
     }
 
@@ -204,13 +210,12 @@ impl TuiDisplay {
             let elapsed = s.started_at.elapsed().as_secs();
             s.push_block_found_tick(elapsed);
         }
+        self.request_render();
     }
 
     fn render_now(&mut self) {
-        if let Ok(locked) = self.state.lock() {
-            let _ = self.renderer.render(&locked);
-        }
-        self.last_render = Instant::now();
+        self.request_render();
+        self.last_render_request = Instant::now();
     }
 
     fn set_state_and_render(&mut self, state_label: &str) {
@@ -220,10 +225,24 @@ impl TuiDisplay {
         self.last_state_label = state_label.to_string();
         self.render_now();
     }
+
+    fn request_render(&self) {
+        match self.render_signal.try_send(RenderSignal::RenderNow) {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) => {}
+            Err(TrySendError::Disconnected(_)) => {}
+        }
+    }
 }
 
 impl Drop for TuiDisplay {
     fn drop(&mut self) {
+        self.render_stop.store(true, Ordering::SeqCst);
+        let _ = self.render_signal.try_send(RenderSignal::RenderNow);
+        if let Some(handle) = self.render_worker.take() {
+            let _ = handle.join();
+        }
+
         self.quit_watcher_stop.store(true, Ordering::SeqCst);
         if let Some(handle) = self.quit_watcher.take() {
             let _ = handle.join();
@@ -263,6 +282,61 @@ fn render_tui_now(tui: &mut Option<TuiDisplay>) {
 fn set_tui_state_label(tui: &mut Option<TuiDisplay>, state_label: &str) {
     if let Some(display) = tui.as_mut() {
         display.set_state_and_render(state_label);
+    }
+}
+
+fn spawn_tui_render_worker(
+    state: TuiState,
+    shutdown: Arc<AtomicBool>,
+) -> Result<(Sender<RenderSignal>, Arc<AtomicBool>, JoinHandle<()>)> {
+    let (render_signal_tx, render_signal_rx) = bounded(TUI_RENDER_SIGNAL_CAPACITY.max(1));
+    let render_stop = Arc::new(AtomicBool::new(false));
+    let render_stop_flag = Arc::clone(&render_stop);
+    let (ready_tx, ready_rx) = bounded::<Result<()>>(1);
+
+    let render_worker = thread::spawn(move || {
+        let mut renderer = match TuiRenderer::new() {
+            Ok(renderer) => {
+                let _ = ready_tx.send(Ok(()));
+                renderer
+            }
+            Err(err) => {
+                let _ = ready_tx.send(Err(anyhow!("TUI renderer init failed: {err}")));
+                return;
+            }
+        };
+
+        if let Ok(locked) = state.lock() {
+            let _ = renderer.render(&locked);
+        }
+
+        while !render_stop_flag.load(Ordering::Relaxed) && !shutdown.load(Ordering::Relaxed) {
+            match render_signal_rx.recv_timeout(Duration::from_millis(100)) {
+                Ok(RenderSignal::RenderNow) => {
+                    if let Ok(locked) = state.lock() {
+                        let _ = renderer.render(&locked);
+                    }
+                }
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) => continue,
+                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+    });
+
+    match ready_rx.recv() {
+        Ok(Ok(())) => Ok((render_signal_tx, render_stop, render_worker)),
+        Ok(Err(err)) => {
+            render_stop.store(true, Ordering::SeqCst);
+            let _ = render_worker.join();
+            Err(err)
+        }
+        Err(_) => {
+            render_stop.store(true, Ordering::SeqCst);
+            let _ = render_worker.join();
+            Err(anyhow!(
+                "TUI renderer thread terminated before initialization"
+            ))
+        }
     }
 }
 
@@ -686,7 +760,9 @@ fn run_round_event_loop(
     let mut round_backend_hashes = BTreeMap::new();
     let mut round_backend_telemetry = BTreeMap::new();
     let mut topology_changed = false;
-    let mut next_hash_poll_at = Instant::now();
+    let mut hash_poll_interval =
+        super::effective_hash_poll_interval(backends, cfg.hash_poll_interval);
+    let mut next_hash_poll_at = Instant::now() + hash_poll_interval;
     update_tui(
         tui,
         stats,
@@ -716,7 +792,7 @@ fn run_round_event_loop(
                 Some(&mut round_backend_hashes),
                 Some(&mut round_backend_telemetry),
             );
-            next_hash_poll_at = now + cfg.hash_poll_interval;
+            next_hash_poll_at = now + hash_poll_interval;
             update_tui(
                 tui,
                 stats,
@@ -806,7 +882,9 @@ fn run_round_event_loop(
                 },
             )?;
             nonce_scheduler.consume_additional_span(additional_span);
-            next_hash_poll_at = Instant::now();
+            hash_poll_interval =
+                super::effective_hash_poll_interval(backends, cfg.hash_poll_interval);
+            next_hash_poll_at = Instant::now() + hash_poll_interval;
             topology_changed = false;
             update_tui(
                 tui,

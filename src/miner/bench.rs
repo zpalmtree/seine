@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use sysinfo::System;
 
 use crate::backend::{BackendEvent, BackendInstanceId, PowBackend};
-use crate::config::{BenchKind, Config, CpuAffinityMode, WorkAllocation};
+use crate::config::{BenchBaselinePolicy, BenchKind, Config, CpuAffinityMode, WorkAllocation};
 
 use super::scheduler::NonceScheduler;
 use super::stats::{format_hashrate, median};
@@ -167,6 +167,13 @@ fn run_kernel_benchmark(
                 .map(|pct| format!("-{pct:.2}%"))
                 .unwrap_or_else(|| "off".to_string()),
         ),
+        (
+            "Baseline Policy",
+            match cfg.bench_baseline_policy {
+                BenchBaselinePolicy::Strict => "strict".to_string(),
+                BenchBaselinePolicy::IgnoreEnvironment => "ignore-environment".to_string(),
+            },
+        ),
     ];
     startup_banner(&lines);
 
@@ -248,6 +255,8 @@ fn run_worker_benchmark(
     } else {
         "backend"
     };
+    let effective_hash_poll =
+        super::effective_hash_poll_interval(&backends, cfg.hash_poll_interval);
 
     let lines = vec![
         ("Mode", "benchmark".to_string()),
@@ -259,7 +268,11 @@ fn run_worker_benchmark(
         ("Seconds/Round", cfg.bench_secs.to_string()),
         (
             "Hash Poll",
-            format!("{}ms", cfg.hash_poll_interval.as_millis()),
+            format!(
+                "configured={}ms effective={}ms",
+                cfg.hash_poll_interval.as_millis(),
+                effective_hash_poll.as_millis()
+            ),
         ),
         (
             "Accounting",
@@ -276,6 +289,13 @@ fn run_worker_benchmark(
             cfg.bench_fail_below_pct
                 .map(|pct| format!("-{pct:.2}%"))
                 .unwrap_or_else(|| "off".to_string()),
+        ),
+        (
+            "Baseline Policy",
+            match cfg.bench_baseline_policy {
+                BenchBaselinePolicy::Strict => "strict".to_string(),
+                BenchBaselinePolicy::IgnoreEnvironment => "ignore-environment".to_string(),
+            },
         ),
     ];
     startup_banner(&lines);
@@ -346,7 +366,9 @@ fn run_worker_benchmark_inner(
         let mut round_backend_hashes = BTreeMap::new();
         let mut round_backend_telemetry = BTreeMap::new();
         let mut topology_changed = false;
-        let mut next_hash_poll_at = Instant::now();
+        let mut hash_poll_interval =
+            super::effective_hash_poll_interval(backends, cfg.hash_poll_interval);
+        let mut next_hash_poll_at = Instant::now() + hash_poll_interval;
         while Instant::now() < stop_at && !shutdown.load(Ordering::Relaxed) {
             let now = Instant::now();
             if now >= next_hash_poll_at {
@@ -357,7 +379,7 @@ fn run_worker_benchmark_inner(
                     Some(&mut round_backend_hashes),
                     Some(&mut round_backend_telemetry),
                 );
-                next_hash_poll_at = now + cfg.hash_poll_interval;
+                next_hash_poll_at = now + hash_poll_interval;
             }
             let now = Instant::now();
             let wait_for = stop_at
@@ -405,7 +427,9 @@ fn run_worker_benchmark_inner(
                     },
                 )?;
                 scheduler.consume_additional_span(additional_span);
-                next_hash_poll_at = Instant::now();
+                hash_poll_interval =
+                    super::effective_hash_poll_interval(backends, cfg.hash_poll_interval);
+                next_hash_poll_at = Instant::now() + hash_poll_interval;
                 topology_changed = false;
             }
         }
@@ -561,7 +585,8 @@ fn summarize_benchmark(cfg: &Config, mut report: BenchReport) -> Result<()> {
             .with_context(|| format!("failed to read baseline file {}", path.display()))?;
         let baseline: BenchReport = serde_json::from_str(&baseline_text)
             .with_context(|| format!("failed to parse baseline JSON {}", path.display()))?;
-        let compatibility_issues = baseline_compatibility_issues(&report, &baseline);
+        let compatibility_issues =
+            baseline_compatibility_issues(&report, &baseline, cfg.bench_baseline_policy);
         if !compatibility_issues.is_empty() {
             let message = format!(
                 "baseline is not comparable ({})",
@@ -618,7 +643,11 @@ fn summarize_benchmark(cfg: &Config, mut report: BenchReport) -> Result<()> {
     Ok(())
 }
 
-fn baseline_compatibility_issues(current: &BenchReport, baseline: &BenchReport) -> Vec<String> {
+fn baseline_compatibility_issues(
+    current: &BenchReport,
+    baseline: &BenchReport,
+    policy: BenchBaselinePolicy,
+) -> Vec<String> {
     let mut issues = Vec::new();
 
     if baseline.schema_version != current.schema_version {
@@ -745,92 +774,94 @@ fn baseline_compatibility_issues(current: &BenchReport, baseline: &BenchReport) 
         issues.push("baseline benchmark report schema is too old".to_string());
     }
 
-    if !baseline.environment.seine_version.is_empty()
-        && !current.environment.seine_version.is_empty()
-        && baseline.environment.seine_version != current.environment.seine_version
-    {
-        issues.push(format!(
-            "version mismatch baseline={} current={}",
-            baseline.environment.seine_version, current.environment.seine_version
-        ));
-    }
-    if baseline.environment.git_commit.is_some()
-        && current.environment.git_commit.is_some()
-        && baseline.environment.git_commit != current.environment.git_commit
-    {
-        issues.push(format!(
-            "git mismatch baseline={} current={}",
-            baseline
-                .environment
-                .git_commit
-                .as_deref()
-                .unwrap_or("unknown"),
-            current
-                .environment
-                .git_commit
-                .as_deref()
-                .unwrap_or("unknown")
-        ));
-    }
-    if !baseline.environment.target_triple.is_empty()
-        && !current.environment.target_triple.is_empty()
-        && baseline.environment.target_triple != current.environment.target_triple
-    {
-        issues.push(format!(
-            "target mismatch baseline={} current={}",
-            baseline.environment.target_triple, current.environment.target_triple
-        ));
-    }
-    if baseline.environment.cpu_arch.is_some()
-        && current.environment.cpu_arch.is_some()
-        && baseline.environment.cpu_arch != current.environment.cpu_arch
-    {
-        issues.push(format!(
-            "cpu_arch mismatch baseline={} current={}",
-            baseline
-                .environment
-                .cpu_arch
-                .as_deref()
-                .unwrap_or("unknown"),
-            current.environment.cpu_arch.as_deref().unwrap_or("unknown")
-        ));
-    }
-    if baseline.environment.cpu_brand.is_some()
-        && current.environment.cpu_brand.is_some()
-        && baseline.environment.cpu_brand != current.environment.cpu_brand
-    {
-        issues.push(format!(
-            "cpu mismatch baseline={} current={}",
-            baseline
-                .environment
-                .cpu_brand
-                .as_deref()
-                .unwrap_or("unknown"),
-            current
-                .environment
-                .cpu_brand
-                .as_deref()
-                .unwrap_or("unknown")
-        ));
-    }
-    if baseline.environment.logical_cores > 0
-        && current.environment.logical_cores > 0
-        && baseline.environment.logical_cores != current.environment.logical_cores
-    {
-        issues.push(format!(
-            "logical_cores mismatch baseline={} current={}",
-            baseline.environment.logical_cores, current.environment.logical_cores
-        ));
-    }
-    if baseline.environment.physical_cores.is_some()
-        && current.environment.physical_cores.is_some()
-        && baseline.environment.physical_cores != current.environment.physical_cores
-    {
-        issues.push(format!(
-            "physical_cores mismatch baseline={} current={}",
-            baseline.environment.physical_cores.unwrap_or(0),
-            current.environment.physical_cores.unwrap_or(0)
-        ));
+    if policy == BenchBaselinePolicy::Strict {
+        if !baseline.environment.seine_version.is_empty()
+            && !current.environment.seine_version.is_empty()
+            && baseline.environment.seine_version != current.environment.seine_version
+        {
+            issues.push(format!(
+                "version mismatch baseline={} current={}",
+                baseline.environment.seine_version, current.environment.seine_version
+            ));
+        }
+        if baseline.environment.git_commit.is_some()
+            && current.environment.git_commit.is_some()
+            && baseline.environment.git_commit != current.environment.git_commit
+        {
+            issues.push(format!(
+                "git mismatch baseline={} current={}",
+                baseline
+                    .environment
+                    .git_commit
+                    .as_deref()
+                    .unwrap_or("unknown"),
+                current
+                    .environment
+                    .git_commit
+                    .as_deref()
+                    .unwrap_or("unknown")
+            ));
+        }
+        if !baseline.environment.target_triple.is_empty()
+            && !current.environment.target_triple.is_empty()
+            && baseline.environment.target_triple != current.environment.target_triple
+        {
+            issues.push(format!(
+                "target mismatch baseline={} current={}",
+                baseline.environment.target_triple, current.environment.target_triple
+            ));
+        }
+        if baseline.environment.cpu_arch.is_some()
+            && current.environment.cpu_arch.is_some()
+            && baseline.environment.cpu_arch != current.environment.cpu_arch
+        {
+            issues.push(format!(
+                "cpu_arch mismatch baseline={} current={}",
+                baseline
+                    .environment
+                    .cpu_arch
+                    .as_deref()
+                    .unwrap_or("unknown"),
+                current.environment.cpu_arch.as_deref().unwrap_or("unknown")
+            ));
+        }
+        if baseline.environment.cpu_brand.is_some()
+            && current.environment.cpu_brand.is_some()
+            && baseline.environment.cpu_brand != current.environment.cpu_brand
+        {
+            issues.push(format!(
+                "cpu mismatch baseline={} current={}",
+                baseline
+                    .environment
+                    .cpu_brand
+                    .as_deref()
+                    .unwrap_or("unknown"),
+                current
+                    .environment
+                    .cpu_brand
+                    .as_deref()
+                    .unwrap_or("unknown")
+            ));
+        }
+        if baseline.environment.logical_cores > 0
+            && current.environment.logical_cores > 0
+            && baseline.environment.logical_cores != current.environment.logical_cores
+        {
+            issues.push(format!(
+                "logical_cores mismatch baseline={} current={}",
+                baseline.environment.logical_cores, current.environment.logical_cores
+            ));
+        }
+        if baseline.environment.physical_cores.is_some()
+            && current.environment.physical_cores.is_some()
+            && baseline.environment.physical_cores != current.environment.physical_cores
+        {
+            issues.push(format!(
+                "physical_cores mismatch baseline={} current={}",
+                baseline.environment.physical_cores.unwrap_or(0),
+                current.environment.physical_cores.unwrap_or(0)
+            ));
+        }
     }
 
     issues
@@ -1082,7 +1113,8 @@ mod tests {
         let mut baseline = sample_report();
         baseline.bench_kind = "kernel".to_string();
 
-        let issues = baseline_compatibility_issues(&current, &baseline);
+        let issues =
+            baseline_compatibility_issues(&current, &baseline, BenchBaselinePolicy::Strict);
         assert!(!issues.is_empty());
         assert!(issues.iter().any(|issue| issue.contains("kind mismatch")));
     }
@@ -1093,7 +1125,35 @@ mod tests {
         let mut baseline = sample_report();
         baseline.schema_version = 1;
 
-        let issues = baseline_compatibility_issues(&current, &baseline);
+        let issues =
+            baseline_compatibility_issues(&current, &baseline, BenchBaselinePolicy::Strict);
         assert!(issues.iter().any(|issue| issue.contains("schema mismatch")));
+    }
+
+    #[test]
+    fn baseline_policy_can_ignore_environment_mismatch() {
+        let current = sample_report();
+        let mut baseline = sample_report();
+        baseline.environment.git_commit = Some("a".to_string());
+        let mut current_with_git = current.clone();
+        current_with_git.environment.git_commit = Some("b".to_string());
+
+        let strict_issues = baseline_compatibility_issues(
+            &current_with_git,
+            &baseline,
+            BenchBaselinePolicy::Strict,
+        );
+        assert!(strict_issues
+            .iter()
+            .any(|issue| issue.contains("git mismatch")));
+
+        let relaxed_issues = baseline_compatibility_issues(
+            &current_with_git,
+            &baseline,
+            BenchBaselinePolicy::IgnoreEnvironment,
+        );
+        assert!(!relaxed_issues
+            .iter()
+            .any(|issue| issue.contains("git mismatch")));
     }
 }

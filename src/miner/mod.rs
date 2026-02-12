@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 use std::io::IsTerminal;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Result};
@@ -118,6 +119,14 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
         format!(
             "chunking | {}",
             backend_chunk_profiles(&backends, cfg.nonce_iters_per_lane)
+        ),
+    );
+    info(
+        "MINER",
+        format!(
+            "hash-poll | configured={}ms effective={}ms",
+            cfg.hash_poll_interval.as_millis(),
+            effective_hash_poll_interval(&backends, cfg.hash_poll_interval).as_millis(),
         ),
     );
     if cfg.strict_round_accounting {
@@ -597,26 +606,10 @@ fn control_backend_slots(
         return Ok(RuntimeBackendEventAction::None);
     }
 
-    let mut failures: BTreeMap<BackendInstanceId, (&'static str, Vec<String>)> = BTreeMap::new();
-    for slot in backends.iter() {
-        if let Err(err) = slot.backend.cancel_work() {
-            failures
-                .entry(slot.id)
-                .or_insert_with(|| (slot.backend.name(), Vec::new()))
-                .1
-                .push(format!("cancel failed: {err:#}"));
-        }
-    }
+    let mut failures = collect_backend_control_failures(backends, BackendControlPhase::Cancel);
     if include_fence {
-        for slot in backends.iter() {
-            if let Err(err) = slot.backend.fence() {
-                failures
-                    .entry(slot.id)
-                    .or_insert_with(|| (slot.backend.name(), Vec::new()))
-                    .1
-                    .push(format!("fence failed: {err:#}"));
-            }
-        }
+        let fence_failures = collect_backend_control_failures(backends, BackendControlPhase::Fence);
+        merge_backend_failures(&mut failures, fence_failures);
     }
 
     if failures.is_empty() {
@@ -685,6 +678,67 @@ fn control_backend_slots(
     }
 
     Ok(RuntimeBackendEventAction::TopologyChanged)
+}
+
+#[derive(Debug, Clone, Copy)]
+enum BackendControlPhase {
+    Cancel,
+    Fence,
+}
+
+fn collect_backend_control_failures(
+    backends: &mut [BackendSlot],
+    phase: BackendControlPhase,
+) -> BTreeMap<BackendInstanceId, (&'static str, Vec<String>)> {
+    let (tx, rx) = crossbeam_channel::unbounded::<(BackendInstanceId, &'static str, String)>();
+
+    thread::scope(|scope| {
+        for slot in backends {
+            let tx = tx.clone();
+            scope.spawn(move || {
+                let result = match phase {
+                    BackendControlPhase::Cancel => slot.backend.cancel_work(),
+                    BackendControlPhase::Fence => slot.backend.fence(),
+                };
+                if let Err(err) = result {
+                    let action = match phase {
+                        BackendControlPhase::Cancel => "cancel",
+                        BackendControlPhase::Fence => "fence",
+                    };
+                    let _ = tx.send((
+                        slot.id,
+                        slot.backend.name(),
+                        format!("{action} failed: {err:#}"),
+                    ));
+                }
+            });
+        }
+    });
+
+    drop(tx);
+
+    let mut failures: BTreeMap<BackendInstanceId, (&'static str, Vec<String>)> = BTreeMap::new();
+    for (backend_id, backend, message) in rx.iter() {
+        failures
+            .entry(backend_id)
+            .or_insert_with(|| (backend, Vec::new()))
+            .1
+            .push(message);
+    }
+    failures
+}
+
+fn merge_backend_failures(
+    failures: &mut BTreeMap<BackendInstanceId, (&'static str, Vec<String>)>,
+    additional: BTreeMap<BackendInstanceId, (&'static str, Vec<String>)>,
+) {
+    for (backend_id, (backend, messages)) in additional {
+        failures
+            .entry(backend_id)
+            .or_insert_with(|| (backend, Vec::new()))
+            .1
+            .extend(messages);
+    }
 }
 
 fn remove_backend_by_id(backends: &mut Vec<BackendSlot>, backend_id: BackendInstanceId) -> bool {
@@ -865,10 +919,35 @@ fn backend_chunk_profiles(backends: &[BackendSlot], default_iters_per_lane: u64)
         .iter()
         .map(|slot| {
             let hinted = backend_iters_per_lane(slot, default_iters_per_lane);
-            format!("{}#{}={} iters/lane", slot.backend.name(), slot.id, hinted)
+            let capabilities = slot.backend.capabilities();
+            let inflight = capabilities.max_inflight_assignments.max(1);
+            let poll_hint = capabilities
+                .preferred_hash_poll_interval
+                .map(|d| format!("{}ms", d.as_millis()))
+                .unwrap_or_else(|| "none".to_string());
+            format!(
+                "{}#{}={} iters/lane inflight={} poll_hint={}",
+                slot.backend.name(),
+                slot.id,
+                hinted,
+                inflight,
+                poll_hint,
+            )
         })
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+fn effective_hash_poll_interval(backends: &[BackendSlot], configured: Duration) -> Duration {
+    let mut effective = configured.max(Duration::from_millis(1));
+    for slot in backends {
+        if let Some(hint) = slot.backend.capabilities().preferred_hash_poll_interval {
+            if hint > Duration::from_millis(0) {
+                effective = effective.min(hint);
+            }
+        }
+    }
+    effective
 }
 
 fn cpu_lane_count(backends: &[BackendSlot]) -> u64 {
@@ -998,6 +1077,8 @@ mod tests {
         lanes: usize,
         state: Arc<MockState>,
         preferred_iters_per_lane: Option<u64>,
+        preferred_hash_poll_interval: Option<Duration>,
+        max_inflight_assignments: u32,
     }
 
     impl MockBackend {
@@ -1007,11 +1088,18 @@ mod tests {
                 lanes,
                 state,
                 preferred_iters_per_lane: None,
+                preferred_hash_poll_interval: None,
+                max_inflight_assignments: 1,
             }
         }
 
         fn with_preferred_iters_per_lane(mut self, preferred_iters_per_lane: u64) -> Self {
             self.preferred_iters_per_lane = Some(preferred_iters_per_lane.max(1));
+            self
+        }
+
+        fn with_preferred_hash_poll_interval(mut self, interval: Duration) -> Self {
+            self.preferred_hash_poll_interval = Some(interval);
             self
         }
     }
@@ -1056,6 +1144,8 @@ mod tests {
         fn capabilities(&self) -> crate::backend::BackendCapabilities {
             crate::backend::BackendCapabilities {
                 preferred_iters_per_lane: self.preferred_iters_per_lane,
+                preferred_hash_poll_interval: self.preferred_hash_poll_interval,
+                max_inflight_assignments: self.max_inflight_assignments.max(1),
             }
         }
     }
@@ -1292,6 +1382,30 @@ mod tests {
         assert!(counts[1] >= 2);
     }
 
+    #[test]
+    fn effective_hash_poll_interval_uses_backend_hint() {
+        let state_a = Arc::new(MockState::default());
+        let state_b = Arc::new(MockState::default());
+        let backends = vec![
+            slot(
+                1,
+                1,
+                Box::new(
+                    MockBackend::new("cpu", 1, Arc::clone(&state_a))
+                        .with_preferred_hash_poll_interval(Duration::from_millis(50)),
+                ),
+            ),
+            slot(
+                2,
+                1,
+                Box::new(MockBackend::new("cpu", 1, Arc::clone(&state_b))),
+            ),
+        ];
+
+        let effective = effective_hash_poll_interval(&backends, Duration::from_millis(200));
+        assert_eq!(effective, Duration::from_millis(50));
+    }
+
     #[derive(Default)]
     struct QuiesceTrace {
         events: Mutex<Vec<String>>,
@@ -1371,14 +1485,32 @@ mod tests {
             .lock()
             .expect("trace lock should not be poisoned")
             .clone();
+        assert_eq!(events.len(), 4);
         assert_eq!(
-            events,
-            vec![
-                "cancel:cpu-a".to_string(),
-                "cancel:cpu-b".to_string(),
-                "fence:cpu-a".to_string(),
-                "fence:cpu-b".to_string(),
-            ]
+            events
+                .iter()
+                .filter(|entry| entry.starts_with("cancel:"))
+                .count(),
+            2
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|entry| entry.starts_with("fence:"))
+                .count(),
+            2
+        );
+
+        let first_fence_idx = events
+            .iter()
+            .position(|entry| entry.starts_with("fence:"))
+            .expect("fence events should exist");
+        assert!(
+            events
+                .iter()
+                .take(first_fence_idx)
+                .all(|entry| entry.starts_with("cancel:")),
+            "all pre-fence actions should be cancels: {events:?}"
         );
     }
 

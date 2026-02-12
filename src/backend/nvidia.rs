@@ -4,8 +4,8 @@ use anyhow::{bail, Result};
 use crossbeam_channel::Sender;
 
 use crate::backend::{
-    BackendEvent, BackendInstanceId, BenchBackend, PowBackend, PreemptionGranularity,
-    WorkAssignment,
+    BackendCapabilities, BackendEvent, BackendInstanceId, BenchBackend, PowBackend,
+    PreemptionGranularity, WorkAssignment,
 };
 
 pub struct NvidiaBackend {
@@ -65,6 +65,14 @@ impl PowBackend for NvidiaBackend {
     fn preemption_granularity(&self) -> PreemptionGranularity {
         // Placeholder until the CUDA worker model is implemented.
         PreemptionGranularity::Unknown
+    }
+
+    fn capabilities(&self) -> BackendCapabilities {
+        BackendCapabilities {
+            preferred_iters_per_lane: Some(1),
+            preferred_hash_poll_interval: Some(std::time::Duration::from_millis(50)),
+            max_inflight_assignments: 2,
+        }
     }
 
     fn bench_backend(&self) -> Option<&dyn BenchBackend> {

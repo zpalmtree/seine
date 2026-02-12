@@ -1,6 +1,6 @@
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use crossbeam_channel::Sender;
@@ -11,13 +11,14 @@ pub mod nvidia;
 #[cfg(not(feature = "nvidia"))]
 pub mod nvidia {
     use std::sync::atomic::AtomicBool;
+    use std::time::Duration;
 
     use anyhow::{bail, Result};
     use crossbeam_channel::Sender;
 
     use super::{
-        BackendEvent, BackendInstanceId, BenchBackend, PowBackend, PreemptionGranularity,
-        WorkAssignment,
+        BackendCapabilities, BackendEvent, BackendInstanceId, BenchBackend, PowBackend,
+        PreemptionGranularity, WorkAssignment,
     };
 
     pub struct NvidiaBackend {
@@ -76,6 +77,14 @@ pub mod nvidia {
 
         fn preemption_granularity(&self) -> PreemptionGranularity {
             PreemptionGranularity::Unknown
+        }
+
+        fn capabilities(&self) -> BackendCapabilities {
+            BackendCapabilities {
+                preferred_iters_per_lane: Some(1),
+                preferred_hash_poll_interval: Some(Duration::from_millis(50)),
+                max_inflight_assignments: 2,
+            }
         }
 
         fn bench_backend(&self) -> Option<&dyn BenchBackend> {
@@ -142,11 +151,27 @@ pub struct BackendTelemetry {
     pub completed_assignment_micros: u64,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub struct BackendCapabilities {
     /// Preferred iterations per lane for one assignment chunk.
     /// Runtime treats this as a scheduling hint, not a hard contract.
     pub preferred_iters_per_lane: Option<u64>,
+    /// Preferred backend hash-poll cadence for telemetry/accounting.
+    /// Runtime clamps this against operator-configured polling limits.
+    pub preferred_hash_poll_interval: Option<Duration>,
+    /// Maximum number of in-flight assignments this backend can queue efficiently.
+    /// Current runtime dispatches one assignment at a time but records this for profiling.
+    pub max_inflight_assignments: u32,
+}
+
+impl Default for BackendCapabilities {
+    fn default() -> Self {
+        Self {
+            preferred_iters_per_lane: None,
+            preferred_hash_poll_interval: None,
+            max_inflight_assignments: 1,
+        }
+    }
 }
 
 pub trait BenchBackend: Send {

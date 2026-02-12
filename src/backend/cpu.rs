@@ -9,8 +9,8 @@ use blocknet_pow_spec::{pow_params, POW_OUTPUT_LEN};
 use crossbeam_channel::{SendTimeoutError, Sender};
 
 use crate::backend::{
-    BackendEvent, BackendInstanceId, BackendTelemetry, BenchBackend, MiningSolution, PowBackend,
-    PreemptionGranularity, WorkAssignment, WORK_ID_MAX,
+    BackendCapabilities, BackendEvent, BackendInstanceId, BackendTelemetry, BenchBackend,
+    MiningSolution, PowBackend, PreemptionGranularity, WorkAssignment, WORK_ID_MAX,
 };
 use crate::config::CpuAffinityMode;
 use crate::types::hash_meets_target;
@@ -307,6 +307,14 @@ impl PowBackend for CpuBackend {
 
     fn preemption_granularity(&self) -> PreemptionGranularity {
         PreemptionGranularity::Hashes(1)
+    }
+
+    fn capabilities(&self) -> BackendCapabilities {
+        BackendCapabilities {
+            preferred_iters_per_lane: None,
+            preferred_hash_poll_interval: Some(HASH_FLUSH_INTERVAL),
+            max_inflight_assignments: 1,
+        }
     }
 
     fn bench_backend(&self) -> Option<&dyn BenchBackend> {
@@ -621,13 +629,23 @@ fn has_pending_work(shared: &Shared) -> bool {
 }
 
 fn start_assignment(shared: &Shared, generation: u64) {
-    shared.assignment_hashes.store(0, Ordering::Release);
+    let idle = shared.active_workers.load(Ordering::Acquire) == 0;
+    if idle {
+        // When a reassignment happens while workers are still draining, resetting counters here
+        // can drop or misattribute tail hashes. Finalize/reset only after lanes are quiesced.
+        maybe_finalize_assignment(shared);
+        shared.assignment_hashes.store(0, Ordering::Release);
+        if let Ok(mut started_at) = shared.assignment_started_at.lock() {
+            *started_at = Some(Instant::now());
+        }
+    } else if let Ok(mut started_at) = shared.assignment_started_at.lock() {
+        if started_at.is_none() {
+            *started_at = Some(Instant::now());
+        }
+    }
     shared
         .assignment_generation
         .store(generation, Ordering::Release);
-    if let Ok(mut started_at) = shared.assignment_started_at.lock() {
-        *started_at = Some(Instant::now());
-    }
 }
 
 fn maybe_finalize_assignment(shared: &Shared) {
@@ -772,13 +790,16 @@ fn send_critical_event(shared: &Shared, tx: &Sender<BackendEvent>, event: Backen
 
 #[cfg(test)]
 mod tests {
-    use super::{emit_error, lane_quota_for_chunk, BackendEvent, CpuBackend, MiningSolution};
+    use super::{
+        emit_error, lane_quota_for_chunk, start_assignment, BackendEvent, CpuBackend,
+        MiningSolution,
+    };
     use crate::backend::PowBackend;
     use crate::config::CpuAffinityMode;
     use std::sync::atomic::Ordering;
     use std::sync::Arc;
     use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn lane_quota_even_chunk_distribution() {
@@ -844,5 +865,76 @@ mod tests {
         emit_thread
             .join()
             .expect("error emitter thread should finish once queued");
+    }
+
+    #[test]
+    fn start_assignment_does_not_reset_hashes_while_workers_active() {
+        let backend = CpuBackend::new(1, CpuAffinityMode::Off);
+        backend.shared.active_workers.store(1, Ordering::Release);
+        backend
+            .shared
+            .assignment_hashes
+            .store(91, Ordering::Release);
+        backend
+            .shared
+            .assignment_generation
+            .store(1, Ordering::Release);
+        if let Ok(mut started_at) = backend.shared.assignment_started_at.lock() {
+            *started_at = Some(Instant::now());
+        }
+
+        start_assignment(&backend.shared, 2);
+
+        assert_eq!(backend.shared.assignment_hashes.load(Ordering::Acquire), 91);
+        assert_eq!(
+            backend.shared.assignment_generation.load(Ordering::Acquire),
+            2
+        );
+    }
+
+    #[test]
+    fn start_assignment_finalizes_previous_window_when_idle() {
+        let backend = CpuBackend::new(1, CpuAffinityMode::Off);
+        backend.shared.active_workers.store(0, Ordering::Release);
+        backend
+            .shared
+            .assignment_hashes
+            .store(33, Ordering::Release);
+        backend
+            .shared
+            .assignment_generation
+            .store(1, Ordering::Release);
+        backend
+            .shared
+            .assignment_reported_generation
+            .store(0, Ordering::Release);
+        if let Ok(mut started_at) = backend.shared.assignment_started_at.lock() {
+            *started_at = Some(Instant::now() - Duration::from_millis(5));
+        }
+
+        start_assignment(&backend.shared, 2);
+
+        assert_eq!(
+            backend.shared.completed_assignments.load(Ordering::Acquire),
+            1
+        );
+        assert_eq!(
+            backend
+                .shared
+                .completed_assignment_hashes
+                .load(Ordering::Acquire),
+            33
+        );
+        assert_eq!(backend.shared.assignment_hashes.load(Ordering::Acquire), 0);
+        assert_eq!(
+            backend.shared.assignment_generation.load(Ordering::Acquire),
+            2
+        );
+        assert!(backend
+            .shared
+            .assignment_started_at
+            .lock()
+            .expect("assignment_started_at lock should not be poisoned")
+            .is_some());
     }
 }
