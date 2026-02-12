@@ -5,7 +5,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
-use crossbeam_channel::{bounded, unbounded, RecvTimeoutError, Sender};
+use crossbeam_channel::{bounded, RecvTimeoutError, Sender, TrySendError};
 
 use crate::backend::{BackendInstanceId, PowBackend, WorkAssignment};
 
@@ -55,19 +55,36 @@ struct BackendWorker {
     tx: Sender<BackendWorkerCommand>,
 }
 
-static BACKEND_WORKERS: OnceLock<Mutex<BTreeMap<BackendInstanceId, BackendWorker>>> =
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+struct BackendWorkerKey {
+    backend_id: BackendInstanceId,
+    backend_ptr: usize,
+}
+
+static BACKEND_WORKERS: OnceLock<Mutex<BTreeMap<BackendWorkerKey, BackendWorker>>> =
     OnceLock::new();
 
-fn worker_registry() -> &'static Mutex<BTreeMap<BackendInstanceId, BackendWorker>> {
+fn worker_registry() -> &'static Mutex<BTreeMap<BackendWorkerKey, BackendWorker>> {
     BACKEND_WORKERS.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+fn backend_worker_key(
+    backend_id: BackendInstanceId,
+    backend_handle: &Arc<dyn PowBackend>,
+) -> BackendWorkerKey {
+    BackendWorkerKey {
+        backend_id,
+        backend_ptr: Arc::as_ptr(backend_handle) as *const () as usize,
+    }
 }
 
 fn spawn_backend_worker(
     backend_id: BackendInstanceId,
     backend: &'static str,
+    backend_ptr: usize,
 ) -> Option<BackendWorker> {
-    let (cmd_tx, cmd_rx) = unbounded::<BackendWorkerCommand>();
-    let thread_name = format!("seine-backend-{backend}-{backend_id}");
+    let (cmd_tx, cmd_rx) = bounded::<BackendWorkerCommand>(1);
+    let thread_name = format!("seine-backend-{backend}-{backend_id}-{backend_ptr:x}");
     let spawn_result = thread::Builder::new().name(thread_name).spawn(move || {
         while let Ok(command) = cmd_rx.recv() {
             run_backend_command(command);
@@ -83,14 +100,16 @@ fn spawn_backend_worker(
 fn worker_sender_for_backend(
     backend_id: BackendInstanceId,
     backend: &'static str,
+    backend_handle: &Arc<dyn PowBackend>,
 ) -> Option<Sender<BackendWorkerCommand>> {
+    let key = backend_worker_key(backend_id, backend_handle);
     let mut registry = worker_registry().lock().ok()?;
-    if let Some(worker) = registry.get(&backend_id) {
+    if let Some(worker) = registry.get(&key) {
         return Some(worker.tx.clone());
     }
-    let worker = spawn_backend_worker(backend_id, backend)?;
+    let worker = spawn_backend_worker(backend_id, backend, key.backend_ptr)?;
     let sender = worker.tx.clone();
-    registry.insert(backend_id, worker);
+    registry.insert(key, worker);
     Some(sender)
 }
 
@@ -101,15 +120,22 @@ pub(super) fn clear_backend_workers() {
 }
 
 pub(super) fn prune_backend_workers(backends: &[BackendSlot]) {
-    let active_ids = backends.iter().map(|slot| slot.id).collect::<BTreeSet<_>>();
+    let active_keys = backends
+        .iter()
+        .map(|slot| backend_worker_key(slot.id, &slot.backend))
+        .collect::<BTreeSet<_>>();
     if let Ok(mut registry) = worker_registry().lock() {
-        registry.retain(|backend_id, _| active_ids.contains(backend_id));
+        registry.retain(|backend_key, _| active_keys.contains(backend_key));
     }
 }
 
-pub(super) fn remove_backend_worker(backend_id: BackendInstanceId) {
+pub(super) fn remove_backend_worker(
+    backend_id: BackendInstanceId,
+    backend_handle: &Arc<dyn PowBackend>,
+) {
+    let key = backend_worker_key(backend_id, backend_handle);
     if let Ok(mut registry) = worker_registry().lock() {
-        registry.remove(&backend_id);
+        registry.remove(&key);
     }
 }
 
@@ -160,7 +186,8 @@ pub(super) fn dispatch_backend_tasks(
         let action = task.kind.action_label();
         let backend_handle = Arc::clone(&task.backend_handle);
         let idx = task.idx;
-        let Some(worker_tx) = worker_sender_for_backend(backend_id, backend) else {
+        let Some(worker_tx) = worker_sender_for_backend(backend_id, backend, &backend_handle)
+        else {
             let _ = outcome_tx.send(BackendTaskOutcome {
                 idx,
                 result: Err(anyhow!(
@@ -175,17 +202,28 @@ pub(super) fn dispatch_backend_tasks(
             timeout,
             outcome_tx: outcome_tx.clone(),
         };
-        if worker_tx.send(command).is_err() {
-            if let Ok(mut registry) = worker_registry().lock() {
-                registry.remove(&backend_id);
+        match worker_tx.try_send(command) {
+            Ok(()) => {}
+            Err(TrySendError::Disconnected(_)) => {
+                remove_backend_worker(backend_id, &backend_handle);
+                let _ = outcome_tx.send(BackendTaskOutcome {
+                    idx,
+                    result: Err(anyhow!(
+                        "{action} dispatch failed: worker channel closed for {backend}#{backend_id}"
+                    )),
+                });
+                quarantine_backend(backend_handle);
             }
-            let _ = outcome_tx.send(BackendTaskOutcome {
-                idx,
-                result: Err(anyhow!(
-                    "{action} dispatch failed: worker channel closed for {backend}#{backend_id}"
-                )),
-            });
-            quarantine_backend(backend_handle);
+            Err(TrySendError::Full(_)) => {
+                remove_backend_worker(backend_id, &backend_handle);
+                let _ = outcome_tx.send(BackendTaskOutcome {
+                    idx,
+                    result: Err(anyhow!(
+                        "{action} dispatch failed: queue saturated for {backend}#{backend_id}"
+                    )),
+                });
+                quarantine_backend(backend_handle);
+            }
         }
     }
     drop(outcome_tx);

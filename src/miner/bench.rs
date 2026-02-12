@@ -21,9 +21,9 @@ use super::stats::{format_hashrate, median};
 use super::ui::{info, startup_banner, success, warn};
 use super::{
     activate_backends, backend_name_list, backend_names, collect_backend_hashes, distribute_work,
-    format_round_backend_hashrate, format_round_backend_telemetry, next_work_id,
-    quiesce_backend_slots, start_backend_slots, stop_backend_slots, total_lanes,
-    BackendRoundTelemetry, BackendSlot, RuntimeBackendEventAction, RuntimeMode, MIN_EVENT_WAIT,
+    format_round_backend_telemetry, next_work_id, quiesce_backend_slots, start_backend_slots,
+    stop_backend_slots, total_lanes, BackendRoundTelemetry, BackendSlot, RuntimeBackendEventAction,
+    RuntimeMode, MIN_EVENT_WAIT,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -520,7 +520,7 @@ fn run_worker_benchmark_inner(
                 counted_elapsed,
                 fence_elapsed,
                 format_hashrate(hps),
-                format_round_backend_hashrate(backends, &round_backend_hashes, measured_elapsed),
+                format_bench_backend_hashrate(backends, &round_backend_hashes, measured_elapsed),
             ),
         );
         let telemetry_line = format_round_backend_telemetry(backends, &round_backend_telemetry);
@@ -1124,6 +1124,31 @@ fn build_backend_round_stats(
     runs
 }
 
+fn format_bench_backend_hashrate(
+    backends: &[BackendSlot],
+    round_backend_hashes: &BTreeMap<BackendInstanceId, u64>,
+    elapsed_secs: f64,
+) -> String {
+    if backends.is_empty() {
+        return "none".to_string();
+    }
+    let elapsed_secs = elapsed_secs.max(0.001);
+    backends
+        .iter()
+        .map(|slot| {
+            let hashes = round_backend_hashes.get(&slot.id).copied().unwrap_or(0);
+            let hps = hashes as f64 / elapsed_secs;
+            format!(
+                "{}#{}={}",
+                slot.backend.name(),
+                slot.id,
+                format_hashrate(hps)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn handle_benchmark_backend_event(
     event: BackendEvent,
     epoch: u64,
@@ -1326,5 +1351,18 @@ mod tests {
         assert_eq!(runs[0].backend_id, 7);
         assert_eq!(runs[0].backend, "noop");
         assert_eq!(runs[0].hashes, 0);
+    }
+
+    #[test]
+    fn bench_hashrate_formatter_includes_zero_hash_backends() {
+        let backends = vec![BackendSlot {
+            id: 7,
+            backend: Arc::new(NoopBackend),
+            lanes: 1,
+        }];
+        let round_backend_hashes = BTreeMap::new();
+
+        let rendered = format_bench_backend_hashrate(&backends, &round_backend_hashes, 1.0);
+        assert!(rendered.contains("noop#7=0.000 H/s"), "{rendered}");
     }
 }

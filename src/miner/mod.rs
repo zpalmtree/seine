@@ -535,7 +535,7 @@ fn remove_backend_by_id(backends: &mut Vec<BackendSlot>, backend_id: BackendInst
 
     let slot = backends.remove(idx);
     backend_executor::quarantine_backend(Arc::clone(&slot.backend));
-    backend_executor::remove_backend_worker(slot.id);
+    backend_executor::remove_backend_worker(slot.id, &slot.backend);
     backend_executor::prune_backend_workers(backends);
     true
 }
@@ -580,7 +580,7 @@ fn enforce_deadline_policy(
         let backend_name = slot.backend.name();
         let backend_id = slot.id;
         backend_executor::quarantine_backend(Arc::clone(&slot.backend));
-        backend_executor::remove_backend_worker(backend_id);
+        backend_executor::remove_backend_worker(backend_id, &slot.backend);
         warn(
             "BACKEND",
             format!(

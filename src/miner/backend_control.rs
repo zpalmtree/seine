@@ -317,7 +317,7 @@ fn run_backend_control_phase(
                 Ok(()) => survivors.push((idx, slot)),
                 Err(err) => {
                     backend_executor::quarantine_backend(Arc::clone(&slot.backend));
-                    backend_executor::remove_backend_worker(backend_id);
+                    backend_executor::remove_backend_worker(backend_id, &slot.backend);
                     failures
                         .entry(backend_id)
                         .or_insert_with(|| (backend, Vec::new()))
@@ -327,7 +327,7 @@ fn run_backend_control_phase(
             },
             None => {
                 backend_executor::quarantine_backend(Arc::clone(&slot.backend));
-                backend_executor::remove_backend_worker(backend_id);
+                backend_executor::remove_backend_worker(backend_id, &slot.backend);
                 failures
                     .entry(backend_id)
                     .or_insert_with(|| (backend, Vec::new()))
