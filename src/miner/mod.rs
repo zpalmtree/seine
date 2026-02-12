@@ -1,4 +1,5 @@
 mod auth;
+mod backend_control;
 mod bench;
 mod mining;
 mod scheduler;
@@ -6,12 +7,12 @@ mod stats;
 mod tip;
 mod tui;
 mod ui;
+mod work_allocator;
 
 use std::collections::BTreeMap;
 use std::io::IsTerminal;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Result};
@@ -23,13 +24,13 @@ use crate::backend::cpu::CpuBackend;
 use crate::backend::nvidia::NvidiaBackend;
 use crate::backend::{
     BackendEvent, BackendInstanceId, BackendTelemetry, NonceChunk, PowBackend,
-    PreemptionGranularity, WorkAssignment, WorkTemplate, WORK_ID_MAX,
+    PreemptionGranularity, WorkAssignment, WORK_ID_MAX,
 };
 use crate::config::{BackendKind, Config, UiMode, WorkAllocation};
 use scheduler::NonceReservation;
 use stats::{format_hashrate, Stats};
 use tui::{new_tui_state, TuiState};
-use ui::{error, info, warn};
+use ui::{info, warn};
 
 const TEMPLATE_RETRY_DELAY: Duration = Duration::from_secs(2);
 const MIN_EVENT_WAIT: Duration = Duration::from_millis(1);
@@ -335,86 +336,7 @@ fn distribute_work(
     backends: &mut Vec<BackendSlot>,
     options: DistributeWorkOptions<'_>,
 ) -> Result<u64> {
-    let mut attempt_start_nonce = options.reservation.start_nonce;
-    let mut total_span_consumed = 0u64;
-    loop {
-        if backends.is_empty() {
-            bail!("all mining backends are unavailable");
-        }
-
-        let nonce_counts = compute_backend_nonce_counts(
-            backends,
-            options.reservation.max_iters_per_lane,
-            options.backend_weights,
-        );
-        let total_lanes = total_lanes(backends);
-        let attempt_span = nonce_counts.iter().copied().sum::<u64>().max(total_lanes);
-        total_span_consumed = total_span_consumed.wrapping_add(attempt_span);
-        let template = Arc::new(WorkTemplate {
-            work_id: options.work_id,
-            epoch: options.epoch,
-            header_base: Arc::clone(&options.header_base),
-            target: options.target,
-            stop_at: options.stop_at,
-        });
-        let mut failed_indices = Vec::new();
-        let mut chunk_start = attempt_start_nonce;
-
-        for (idx, slot) in backends.iter().enumerate() {
-            let nonce_count = *nonce_counts.get(idx).unwrap_or(&slot.lanes.max(1));
-            let work = WorkAssignment {
-                template: Arc::clone(&template),
-                nonce_chunk: NonceChunk {
-                    start_nonce: chunk_start,
-                    nonce_count,
-                },
-            };
-            if let Err(err) = slot.backend.assign_work(work) {
-                warn(
-                    "BACKEND",
-                    format!(
-                        "{}#{} failed work assignment: {err:#}",
-                        slot.backend.name(),
-                        slot.id
-                    ),
-                );
-                failed_indices.push(idx);
-            }
-            chunk_start = chunk_start.wrapping_add(nonce_count);
-        }
-
-        if failed_indices.is_empty() {
-            return Ok(total_span_consumed.saturating_sub(options.reservation.reserved_span));
-        }
-
-        for idx in failed_indices.into_iter().rev() {
-            let mut slot = backends.remove(idx);
-            let backend_name = slot.backend.name();
-            let backend_id = slot.id;
-            slot.backend.stop();
-            warn(
-                "BACKEND",
-                format!(
-                    "quarantined {}#{} due to assignment failure",
-                    backend_name, backend_id
-                ),
-            );
-        }
-
-        if backends.is_empty() {
-            bail!("all mining backends are unavailable after assignment failure");
-        }
-
-        attempt_start_nonce = attempt_start_nonce.wrapping_add(attempt_span);
-        warn(
-            "BACKEND",
-            format!(
-                "retrying work assignment with remaining={} start_nonce={}",
-                backend_names(backends),
-                attempt_start_nonce
-            ),
-        );
-    }
+    work_allocator::distribute_work(backends, options)
 }
 
 fn compute_backend_nonce_counts(
@@ -422,97 +344,11 @@ fn compute_backend_nonce_counts(
     max_iters_per_lane: u64,
     backend_weights: Option<&BTreeMap<BackendInstanceId, f64>>,
 ) -> Vec<u64> {
-    if backends.is_empty() {
-        return Vec::new();
-    }
-
-    let base_counts: Vec<u64> = backends.iter().map(|slot| slot.lanes.max(1)).collect();
-    let preferred_counts: Vec<u64> = backends
-        .iter()
-        .map(|slot| {
-            let lanes = slot.lanes.max(1);
-            let iters = backend_iters_per_lane(slot, max_iters_per_lane);
-            lanes.saturating_mul(iters).max(lanes)
-        })
-        .collect();
-    if backend_weights.is_none() {
-        return preferred_counts;
-    }
-
-    let total_lanes = total_lanes(backends);
-    let total_span = preferred_counts
-        .iter()
-        .fold(0u64, |acc, count| acc.saturating_add(*count))
-        .max(total_lanes);
-    let min_total = base_counts
-        .iter()
-        .fold(0u64, |acc, count| acc.saturating_add(*count));
-    if total_span <= min_total {
-        return base_counts;
-    }
-
-    let weights_map = backend_weights.expect("weights should be present");
-    let mut weights = Vec::with_capacity(backends.len());
-    let mut sum_weights = 0.0f64;
-    for (idx, slot) in backends.iter().enumerate() {
-        let fallback = preferred_counts
-            .get(idx)
-            .copied()
-            .unwrap_or_else(|| slot.lanes.max(1)) as f64;
-        let weight = weights_map
-            .get(&slot.id)
-            .copied()
-            .filter(|w| w.is_finite() && *w > 0.0)
-            .unwrap_or(fallback);
-        sum_weights += weight;
-        weights.push(weight);
-    }
-    if !sum_weights.is_finite() || sum_weights <= 0.0 {
-        return base_counts;
-    }
-
-    let remaining = total_span - min_total;
-    let mut extra = vec![0u64; backends.len()];
-    let mut floors = 0u64;
-    let mut remainders: Vec<(usize, f64, BackendInstanceId)> = Vec::with_capacity(backends.len());
-    for (idx, weight) in weights.iter().enumerate() {
-        let raw = (remaining as f64) * (*weight / sum_weights);
-        let floor = raw.floor() as u64;
-        floors = floors.saturating_add(floor);
-        extra[idx] = floor;
-        remainders.push((idx, raw - floor as f64, backends[idx].id));
-    }
-
-    let mut leftover = remaining.saturating_sub(floors);
-    if leftover > 0 {
-        remainders.sort_by(|a, b| {
-            b.1.partial_cmp(&a.1)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| a.2.cmp(&b.2))
-        });
-        for (idx, _, _) in remainders {
-            if leftover == 0 {
-                break;
-            }
-            extra[idx] = extra[idx].saturating_add(1);
-            leftover -= 1;
-        }
-    }
-
-    base_counts
-        .iter()
-        .zip(extra)
-        .map(|(base, add)| base.saturating_add(add))
-        .collect()
+    work_allocator::compute_backend_nonce_counts(backends, max_iters_per_lane, backend_weights)
 }
 
 fn backend_iters_per_lane(slot: &BackendSlot, default_iters_per_lane: u64) -> u64 {
-    let default_iters_per_lane = default_iters_per_lane.max(1);
-    slot.backend
-        .capabilities()
-        .preferred_iters_per_lane
-        .unwrap_or(default_iters_per_lane)
-        .max(1)
+    work_allocator::backend_iters_per_lane(slot, default_iters_per_lane)
 }
 
 fn collect_backend_hashes(
@@ -587,158 +423,14 @@ fn cancel_backend_slots(
     backends: &mut Vec<BackendSlot>,
     mode: RuntimeMode,
 ) -> Result<RuntimeBackendEventAction> {
-    control_backend_slots(backends, mode, false)
+    backend_control::cancel_backend_slots(backends, mode)
 }
 
 fn quiesce_backend_slots(
     backends: &mut Vec<BackendSlot>,
     mode: RuntimeMode,
 ) -> Result<RuntimeBackendEventAction> {
-    control_backend_slots(backends, mode, true)
-}
-
-fn control_backend_slots(
-    backends: &mut Vec<BackendSlot>,
-    mode: RuntimeMode,
-    include_fence: bool,
-) -> Result<RuntimeBackendEventAction> {
-    if backends.is_empty() {
-        return Ok(RuntimeBackendEventAction::None);
-    }
-
-    let mut failures = collect_backend_control_failures(backends, BackendControlPhase::Cancel);
-    if include_fence {
-        let fence_failures = collect_backend_control_failures(backends, BackendControlPhase::Fence);
-        merge_backend_failures(&mut failures, fence_failures);
-    }
-
-    if failures.is_empty() {
-        return Ok(RuntimeBackendEventAction::None);
-    }
-
-    for (backend_id, (backend, messages)) in &failures {
-        let details = messages.join(" | ");
-        match mode {
-            RuntimeMode::Mining => {
-                error(
-                    "BACKEND",
-                    format!("{backend}#{backend_id} control error: {details}"),
-                );
-            }
-            RuntimeMode::Bench => {
-                error(
-                    "BENCH",
-                    format!("backend '{backend}#{backend_id}' control error: {details}"),
-                );
-            }
-        }
-    }
-
-    for backend_id in failures.keys().copied().collect::<Vec<_>>() {
-        let removed = remove_backend_by_id(backends, backend_id);
-        if !removed {
-            continue;
-        }
-
-        let remaining = backend_names(backends);
-        let backend = failures
-            .get(&backend_id)
-            .map(|(name, _)| *name)
-            .unwrap_or("unknown");
-        match mode {
-            RuntimeMode::Mining => warn(
-                "BACKEND",
-                format!(
-                    "quarantined {backend}#{backend_id} after control failure; continuing with {remaining}"
-                ),
-            ),
-            RuntimeMode::Bench => warn(
-                "BENCH",
-                format!(
-                    "quarantined {backend}#{backend_id} after control failure; remaining backends={remaining}"
-                ),
-            ),
-        }
-    }
-
-    if backends.is_empty() {
-        let failed = failures
-            .iter()
-            .map(|(backend_id, (backend, _))| format!("{backend}#{backend_id}"))
-            .collect::<Vec<_>>()
-            .join(",");
-        match mode {
-            RuntimeMode::Mining => {
-                bail!("all mining backends are unavailable after control failure in {failed}");
-            }
-            RuntimeMode::Bench => {
-                bail!("all benchmark backends are unavailable after control failure in {failed}");
-            }
-        }
-    }
-
-    Ok(RuntimeBackendEventAction::TopologyChanged)
-}
-
-#[derive(Debug, Clone, Copy)]
-enum BackendControlPhase {
-    Cancel,
-    Fence,
-}
-
-fn collect_backend_control_failures(
-    backends: &mut [BackendSlot],
-    phase: BackendControlPhase,
-) -> BTreeMap<BackendInstanceId, (&'static str, Vec<String>)> {
-    let (tx, rx) = crossbeam_channel::unbounded::<(BackendInstanceId, &'static str, String)>();
-
-    thread::scope(|scope| {
-        for slot in backends {
-            let tx = tx.clone();
-            scope.spawn(move || {
-                let result = match phase {
-                    BackendControlPhase::Cancel => slot.backend.cancel_work(),
-                    BackendControlPhase::Fence => slot.backend.fence(),
-                };
-                if let Err(err) = result {
-                    let action = match phase {
-                        BackendControlPhase::Cancel => "cancel",
-                        BackendControlPhase::Fence => "fence",
-                    };
-                    let _ = tx.send((
-                        slot.id,
-                        slot.backend.name(),
-                        format!("{action} failed: {err:#}"),
-                    ));
-                }
-            });
-        }
-    });
-
-    drop(tx);
-
-    let mut failures: BTreeMap<BackendInstanceId, (&'static str, Vec<String>)> = BTreeMap::new();
-    for (backend_id, backend, message) in rx.iter() {
-        failures
-            .entry(backend_id)
-            .or_insert_with(|| (backend, Vec::new()))
-            .1
-            .push(message);
-    }
-    failures
-}
-
-fn merge_backend_failures(
-    failures: &mut BTreeMap<BackendInstanceId, (&'static str, Vec<String>)>,
-    additional: BTreeMap<BackendInstanceId, (&'static str, Vec<String>)>,
-) {
-    for (backend_id, (backend, messages)) in additional {
-        failures
-            .entry(backend_id)
-            .or_insert_with(|| (backend, Vec::new()))
-            .1
-            .extend(messages);
-    }
+    backend_control::quiesce_backend_slots(backends, mode)
 }
 
 fn remove_backend_by_id(backends: &mut Vec<BackendSlot>, backend_id: BackendInstanceId) -> bool {
@@ -772,96 +464,7 @@ fn handle_runtime_backend_event(
     RuntimeBackendEventAction,
     Option<crate::backend::MiningSolution>,
 )> {
-    match event {
-        BackendEvent::Solution(solution) => {
-            let backend_active = backends.iter().any(|slot| slot.id == solution.backend_id);
-            if solution.epoch == epoch && backend_active {
-                match mode {
-                    RuntimeMode::Mining => {
-                        return Ok((RuntimeBackendEventAction::None, Some(solution)));
-                    }
-                    RuntimeMode::Bench => {
-                        info(
-                            "BENCH",
-                            format!(
-                                "unexpected solution from {}#{} at nonce={}",
-                                solution.backend, solution.backend_id, solution.nonce
-                            ),
-                        );
-                    }
-                }
-            }
-            Ok((RuntimeBackendEventAction::None, None))
-        }
-        BackendEvent::Error {
-            backend_id,
-            backend,
-            message,
-        } => {
-            match mode {
-                RuntimeMode::Mining => {
-                    error(
-                        "BACKEND",
-                        format!("{backend}#{backend_id} runtime error: {message}"),
-                    );
-                }
-                RuntimeMode::Bench => {
-                    error(
-                        "BENCH",
-                        format!("backend '{backend}#{backend_id}' runtime error: {message}"),
-                    );
-                }
-            }
-
-            let removed = remove_backend_by_id(backends, backend_id);
-            if removed {
-                if backends.is_empty() {
-                    match mode {
-                        RuntimeMode::Mining => {
-                            bail!(
-                                "all mining backends are unavailable after failure in '{backend}#{backend_id}'"
-                            );
-                        }
-                        RuntimeMode::Bench => {
-                            bail!(
-                                "all benchmark backends are unavailable after failure in '{backend}#{backend_id}'"
-                            );
-                        }
-                    }
-                }
-
-                match mode {
-                    RuntimeMode::Mining => {
-                        warn(
-                            "BACKEND",
-                            format!(
-                                "quarantined {backend}#{backend_id}; continuing with {}",
-                                backend_names(backends)
-                            ),
-                        );
-                    }
-                    RuntimeMode::Bench => {
-                        warn(
-                            "BENCH",
-                            format!(
-                                "quarantined {backend}#{backend_id}; remaining backends={}",
-                                backend_names(backends)
-                            ),
-                        );
-                    }
-                }
-                Ok((RuntimeBackendEventAction::TopologyChanged, None))
-            } else {
-                if mode == RuntimeMode::Mining {
-                    warn(
-                        "BACKEND",
-                        format!("ignoring error from unavailable backend '{backend}#{backend_id}'"),
-                    );
-                }
-                Ok((RuntimeBackendEventAction::None, None))
-            }
-        }
-    }
+    backend_control::handle_runtime_backend_event(event, epoch, backends, mode)
 }
 
 fn drain_runtime_backend_events(
@@ -873,19 +476,7 @@ fn drain_runtime_backend_events(
     RuntimeBackendEventAction,
     Option<crate::backend::MiningSolution>,
 )> {
-    let mut action = RuntimeBackendEventAction::None;
-    let mut solution = None;
-    while let Ok(event) = backend_events.try_recv() {
-        let (event_action, maybe_solution) =
-            handle_runtime_backend_event(event, epoch, backends, mode)?;
-        if event_action == RuntimeBackendEventAction::TopologyChanged {
-            action = RuntimeBackendEventAction::TopologyChanged;
-        }
-        if solution.is_none() {
-            solution = maybe_solution;
-        }
-    }
-    Ok((action, solution))
+    backend_control::drain_runtime_backend_events(backend_events, epoch, backends, mode)
 }
 
 fn backend_name_list(backends: &[BackendSlot]) -> Vec<String> {
@@ -1068,8 +659,11 @@ mod tests {
         fail_start: AtomicBool,
         fail_next_assign: AtomicBool,
         assign_calls: AtomicUsize,
+        assign_batch_calls: AtomicUsize,
+        last_batch_len: AtomicUsize,
         stop_calls: AtomicUsize,
         last_chunk: Mutex<Option<NonceChunk>>,
+        chunks: Mutex<Vec<NonceChunk>>,
     }
 
     struct MockBackend {
@@ -1100,6 +694,11 @@ mod tests {
 
         fn with_preferred_hash_poll_interval(mut self, interval: Duration) -> Self {
             self.preferred_hash_poll_interval = Some(interval);
+            self
+        }
+
+        fn with_max_inflight_assignments(mut self, max_inflight_assignments: u32) -> Self {
+            self.max_inflight_assignments = max_inflight_assignments.max(1);
             self
         }
     }
@@ -1133,11 +732,29 @@ mod tests {
             if self.state.fail_next_assign.swap(false, Ordering::AcqRel) {
                 return Err(anyhow!("injected assign failure"));
             }
+            self.state
+                .chunks
+                .lock()
+                .expect("mock chunk history lock should not be poisoned")
+                .push(work.nonce_chunk);
             *self
                 .state
                 .last_chunk
                 .lock()
                 .expect("mock chunk lock should not be poisoned") = Some(work.nonce_chunk);
+            Ok(())
+        }
+
+        fn assign_work_batch(&self, work: &[WorkAssignment]) -> Result<()> {
+            self.state
+                .assign_batch_calls
+                .fetch_add(1, Ordering::Relaxed);
+            self.state
+                .last_batch_len
+                .store(work.len(), Ordering::Relaxed);
+            for assignment in work {
+                self.assign_work(assignment.clone())?;
+            }
             Ok(())
         }
 
@@ -1259,6 +876,57 @@ mod tests {
         assert_eq!(third_chunk.start_nonce, 160);
         assert_eq!(third_chunk.nonce_count, 10);
         assert_eq!(failed_state.stop_calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn distribute_work_uses_backend_inflight_batching_hint() {
+        let state = Arc::new(MockState::default());
+        let mut backends = vec![slot(
+            7,
+            1,
+            Box::new(
+                MockBackend::new("nvidia", 1, Arc::clone(&state))
+                    .with_preferred_iters_per_lane(12)
+                    .with_max_inflight_assignments(4),
+            ),
+        )];
+
+        let additional_span = distribute_work(
+            &mut backends,
+            DistributeWorkOptions {
+                epoch: 1,
+                work_id: 1,
+                header_base: Arc::from(vec![7u8; POW_HEADER_BASE_LEN]),
+                target: [0xFF; 32],
+                reservation: NonceReservation {
+                    start_nonce: 200,
+                    max_iters_per_lane: 12,
+                    reserved_span: 12,
+                },
+                stop_at: Instant::now() + Duration::from_secs(1),
+                backend_weights: None,
+            },
+        )
+        .expect("distribution should succeed");
+
+        assert_eq!(additional_span, 0);
+        assert_eq!(state.assign_batch_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(state.last_batch_len.load(Ordering::Relaxed), 4);
+
+        let chunks = state
+            .chunks
+            .lock()
+            .expect("chunk history lock should not be poisoned")
+            .clone();
+        assert_eq!(chunks.len(), 4);
+        assert_eq!(chunks[0].start_nonce, 200);
+        assert_eq!(chunks[0].nonce_count, 3);
+        assert_eq!(chunks[1].start_nonce, 203);
+        assert_eq!(chunks[1].nonce_count, 3);
+        assert_eq!(chunks[2].start_nonce, 206);
+        assert_eq!(chunks[2].nonce_count, 3);
+        assert_eq!(chunks[3].start_nonce, 209);
+        assert_eq!(chunks[3].nonce_count, 3);
     }
 
     #[test]

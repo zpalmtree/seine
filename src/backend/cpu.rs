@@ -746,6 +746,7 @@ fn emit_event(shared: &Shared, event: BackendEvent) {
         Err(_) => None,
     };
     let Some(tx) = tx else {
+        shared.dropped_events.fetch_add(1, Ordering::Relaxed);
         return;
     };
 
@@ -775,12 +776,16 @@ fn send_critical_event(shared: &Shared, tx: &Sender<BackendEvent>, event: Backen
     let mut queued = event;
     loop {
         if !shared.started.load(Ordering::Acquire) {
+            shared.dropped_events.fetch_add(1, Ordering::Relaxed);
             return;
         }
 
         match tx.send_timeout(queued, CRITICAL_EVENT_RETRY_WAIT) {
             Ok(()) => return,
-            Err(SendTimeoutError::Disconnected(_)) => return,
+            Err(SendTimeoutError::Disconnected(_)) => {
+                shared.dropped_events.fetch_add(1, Ordering::Relaxed);
+                return;
+            }
             Err(SendTimeoutError::Timeout(returned)) => {
                 queued = returned;
             }

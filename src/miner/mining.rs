@@ -609,11 +609,10 @@ pub(super) fn run_mining_loop(
             &backend_weights,
         )?;
 
-        if round_state.stale_tip_event || round_state.solved.is_some() {
-            let _ = cancel_backend_slots(backends, RuntimeMode::Mining)?;
-        }
         if cfg.strict_round_accounting {
             let _ = quiesce_backend_slots(backends, RuntimeMode::Mining)?;
+        } else if round_state.stale_tip_event || round_state.solved.is_some() {
+            let _ = cancel_backend_slots(backends, RuntimeMode::Mining)?;
         }
         let _ =
             drain_mining_backend_events(backend_events, epoch, &mut round_state.solved, backends)?;

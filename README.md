@@ -7,9 +7,10 @@ Current status:
 - NVIDIA backend: scaffolded interface only (not implemented yet).
 - Runtime architecture: supports multiple backends in one process with persistent workers, configurable bounded backend event queues with lossless `Solution` delivery and deduplicated backend `Error` events (prevents multi-thread error storms from stalling worker teardown), coalesced tip notifications (deduped across SSE reconnects), template prefetch overlap to reduce round-boundary idle, and optional strict quiesce barriers for round-accurate hash accounting.
   - Runtime assigns disjoint nonce chunks per backend per round (backend-local scheduling inside each chunk) so CPU and future GPU implementations can iterate independently without nonce overlap.
+  - Runtime supports batched per-backend work assignment via backend queue-depth hints (`max_inflight_assignments`) so future GPU backends can overlap control and kernel scheduling.
   - Mining mode supports adaptive weighted nonce allocation (`--work-allocation adaptive`) based on observed backend throughput, with `--work-allocation static` available for fixed lane-based splitting.
   - NVIDIA backend topology supports multiple explicit device instances via `--nvidia-devices` (for example `--backend nvidia --nvidia-devices 0,1`).
-  - Runtime is split into `src/miner/{mining,tip,bench,scheduler,stats}.rs` to keep orchestration, tip-stream control, benchmarking, nonce scheduling, and telemetry isolated for faster iteration.
+  - Runtime is split into `src/miner/{mining,tip,bench,scheduler,stats,work_allocator,backend_control}.rs` to keep orchestration, scheduling, and backend control isolated for faster iteration.
 
 ## Test
 

@@ -211,6 +211,18 @@ pub trait PowBackend: Send {
 
     fn assign_work(&self, work: WorkAssignment) -> Result<()>;
 
+    /// Assign one or more work chunks to the backend.
+    ///
+    /// Default behavior preserves current single-assignment semantics.
+    /// Backends that can queue multiple chunks (for example GPUs) should
+    /// override this for lower control-plane overhead.
+    fn assign_work_batch(&self, work: &[WorkAssignment]) -> Result<()> {
+        for assignment in work {
+            self.assign_work(assignment.clone())?;
+        }
+        Ok(())
+    }
+
     /// Request the backend to stop processing the current assignment.
     fn cancel_work(&self) -> Result<()> {
         Ok(())
