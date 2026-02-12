@@ -12,7 +12,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Terminal;
 
 const LOG_CAPACITY: usize = 200;
@@ -31,6 +31,7 @@ pub enum LogLevel {
     Success,
     Warn,
     Error,
+    Mined,
 }
 
 impl LogLevel {
@@ -40,6 +41,7 @@ impl LogLevel {
             Self::Success => " OK ",
             Self::Warn => "WARN",
             Self::Error => " ERR",
+            Self::Mined => " ** ",
         }
     }
 
@@ -49,6 +51,7 @@ impl LogLevel {
             Self::Success => Color::Rgb(120, 190, 120),
             Self::Warn => Color::Rgb(210, 180, 100),
             Self::Error => Color::Rgb(210, 110, 110),
+            Self::Mined => Color::Rgb(255, 220, 100),
         }
     }
 
@@ -58,6 +61,7 @@ impl LogLevel {
             Self::Success => Color::Rgb(25, 70, 25),
             Self::Warn => Color::Rgb(100, 80, 20),
             Self::Error => Color::Rgb(100, 25, 25),
+            Self::Mined => Color::Rgb(130, 100, 10),
         }
     }
 
@@ -67,6 +71,7 @@ impl LogLevel {
             Self::Success => Color::Rgb(140, 210, 140),
             Self::Warn => Color::Rgb(230, 200, 120),
             Self::Error => Color::Rgb(230, 140, 140),
+            Self::Mined => Color::Rgb(255, 230, 120),
         }
     }
 }
@@ -233,7 +238,7 @@ fn draw_dashboard(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner)
     // Compute row heights
     let stats_height = if wide { 6 } else { 14 };
     let config_height = 4;
-    let header_height = 3;
+    let header_height = 4;
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -253,6 +258,7 @@ fn draw_dashboard(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner)
 
 fn draw_header(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
     let uptime = state.uptime();
+    let tick = state.started_at.elapsed().as_secs();
 
     let title = format!(" seine {} ", state.version);
     let uptime_text = format!("uptime {uptime} ");
@@ -260,7 +266,8 @@ fn draw_header(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
     let inner_width = area.width.saturating_sub(2) as usize;
     let padding = inner_width.saturating_sub(uptime_text.len());
 
-    let content = Line::from(vec![
+    let wave_line = wave_decoration(inner_width, tick);
+    let uptime_line = Line::from(vec![
         Span::raw(" ".repeat(padding.max(1))),
         Span::styled(uptime_text, DIM_STYLE),
     ]);
@@ -270,8 +277,57 @@ fn draw_header(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
         .borders(Borders::ALL)
         .border_style(BORDER_STYLE);
 
-    let paragraph = Paragraph::new(content).block(block);
+    let paragraph = Paragraph::new(vec![wave_line, uptime_line]).block(block);
     frame.render_widget(paragraph, area);
+}
+
+fn wave_decoration(width: usize, tick: u64) -> Line<'static> {
+    const WAVE: Color = Color::Rgb(50, 90, 140);
+    const DOT: Color = Color::Rgb(40, 55, 75);
+
+    let pattern: &[(&str, Color)] = &[
+        ("·", DOT),
+        (" ", DOT),
+        ("~", WAVE),
+        (" ", DOT),
+        ("≈", WAVE),
+        (" ", DOT),
+        ("~", WAVE),
+        (" ", DOT),
+        ("·", DOT),
+        (" ", DOT),
+        ("~", WAVE),
+        (" ", DOT),
+        ("≈", WAVE),
+        (" ", DOT),
+        ("≈", WAVE),
+        (" ", DOT),
+    ];
+
+    let offset = (tick as usize) % pattern.len();
+    let mut spans = Vec::new();
+    let mut total = 0;
+    let mut idx = offset;
+
+    while total < width {
+        let (text, color) = pattern[idx % pattern.len()];
+        let chars: usize = text.chars().count();
+        let remaining = width - total;
+        if chars <= remaining {
+            spans.push(Span::styled(
+                text.to_string(),
+                Style::default().fg(color),
+            ));
+            total += chars;
+        } else {
+            let clipped: String = text.chars().take(remaining).collect();
+            spans.push(Span::styled(clipped, Style::default().fg(color)));
+            total += remaining;
+        }
+        idx += 1;
+    }
+
+    Line::from(spans)
 }
 
 fn draw_stats(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner, wide: bool) {
@@ -433,6 +489,10 @@ fn draw_log(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
         .border_style(BORDER_STYLE);
 
     let inner_height = area.height.saturating_sub(2) as usize;
+    let inner_width = area.width.saturating_sub(2) as usize;
+    // Fixed prefix: "HHHHHHs LLLL TTTTTTTT " = 8 + 6 + 10 + 1 = 25 chars
+    let prefix_width = 25;
+    let msg_width = inner_width.saturating_sub(prefix_width);
     let start = state.log_entries.len().saturating_sub(inner_height);
     let visible: Vec<Line> = state
         .log_entries
@@ -440,7 +500,7 @@ fn draw_log(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
         .skip(start)
         .map(|entry| {
             let time = Span::styled(
-                format!("{:>7.1}s ", entry.elapsed_secs),
+                format!("{:>6.0}s ", entry.elapsed_secs),
                 DIM_STYLE,
             );
             let level = Span::styled(
@@ -457,17 +517,20 @@ fn draw_log(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
                     .bg(Color::Rgb(40, 40, 40))
                     .add_modifier(Modifier::BOLD),
             );
-            let msg = Span::styled(
-                format!(" {}", entry.message),
-                Style::default().fg(entry.level.color()),
-            );
+            let body = truncate_str(&entry.message, msg_width);
+            let msg_style = if matches!(entry.level, LogLevel::Mined) {
+                Style::default()
+                    .fg(entry.level.color())
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(entry.level.color())
+            };
+            let msg = Span::styled(format!(" {body}"), msg_style);
             Line::from(vec![time, level, tag, msg])
         })
         .collect();
 
-    let log = Paragraph::new(visible)
-        .block(log_block)
-        .wrap(Wrap { trim: true });
+    let log = Paragraph::new(visible).block(log_block);
     frame.render_widget(log, area);
 }
 
@@ -476,6 +539,15 @@ fn kv_line(label: &str, value: &str) -> Line<'static> {
         Span::styled(format!("  {:<10} ", label), LABEL_STYLE),
         Span::styled(value.to_string(), VALUE_STYLE),
     ])
+}
+
+fn truncate_str(s: &str, max: usize) -> String {
+    if max <= 3 || s.chars().count() <= max {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(max - 1).collect();
+    out.push('…');
+    out
 }
 
 fn format_u64(n: u64) -> String {

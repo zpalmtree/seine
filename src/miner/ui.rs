@@ -28,6 +28,7 @@ enum Level {
     Success,
     Warn,
     Error,
+    Mined,
 }
 
 impl Level {
@@ -37,6 +38,7 @@ impl Level {
             Self::Success => "OK",
             Self::Warn => "WARN",
             Self::Error => "ERR",
+            Self::Mined => "**",
         }
     }
 
@@ -46,6 +48,7 @@ impl Level {
             Self::Success => "48;5;28;1;97",
             Self::Warn => "48;5;214;1;30",
             Self::Error => "48;5;160;1;97",
+            Self::Mined => "48;5;178;1;30",
         }
     }
 
@@ -55,6 +58,7 @@ impl Level {
             Self::Success => "38;5;120",
             Self::Warn => "38;5;223",
             Self::Error => "38;5;217",
+            Self::Mined => "1;38;5;220",
         }
     }
 
@@ -96,6 +100,10 @@ pub(super) fn error(tag: &str, message: impl AsRef<str>) {
     log(Level::Error, tag, message.as_ref());
 }
 
+pub(super) fn mined(tag: &str, message: impl AsRef<str>) {
+    log(Level::Mined, tag, message.as_ref());
+}
+
 pub(super) fn set_tui_state(state: TuiState) {
     let _ = TUI_STATE.set(state);
 }
@@ -110,6 +118,7 @@ fn level_to_tui(level: Level) -> LogLevel {
         Level::Success => LogLevel::Success,
         Level::Warn => LogLevel::Warn,
         Level::Error => LogLevel::Error,
+        Level::Mined => LogLevel::Mined,
     }
 }
 

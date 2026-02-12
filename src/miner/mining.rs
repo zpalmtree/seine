@@ -23,7 +23,7 @@ use crate::types::{
 use super::scheduler::NonceScheduler;
 use super::stats::{format_hashrate, Stats};
 use super::tui::{TuiRenderer, TuiState};
-use super::ui::{active_tui_state, error, info, success, warn};
+use super::ui::{active_tui_state, error, info, mined, success, warn};
 use super::{
     collect_backend_hashes, distribute_work, format_round_backend_hashrate, next_event_wait,
     next_work_id, quiesce_backend_slots, total_lanes, BackendSlot, RuntimeBackendEventAction,
@@ -492,14 +492,13 @@ pub(super) fn run_mining_loop(
                 epoch,
                 "solved",
             );
-            success(
+            mined(
                 "SOLVE",
                 format!(
-                    "backend={}#{} nonce={} elapsed={:.2}s",
+                    "solution found! elapsed={:.2}s backend={}#{}",
+                    round_start.elapsed().as_secs_f64(),
                     solution.backend,
                     solution.backend_id,
-                    solution.nonce,
-                    round_start.elapsed().as_secs_f64(),
                 ),
             );
 
@@ -513,16 +512,13 @@ pub(super) fn run_mining_loop(
                 Ok(resp) => {
                     if resp.accepted {
                         stats.bump_accepted();
-                        success(
-                            "SUBMIT",
-                            format!(
-                                "accepted height={} hash={}",
-                                resp.height
-                                    .map(|h| h.to_string())
-                                    .unwrap_or_else(|| "unknown".to_string()),
-                                resp.hash.unwrap_or_else(|| "unknown".to_string())
-                            ),
-                        );
+                        let height = resp
+                            .height
+                            .map(|h| h.to_string())
+                            .unwrap_or_else(|| "unknown".to_string());
+                        let hash = resp.hash.unwrap_or_else(|| "unknown".to_string());
+                        mined("SUBMIT", format!("block accepted at height {height}"));
+                        mined("SUBMIT", format!("hash {hash}"));
                     } else {
                         warn("SUBMIT", "rejected by daemon");
                     }
