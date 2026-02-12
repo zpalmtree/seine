@@ -19,6 +19,8 @@ use crate::types::hash_meets_target;
 const HASH_BATCH_SIZE: u64 = 64;
 const HASH_FLUSH_INTERVAL: Duration = Duration::from_millis(50);
 const CRITICAL_EVENT_RETRY_WAIT: Duration = Duration::from_millis(5);
+const CRITICAL_EVENT_RETRY_MAX_WAIT: Duration = Duration::from_millis(100);
+const ERROR_EVENT_MAX_BLOCK: Duration = Duration::from_millis(500);
 const EVENT_DISPATCH_CAPACITY: usize = 1024;
 const SOLVED_MASK: u64 = 1u64 << 63;
 
@@ -917,24 +919,7 @@ fn emit_event(shared: &Shared, event: BackendEvent) {
 }
 
 fn send_dispatch_event(shared: &Shared, tx: &Sender<BackendEvent>, event: BackendEvent) {
-    let mut queued = event;
-    loop {
-        if !shared.started.load(Ordering::Acquire) {
-            shared.dropped_events.fetch_add(1, Ordering::Relaxed);
-            return;
-        }
-
-        match tx.send_timeout(queued, CRITICAL_EVENT_RETRY_WAIT) {
-            Ok(()) => return,
-            Err(SendTimeoutError::Disconnected(_)) => {
-                shared.dropped_events.fetch_add(1, Ordering::Relaxed);
-                return;
-            }
-            Err(SendTimeoutError::Timeout(returned)) => {
-                queued = returned;
-            }
-        }
-    }
+    send_event_with_backpressure(shared, tx, event, EventDelivery::Lossless);
 }
 
 fn forward_event(shared: &Shared, event: BackendEvent) {
@@ -949,7 +934,12 @@ fn forward_event(shared: &Shared, event: BackendEvent) {
 
     match event {
         BackendEvent::Solution(solution) => {
-            send_critical_event(shared, &tx, BackendEvent::Solution(solution));
+            send_critical_event(
+                shared,
+                &tx,
+                BackendEvent::Solution(solution),
+                EventDelivery::Lossless,
+            );
         }
         BackendEvent::Error {
             backend_id,
@@ -964,27 +954,57 @@ fn forward_event(shared: &Shared, event: BackendEvent) {
                     backend,
                     message,
                 },
+                EventDelivery::BestEffort(ERROR_EVENT_MAX_BLOCK),
             );
         }
     }
 }
 
-fn send_critical_event(shared: &Shared, tx: &Sender<BackendEvent>, event: BackendEvent) {
+#[derive(Debug, Clone, Copy)]
+enum EventDelivery {
+    Lossless,
+    BestEffort(Duration),
+}
+
+fn send_critical_event(
+    shared: &Shared,
+    tx: &Sender<BackendEvent>,
+    event: BackendEvent,
+    delivery: EventDelivery,
+) {
+    send_event_with_backpressure(shared, tx, event, delivery);
+}
+
+fn send_event_with_backpressure(
+    shared: &Shared,
+    tx: &Sender<BackendEvent>,
+    event: BackendEvent,
+    delivery: EventDelivery,
+) {
     let mut queued = event;
+    let started_at = Instant::now();
+    let mut retry_wait = CRITICAL_EVENT_RETRY_WAIT;
     loop {
         if !shared.started.load(Ordering::Acquire) {
             shared.dropped_events.fetch_add(1, Ordering::Relaxed);
             return;
         }
 
-        match tx.send_timeout(queued, CRITICAL_EVENT_RETRY_WAIT) {
+        match tx.send_timeout(queued, retry_wait) {
             Ok(()) => return,
             Err(SendTimeoutError::Disconnected(_)) => {
                 shared.dropped_events.fetch_add(1, Ordering::Relaxed);
                 return;
             }
             Err(SendTimeoutError::Timeout(returned)) => {
+                if let EventDelivery::BestEffort(max_block) = delivery {
+                    if started_at.elapsed() >= max_block {
+                        shared.dropped_events.fetch_add(1, Ordering::Relaxed);
+                        return;
+                    }
+                }
                 queued = returned;
+                retry_wait = (retry_wait.saturating_mul(2)).min(CRITICAL_EVENT_RETRY_MAX_WAIT);
             }
         }
     }
@@ -994,7 +1014,7 @@ fn send_critical_event(shared: &Shared, tx: &Sender<BackendEvent>, event: Backen
 mod tests {
     use super::{
         emit_error, forward_event, lane_quota_for_chunk, start_assignment, BackendEvent,
-        CpuBackend, MiningSolution,
+        CpuBackend, MiningSolution, ERROR_EVENT_MAX_BLOCK,
     };
     use crate::backend::PowBackend;
     use crate::config::CpuAffinityMode;
@@ -1077,6 +1097,60 @@ mod tests {
         emit_thread
             .join()
             .expect("error emitter thread should finish once queued");
+        if let Ok(mut slot) = backend.shared.event_dispatch_tx.write() {
+            *slot = None;
+        }
+        forwarder
+            .join()
+            .expect("forwarder thread should stop after queue closes");
+    }
+
+    #[test]
+    fn error_event_drops_after_sustained_backpressure() {
+        let backend = CpuBackend::new(1, CpuAffinityMode::Off);
+        backend.shared.started.store(true, Ordering::Release);
+        backend.set_instance_id(9);
+        let (event_tx, _event_rx) = crossbeam_channel::bounded(1);
+        backend.set_event_sink(event_tx.clone());
+        let (dispatch_tx, dispatch_rx) = crossbeam_channel::unbounded::<BackendEvent>();
+        if let Ok(mut slot) = backend.shared.event_dispatch_tx.write() {
+            *slot = Some(dispatch_tx);
+        }
+
+        event_tx
+            .send(BackendEvent::Solution(MiningSolution {
+                epoch: 1,
+                nonce: 1,
+                backend_id: 99,
+                backend: "cpu",
+            }))
+            .expect("prefill should succeed");
+
+        let shared = Arc::clone(&backend.shared);
+        let forwarder = thread::spawn(move || {
+            while let Ok(event) = dispatch_rx.recv() {
+                forward_event(&shared, event);
+            }
+        });
+        let shared = Arc::clone(&backend.shared);
+        let emit_thread = thread::spawn(move || {
+            emit_error(&shared, "synthetic backpressure".to_string());
+        });
+
+        emit_thread
+            .join()
+            .expect("error emitter thread should complete under backpressure");
+        let deadline = Instant::now() + ERROR_EVENT_MAX_BLOCK + Duration::from_millis(250);
+        while backend.shared.dropped_events.load(Ordering::Acquire) == 0
+            && Instant::now() < deadline
+        {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            backend.shared.dropped_events.load(Ordering::Acquire) >= 1,
+            "error event should eventually drop under sustained queue backpressure"
+        );
+
         if let Ok(mut slot) = backend.shared.event_dispatch_tx.write() {
             *slot = None;
         }

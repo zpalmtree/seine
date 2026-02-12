@@ -15,6 +15,9 @@ use sysinfo::System;
 use crate::backend::{BackendEvent, BackendInstanceId, DeadlineSupport, PowBackend};
 use crate::config::{BenchBaselinePolicy, BenchKind, Config, CpuAffinityMode, WorkAllocation};
 
+use super::hash_poll::{
+    build_backend_poll_state, collect_due_backend_samples, next_backend_poll_deadline,
+};
 use super::runtime::{
     seed_backend_weights, update_backend_weights, work_distribution_weights, RoundEndReason,
     WeightUpdateInputs,
@@ -151,83 +154,6 @@ struct WorkerBenchmarkIdentity {
 
 type BackendEventAction = RuntimeBackendEventAction;
 const BENCH_REPORT_SCHEMA_VERSION: u32 = 2;
-type BackendPollState = BTreeMap<BackendInstanceId, (Duration, Instant)>;
-
-fn backend_poll_interval(slot: &BackendSlot, configured: Duration) -> Duration {
-    let configured = configured.max(Duration::from_millis(1));
-    let hinted = super::backend_capabilities(slot)
-        .preferred_hash_poll_interval
-        .filter(|hint| *hint > Duration::from_millis(0))
-        .map(|hint| hint.max(Duration::from_millis(1)));
-    hinted.map_or(configured, |hint| configured.min(hint))
-}
-
-fn build_backend_poll_state(backends: &[BackendSlot], configured: Duration) -> BackendPollState {
-    let now = Instant::now();
-    let mut state = BackendPollState::new();
-    for slot in backends {
-        let interval = backend_poll_interval(slot, configured);
-        state.insert(slot.id, (interval, now + interval));
-    }
-    state
-}
-
-fn collect_due_backend_hashes(
-    backends: &[BackendSlot],
-    configured: Duration,
-    poll_state: &mut BackendPollState,
-    round_hashes: &mut u64,
-    round_backend_hashes: &mut BTreeMap<BackendInstanceId, u64>,
-    round_backend_telemetry: &mut BTreeMap<BackendInstanceId, BackendRoundTelemetry>,
-) {
-    let now = Instant::now();
-    let mut collected = 0u64;
-
-    for slot in backends {
-        let (interval, next_poll) = poll_state.entry(slot.id).or_insert_with(|| {
-            let interval = backend_poll_interval(slot, configured);
-            (interval, now + interval)
-        });
-        if now < *next_poll {
-            continue;
-        }
-
-        let slot_hashes = slot.backend.take_hashes();
-        let telemetry = slot.backend.take_telemetry();
-        merge_round_telemetry(
-            round_backend_telemetry,
-            slot.id,
-            BackendRoundTelemetry {
-                dropped_events: telemetry.dropped_events,
-                completed_assignments: telemetry.completed_assignments,
-                completed_assignment_hashes: telemetry.completed_assignment_hashes,
-                completed_assignment_micros: telemetry.completed_assignment_micros,
-                peak_active_lanes: telemetry.active_lanes,
-                peak_pending_work: telemetry.pending_work,
-                peak_inflight_assignment_hashes: telemetry.inflight_assignment_hashes,
-                peak_inflight_assignment_micros: telemetry.inflight_assignment_micros,
-            },
-        );
-
-        if slot_hashes > 0 {
-            collected = collected.saturating_add(slot_hashes);
-            let entry = round_backend_hashes.entry(slot.id).or_insert(0);
-            *entry = entry.saturating_add(slot_hashes);
-        }
-
-        *next_poll = now + *interval;
-    }
-
-    *round_hashes = round_hashes.saturating_add(collected);
-}
-
-fn next_backend_poll_deadline(poll_state: &BackendPollState) -> Instant {
-    poll_state
-        .values()
-        .map(|(_, next_poll)| *next_poll)
-        .min()
-        .unwrap_or_else(Instant::now)
-}
 
 pub(super) fn run_benchmark(cfg: &Config, shutdown: &AtomicBool) -> Result<()> {
     let instances = super::build_backend_instances(cfg);
@@ -571,14 +497,44 @@ fn run_worker_benchmark_inner(
         let mut round_backend_telemetry = BTreeMap::new();
         let mut backend_poll_state = build_backend_poll_state(backends, cfg.hash_poll_interval);
         while Instant::now() < stop_at && !shutdown.load(Ordering::Relaxed) {
-            collect_due_backend_hashes(
+            let mut collected = 0u64;
+            collect_due_backend_samples(
                 backends,
                 cfg.hash_poll_interval,
                 &mut backend_poll_state,
-                &mut round_hashes,
-                &mut round_backend_hashes,
-                &mut round_backend_telemetry,
+                |sample| {
+                    merge_round_telemetry(
+                        &mut round_backend_telemetry,
+                        sample.backend_id,
+                        BackendRoundTelemetry {
+                            dropped_events: sample.telemetry.dropped_events,
+                            completed_assignments: sample.telemetry.completed_assignments,
+                            completed_assignment_hashes: sample
+                                .telemetry
+                                .completed_assignment_hashes,
+                            completed_assignment_micros: sample
+                                .telemetry
+                                .completed_assignment_micros,
+                            peak_active_lanes: sample.telemetry.active_lanes,
+                            peak_pending_work: sample.telemetry.pending_work,
+                            peak_inflight_assignment_hashes: sample
+                                .telemetry
+                                .inflight_assignment_hashes,
+                            peak_inflight_assignment_micros: sample
+                                .telemetry
+                                .inflight_assignment_micros,
+                        },
+                    );
+                    if sample.hashes > 0 {
+                        collected = collected.saturating_add(sample.hashes);
+                        let entry = round_backend_hashes
+                            .entry(sample.backend_id)
+                            .or_insert(0u64);
+                        *entry = (*entry).saturating_add(sample.hashes);
+                    }
+                },
             );
+            round_hashes = round_hashes.saturating_add(collected);
             let now = Instant::now();
             let next_hash_poll_at = next_backend_poll_deadline(&backend_poll_state);
             let wait_for = stop_at

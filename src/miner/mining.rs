@@ -1,21 +1,14 @@
 use std::collections::{BTreeMap, HashSet, VecDeque};
-use std::env;
-use std::fs;
-use std::io::IsTerminal;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::thread::{self, JoinHandle};
+use std::thread;
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, bail, Result};
 use blocknet_pow_spec::POW_HEADER_BASE_LEN;
-use crossbeam_channel::{bounded, Receiver, Sender, TrySendError};
-use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
-use crossterm::terminal::is_raw_mode_enabled;
+use crossbeam_channel::Receiver;
 
-use crate::api::{
-    is_no_wallet_loaded_error, is_unauthorized_error, is_wallet_already_loaded_error, ApiClient,
-};
+use crate::api::{is_no_wallet_loaded_error, is_unauthorized_error, ApiClient};
 use crate::backend::{BackendEvent, MiningSolution};
 use crate::config::Config;
 use crate::types::{
@@ -24,54 +17,37 @@ use crate::types::{
 };
 
 use super::auth::{refresh_api_token_from_cookie, TokenRefreshOutcome};
+use super::hash_poll::{
+    build_backend_poll_state, collect_due_backend_samples, next_backend_poll_deadline,
+};
+use super::mining_tui::{
+    init_tui_display, render_tui_now, set_tui_state_label, update_tui, RoundUiView, TuiDisplay,
+};
 use super::round_control::{redistribute_for_topology_change, TopologyRedistributionOptions};
 use super::runtime::{
     maybe_print_stats, seed_backend_weights, update_backend_weights, work_distribution_weights,
     RoundEndReason, WeightUpdateInputs,
 };
 use super::scheduler::NonceScheduler;
-use super::stats::{format_hashrate, Stats};
+use super::stats::Stats;
 use super::template_prefetch::TemplatePrefetch;
 pub(super) use super::tip::{spawn_tip_listener, TipListener, TipSignal};
-use super::tui::{TuiRenderer, TuiState};
-use super::ui::{error, info, mined, set_tui_state, success, warn};
+use super::tui::TuiState;
+use super::ui::{error, info, mined, success, warn};
+use super::wallet::auto_load_wallet;
 use super::{
-    cancel_backend_slots, collect_backend_hashes, distribute_work, format_round_backend_hashrate,
-    format_round_backend_telemetry, next_event_wait, next_work_id, quiesce_backend_slots,
-    total_lanes, BackendRoundTelemetry, BackendSlot, RuntimeBackendEventAction, RuntimeMode,
-    TEMPLATE_RETRY_DELAY,
+    cancel_backend_slots, collect_backend_hashes, distribute_work, format_round_backend_telemetry,
+    next_event_wait, next_work_id, quiesce_backend_slots, total_lanes, BackendRoundTelemetry,
+    BackendSlot, RuntimeBackendEventAction, RuntimeMode, TEMPLATE_RETRY_DELAY,
 };
 
 type BackendEventAction = RuntimeBackendEventAction;
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum WalletPasswordSource {
-    CliFlag,
-    PasswordFile,
-    Environment,
-    Prompt,
-}
-
-impl WalletPasswordSource {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::CliFlag => "--wallet-password",
-            Self::PasswordFile => "--wallet-password-file",
-            Self::Environment => "SEINE_WALLET_PASSWORD",
-            Self::Prompt => "terminal prompt",
-        }
-    }
-}
-
-const TUI_RENDER_INTERVAL: Duration = Duration::from_secs(1);
-const TUI_QUIT_POLL_INTERVAL: Duration = Duration::from_millis(100);
-const TUI_RENDER_SIGNAL_CAPACITY: usize = 8;
 const RETRY_LOG_INTERVAL: Duration = Duration::from_secs(10);
 const RECENT_TEMPLATE_CACHE_MIN: usize = 16;
 const RECENT_TEMPLATE_CACHE_MAX: usize = 512;
 const RECENT_TEMPLATE_CACHE_HEADROOM_ROUNDS: usize = 4;
 const RECENT_SUBMITTED_SOLUTIONS_CAPACITY: usize = 4096;
-static PROMPT_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 #[derive(Default)]
 struct RetryTracker {
@@ -121,33 +97,6 @@ struct MiningControlPlane<'a> {
     prefetch: Option<TemplatePrefetch>,
 }
 
-struct TuiDisplay {
-    state: TuiState,
-    last_render_request: Instant,
-    last_state_label: String,
-    render_signal: Sender<RenderSignal>,
-    render_stop: Arc<AtomicBool>,
-    render_worker: Option<JoinHandle<()>>,
-    quit_watcher_stop: Arc<AtomicBool>,
-    quit_watcher: Option<JoinHandle<()>>,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum RenderSignal {
-    RenderNow,
-}
-
-struct RoundUiView<'a> {
-    backends: &'a [BackendSlot],
-    round_backend_hashes: &'a BTreeMap<u64, u64>,
-    round_hashes: u64,
-    round_start: Instant,
-    height: &'a str,
-    difficulty: &'a str,
-    epoch: u64,
-    state_label: &'a str,
-}
-
 struct RoundLoopState {
     solved: Option<MiningSolution>,
     stale_tip_event: bool,
@@ -160,218 +109,6 @@ struct RecentTemplateEntry {
     epoch: u64,
     recorded_at: Instant,
     template: BlockTemplateResponse,
-}
-
-impl TuiDisplay {
-    fn new(tui_state: TuiState, shutdown: Arc<AtomicBool>) -> Result<Self> {
-        let (render_signal, render_stop, render_worker) =
-            spawn_tui_render_worker(Arc::clone(&tui_state), Arc::clone(&shutdown))?;
-        let (quit_watcher_stop, quit_watcher) = spawn_tui_quit_watcher(shutdown);
-        let display = Self {
-            state: tui_state,
-            last_render_request: Instant::now() - TUI_RENDER_INTERVAL,
-            last_state_label: String::new(),
-            render_signal,
-            render_stop,
-            render_worker: Some(render_worker),
-            quit_watcher_stop,
-            quit_watcher: Some(quit_watcher),
-        };
-        display.request_render();
-        Ok(display)
-    }
-
-    fn update(&mut self, stats: &Stats, view: RoundUiView<'_>) {
-        let state_changed = self.last_state_label != view.state_label;
-        if !state_changed && self.last_render_request.elapsed() < TUI_RENDER_INTERVAL {
-            return;
-        }
-
-        let snapshot = stats.snapshot();
-        let round_elapsed = view.round_start.elapsed().as_secs_f64().max(0.001);
-        let round_rate = format_hashrate(view.round_hashes as f64 / round_elapsed);
-        let backend_rate =
-            format_round_backend_hashrate(view.backends, view.round_backend_hashes, round_elapsed);
-
-        if let Ok(mut s) = self.state.lock() {
-            s.height = view.height.to_string();
-            s.difficulty = view.difficulty.to_string();
-            s.epoch = view.epoch;
-            s.state = view.state_label.to_string();
-            s.round_hashrate = round_rate;
-            s.avg_hashrate = format_hashrate(snapshot.hps);
-            s.total_hashes = snapshot.hashes;
-            s.templates = snapshot.templates;
-            s.submitted = snapshot.submitted;
-            s.accepted = snapshot.accepted;
-            s.backend_rates = backend_rate;
-        }
-
-        self.request_render();
-        self.last_render_request = Instant::now();
-        self.last_state_label = view.state_label.to_string();
-    }
-
-    fn mark_block_found(&mut self) {
-        if let Ok(mut s) = self.state.lock() {
-            let elapsed = s.started_at.elapsed().as_secs();
-            s.push_block_found_tick(elapsed);
-        }
-        self.request_render();
-    }
-
-    fn render_now(&mut self) {
-        self.request_render();
-        self.last_render_request = Instant::now();
-    }
-
-    fn set_state_and_render(&mut self, state_label: &str) {
-        if let Ok(mut s) = self.state.lock() {
-            s.state = state_label.to_string();
-        }
-        self.last_state_label = state_label.to_string();
-        self.render_now();
-    }
-
-    fn request_render(&self) {
-        match self.render_signal.try_send(RenderSignal::RenderNow) {
-            Ok(()) => {}
-            Err(TrySendError::Full(_)) => {}
-            Err(TrySendError::Disconnected(_)) => {}
-        }
-    }
-}
-
-impl Drop for TuiDisplay {
-    fn drop(&mut self) {
-        self.render_stop.store(true, Ordering::SeqCst);
-        let _ = self.render_signal.try_send(RenderSignal::RenderNow);
-        if let Some(handle) = self.render_worker.take() {
-            let _ = handle.join();
-        }
-
-        self.quit_watcher_stop.store(true, Ordering::SeqCst);
-        if let Some(handle) = self.quit_watcher.take() {
-            let _ = handle.join();
-        }
-    }
-}
-
-fn init_tui_display(tui_state: Option<TuiState>, shutdown: Arc<AtomicBool>) -> Option<TuiDisplay> {
-    let state = tui_state?;
-    match TuiDisplay::new(Arc::clone(&state), shutdown) {
-        Ok(display) => {
-            set_tui_state(state);
-            Some(display)
-        }
-        Err(err) => {
-            warn(
-                "TUI",
-                format!("disabled after init failure; continuing in plain mode ({err:#})"),
-            );
-            None
-        }
-    }
-}
-
-fn update_tui(tui: &mut Option<TuiDisplay>, stats: &Stats, view: RoundUiView<'_>) {
-    if let Some(display) = tui.as_mut() {
-        display.update(stats, view);
-    }
-}
-
-fn render_tui_now(tui: &mut Option<TuiDisplay>) {
-    if let Some(display) = tui.as_mut() {
-        display.render_now();
-    }
-}
-
-fn set_tui_state_label(tui: &mut Option<TuiDisplay>, state_label: &str) {
-    if let Some(display) = tui.as_mut() {
-        display.set_state_and_render(state_label);
-    }
-}
-
-fn spawn_tui_render_worker(
-    state: TuiState,
-    shutdown: Arc<AtomicBool>,
-) -> Result<(Sender<RenderSignal>, Arc<AtomicBool>, JoinHandle<()>)> {
-    let (render_signal_tx, render_signal_rx) = bounded(TUI_RENDER_SIGNAL_CAPACITY.max(1));
-    let render_stop = Arc::new(AtomicBool::new(false));
-    let render_stop_flag = Arc::clone(&render_stop);
-    let (ready_tx, ready_rx) = bounded::<Result<()>>(1);
-
-    let render_worker = thread::spawn(move || {
-        let mut renderer = match TuiRenderer::new() {
-            Ok(renderer) => {
-                let _ = ready_tx.send(Ok(()));
-                renderer
-            }
-            Err(err) => {
-                let _ = ready_tx.send(Err(anyhow!("TUI renderer init failed: {err}")));
-                return;
-            }
-        };
-
-        if let Ok(locked) = state.lock() {
-            let _ = renderer.render(&locked);
-        }
-
-        while !render_stop_flag.load(Ordering::Relaxed) && !shutdown.load(Ordering::Relaxed) {
-            match render_signal_rx.recv_timeout(Duration::from_millis(100)) {
-                Ok(RenderSignal::RenderNow) => {
-                    if let Ok(locked) = state.lock() {
-                        let _ = renderer.render(&locked);
-                    }
-                }
-                Err(crossbeam_channel::RecvTimeoutError::Timeout) => continue,
-                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
-            }
-        }
-    });
-
-    match ready_rx.recv() {
-        Ok(Ok(())) => Ok((render_signal_tx, render_stop, render_worker)),
-        Ok(Err(err)) => {
-            render_stop.store(true, Ordering::SeqCst);
-            let _ = render_worker.join();
-            Err(err)
-        }
-        Err(_) => {
-            render_stop.store(true, Ordering::SeqCst);
-            let _ = render_worker.join();
-            Err(anyhow!(
-                "TUI renderer thread terminated before initialization"
-            ))
-        }
-    }
-}
-
-fn spawn_tui_quit_watcher(shutdown: Arc<AtomicBool>) -> (Arc<AtomicBool>, JoinHandle<()>) {
-    let stop = Arc::new(AtomicBool::new(false));
-    let stop_flag = Arc::clone(&stop);
-    let handle = thread::spawn(move || {
-        while !stop_flag.load(Ordering::Relaxed) && !shutdown.load(Ordering::Relaxed) {
-            if PROMPT_ACTIVE.load(Ordering::Acquire) {
-                thread::sleep(Duration::from_millis(50));
-                continue;
-            }
-            let has_event = event::poll(TUI_QUIT_POLL_INTERVAL).unwrap_or(false);
-            if !has_event {
-                continue;
-            }
-            if let Ok(Event::Key(key)) = event::read() {
-                if key.code == KeyCode::Char('q')
-                    || (key.code == KeyCode::Char('c')
-                        && key.modifiers.contains(KeyModifiers::CONTROL))
-                {
-                    shutdown.store(true, Ordering::SeqCst);
-                    break;
-                }
-            }
-        }
-    });
-    (stop, handle)
 }
 
 fn current_tip_sequence(tip_signal: Option<&TipSignal>) -> u64 {
@@ -913,78 +650,6 @@ fn should_cancel_relaxed_round(
     stale_tip_event || solved_found || append_semantics_active
 }
 
-type BackendPollState = BTreeMap<u64, (Duration, Instant)>;
-
-fn backend_poll_interval(slot: &BackendSlot, configured: Duration) -> Duration {
-    let configured = configured.max(Duration::from_millis(1));
-    let hinted = super::backend_capabilities(slot)
-        .preferred_hash_poll_interval
-        .filter(|hint| *hint > Duration::from_millis(0))
-        .map(|hint| hint.max(Duration::from_millis(1)));
-    hinted.map_or(configured, |hint| configured.min(hint))
-}
-
-fn build_backend_poll_state(backends: &[BackendSlot], configured: Duration) -> BackendPollState {
-    let now = Instant::now();
-    let mut state = BackendPollState::new();
-    for slot in backends {
-        let interval = backend_poll_interval(slot, configured);
-        state.insert(slot.id, (interval, now + interval));
-    }
-    state
-}
-
-fn next_backend_poll_deadline(poll_state: &BackendPollState) -> Instant {
-    poll_state
-        .values()
-        .map(|(_, next_poll)| *next_poll)
-        .min()
-        .unwrap_or_else(Instant::now)
-}
-
-fn collect_due_backend_hashes(
-    backends: &[BackendSlot],
-    configured: Duration,
-    poll_state: &mut BackendPollState,
-    stats: Option<&Stats>,
-    round_hashes: &mut u64,
-    round_backend_hashes: &mut BTreeMap<u64, u64>,
-    round_backend_telemetry: &mut BTreeMap<u64, BackendRoundTelemetry>,
-) {
-    let now = Instant::now();
-    let mut collected = 0u64;
-
-    for slot in backends {
-        let (interval, next_poll) = poll_state.entry(slot.id).or_insert_with(|| {
-            let interval = backend_poll_interval(slot, configured);
-            (interval, now + interval)
-        });
-        if now < *next_poll {
-            continue;
-        }
-
-        let slot_hashes = slot.backend.take_hashes();
-        let telemetry = slot.backend.take_telemetry();
-        super::merge_backend_telemetry(round_backend_telemetry, slot.id, telemetry);
-
-        if slot_hashes > 0 {
-            collected = collected.saturating_add(slot_hashes);
-            let entry = round_backend_hashes.entry(slot.id).or_insert(0);
-            *entry = entry.saturating_add(slot_hashes);
-        }
-
-        *next_poll = now + *interval;
-    }
-
-    if collected == 0 {
-        return;
-    }
-    if let Some(stats) = stats {
-        stats.add_hashes(collected);
-    }
-    *round_hashes = round_hashes.saturating_add(collected);
-}
-
 struct RoundInput<'a> {
     epoch: u64,
     work_id: u64,
@@ -1042,15 +707,28 @@ impl<'a> RoundRuntime<'a> {
             && !stale_tip_event
         {
             let hashes_before = round_hashes;
-            collect_due_backend_hashes(
+            let mut collected = 0u64;
+            collect_due_backend_samples(
                 self.backends,
                 self.cfg.hash_poll_interval,
                 &mut backend_poll_state,
-                Some(self.stats),
-                &mut round_hashes,
-                &mut round_backend_hashes,
-                &mut round_backend_telemetry,
+                |sample| {
+                    super::merge_backend_telemetry(
+                        &mut round_backend_telemetry,
+                        sample.backend_id,
+                        sample.telemetry,
+                    );
+                    if sample.hashes > 0 {
+                        collected = collected.saturating_add(sample.hashes);
+                        let entry = round_backend_hashes.entry(sample.backend_id).or_insert(0);
+                        *entry = entry.saturating_add(sample.hashes);
+                    }
+                },
             );
+            if collected > 0 {
+                self.stats.add_hashes(collected);
+                round_hashes = round_hashes.saturating_add(collected);
+            }
             if round_hashes != hashes_before {
                 update_tui(
                     self.tui,
@@ -1629,179 +1307,6 @@ fn sleep_with_shutdown(shutdown: &AtomicBool, duration: Duration) -> bool {
     false
 }
 
-fn auto_load_wallet(
-    client: &ApiClient,
-    cfg: &Config,
-    shutdown: &AtomicBool,
-    tui: &mut Option<TuiDisplay>,
-) -> Result<bool> {
-    const MAX_PROMPT_ATTEMPTS: u32 = 3;
-
-    let (mut password, source) = match resolve_wallet_password(cfg)? {
-        Some((password, source)) => (password, source),
-        None => {
-            let Some(password) = prompt_wallet_password(tui)? else {
-                return Ok(false);
-            };
-            (password, WalletPasswordSource::Prompt)
-        }
-    };
-    let mut prompt_attempt = 1u32;
-
-    loop {
-        if shutdown.load(Ordering::Relaxed) {
-            return Ok(false);
-        }
-
-        match client.load_wallet(&password) {
-            Ok(()) => {
-                success("WALLET", format!("loaded via {}", source.as_str()));
-                password.clear();
-                return Ok(true);
-            }
-            Err(err) if is_wallet_already_loaded_error(&err) => {
-                info("WALLET", "already loaded");
-                password.clear();
-                return Ok(true);
-            }
-            Err(err)
-                if source == WalletPasswordSource::Prompt
-                    && prompt_attempt < MAX_PROMPT_ATTEMPTS =>
-            {
-                warn("WALLET", format!("load failed: {err:#}"));
-                render_tui_now(tui);
-                prompt_attempt += 1;
-                let Some(next_password) = prompt_wallet_password(tui)? else {
-                    return Ok(false);
-                };
-                password.clear();
-                password = next_password;
-                continue;
-            }
-            Err(err) => {
-                password.clear();
-                return Err(err).with_context(|| {
-                    format!("wallet load request failed using {}", source.as_str())
-                });
-            }
-        }
-    }
-}
-
-fn resolve_wallet_password(cfg: &Config) -> Result<Option<(String, WalletPasswordSource)>> {
-    if let Some(password) = &cfg.wallet_password {
-        if password.is_empty() {
-            bail!("--wallet-password is empty");
-        }
-        return Ok(Some((password.clone(), WalletPasswordSource::CliFlag)));
-    }
-
-    if let Some(path) = &cfg.wallet_password_file {
-        let password = read_password_file(path)?;
-        if password.is_empty() {
-            bail!("wallet password file is empty: {}", path.display());
-        }
-        return Ok(Some((password, WalletPasswordSource::PasswordFile)));
-    }
-
-    if let Ok(password) = env::var("SEINE_WALLET_PASSWORD") {
-        if !password.is_empty() {
-            return Ok(Some((password, WalletPasswordSource::Environment)));
-        }
-    }
-
-    if let Ok(password) = env::var("BNMINER_WALLET_PASSWORD") {
-        if !password.is_empty() {
-            return Ok(Some((password, WalletPasswordSource::Environment)));
-        }
-    }
-
-    Ok(None)
-}
-
-fn read_password_file(path: &std::path::Path) -> Result<String> {
-    let raw = fs::read_to_string(path)
-        .with_context(|| format!("failed to read wallet password file at {}", path.display()))?;
-    Ok(raw.trim_end_matches(['\r', '\n']).to_string())
-}
-
-fn prompt_wallet_password(tui: &mut Option<TuiDisplay>) -> Result<Option<String>> {
-    if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
-        return Ok(None);
-    }
-
-    PROMPT_ACTIVE.store(true, Ordering::Release);
-    struct PromptGuard;
-    impl Drop for PromptGuard {
-        fn drop(&mut self) {
-            PROMPT_ACTIVE.store(false, Ordering::Release);
-        }
-    }
-    let _prompt_guard = PromptGuard;
-
-    let raw_mode = is_raw_mode_enabled().unwrap_or(false);
-
-    set_tui_state_label(tui, "awaiting-wallet");
-    error(
-        "WALLET",
-        "ACTION REQUIRED: wallet password needed to continue mining",
-    );
-    warn(
-        "WALLET",
-        "password input is hidden; type password and press Enter",
-    );
-    render_tui_now(tui);
-    if raw_mode {
-        return prompt_wallet_password_raw_mode();
-    }
-
-    let password = rpassword::prompt_password("wallet password (input hidden): ")
-        .context("failed to read wallet password from terminal")?;
-    if password.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(password))
-}
-
-fn prompt_wallet_password_raw_mode() -> Result<Option<String>> {
-    let mut password = String::new();
-
-    loop {
-        let event = event::read().context("failed to read wallet password key event")?;
-        let Event::Key(key) = event else {
-            continue;
-        };
-        if key.kind == KeyEventKind::Release {
-            continue;
-        }
-
-        match key.code {
-            KeyCode::Enter => break,
-            KeyCode::Esc => return Ok(None),
-            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                return Ok(None);
-            }
-            KeyCode::Backspace => {
-                password.pop();
-            }
-            KeyCode::Char(ch) => {
-                if !key
-                    .modifiers
-                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
-                {
-                    password.push(ch);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    if password.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(password))
-}
-
 #[cfg(test)]
 mod tests {
     use crossbeam_channel::Sender;
@@ -2362,6 +1867,36 @@ mod tests {
         let updated = weights.get(&5).copied().unwrap_or_default();
         assert!(updated > 0.0);
         assert!(updated < 1.0);
+    }
+
+    #[test]
+    fn adaptive_weight_update_incorporates_short_rounds() {
+        let backends = vec![BackendSlot {
+            id: 15,
+            backend: Arc::new(NoopBackend::new("cpu")),
+            lanes: 1,
+        }];
+        let mut weights = seed_backend_weights(&backends);
+        let mut round_hashes = BTreeMap::new();
+        round_hashes.insert(15, 5_000);
+
+        update_backend_weights(
+            &mut weights,
+            WeightUpdateInputs {
+                backends: &backends,
+                round_backend_hashes: &round_hashes,
+                round_backend_telemetry: None,
+                round_elapsed_secs: 0.020,
+                mode: WorkAllocation::Adaptive,
+                round_end_reason: RoundEndReason::Refresh,
+                refresh_interval: Duration::from_secs(1),
+            },
+        );
+
+        assert!(
+            weights.get(&15).copied().unwrap_or_default() > 1.0,
+            "short rounds should still contribute throughput signal"
+        );
     }
 
     #[test]

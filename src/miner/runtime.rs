@@ -71,9 +71,6 @@ pub(super) fn update_backend_weights(
     }
 
     let elapsed = inputs.round_elapsed_secs.max(0.001);
-    if elapsed < 0.050 {
-        return;
-    }
 
     let base_alpha = match inputs.round_end_reason {
         RoundEndReason::Refresh => 0.35f64,
@@ -87,8 +84,8 @@ pub(super) fn update_backend_weights(
 
     // Scale update strength by round coverage to keep short churny rounds useful but bounded.
     let refresh_secs = inputs.refresh_interval.as_secs_f64().max(0.001);
-    let coverage = (elapsed / refresh_secs).clamp(0.1, 1.0);
-    let alpha = (base_alpha * coverage).clamp(0.02, 0.35);
+    let coverage = (elapsed / refresh_secs).clamp(0.01, 1.0);
+    let alpha = (base_alpha * coverage.sqrt()).clamp(0.01, 0.35);
 
     backend_weights
         .retain(|backend_id, _| inputs.backends.iter().any(|slot| slot.id == *backend_id));

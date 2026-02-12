@@ -2,7 +2,9 @@ mod auth;
 mod backend_control;
 mod backend_executor;
 mod bench;
+mod hash_poll;
 mod mining;
+mod mining_tui;
 mod round_control;
 mod runtime;
 mod scheduler;
@@ -11,6 +13,7 @@ mod template_prefetch;
 mod tip;
 mod tui;
 mod ui;
+mod wallet;
 mod work_allocator;
 
 use std::collections::BTreeMap;

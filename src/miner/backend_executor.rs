@@ -221,6 +221,7 @@ impl BackendExecutor {
             backend: &'static str,
             action: &'static str,
             backend_handle: Arc<dyn PowBackend>,
+            deadline: Instant,
         }
 
         let timeout = timeout.max(Duration::from_millis(1));
@@ -244,6 +245,9 @@ impl BackendExecutor {
             let action = task.kind.action_label();
             let backend_handle = Arc::clone(&task.backend_handle);
             let idx = task.idx;
+            let task_deadline = Instant::now()
+                .checked_add(timeout)
+                .unwrap_or_else(Instant::now);
             task_contexts.insert(
                 idx,
                 TimeoutTaskContext {
@@ -251,11 +255,9 @@ impl BackendExecutor {
                     backend,
                     action,
                     backend_handle: Arc::clone(&backend_handle),
+                    deadline: task_deadline,
                 },
             );
-            let task_deadline = Instant::now()
-                .checked_add(timeout)
-                .unwrap_or_else(Instant::now);
             if task_deadline > recv_deadline {
                 recv_deadline = task_deadline;
             }
@@ -302,30 +304,62 @@ impl BackendExecutor {
         }
         drop(outcome_tx);
 
-        let mut received = 0usize;
-        while received < expected {
+        let mut pending = expected_indices.clone();
+        while !pending.is_empty() {
             let now = Instant::now();
             if now >= recv_deadline {
                 break;
             }
-            match outcome_rx.recv_timeout(recv_deadline.saturating_duration_since(now)) {
+
+            let mut next_deadline = recv_deadline;
+            let mut expired = Vec::new();
+            for idx in &pending {
+                let Some(context) = task_contexts.get(idx) else {
+                    expired.push(*idx);
+                    continue;
+                };
+                if now >= context.deadline {
+                    expired.push(*idx);
+                } else {
+                    next_deadline = next_deadline.min(context.deadline);
+                }
+            }
+            for idx in expired {
+                pending.remove(&idx);
+            }
+            if pending.is_empty() {
+                break;
+            }
+
+            let wait_for = next_deadline
+                .saturating_duration_since(now)
+                .max(Duration::from_millis(1));
+            match outcome_rx.recv_timeout(wait_for) {
                 Ok(outcome) => {
                     let outcome_idx = outcome.idx;
-                    if expected_indices.contains(&outcome_idx) && outcomes[outcome_idx].is_none() {
-                        received = received.saturating_add(1);
+                    if pending.contains(&outcome_idx) && outcomes[outcome_idx].is_none() {
+                        pending.remove(&outcome_idx);
+                        outcomes[outcome_idx] = Some(outcome);
                     }
+                }
+                Err(RecvTimeoutError::Timeout) => continue,
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
+
+            while let Ok(outcome) = outcome_rx.try_recv() {
+                let outcome_idx = outcome.idx;
+                if pending.contains(&outcome_idx) && outcomes[outcome_idx].is_none() {
+                    pending.remove(&outcome_idx);
                     outcomes[outcome_idx] = Some(outcome);
                 }
-                Err(RecvTimeoutError::Timeout) => break,
-                Err(RecvTimeoutError::Disconnected) => break,
             }
         }
         while let Ok(outcome) = outcome_rx.try_recv() {
             let outcome_idx = outcome.idx;
-            if expected_indices.contains(&outcome_idx) && outcomes[outcome_idx].is_none() {
-                received = received.saturating_add(1);
+            if pending.contains(&outcome_idx) && outcomes[outcome_idx].is_none() {
+                pending.remove(&outcome_idx);
+                outcomes[outcome_idx] = Some(outcome);
             }
-            outcomes[outcome_idx] = Some(outcome);
         }
 
         for idx in &expected_indices {
@@ -589,5 +623,90 @@ mod tests {
         .expect_err("expired deadline should fail fast");
         assert!(format!("{err:#}").contains("deadline elapsed"));
         assert_eq!(backend.assign_calls.load(Ordering::Relaxed), 0);
+    }
+
+    struct SlowAssignBackend {
+        interrupts: Arc<AtomicUsize>,
+        delay: Duration,
+    }
+
+    impl SlowAssignBackend {
+        fn new(interrupts: Arc<AtomicUsize>, delay: Duration) -> Self {
+            Self { interrupts, delay }
+        }
+    }
+
+    impl PowBackend for SlowAssignBackend {
+        fn name(&self) -> &'static str {
+            "slow-assign"
+        }
+
+        fn lanes(&self) -> usize {
+            1
+        }
+
+        fn set_instance_id(&self, _id: BackendInstanceId) {}
+
+        fn set_event_sink(&self, _sink: Sender<BackendEvent>) {}
+
+        fn start(&self) -> Result<()> {
+            Ok(())
+        }
+
+        fn stop(&self) {}
+
+        fn assign_work(&self, _work: WorkAssignment) -> Result<()> {
+            thread::sleep(self.delay);
+            Ok(())
+        }
+
+        fn request_timeout_interrupt(&self) -> Result<()> {
+            self.interrupts.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn dispatch_ignores_late_outcomes_after_timeout() {
+        let executor = BackendExecutor::new();
+        let interrupts = Arc::new(AtomicUsize::new(0));
+        let backend = Arc::new(SlowAssignBackend::new(
+            Arc::clone(&interrupts),
+            Duration::from_millis(40),
+        )) as Arc<dyn PowBackend>;
+
+        let work = WorkAssignment {
+            template: Arc::new(WorkTemplate {
+                work_id: 1,
+                epoch: 1,
+                header_base: Arc::from(vec![0u8; blocknet_pow_spec::POW_HEADER_BASE_LEN]),
+                target: [0xFF; 32],
+                stop_at: Instant::now() + Duration::from_secs(1),
+            }),
+            nonce_chunk: NonceChunk {
+                start_nonce: 0,
+                nonce_count: 1,
+            },
+        };
+
+        let outcomes = executor.dispatch_backend_tasks(
+            vec![BackendTask {
+                idx: 0,
+                backend_id: 77,
+                backend: "slow-assign",
+                backend_handle: backend,
+                kind: BackendTaskKind::Assign(work),
+            }],
+            Duration::from_millis(5),
+        );
+
+        assert!(
+            outcomes[0].is_none(),
+            "timed-out task should remain unresolved"
+        );
+        assert!(
+            interrupts.load(Ordering::Relaxed) > 0,
+            "timeout path should request backend interrupt"
+        );
     }
 }
