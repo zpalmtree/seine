@@ -5,9 +5,10 @@
 Current status:
 - CPU backend: implemented (Argon2id, consensus-compatible params).
 - NVIDIA backend: scaffolded interface only (not implemented yet).
-- Runtime architecture: supports multiple backends in one process with persistent workers, configurable bounded backend event queues, coalesced tip notifications (deduped across SSE reconnects), template prefetch overlap to reduce round-boundary idle, and optional strict quiesce barriers for round-accurate hash accounting.
+- Runtime architecture: supports multiple backends in one process with persistent workers, configurable bounded backend event queues with lossless `Solution`/`Error` delivery (backpressure instead of silent drop), coalesced tip notifications (deduped across SSE reconnects), template prefetch overlap to reduce round-boundary idle, and optional strict quiesce barriers for round-accurate hash accounting.
   - Runtime assigns disjoint nonce chunks per backend per round (backend-local scheduling inside each chunk) so CPU and future GPU implementations can iterate independently without nonce overlap.
-  - Runtime is split into `src/miner/{mining,bench,scheduler,stats}.rs` to keep orchestration, benchmarking, nonce scheduling, and telemetry isolated for faster iteration.
+  - Mining mode supports adaptive weighted nonce allocation (`--work-allocation adaptive`) based on observed backend throughput, with `--work-allocation static` available for fixed lane-based splitting.
+  - Runtime is split into `src/miner/{mining,tip,bench,scheduler,stats}.rs` to keep orchestration, tip-stream control, benchmarking, nonce scheduling, and telemetry isolated for faster iteration.
 
 ## Test
 
@@ -78,6 +79,7 @@ Run headless/plain logs (no fullscreen TUI):
   - `--backend-event-capacity` (default `1024`) controls bounded backend event queue size.
   - `--hash-poll-ms` (default `200`) controls backend hash counter polling cadence.
   - `--stats-secs` (default `10`) controls periodic stats log emission cadence.
+  - `--work-allocation` (`adaptive` or `static`) controls backend nonce-chunk splitting policy in mining mode.
   - `--request-timeout-secs` (default `10`) controls JSON API request timeout for template/submit/wallet calls.
   - `--events-stream-timeout-secs` (default `10`) controls SSE connect timeout per attempt (stream itself is long-lived).
   - `--cpu-affinity` (`auto` or `off`) controls CPU worker pinning policy for better repeatability on NUMA/SMT hosts.
@@ -97,6 +99,8 @@ Run deterministic local benchmarking (no API connection needed):
 - `--bench-kind backend`: persistent backend workers (steady-state throughput).
 - `--bench-kind end-to-end`: includes backend start/stop per round.
 - Worker benchmarks always apply a round-end measurement fence so round H/s is comparable across strict/relaxed accounting modes.
+  - Benchmark reports now expose `counted_hashes` and `late_hashes` per round; throughput uses measured elapsed + fence time to avoid inflation when backend preemption is coarse.
+  - Baseline comparison validates benchmark/config/environment compatibility before computing deltas (and fails fast when regression gating is requested on non-comparable runs).
 
 ```bash
 cd seine

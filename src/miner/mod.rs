@@ -2,6 +2,7 @@ mod bench;
 mod mining;
 mod scheduler;
 mod stats;
+mod tip;
 mod tui;
 mod ui;
 
@@ -22,7 +23,7 @@ use crate::backend::{
     BackendEvent, BackendInstanceId, NonceChunk, PowBackend, PreemptionGranularity, WorkAssignment,
     WorkTemplate, WORK_ID_MAX,
 };
-use crate::config::{BackendKind, Config, UiMode};
+use crate::config::{BackendKind, Config, UiMode, WorkAllocation};
 use scheduler::NonceReservation;
 use stats::{format_hashrate, Stats};
 use tui::{new_tui_state, TuiState};
@@ -35,6 +36,16 @@ struct BackendSlot {
     id: BackendInstanceId,
     backend: Box<dyn PowBackend>,
     lanes: u64,
+}
+
+struct DistributeWorkOptions<'a> {
+    epoch: u64,
+    work_id: u64,
+    header_base: Arc<[u8]>,
+    target: [u8; 32],
+    reservation: NonceReservation,
+    stop_at: Instant,
+    backend_weights: Option<&'a BTreeMap<BackendInstanceId, f64>>,
 }
 
 pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
@@ -79,6 +90,16 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
     info(
         "MINER",
         format!("preemption | {}", backend_preemption_profiles(&backends)),
+    );
+    info(
+        "MINER",
+        format!(
+            "allocation | {}",
+            match cfg.work_allocation {
+                WorkAllocation::Static => "static-lanes",
+                WorkAllocation::Adaptive => "adaptive-weighted",
+            }
+        ),
     );
     if cfg.strict_round_accounting {
         let constrained: Vec<String> = backends
@@ -262,38 +283,33 @@ fn stop_backend_slots(backends: &mut [BackendSlot]) {
 
 fn distribute_work(
     backends: &mut Vec<BackendSlot>,
-    epoch: u64,
-    work_id: u64,
-    header_base: Arc<[u8]>,
-    target: [u8; 32],
-    reservation: NonceReservation,
-    stop_at: Instant,
+    options: DistributeWorkOptions<'_>,
 ) -> Result<()> {
-    let mut attempt_start_nonce = reservation.start_nonce;
+    let mut attempt_start_nonce = options.reservation.start_nonce;
     loop {
         if backends.is_empty() {
             bail!("all mining backends are unavailable");
         }
 
+        let nonce_counts = compute_backend_nonce_counts(
+            backends,
+            options.reservation.max_iters_per_lane,
+            options.backend_weights,
+        );
         let total_lanes = total_lanes(backends);
-        let attempt_span = total_lanes
-            .saturating_mul(reservation.max_iters_per_lane)
-            .max(total_lanes);
+        let attempt_span = nonce_counts.iter().copied().sum::<u64>().max(total_lanes);
         let template = Arc::new(WorkTemplate {
-            work_id,
-            epoch,
-            header_base: Arc::clone(&header_base),
-            target,
-            stop_at,
+            work_id: options.work_id,
+            epoch: options.epoch,
+            header_base: Arc::clone(&options.header_base),
+            target: options.target,
+            stop_at: options.stop_at,
         });
         let mut failed_indices = Vec::new();
         let mut chunk_start = attempt_start_nonce;
 
         for (idx, slot) in backends.iter().enumerate() {
-            let nonce_count = slot
-                .lanes
-                .saturating_mul(reservation.max_iters_per_lane)
-                .max(slot.lanes);
+            let nonce_count = *nonce_counts.get(idx).unwrap_or(&slot.lanes.max(1));
             let work = WorkAssignment {
                 template: Arc::clone(&template),
                 nonce_chunk: NonceChunk {
@@ -347,6 +363,84 @@ fn distribute_work(
             ),
         );
     }
+}
+
+fn compute_backend_nonce_counts(
+    backends: &[BackendSlot],
+    max_iters_per_lane: u64,
+    backend_weights: Option<&BTreeMap<BackendInstanceId, f64>>,
+) -> Vec<u64> {
+    if backends.is_empty() {
+        return Vec::new();
+    }
+
+    let base_counts: Vec<u64> = backends.iter().map(|slot| slot.lanes.max(1)).collect();
+    if backend_weights.is_none() {
+        return base_counts
+            .iter()
+            .map(|lanes| lanes.saturating_mul(max_iters_per_lane).max(*lanes))
+            .collect();
+    }
+
+    let total_lanes = total_lanes(backends);
+    let total_span = total_lanes
+        .saturating_mul(max_iters_per_lane)
+        .max(total_lanes);
+    let min_total: u64 = base_counts.iter().copied().sum();
+    if total_span <= min_total {
+        return base_counts;
+    }
+
+    let weights_map = backend_weights.expect("weights should be present");
+    let mut weights = Vec::with_capacity(backends.len());
+    let mut sum_weights = 0.0f64;
+    for slot in backends {
+        let fallback = slot.lanes.max(1) as f64;
+        let weight = weights_map
+            .get(&slot.id)
+            .copied()
+            .filter(|w| w.is_finite() && *w > 0.0)
+            .unwrap_or(fallback);
+        sum_weights += weight;
+        weights.push(weight);
+    }
+    if !sum_weights.is_finite() || sum_weights <= 0.0 {
+        return base_counts;
+    }
+
+    let remaining = total_span - min_total;
+    let mut extra = vec![0u64; backends.len()];
+    let mut floors = 0u64;
+    let mut remainders: Vec<(usize, f64, BackendInstanceId)> = Vec::with_capacity(backends.len());
+    for (idx, weight) in weights.iter().enumerate() {
+        let raw = (remaining as f64) * (*weight / sum_weights);
+        let floor = raw.floor() as u64;
+        floors = floors.saturating_add(floor);
+        extra[idx] = floor;
+        remainders.push((idx, raw - floor as f64, backends[idx].id));
+    }
+
+    let mut leftover = remaining.saturating_sub(floors);
+    if leftover > 0 {
+        remainders.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.2.cmp(&b.2))
+        });
+        for (idx, _, _) in remainders {
+            if leftover == 0 {
+                break;
+            }
+            extra[idx] = extra[idx].saturating_add(1);
+            leftover -= 1;
+        }
+    }
+
+    base_counts
+        .iter()
+        .zip(extra)
+        .map(|(base, add)| base.saturating_add(add))
+        .collect()
 }
 
 fn collect_backend_hashes(
@@ -771,15 +865,18 @@ mod tests {
         ];
         distribute_work(
             &mut backends,
-            1,
-            1,
-            Arc::from(vec![7u8; POW_HEADER_BASE_LEN]),
-            [0xFF; 32],
-            NonceReservation {
-                start_nonce: 100,
-                max_iters_per_lane: 10,
+            DistributeWorkOptions {
+                epoch: 1,
+                work_id: 1,
+                header_base: Arc::from(vec![7u8; POW_HEADER_BASE_LEN]),
+                target: [0xFF; 32],
+                reservation: NonceReservation {
+                    start_nonce: 100,
+                    max_iters_per_lane: 10,
+                },
+                stop_at: Instant::now() + Duration::from_secs(1),
+                backend_weights: None,
             },
-            Instant::now() + Duration::from_secs(1),
         )
         .expect("distribution should continue after quarantining failing backend");
 
@@ -823,5 +920,53 @@ mod tests {
         assert_eq!(active.len(), 1);
         assert_eq!(failed_state.stop_calls.load(Ordering::Relaxed), 1);
         assert_eq!(healthy_state.stop_calls.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn nonce_counts_static_match_lane_quota() {
+        let state_a = Arc::new(MockState::default());
+        let state_b = Arc::new(MockState::default());
+        let backends = vec![
+            slot(
+                1,
+                2,
+                Box::new(MockBackend::new("cpu", 2, Arc::clone(&state_a))),
+            ),
+            slot(
+                2,
+                1,
+                Box::new(MockBackend::new("cpu", 1, Arc::clone(&state_b))),
+            ),
+        ];
+
+        let counts = compute_backend_nonce_counts(&backends, 10, None);
+        assert_eq!(counts, vec![20, 10]);
+    }
+
+    #[test]
+    fn nonce_counts_adaptive_follow_weights_without_overlap() {
+        let state_a = Arc::new(MockState::default());
+        let state_b = Arc::new(MockState::default());
+        let backends = vec![
+            slot(
+                10,
+                2,
+                Box::new(MockBackend::new("cpu", 2, Arc::clone(&state_a))),
+            ),
+            slot(
+                20,
+                2,
+                Box::new(MockBackend::new("cpu", 2, Arc::clone(&state_b))),
+            ),
+        ];
+        let mut weights = BTreeMap::new();
+        weights.insert(10, 9.0);
+        weights.insert(20, 1.0);
+
+        let counts = compute_backend_nonce_counts(&backends, 10, Some(&weights));
+        assert_eq!(counts.iter().copied().sum::<u64>(), 40);
+        assert!(counts[0] > counts[1]);
+        assert!(counts[0] >= 2);
+        assert!(counts[1] >= 2);
     }
 }

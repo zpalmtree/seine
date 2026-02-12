@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, Result};
 use argon2::{Algorithm, Argon2, Block, Version};
 use blocknet_pow_spec::{pow_params, POW_OUTPUT_LEN};
-use crossbeam_channel::{Sender, TrySendError};
+use crossbeam_channel::Sender;
 
 use crate::backend::{
     BackendEvent, BackendInstanceId, BenchBackend, MiningSolution, PowBackend,
@@ -17,8 +17,6 @@ use crate::types::hash_meets_target;
 
 const HASH_BATCH_SIZE: u64 = 64;
 const HASH_FLUSH_INTERVAL: Duration = Duration::from_millis(50);
-const SOLUTION_SEND_TIMEOUT: Duration = Duration::from_millis(10);
-const ERROR_SEND_TIMEOUT: Duration = Duration::from_millis(50);
 const SOLVED_MASK: u64 = 1u64 << 63;
 
 struct ControlState {
@@ -553,36 +551,7 @@ fn emit_event(shared: &Shared, event: BackendEvent) {
         Err(_) => None,
     };
     if let Some(tx) = tx {
-        match event {
-            BackendEvent::Solution(solution) => {
-                let event = BackendEvent::Solution(solution);
-                match tx.try_send(event) {
-                    Ok(()) => {}
-                    Err(TrySendError::Full(event)) => {
-                        let _ = tx.send_timeout(event, SOLUTION_SEND_TIMEOUT);
-                    }
-                    Err(TrySendError::Disconnected(_)) => {}
-                }
-            }
-            BackendEvent::Error {
-                backend_id,
-                backend,
-                message,
-            } => {
-                let event = BackendEvent::Error {
-                    backend_id,
-                    backend,
-                    message,
-                };
-                match tx.try_send(event) {
-                    Ok(()) => {}
-                    Err(TrySendError::Full(event)) => {
-                        let _ = tx.send_timeout(event, ERROR_SEND_TIMEOUT);
-                    }
-                    Err(TrySendError::Disconnected(_)) => {}
-                }
-            }
-        }
+        let _ = tx.send(event);
     }
 }
 

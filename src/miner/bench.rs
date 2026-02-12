@@ -34,6 +34,10 @@ struct BenchBackendRun {
 struct BenchRun {
     round: u32,
     hashes: u64,
+    #[serde(default)]
+    counted_hashes: u64,
+    #[serde(default)]
+    late_hashes: u64,
     elapsed_secs: f64,
     #[serde(default)]
     fence_secs: f64,
@@ -153,6 +157,8 @@ fn run_kernel_benchmark(
         runs.push(BenchRun {
             round: round + 1,
             hashes,
+            counted_hashes: hashes,
+            late_hashes: 0,
             elapsed_secs: elapsed,
             fence_secs: 0.0,
             hps,
@@ -278,12 +284,15 @@ fn run_worker_benchmark_inner(
 
         distribute_work(
             backends,
-            epoch,
-            work_id,
-            std::sync::Arc::clone(&header_base),
-            impossible_target,
-            reservation,
-            stop_at,
+            super::DistributeWorkOptions {
+                epoch,
+                work_id,
+                header_base: std::sync::Arc::clone(&header_base),
+                target: impossible_target,
+                reservation,
+                stop_at,
+                backend_weights: None,
+            },
         )?;
 
         let mut round_hashes = 0u64;
@@ -336,18 +345,29 @@ fn run_worker_benchmark_inner(
                 );
                 distribute_work(
                     backends,
-                    epoch,
-                    work_id,
-                    std::sync::Arc::clone(&header_base),
-                    impossible_target,
-                    reservation,
-                    stop_at,
+                    super::DistributeWorkOptions {
+                        epoch,
+                        work_id,
+                        header_base: std::sync::Arc::clone(&header_base),
+                        target: impossible_target,
+                        reservation,
+                        stop_at,
+                        backend_weights: None,
+                    },
                 )?;
                 next_hash_poll_at = Instant::now();
                 topology_changed = false;
             }
         }
 
+        collect_backend_hashes(
+            backends,
+            None,
+            &mut round_hashes,
+            Some(&mut round_backend_hashes),
+        );
+
+        let counted_hashes = round_hashes;
         let counted_until = std::cmp::min(Instant::now(), stop_at);
         let counted_elapsed = counted_until
             .saturating_duration_since(round_start)
@@ -356,36 +376,49 @@ fn run_worker_benchmark_inner(
         let fence_start = Instant::now();
         quiesce_backend_slots(backends)?;
         let fence_elapsed = fence_start.elapsed().as_secs_f64();
+        let mut late_hashes = 0u64;
+        let mut late_backend_hashes = BTreeMap::new();
         collect_backend_hashes(
             backends,
             None,
-            &mut round_hashes,
-            Some(&mut round_backend_hashes),
+            &mut late_hashes,
+            Some(&mut late_backend_hashes),
         );
         drain_benchmark_backend_events(backend_events, epoch, backends)?;
 
-        let hps = round_hashes as f64 / counted_elapsed;
+        for (backend_id, hashes) in late_backend_hashes {
+            let entry = round_backend_hashes.entry(backend_id).or_insert(0);
+            *entry = entry.saturating_add(hashes);
+        }
+
+        let round_hashes = counted_hashes.saturating_add(late_hashes);
+        let measured_elapsed = (counted_elapsed + fence_elapsed).max(0.001);
+        let hps = round_hashes as f64 / measured_elapsed;
         let backend_runs =
-            build_backend_round_stats(backends, &round_backend_hashes, counted_elapsed);
+            build_backend_round_stats(backends, &round_backend_hashes, measured_elapsed);
 
         info(
             "BENCH",
             format!(
-                "round {}/{} hashes={} t={:.2}s fence={:.3}s rate={} backends={}",
+                "round {}/{} hashes={} counted={} late={} window={:.2}s fence={:.3}s rate={} backends={}",
                 round + 1,
                 cfg.bench_rounds,
                 round_hashes,
+                counted_hashes,
+                late_hashes,
                 counted_elapsed,
                 fence_elapsed,
                 format_hashrate(hps),
-                format_round_backend_hashrate(backends, &round_backend_hashes, counted_elapsed),
+                format_round_backend_hashrate(backends, &round_backend_hashes, measured_elapsed),
             ),
         );
 
         runs.push(BenchRun {
             round: round + 1,
             hashes: round_hashes,
-            elapsed_secs: counted_elapsed,
+            counted_hashes,
+            late_hashes,
+            elapsed_secs: measured_elapsed,
             fence_secs: fence_elapsed,
             hps,
             backend_runs,
@@ -461,7 +494,17 @@ fn summarize_benchmark(cfg: &Config, mut report: BenchReport) -> Result<()> {
             .with_context(|| format!("failed to read baseline file {}", path.display()))?;
         let baseline: BenchReport = serde_json::from_str(&baseline_text)
             .with_context(|| format!("failed to parse baseline JSON {}", path.display()))?;
-        if baseline.avg_hps > 0.0 {
+        let compatibility_issues = baseline_compatibility_issues(&report, &baseline);
+        if !compatibility_issues.is_empty() {
+            let message = format!(
+                "baseline is not comparable ({})",
+                compatibility_issues.join("; ")
+            );
+            if cfg.bench_fail_below_pct.is_some() {
+                bail!("{message}");
+            }
+            warn("BENCH", message);
+        } else if baseline.avg_hps > 0.0 {
             let delta_pct = ((report.avg_hps - baseline.avg_hps) / baseline.avg_hps) * 100.0;
             baseline_delta_pct = Some(delta_pct);
             info(
@@ -472,6 +515,8 @@ fn summarize_benchmark(cfg: &Config, mut report: BenchReport) -> Result<()> {
                     delta_pct
                 ),
             );
+        } else if cfg.bench_fail_below_pct.is_some() {
+            bail!("baseline avg_hps must be > 0 for regression gating");
         }
     }
 
@@ -504,6 +549,79 @@ fn summarize_benchmark(cfg: &Config, mut report: BenchReport) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn baseline_compatibility_issues(current: &BenchReport, baseline: &BenchReport) -> Vec<String> {
+    let mut issues = Vec::new();
+
+    if baseline.bench_kind != current.bench_kind {
+        issues.push(format!(
+            "kind mismatch baseline={} current={}",
+            baseline.bench_kind, current.bench_kind
+        ));
+    }
+    if baseline.backends != current.backends {
+        issues.push(format!(
+            "backend mismatch baseline={} current={}",
+            baseline.backends.join(","),
+            current.backends.join(",")
+        ));
+    }
+    if baseline.preemption != current.preemption {
+        issues.push(format!(
+            "preemption mismatch baseline={} current={}",
+            baseline.preemption.join(","),
+            current.preemption.join(",")
+        ));
+    }
+    if baseline.total_lanes != current.total_lanes {
+        issues.push(format!(
+            "lanes mismatch baseline={} current={}",
+            baseline.total_lanes, current.total_lanes
+        ));
+    }
+    if baseline.cpu_threads != current.cpu_threads {
+        issues.push(format!(
+            "cpu_threads mismatch baseline={} current={}",
+            baseline.cpu_threads, current.cpu_threads
+        ));
+    }
+    if baseline.bench_secs != current.bench_secs {
+        issues.push(format!(
+            "bench_secs mismatch baseline={} current={}",
+            baseline.bench_secs, current.bench_secs
+        ));
+    }
+
+    if !baseline.environment.target_triple.is_empty()
+        && !current.environment.target_triple.is_empty()
+        && baseline.environment.target_triple != current.environment.target_triple
+    {
+        issues.push(format!(
+            "target mismatch baseline={} current={}",
+            baseline.environment.target_triple, current.environment.target_triple
+        ));
+    }
+    if baseline.environment.cpu_brand.is_some()
+        && current.environment.cpu_brand.is_some()
+        && baseline.environment.cpu_brand != current.environment.cpu_brand
+    {
+        issues.push(format!(
+            "cpu mismatch baseline={} current={}",
+            baseline
+                .environment
+                .cpu_brand
+                .as_deref()
+                .unwrap_or("unknown"),
+            current
+                .environment
+                .cpu_brand
+                .as_deref()
+                .unwrap_or("unknown")
+        ));
+    }
+
+    issues
 }
 
 fn benchmark_header_base(round: u32) -> std::sync::Arc<[u8]> {
@@ -604,6 +722,37 @@ fn drain_benchmark_backend_events(
 mod tests {
     use super::*;
 
+    fn sample_report() -> BenchReport {
+        BenchReport {
+            environment: BenchEnvironment {
+                target_triple: "linux/x86_64".to_string(),
+                cpu_brand: Some("test-cpu".to_string()),
+                ..BenchEnvironment::default()
+            },
+            bench_kind: "backend".to_string(),
+            backends: vec!["cpu#1".to_string()],
+            preemption: vec!["cpu#1=per-hash".to_string()],
+            total_lanes: 1,
+            cpu_threads: 1,
+            bench_secs: 10,
+            rounds: 1,
+            avg_hps: 10.0,
+            median_hps: 10.0,
+            min_hps: 10.0,
+            max_hps: 10.0,
+            runs: vec![BenchRun {
+                round: 1,
+                hashes: 10,
+                counted_hashes: 10,
+                late_hashes: 0,
+                elapsed_secs: 1.0,
+                fence_secs: 0.0,
+                hps: 10.0,
+                backend_runs: Vec::new(),
+            }],
+        }
+    }
+
     #[test]
     fn benchmark_ignores_stale_solution_events() {
         let mut backends = Vec::new();
@@ -619,5 +768,16 @@ mod tests {
         )
         .expect("stale benchmark solution event should be ignored");
         assert_eq!(action, BackendEventAction::None);
+    }
+
+    #[test]
+    fn baseline_compatibility_detects_mismatched_kind() {
+        let current = sample_report();
+        let mut baseline = sample_report();
+        baseline.bench_kind = "kernel".to_string();
+
+        let issues = baseline_compatibility_issues(&current, &baseline);
+        assert!(!issues.is_empty());
+        assert!(issues.iter().any(|issue| issue.contains("kind mismatch")));
     }
 }

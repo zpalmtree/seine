@@ -33,6 +33,12 @@ pub enum UiMode {
     Plain,
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+pub enum WorkAllocation {
+    Static,
+    Adaptive,
+}
+
 #[derive(Debug, Parser)]
 #[command(name = "seine", version, about = "Seine net miner for Blocknet")]
 struct Cli {
@@ -118,6 +124,10 @@ struct Cli {
     #[arg(long, default_value_t = 1u64 << 36)]
     nonce_iters_per_lane: u64,
 
+    /// Nonce chunk allocation strategy across active backends.
+    #[arg(long, value_enum, default_value_t = WorkAllocation::Adaptive)]
+    work_allocation: WorkAllocation,
+
     /// Disable SSE tip notifications (/api/events) and rely only on refresh timer.
     #[arg(long, action = ArgAction::SetTrue)]
     disable_sse: bool,
@@ -178,6 +188,7 @@ pub struct Config {
     pub strict_round_accounting: bool,
     pub start_nonce: u64,
     pub nonce_iters_per_lane: u64,
+    pub work_allocation: WorkAllocation,
     pub sse_enabled: bool,
     pub refresh_on_same_height: bool,
     pub ui_mode: UiMode,
@@ -250,6 +261,7 @@ impl Config {
             strict_round_accounting: !cli.relaxed_accounting,
             start_nonce: cli.start_nonce.unwrap_or_else(default_nonce_seed),
             nonce_iters_per_lane: cli.nonce_iters_per_lane,
+            work_allocation: cli.work_allocation,
             sse_enabled: !cli.disable_sse,
             refresh_on_same_height: cli.refresh_on_same_height,
             ui_mode: cli.ui,
@@ -440,6 +452,7 @@ mod tests {
             relaxed_accounting: false,
             start_nonce: None,
             nonce_iters_per_lane: 1u64 << 36,
+            work_allocation: WorkAllocation::Adaptive,
             disable_sse: false,
             refresh_on_same_height: false,
             ui: UiMode::Auto,
