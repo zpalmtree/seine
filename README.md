@@ -44,6 +44,13 @@ Or pass token directly:
 ./target/release/bnminer --api-url http://127.0.0.1:8332 --token <hex_token>
 ```
 
+If daemon mode starts without a wallet loaded, `bnminer` now auto-loads wallet on first template request.
+Password sources (in order): `--wallet-password`, `--wallet-password-file`, `BNMINER_WALLET_PASSWORD`, interactive prompt.
+
+```bash
+./target/release/bnminer --api-url http://127.0.0.1:8332 --wallet-password-file /path/to/wallet.pass
+```
+
 Select multiple backends (comma-separated or repeated flag). Unavailable backends are skipped:
 
 ```bash
@@ -55,6 +62,7 @@ Select multiple backends (comma-separated or repeated flag). Unavailable backend
 - Each CPU thread needs roughly 2GB RAM due to Argon2id parameters.
 - By default, bnminer refuses to start if configured CPU lanes exceed detected system RAM. Override with `--allow-oversubscribe` if needed.
 - The miner fetches block templates from `/api/mining/blocktemplate` and submits solved blocks to `/api/mining/submitblock` using compact `{template_id, nonce}` payloads when available.
+- If `/api/mining/blocktemplate` reports `no wallet loaded`, the miner automatically calls `/api/wallet/load` and retries.
 - The miner listens to `/api/events` and refreshes work immediately on `new_block` events (disable with `--disable-sse`).
 - A backend runtime fault quarantines only that backend; mining continues on remaining active backends when possible.
 - This miner is intentionally external so consensus-critical validation remains in the daemon.

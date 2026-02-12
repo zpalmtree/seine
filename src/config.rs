@@ -31,6 +31,14 @@ struct Cli {
     #[arg(long)]
     token: Option<String>,
 
+    /// Wallet password used for automatic wallet load when daemon starts without a wallet.
+    #[arg(long)]
+    wallet_password: Option<String>,
+
+    /// Path to a file containing the wallet password for automatic wallet load.
+    #[arg(long)]
+    wallet_password_file: Option<PathBuf>,
+
     /// Path to api.cookie file (defaults to <data-dir>/api.cookie).
     #[arg(long)]
     cookie: Option<PathBuf>,
@@ -106,6 +114,8 @@ struct Cli {
 pub struct Config {
     pub api_url: String,
     pub token: Option<String>,
+    pub wallet_password: Option<String>,
+    pub wallet_password_file: Option<PathBuf>,
     pub backends: Vec<BackendKind>,
     pub threads: usize,
     pub refresh_interval: Duration,
@@ -148,6 +158,8 @@ impl Config {
         Ok(Self {
             api_url,
             token,
+            wallet_password: cli.wallet_password,
+            wallet_password_file: cli.wallet_password_file,
             backends,
             threads: cli.threads,
             refresh_interval: Duration::from_secs(cli.refresh_secs.max(1)),
@@ -319,6 +331,8 @@ mod tests {
         Cli {
             api_url: "http://127.0.0.1:8332".to_string(),
             token: None,
+            wallet_password: None,
+            wallet_password_file: None,
             cookie: None,
             data_dir: PathBuf::from("./data"),
             backends: vec![BackendKind::Cpu],

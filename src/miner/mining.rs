@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
-use std::io::{BufRead, BufReader};
+use std::env;
+use std::fs;
+use std::io::{BufRead, BufReader, IsTerminal};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -8,8 +10,9 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, bail, Context, Result};
 use blocknet_pow_spec::POW_HEADER_BASE_LEN;
 use crossbeam_channel::{after, Receiver};
+use serde_json::Value;
 
-use crate::api::ApiClient;
+use crate::api::{is_no_wallet_loaded_error, is_wallet_already_loaded_error, ApiClient};
 use crate::backend::{BackendEvent, MiningSolution};
 use crate::config::Config;
 use crate::types::{
@@ -47,6 +50,25 @@ enum BackendEventAction {
     TopologyChanged,
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum WalletPasswordSource {
+    CliFlag,
+    PasswordFile,
+    Environment,
+    Prompt,
+}
+
+impl WalletPasswordSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::CliFlag => "--wallet-password",
+            Self::PasswordFile => "--wallet-password-file",
+            Self::Environment => "BNMINER_WALLET_PASSWORD",
+            Self::Prompt => "terminal prompt",
+        }
+    }
+}
+
 pub(super) fn run_mining_loop(
     cfg: &Config,
     client: &ApiClient,
@@ -66,7 +88,7 @@ pub(super) fn run_mining_loop(
             bail!("all mining backends are unavailable");
         }
 
-        let template = match fetch_template_with_retry(client, shutdown) {
+        let template = match fetch_template_with_retry(client, cfg, shutdown) {
             Some(t) => t,
             None => break,
         };
@@ -364,6 +386,7 @@ fn stream_tip_events(
     shutdown: &AtomicBool,
 ) -> Result<()> {
     let mut event_name = String::new();
+    let mut last_new_block_hash: Option<String> = None;
     let reader = BufReader::new(resp);
 
     for line_result in reader.lines() {
@@ -372,32 +395,83 @@ fn stream_tip_events(
         }
 
         let line = line_result.context("failed reading SSE event stream")?;
-
-        if let Some(name) = line.strip_prefix("event:") {
-            event_name = name.trim().to_string();
-            continue;
-        }
-
-        if line.is_empty() {
-            event_name.clear();
-            continue;
-        }
-
-        if event_name == "new_block" && line.starts_with("data:") {
-            stale.store(true, Ordering::Release);
-        }
+        process_sse_line(&line, &mut event_name, &mut last_new_block_hash, stale);
     }
 
     Ok(())
 }
 
+fn process_sse_line(
+    line: &str,
+    event_name: &mut String,
+    last_new_block_hash: &mut Option<String>,
+    stale: &AtomicBool,
+) {
+    if let Some(name) = line.strip_prefix("event:") {
+        *event_name = name.trim().to_string();
+        return;
+    }
+
+    if line.is_empty() {
+        event_name.clear();
+        return;
+    }
+
+    if event_name != "new_block" || !line.starts_with("data:") {
+        return;
+    }
+
+    let payload = line
+        .strip_prefix("data:")
+        .map(str::trim)
+        .unwrap_or_default();
+    if let Some(hash) = extract_new_block_hash(payload) {
+        if last_new_block_hash.as_deref() != Some(hash.as_str()) {
+            stale.store(true, Ordering::Release);
+        }
+        *last_new_block_hash = Some(hash);
+        return;
+    }
+
+    // If parsing fails, preserve old behavior and refresh once.
+    stale.store(true, Ordering::Release);
+    *last_new_block_hash = None;
+}
+
+fn extract_new_block_hash(payload: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(payload).ok()?;
+    value
+        .get("hash")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
 fn fetch_template_with_retry(
     client: &ApiClient,
+    cfg: &Config,
     shutdown: &AtomicBool,
 ) -> Option<BlockTemplateResponse> {
     while !shutdown.load(Ordering::Relaxed) {
         match client.get_block_template() {
             Ok(template) => return Some(template),
+            Err(err) if is_no_wallet_loaded_error(&err) => {
+                eprintln!(
+                    "[wallet] blocktemplate requires a loaded wallet; attempting automatic wallet load"
+                );
+                match auto_load_wallet(client, cfg, shutdown) {
+                    Ok(true) => continue,
+                    Ok(false) => {
+                        eprintln!(
+                            "[wallet] unable to load wallet automatically. Provide --wallet-password, --wallet-password-file, BNMINER_WALLET_PASSWORD, or run bnminer in a terminal for prompt-based loading."
+                        );
+                        return None;
+                    }
+                    Err(load_err) => {
+                        eprintln!("[wallet] automatic wallet load failed: {load_err:#}");
+                        return None;
+                    }
+                }
+            }
             Err(err) => {
                 eprintln!("blocktemplate request failed: {err:#}");
                 if !sleep_with_shutdown(shutdown, TEMPLATE_RETRY_DELAY) {
@@ -423,6 +497,101 @@ fn sleep_with_shutdown(shutdown: &AtomicBool, duration: Duration) -> bool {
         thread::sleep(sleep_for);
     }
     false
+}
+
+fn auto_load_wallet(client: &ApiClient, cfg: &Config, shutdown: &AtomicBool) -> Result<bool> {
+    const MAX_PROMPT_ATTEMPTS: u32 = 3;
+
+    let Some((mut password, source)) = resolve_wallet_password(cfg)? else {
+        return Ok(false);
+    };
+    let mut prompt_attempt = 1u32;
+
+    loop {
+        if shutdown.load(Ordering::Relaxed) {
+            return Ok(false);
+        }
+
+        match client.load_wallet(&password) {
+            Ok(()) => {
+                println!("[wallet] loaded wallet via {}", source.as_str());
+                password.clear();
+                return Ok(true);
+            }
+            Err(err) if is_wallet_already_loaded_error(&err) => {
+                println!("[wallet] wallet already loaded");
+                password.clear();
+                return Ok(true);
+            }
+            Err(err)
+                if source == WalletPasswordSource::Prompt
+                    && prompt_attempt < MAX_PROMPT_ATTEMPTS =>
+            {
+                eprintln!("[wallet] load failed: {err:#}");
+                prompt_attempt += 1;
+                let Some(next_password) = prompt_wallet_password()? else {
+                    return Ok(false);
+                };
+                password.clear();
+                password = next_password;
+                continue;
+            }
+            Err(err) => {
+                password.clear();
+                return Err(err).with_context(|| {
+                    format!("wallet load request failed using {}", source.as_str())
+                });
+            }
+        }
+    }
+}
+
+fn resolve_wallet_password(cfg: &Config) -> Result<Option<(String, WalletPasswordSource)>> {
+    if let Some(password) = &cfg.wallet_password {
+        if password.is_empty() {
+            bail!("--wallet-password is empty");
+        }
+        return Ok(Some((password.clone(), WalletPasswordSource::CliFlag)));
+    }
+
+    if let Some(path) = &cfg.wallet_password_file {
+        let password = read_password_file(path)?;
+        if password.is_empty() {
+            bail!("wallet password file is empty: {}", path.display());
+        }
+        return Ok(Some((password, WalletPasswordSource::PasswordFile)));
+    }
+
+    if let Ok(password) = env::var("BNMINER_WALLET_PASSWORD") {
+        if !password.is_empty() {
+            return Ok(Some((password, WalletPasswordSource::Environment)));
+        }
+    }
+
+    if let Some(password) = prompt_wallet_password()? {
+        return Ok(Some((password, WalletPasswordSource::Prompt)));
+    }
+
+    Ok(None)
+}
+
+fn read_password_file(path: &std::path::Path) -> Result<String> {
+    let raw = fs::read_to_string(path)
+        .with_context(|| format!("failed to read wallet password file at {}", path.display()))?;
+    Ok(raw.trim_end_matches(['\r', '\n']).to_string())
+}
+
+fn prompt_wallet_password() -> Result<Option<String>> {
+    if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
+        return Ok(None);
+    }
+
+    let password = rpassword::prompt_password("wallet password: ")
+        .context("failed to read wallet password from terminal")?;
+    if password.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(password))
 }
 
 #[cfg(test)]
@@ -530,5 +699,55 @@ mod tests {
         let start = Instant::now();
         assert!(!sleep_with_shutdown(&shutdown, Duration::from_secs(1)));
         assert!(start.elapsed() < Duration::from_millis(20));
+    }
+
+    #[test]
+    fn duplicate_new_block_hashes_are_coalesced() {
+        let stale = AtomicBool::new(false);
+        let mut event_name = String::new();
+        let mut last_hash = None;
+
+        process_sse_line("event: new_block", &mut event_name, &mut last_hash, &stale);
+        process_sse_line(
+            "data: {\"hash\":\"abc\",\"height\":1}",
+            &mut event_name,
+            &mut last_hash,
+            &stale,
+        );
+        assert!(stale.swap(false, Ordering::AcqRel));
+
+        process_sse_line("event: new_block", &mut event_name, &mut last_hash, &stale);
+        process_sse_line(
+            "data: {\"hash\":\"abc\",\"height\":1}",
+            &mut event_name,
+            &mut last_hash,
+            &stale,
+        );
+        assert!(!stale.swap(false, Ordering::AcqRel));
+    }
+
+    #[test]
+    fn new_block_hash_change_triggers_refresh() {
+        let stale = AtomicBool::new(false);
+        let mut event_name = String::new();
+        let mut last_hash = None;
+
+        process_sse_line("event: new_block", &mut event_name, &mut last_hash, &stale);
+        process_sse_line(
+            "data: {\"hash\":\"abc\",\"height\":1}",
+            &mut event_name,
+            &mut last_hash,
+            &stale,
+        );
+        let _ = stale.swap(false, Ordering::AcqRel);
+
+        process_sse_line("event: new_block", &mut event_name, &mut last_hash, &stale);
+        process_sse_line(
+            "data: {\"hash\":\"def\",\"height\":2}",
+            &mut event_name,
+            &mut last_hash,
+            &stale,
+        );
+        assert!(stale.swap(false, Ordering::AcqRel));
     }
 }

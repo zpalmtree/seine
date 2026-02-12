@@ -1,8 +1,10 @@
+use std::fmt;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use reqwest::blocking::{Client, Response};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+use reqwest::StatusCode;
 use serde::Serialize;
 use serde_json::Value;
 
@@ -13,6 +15,44 @@ struct CompactSubmitPayload<'a> {
     template_id: &'a str,
     nonce: u64,
 }
+
+#[derive(Debug, Serialize)]
+struct WalletLoadPayload<'a> {
+    password: &'a str,
+}
+
+#[derive(Debug)]
+pub struct ApiStatusError {
+    endpoint: String,
+    status: StatusCode,
+    message: String,
+}
+
+impl ApiStatusError {
+    pub fn endpoint(&self) -> &str {
+        &self.endpoint
+    }
+
+    pub fn status(&self) -> StatusCode {
+        self.status
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+impl fmt::Display for ApiStatusError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} failed ({}): {}",
+            self.endpoint, self.status, self.message
+        )
+    }
+}
+
+impl std::error::Error for ApiStatusError {}
 
 #[derive(Clone)]
 pub struct ApiClient {
@@ -82,6 +122,20 @@ impl ApiClient {
         decode_json_response(resp, "submitblock")
     }
 
+    pub fn load_wallet(&self, password: &str) -> Result<()> {
+        let url = format!("{}/api/wallet/load", self.base_url);
+        let payload = WalletLoadPayload { password };
+        let resp = self
+            .json_client
+            .post(url)
+            .json(&payload)
+            .send()
+            .context("request to wallet/load endpoint failed")?;
+
+        let _: Value = decode_json_response(resp, "wallet/load")?;
+        Ok(())
+    }
+
     pub fn open_events_stream(&self) -> Result<Response> {
         let url = format!("{}/api/events", self.base_url);
         self.stream_client
@@ -89,6 +143,24 @@ impl ApiClient {
             .send()
             .context("request to events endpoint failed")
     }
+}
+
+pub fn is_no_wallet_loaded_error(err: &anyhow::Error) -> bool {
+    let Some(api_err) = err.downcast_ref::<ApiStatusError>() else {
+        return false;
+    };
+    api_err.endpoint() == "blocktemplate"
+        && api_err.status() == StatusCode::SERVICE_UNAVAILABLE
+        && api_err.message().trim() == "no wallet loaded"
+}
+
+pub fn is_wallet_already_loaded_error(err: &anyhow::Error) -> bool {
+    let Some(api_err) = err.downcast_ref::<ApiStatusError>() else {
+        return false;
+    };
+    api_err.endpoint() == "wallet/load"
+        && api_err.status() == StatusCode::CONFLICT
+        && api_err.message().trim() == "wallet already loaded"
 }
 
 fn decode_json_response<T: serde::de::DeserializeOwned>(
@@ -103,13 +175,21 @@ fn decode_json_response<T: serde::de::DeserializeOwned>(
 
     let status = resp.status();
     let body = resp.text().unwrap_or_default();
-    if let Ok(value) = serde_json::from_str::<Value>(&body) {
-        if let Some(msg) = value.get("error").and_then(Value::as_str) {
-            return Err(anyhow!("{endpoint} failed ({status}): {msg}"));
-        }
-    }
+    let message = if let Ok(value) = serde_json::from_str::<Value>(&body) {
+        value
+            .get("error")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .unwrap_or(body)
+    } else {
+        body
+    };
 
-    Err(anyhow!("{endpoint} failed ({status}): {body}"))
+    Err(anyhow!(ApiStatusError {
+        endpoint: endpoint.to_string(),
+        status,
+        message,
+    }))
 }
 
 #[cfg(test)]
@@ -191,6 +271,62 @@ mod tests {
             .submit_block(&json!({"header": {"nonce": 999}}), Some("tmpl-1"), 7)
             .expect("compact submit should succeed");
         assert!(resp.accepted);
+        mock.assert();
+    }
+
+    #[test]
+    fn no_wallet_loaded_error_is_classified() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/api/mining/blocktemplate")
+                .header("authorization", "Bearer testtoken");
+            then.status(503)
+                .json_body(json!({"error": "no wallet loaded"}));
+        });
+
+        let client = test_client(&server);
+        let err = client
+            .get_block_template()
+            .expect_err("blocktemplate request should fail");
+        assert!(is_no_wallet_loaded_error(&err));
+        mock.assert();
+    }
+
+    #[test]
+    fn wallet_already_loaded_error_is_classified() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/api/wallet/load")
+                .header("authorization", "Bearer testtoken");
+            then.status(409)
+                .json_body(json!({"error": "wallet already loaded"}));
+        });
+
+        let client = test_client(&server);
+        let err = client
+            .load_wallet("secret")
+            .expect_err("wallet load should fail");
+        assert!(is_wallet_already_loaded_error(&err));
+        mock.assert();
+    }
+
+    #[test]
+    fn load_wallet_success() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/api/wallet/load")
+                .header("authorization", "Bearer testtoken")
+                .json_body(json!({"password": "secret"}));
+            then.status(200).json_body(json!({"loaded": true}));
+        });
+
+        let client = test_client(&server);
+        client
+            .load_wallet("secret")
+            .expect("wallet load should succeed");
         mock.assert();
     }
 }
