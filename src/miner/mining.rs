@@ -763,6 +763,10 @@ pub(super) fn run_mining_loop(
     }
 
     if !backends.is_empty() {
+        match quiesce_backend_slots(backends, RuntimeMode::Mining, cfg.backend_control_timeout) {
+            Ok(_) => {}
+            Err(err) => warn("BACKEND", format!("final backend quiesce failed: {err:#}")),
+        }
         let mut final_pending_solution = None;
         match drain_mining_backend_events(
             backend_events,
@@ -1051,6 +1055,8 @@ fn handle_mining_backend_event(
         if solution.epoch == epoch {
             if solved.is_none() {
                 *solved = Some(solution);
+            } else {
+                deferred_solutions.push(solution);
             }
         } else if solution.epoch < epoch {
             deferred_solutions.push(solution);
@@ -1074,12 +1080,14 @@ fn drain_mining_backend_events(
     deferred_solutions: &mut Vec<MiningSolution>,
     backends: &mut Vec<BackendSlot>,
 ) -> Result<BackendEventAction> {
-    let (action, maybe_solution) =
+    let (action, solutions) =
         super::drain_runtime_backend_events(backend_events, epoch, backends, RuntimeMode::Mining)?;
-    if let Some(solution) = maybe_solution {
+    for solution in solutions {
         if solution.epoch == epoch {
             if solved.is_none() {
                 *solved = Some(solution);
+            } else {
+                deferred_solutions.push(solution);
             }
         } else if solution.epoch < epoch {
             deferred_solutions.push(solution);
@@ -1565,6 +1573,93 @@ mod tests {
         assert!(solved.is_none());
         assert_eq!(deferred.len(), 1);
         assert_eq!(deferred[0].epoch, 41);
+    }
+
+    #[test]
+    fn same_epoch_solution_is_deferred_when_one_is_already_selected() {
+        let mut solved = Some(MiningSolution {
+            epoch: 42,
+            nonce: 7,
+            backend_id: 1,
+            backend: "cpu",
+        });
+        let mut deferred = Vec::new();
+        let mut backends = vec![BackendSlot {
+            id: 1,
+            backend: Arc::new(NoopBackend::new("cpu")),
+            lanes: 1,
+        }];
+
+        let action = handle_mining_backend_event(
+            BackendEvent::Solution(MiningSolution {
+                epoch: 42,
+                nonce: 11,
+                backend_id: 1,
+                backend: "cpu",
+            }),
+            42,
+            &mut solved,
+            &mut deferred,
+            &mut backends,
+        )
+        .expect("extra same-epoch solution should be deferred");
+
+        assert_eq!(action, BackendEventAction::None);
+        assert_eq!(solved.as_ref().map(|solution| solution.nonce), Some(7));
+        assert_eq!(deferred.len(), 1);
+        assert_eq!(deferred[0].epoch, 42);
+        assert_eq!(deferred[0].nonce, 11);
+    }
+
+    #[test]
+    fn drain_mining_backend_events_keeps_all_solutions() {
+        let (event_tx, event_rx) = crossbeam_channel::bounded(8);
+        let mut solved = None;
+        let mut deferred = Vec::new();
+        let mut backends = vec![BackendSlot {
+            id: 1,
+            backend: Arc::new(NoopBackend::new("cpu")),
+            lanes: 1,
+        }];
+
+        event_tx
+            .send(BackendEvent::Solution(MiningSolution {
+                epoch: 42,
+                nonce: 3,
+                backend_id: 1,
+                backend: "cpu",
+            }))
+            .expect("enqueue current solution");
+        event_tx
+            .send(BackendEvent::Solution(MiningSolution {
+                epoch: 41,
+                nonce: 5,
+                backend_id: 1,
+                backend: "cpu",
+            }))
+            .expect("enqueue stale solution");
+        event_tx
+            .send(BackendEvent::Solution(MiningSolution {
+                epoch: 42,
+                nonce: 9,
+                backend_id: 1,
+                backend: "cpu",
+            }))
+            .expect("enqueue additional current solution");
+
+        let action =
+            drain_mining_backend_events(&event_rx, 42, &mut solved, &mut deferred, &mut backends)
+                .expect("drain should succeed");
+
+        assert_eq!(action, BackendEventAction::None);
+        assert_eq!(solved.as_ref().map(|solution| solution.nonce), Some(3));
+        assert_eq!(deferred.len(), 2);
+        assert!(deferred
+            .iter()
+            .any(|solution| solution.epoch == 41 && solution.nonce == 5));
+        assert!(deferred
+            .iter()
+            .any(|solution| solution.epoch == 42 && solution.nonce == 9));
     }
 
     #[test]

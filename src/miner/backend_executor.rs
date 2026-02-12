@@ -63,9 +63,14 @@ struct BackendWorkerKey {
 
 static BACKEND_WORKERS: OnceLock<Mutex<BTreeMap<BackendWorkerKey, BackendWorker>>> =
     OnceLock::new();
+static QUARANTINED_BACKENDS: OnceLock<Mutex<BTreeSet<BackendWorkerKey>>> = OnceLock::new();
 
 fn worker_registry() -> &'static Mutex<BTreeMap<BackendWorkerKey, BackendWorker>> {
     BACKEND_WORKERS.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+fn quarantine_registry() -> &'static Mutex<BTreeSet<BackendWorkerKey>> {
+    QUARANTINED_BACKENDS.get_or_init(|| Mutex::new(BTreeSet::new()))
 }
 
 fn backend_worker_key(
@@ -139,11 +144,39 @@ pub(super) fn remove_backend_worker(
     }
 }
 
-pub(super) fn quarantine_backend(backend: Arc<dyn PowBackend>) {
+pub(super) fn quarantine_backend(backend_id: BackendInstanceId, backend: Arc<dyn PowBackend>) {
+    let key = backend_worker_key(backend_id, &backend);
+    let should_quarantine = match quarantine_registry().lock() {
+        Ok(mut inflight) => inflight.insert(key),
+        Err(_) => {
+            warn(
+                "BACKEND",
+                "quarantine registry lock poisoned; running synchronous stop fallback",
+            );
+            if panic::catch_unwind(AssertUnwindSafe(|| backend.stop())).is_err() {
+                warn(
+                    "BACKEND",
+                    "backend stop panicked during synchronous quarantine fallback",
+                );
+            }
+            false
+        }
+    };
+    if !should_quarantine {
+        return;
+    }
+
     let detached = Arc::clone(&backend);
     if thread::Builder::new()
         .name("seine-backend-quarantine".to_string())
-        .spawn(move || detached.stop())
+        .spawn(move || {
+            if panic::catch_unwind(AssertUnwindSafe(|| detached.stop())).is_err() {
+                warn("BACKEND", "backend stop panicked during async quarantine");
+            }
+            if let Ok(mut inflight) = quarantine_registry().lock() {
+                inflight.remove(&key);
+            }
+        })
         .is_err()
     {
         warn(
@@ -155,6 +188,9 @@ pub(super) fn quarantine_backend(backend: Arc<dyn PowBackend>) {
                 "BACKEND",
                 "backend stop panicked during synchronous quarantine fallback",
             );
+        }
+        if let Ok(mut inflight) = quarantine_registry().lock() {
+            inflight.remove(&key);
         }
     }
 }
@@ -212,7 +248,7 @@ pub(super) fn dispatch_backend_tasks(
                         "{action} dispatch failed: worker channel closed for {backend}#{backend_id}"
                     )),
                 });
-                quarantine_backend(backend_handle);
+                quarantine_backend(backend_id, backend_handle);
             }
             Err(TrySendError::Full(_)) => {
                 remove_backend_worker(backend_id, &backend_handle);
@@ -222,7 +258,7 @@ pub(super) fn dispatch_backend_tasks(
                         "{action} dispatch failed: queue saturated for {backend}#{backend_id}"
                     )),
                 });
-                quarantine_backend(backend_handle);
+                quarantine_backend(backend_id, backend_handle);
             }
         }
     }
@@ -279,7 +315,7 @@ fn run_backend_command(command: BackendWorkerCommand) {
         .map_err(|err| anyhow!("{action_label} failed for {backend}#{backend_id}: {err:#}"));
     let send_result = outcome_tx.send(BackendTaskOutcome { idx, result });
     if send_result.is_err() {
-        quarantine_backend(backend_handle);
+        quarantine_backend(backend_id, backend_handle);
     }
 }
 
@@ -305,6 +341,10 @@ fn run_backend_call(
 mod tests {
     use super::*;
     use crossbeam_channel::Sender;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::thread;
+    use std::time::Duration;
 
     use crate::backend::{BackendEvent, PowBackend};
 
@@ -328,6 +368,43 @@ mod tests {
         }
 
         fn stop(&self) {}
+
+        fn assign_work(&self, _work: WorkAssignment) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    struct StopCountingBackend {
+        stops: Arc<AtomicUsize>,
+    }
+
+    impl StopCountingBackend {
+        fn new(stops: Arc<AtomicUsize>) -> Self {
+            Self { stops }
+        }
+    }
+
+    impl PowBackend for StopCountingBackend {
+        fn name(&self) -> &'static str {
+            "stop-counter"
+        }
+
+        fn lanes(&self) -> usize {
+            1
+        }
+
+        fn set_instance_id(&self, _id: BackendInstanceId) {}
+
+        fn set_event_sink(&self, _sink: Sender<BackendEvent>) {}
+
+        fn start(&self) -> Result<()> {
+            Ok(())
+        }
+
+        fn stop(&self) {
+            self.stops.fetch_add(1, Ordering::Relaxed);
+            thread::sleep(Duration::from_millis(40));
+        }
 
         fn assign_work(&self, _work: WorkAssignment) -> Result<()> {
             Ok(())
@@ -375,5 +452,17 @@ mod tests {
         assert!(outcomes[4].is_none());
 
         clear_backend_workers();
+    }
+
+    #[test]
+    fn quarantine_is_serialized_per_backend_instance() {
+        let stops = Arc::new(AtomicUsize::new(0));
+        let backend = Arc::new(StopCountingBackend::new(Arc::clone(&stops))) as Arc<dyn PowBackend>;
+
+        quarantine_backend(9, Arc::clone(&backend));
+        quarantine_backend(9, backend);
+
+        thread::sleep(Duration::from_millis(140));
+        assert_eq!(stops.load(Ordering::Relaxed), 1);
     }
 }

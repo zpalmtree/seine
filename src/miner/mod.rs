@@ -534,7 +534,7 @@ fn remove_backend_by_id(backends: &mut Vec<BackendSlot>, backend_id: BackendInst
     };
 
     let slot = backends.remove(idx);
-    backend_executor::quarantine_backend(Arc::clone(&slot.backend));
+    backend_executor::quarantine_backend(slot.id, Arc::clone(&slot.backend));
     backend_executor::remove_backend_worker(slot.id, &slot.backend);
     backend_executor::prune_backend_workers(backends);
     true
@@ -579,7 +579,7 @@ fn enforce_deadline_policy(
     for slot in best_effort {
         let backend_name = slot.backend.name();
         let backend_id = slot.id;
-        backend_executor::quarantine_backend(Arc::clone(&slot.backend));
+        backend_executor::quarantine_backend(backend_id, Arc::clone(&slot.backend));
         backend_executor::remove_backend_worker(backend_id, &slot.backend);
         warn(
             "BACKEND",
@@ -616,7 +616,7 @@ fn drain_runtime_backend_events(
     mode: RuntimeMode,
 ) -> Result<(
     RuntimeBackendEventAction,
-    Option<crate::backend::MiningSolution>,
+    Vec<crate::backend::MiningSolution>,
 )> {
     backend_control::drain_runtime_backend_events(backend_events, epoch, backends, mode)
 }

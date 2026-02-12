@@ -144,21 +144,21 @@ pub(super) fn drain_runtime_backend_events(
     mode: RuntimeMode,
 ) -> Result<(
     RuntimeBackendEventAction,
-    Option<crate::backend::MiningSolution>,
+    Vec<crate::backend::MiningSolution>,
 )> {
     let mut action = RuntimeBackendEventAction::None;
-    let mut solution = None;
+    let mut solutions = Vec::new();
     while let Ok(event) = backend_events.try_recv() {
         let (event_action, maybe_solution) =
             handle_runtime_backend_event(event, epoch, backends, mode)?;
         if event_action == RuntimeBackendEventAction::TopologyChanged {
             action = RuntimeBackendEventAction::TopologyChanged;
         }
-        if solution.is_none() {
-            solution = maybe_solution;
+        if let Some(solution) = maybe_solution {
+            solutions.push(solution);
         }
     }
-    Ok((action, solution))
+    Ok((action, solutions))
 }
 
 fn control_backend_slots(
@@ -316,7 +316,7 @@ fn run_backend_control_phase(
             Some(outcome) => match outcome.result {
                 Ok(()) => survivors.push((idx, slot)),
                 Err(err) => {
-                    backend_executor::quarantine_backend(Arc::clone(&slot.backend));
+                    backend_executor::quarantine_backend(backend_id, Arc::clone(&slot.backend));
                     backend_executor::remove_backend_worker(backend_id, &slot.backend);
                     failures
                         .entry(backend_id)
@@ -326,7 +326,7 @@ fn run_backend_control_phase(
                 }
             },
             None => {
-                backend_executor::quarantine_backend(Arc::clone(&slot.backend));
+                backend_executor::quarantine_backend(backend_id, Arc::clone(&slot.backend));
                 backend_executor::remove_backend_worker(backend_id, &slot.backend);
                 failures
                     .entry(backend_id)
