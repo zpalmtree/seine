@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use anyhow::{anyhow, bail, Context, Result};
 use blocknet_pow_spec::POW_HEADER_BASE_LEN;
-use crossbeam_channel::{after, unbounded, Receiver, Sender};
+use crossbeam_channel::{after, Receiver};
 
 use crate::api::ApiClient;
 use crate::backend::{BackendEvent, MiningSolution};
@@ -19,30 +19,45 @@ use crate::types::{
 use super::scheduler::NonceScheduler;
 use super::stats::Stats;
 use super::{
-    collect_backend_hashes, distribute_work, next_event_wait, next_work_id, total_lanes,
-    BackendSlot, TEMPLATE_RETRY_DELAY,
+    collect_backend_hashes, distribute_work, next_event_wait, next_work_id, quiesce_backend_slots,
+    remove_backend_by_name, total_lanes, BackendSlot, TEMPLATE_RETRY_DELAY,
 };
 
-pub(super) enum TipEvent {
-    NewBlock,
+pub(super) struct TipSignal {
+    stale: Arc<AtomicBool>,
+}
+
+impl TipSignal {
+    fn new() -> Self {
+        Self {
+            stale: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    fn take_stale(&self) -> bool {
+        self.stale.swap(false, Ordering::AcqRel)
+    }
 }
 
 pub(super) fn run_mining_loop(
     cfg: &Config,
     client: &ApiClient,
     shutdown: &AtomicBool,
-    backends: &mut [BackendSlot],
+    backends: &mut Vec<BackendSlot>,
     backend_events: &Receiver<BackendEvent>,
-    tip_events: Option<&Receiver<TipEvent>>,
+    tip_signal: Option<&TipSignal>,
 ) -> Result<()> {
     let stats = Stats::new();
     let mut nonce_scheduler = NonceScheduler::new(cfg.start_nonce, cfg.nonce_iters_per_lane);
     let mut work_id_cursor = 1u64;
     let mut epoch = 0u64;
     let mut last_stats_print = Instant::now();
-    let total_lanes = total_lanes(backends);
 
     while !shutdown.load(Ordering::Relaxed) {
+        if backends.is_empty() {
+            bail!("all mining backends are unavailable");
+        }
+
         let template = match fetch_template_with_retry(client, shutdown) {
             Some(t) => t,
             None => break,
@@ -82,7 +97,7 @@ pub(super) fn run_mining_loop(
 
         epoch = epoch.wrapping_add(1).max(1);
         let work_id = next_work_id(&mut work_id_cursor);
-        let reservation = nonce_scheduler.reserve(total_lanes);
+        let reservation = nonce_scheduler.reserve(total_lanes(backends));
         let stop_at = Instant::now() + cfg.refresh_interval;
 
         stats.bump_templates();
@@ -117,44 +132,33 @@ pub(super) fn run_mining_loop(
             && solved.is_none()
             && !stale_tip_event
         {
-            collect_backend_hashes(backends, epoch, Some(&stats), &mut round_hashes);
+            collect_backend_hashes(backends, Some(&stats), &mut round_hashes);
 
             if last_stats_print.elapsed() >= cfg.stats_interval {
                 stats.print();
                 last_stats_print = Instant::now();
             }
 
+            if tip_signal.is_some_and(TipSignal::take_stale) {
+                stale_tip_event = true;
+                continue;
+            }
+
             let wait_for = next_event_wait(stop_at, last_stats_print, cfg.stats_interval);
 
-            if let Some(tip_rx) = tip_events {
-                crossbeam_channel::select! {
-                    recv(backend_events) -> event => {
-                        let event = event.map_err(|_| anyhow!("backend event channel closed"))?;
-                        handle_mining_backend_event(event, epoch, &mut solved)?;
-                    }
-                    recv(tip_rx) -> tip => {
-                        if tip.is_ok() {
-                            stale_tip_event = true;
-                        }
-                    }
-                    recv(after(wait_for)) -> _ => {}
+            crossbeam_channel::select! {
+                recv(backend_events) -> event => {
+                    let event = event.map_err(|_| anyhow!("backend event channel closed"))?;
+                    handle_mining_backend_event(event, epoch, &mut solved, backends)?;
                 }
-            } else {
-                crossbeam_channel::select! {
-                    recv(backend_events) -> event => {
-                        let event = event.map_err(|_| anyhow!("backend event channel closed"))?;
-                        handle_mining_backend_event(event, epoch, &mut solved)?;
-                    }
-                    recv(after(wait_for)) -> _ => {}
-                }
+                recv(after(wait_for)) -> _ => {}
             }
         }
 
-        drain_mining_backend_events(backend_events, epoch, &mut solved)?;
-        collect_backend_hashes(backends, epoch, Some(&stats), &mut round_hashes);
-        if consume_tip_events(tip_events) {
-            stale_tip_event = true;
-        }
+        quiesce_backend_slots(backends)?;
+        drain_mining_backend_events(backend_events, epoch, &mut solved, backends)?;
+        collect_backend_hashes(backends, Some(&stats), &mut round_hashes);
+        stale_tip_event |= tip_signal.is_some_and(TipSignal::take_stale);
 
         if let Some(solution) = solved {
             println!(
@@ -210,15 +214,29 @@ fn handle_mining_backend_event(
     event: BackendEvent,
     epoch: u64,
     solved: &mut Option<MiningSolution>,
+    backends: &mut Vec<BackendSlot>,
 ) -> Result<()> {
     match event {
         BackendEvent::Solution(solution) => {
-            if solution.epoch == epoch {
+            let backend_active = backends
+                .iter()
+                .any(|slot| slot.backend.name() == solution.backend);
+            if solution.epoch == epoch && backend_active {
                 *solved = Some(solution);
             }
         }
         BackendEvent::Error { backend, message } => {
-            bail!("backend '{backend}' reported error: {message}");
+            eprintln!("[backend] {backend} runtime error: {message}");
+            let removed = remove_backend_by_name(backends, backend);
+            if removed {
+                let remaining = super::backend_names(backends);
+                if backends.is_empty() {
+                    bail!("all mining backends are unavailable after failure in '{backend}'");
+                }
+                eprintln!("[backend] quarantined {backend}; continuing with {remaining}");
+            } else {
+                eprintln!("[backend] ignoring error from unavailable backend '{backend}'");
+            }
         }
     }
     Ok(())
@@ -228,38 +246,23 @@ fn drain_mining_backend_events(
     backend_events: &Receiver<BackendEvent>,
     epoch: u64,
     solved: &mut Option<MiningSolution>,
+    backends: &mut Vec<BackendSlot>,
 ) -> Result<()> {
     while let Ok(event) = backend_events.try_recv() {
-        handle_mining_backend_event(event, epoch, solved)?;
+        handle_mining_backend_event(event, epoch, solved, backends)?;
     }
     Ok(())
 }
 
-fn consume_tip_events(event_rx: Option<&Receiver<TipEvent>>) -> bool {
-    let Some(event_rx) = event_rx else {
-        return false;
-    };
-
-    let mut stale = false;
-    while let Ok(event) = event_rx.try_recv() {
-        if matches!(event, TipEvent::NewBlock) {
-            stale = true;
-        }
-    }
-    stale
-}
-
-pub(super) fn spawn_tip_listener(
-    client: ApiClient,
-    shutdown: Arc<AtomicBool>,
-) -> Receiver<TipEvent> {
-    let (tx, rx) = unbounded();
+pub(super) fn spawn_tip_listener(client: ApiClient, shutdown: Arc<AtomicBool>) -> TipSignal {
+    let tip_signal = TipSignal::new();
+    let signal = Arc::clone(&tip_signal.stale);
 
     thread::spawn(move || {
         while !shutdown.load(Ordering::Relaxed) {
             match client.open_events_stream() {
                 Ok(resp) => {
-                    if let Err(err) = stream_tip_events(resp, &tx, &shutdown) {
+                    if let Err(err) = stream_tip_events(resp, &signal, &shutdown) {
                         if !shutdown.load(Ordering::Relaxed) {
                             eprintln!("events stream dropped: {err:#}");
                         }
@@ -278,12 +281,12 @@ pub(super) fn spawn_tip_listener(
         }
     });
 
-    rx
+    tip_signal
 }
 
 fn stream_tip_events(
     resp: reqwest::blocking::Response,
-    tx: &Sender<TipEvent>,
+    stale: &AtomicBool,
     shutdown: &AtomicBool,
 ) -> Result<()> {
     let mut event_name = String::new();
@@ -307,7 +310,7 @@ fn stream_tip_events(
         }
 
         if event_name == "new_block" && line.starts_with("data:") {
-            let _ = tx.send(TipEvent::NewBlock);
+            stale.store(true, Ordering::Release);
         }
     }
 
@@ -338,6 +341,7 @@ mod tests {
     #[test]
     fn stale_solution_is_ignored_for_current_epoch() {
         let mut solved = None;
+        let mut backends = Vec::new();
 
         handle_mining_backend_event(
             BackendEvent::Solution(MiningSolution {
@@ -347,6 +351,7 @@ mod tests {
             }),
             42,
             &mut solved,
+            &mut backends,
         )
         .expect("stale solution handling should succeed");
 

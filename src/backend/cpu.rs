@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -8,7 +8,7 @@ use argon2::{Algorithm, Argon2, Version};
 use blocknet_pow_spec::{pow_params, POW_OUTPUT_LEN};
 use crossbeam_channel::Sender;
 
-use crate::backend::{BackendEvent, MiningSolution, MiningWork, PowBackend, WORK_ID_MAX};
+use crate::backend::{BackendEvent, MiningSolution, PowBackend, WorkAssignment, WORK_ID_MAX};
 use crate::types::hash_meets_target;
 
 const HASH_BATCH_SIZE: u64 = 64;
@@ -18,16 +18,18 @@ const SOLVED_MASK: u64 = 1u64 << 63;
 struct ControlState {
     shutdown: bool,
     generation: u64,
-    work: Option<Arc<MiningWork>>,
+    work: Option<Arc<WorkAssignment>>,
 }
 
 struct Shared {
     started: AtomicBool,
     solution_state: AtomicU64,
-    hashes_epoch: AtomicU64,
     work_generation: AtomicU64,
+    active_workers: AtomicUsize,
     work_control: Mutex<ControlState>,
     work_cv: Condvar,
+    idle_lock: Mutex<()>,
+    idle_cv: Condvar,
     hash_slots: Vec<AtomicU64>,
     event_sink: RwLock<Option<Sender<BackendEvent>>>,
 }
@@ -46,14 +48,16 @@ impl CpuBackend {
             shared: Arc::new(Shared {
                 started: AtomicBool::new(false),
                 solution_state: AtomicU64::new(0),
-                hashes_epoch: AtomicU64::new(0),
                 work_generation: AtomicU64::new(0),
+                active_workers: AtomicUsize::new(0),
                 work_control: Mutex::new(ControlState {
                     shutdown: false,
                     generation: 0,
                     work: None,
                 }),
                 work_cv: Condvar::new(),
+                idle_lock: Mutex::new(()),
+                idle_cv: Condvar::new(),
                 hash_slots: (0..lanes).map(|_| AtomicU64::new(0)).collect(),
                 event_sink: RwLock::new(None),
             }),
@@ -83,8 +87,8 @@ impl PowBackend for CpuBackend {
         }
 
         self.shared.solution_state.store(0, Ordering::SeqCst);
-        self.shared.hashes_epoch.store(0, Ordering::SeqCst);
         self.shared.work_generation.store(0, Ordering::SeqCst);
+        self.shared.active_workers.store(0, Ordering::SeqCst);
         reset_hash_slots(&self.shared.hash_slots);
 
         {
@@ -113,14 +117,15 @@ impl PowBackend for CpuBackend {
         }
 
         request_shutdown(&self.shared);
+        let _ = wait_for_idle(&self.shared);
 
         for handle in self.worker_handles.drain(..) {
             let _ = handle.join();
         }
 
         self.shared.solution_state.store(0, Ordering::SeqCst);
-        self.shared.hashes_epoch.store(0, Ordering::SeqCst);
         self.shared.work_generation.store(0, Ordering::SeqCst);
+        self.shared.active_workers.store(0, Ordering::SeqCst);
         reset_hash_slots(&self.shared.hash_slots);
 
         if let Ok(mut control) = self.shared.work_control.lock() {
@@ -130,22 +135,17 @@ impl PowBackend for CpuBackend {
         }
     }
 
-    fn set_work(&self, work: MiningWork) -> Result<()> {
+    fn assign_work(&self, work: WorkAssignment) -> Result<()> {
         if !self.shared.started.load(Ordering::SeqCst) {
             return Err(anyhow!("CPU backend is not started"));
         }
-        if work.work_id == 0 || work.work_id > WORK_ID_MAX {
-            return Err(anyhow!("invalid work id {}", work.work_id));
+        if work.template.work_id == 0 || work.template.work_id > WORK_ID_MAX {
+            return Err(anyhow!("invalid work id {}", work.template.work_id));
         }
 
-        let work_epoch = work.epoch;
-        let work_id = work.work_id;
+        let work_id = work.template.work_id;
         let work = Arc::new(work);
 
-        reset_hash_slots(&self.shared.hash_slots);
-        self.shared
-            .hashes_epoch
-            .store(work_epoch, Ordering::Release);
         self.shared.solution_state.store(work_id, Ordering::Release);
 
         let generation = {
@@ -166,11 +166,15 @@ impl PowBackend for CpuBackend {
         Ok(())
     }
 
-    fn take_hashes(&self, epoch: u64) -> u64 {
-        if self.shared.hashes_epoch.load(Ordering::Acquire) != epoch {
-            return 0;
+    fn quiesce(&self) -> Result<()> {
+        if !self.shared.started.load(Ordering::SeqCst) {
+            return Ok(());
         }
+        request_work_pause(&self.shared)?;
+        wait_for_idle(&self.shared)
+    }
 
+    fn take_hashes(&self) -> u64 {
         self.shared
             .hash_slots
             .iter()
@@ -240,7 +244,8 @@ fn cpu_worker_loop(shared: Arc<Shared>, thread_idx: usize) {
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let mut output = [0u8; POW_OUTPUT_LEN];
     let mut local_generation = 0u64;
-    let mut local_work: Option<Arc<MiningWork>> = None;
+    let mut local_work: Option<Arc<WorkAssignment>> = None;
+    let mut worker_active = false;
     let mut nonce = 0u64;
     let mut lane_iters = 0u64;
     let mut pending_hashes = 0u64;
@@ -249,17 +254,22 @@ fn cpu_worker_loop(shared: Arc<Shared>, thread_idx: usize) {
     loop {
         let global_generation = shared.work_generation.load(Ordering::Acquire);
         if global_generation != local_generation || local_work.is_none() {
-            pending_hashes = 0;
+            if local_work.is_some() {
+                flush_hashes(&shared, thread_idx, &mut pending_hashes);
+                mark_worker_inactive(&shared, &mut worker_active);
+            }
             match wait_for_work_update(&shared, local_generation) {
                 Ok(Some((generation, work))) => {
                     nonce = work
+                        .nonce_lease
                         .start_nonce
-                        .wrapping_add(work.lane_offset)
+                        .wrapping_add(work.nonce_lease.lane_offset)
                         .wrapping_add(thread_idx as u64);
                     lane_iters = 0;
                     last_flush = Instant::now();
                     local_generation = generation;
                     local_work = Some(work);
+                    mark_worker_active(&shared, &mut worker_active);
                     continue;
                 }
                 Ok(None) => break,
@@ -277,22 +287,26 @@ fn cpu_worker_loop(shared: Arc<Shared>, thread_idx: usize) {
         let Some(work) = local_work.as_ref() else {
             continue;
         };
+        let template = &work.template;
+        let lease = &work.nonce_lease;
 
-        if lane_iters >= work.max_iters_per_lane || Instant::now() >= work.stop_at {
+        if lane_iters >= lease.max_iters_per_lane || Instant::now() >= template.stop_at {
             flush_hashes(&shared, thread_idx, &mut pending_hashes);
+            mark_worker_inactive(&shared, &mut worker_active);
             local_work = None;
             continue;
         }
 
-        if shared.solution_state.load(Ordering::Acquire) != work.work_id {
+        if shared.solution_state.load(Ordering::Acquire) != template.work_id {
             flush_hashes(&shared, thread_idx, &mut pending_hashes);
+            mark_worker_inactive(&shared, &mut worker_active);
             local_work = None;
             continue;
         }
 
         let nonce_bytes = nonce.to_le_bytes();
         if argon2
-            .hash_password_into(&nonce_bytes, &work.header_base, &mut output)
+            .hash_password_into(&nonce_bytes, &template.header_base, &mut output)
             .is_err()
         {
             emit_error(
@@ -310,12 +324,12 @@ fn cpu_worker_loop(shared: Arc<Shared>, thread_idx: usize) {
             last_flush = Instant::now();
         }
 
-        if hash_meets_target(&output, &work.target) {
-            let solved_state = SOLVED_MASK | work.work_id;
+        if hash_meets_target(&output, &template.target) {
+            let solved_state = SOLVED_MASK | template.work_id;
             if shared
                 .solution_state
                 .compare_exchange(
-                    work.work_id,
+                    template.work_id,
                     solved_state,
                     Ordering::SeqCst,
                     Ordering::SeqCst,
@@ -325,7 +339,7 @@ fn cpu_worker_loop(shared: Arc<Shared>, thread_idx: usize) {
                 emit_event(
                     &shared,
                     BackendEvent::Solution(MiningSolution {
-                        epoch: work.epoch,
+                        epoch: template.epoch,
                         nonce,
                         backend: "cpu".to_string(),
                     }),
@@ -333,38 +347,76 @@ fn cpu_worker_loop(shared: Arc<Shared>, thread_idx: usize) {
             }
         }
 
-        nonce = nonce.wrapping_add(work.global_stride.max(1));
+        nonce = nonce.wrapping_add(lease.global_stride.max(1));
     }
 
     flush_hashes(&shared, thread_idx, &mut pending_hashes);
+    mark_worker_inactive(&shared, &mut worker_active);
 }
 
 fn wait_for_work_update(
     shared: &Shared,
     seen_generation: u64,
-) -> Result<Option<(u64, Arc<MiningWork>)>> {
+) -> Result<Option<(u64, Arc<WorkAssignment>)>> {
     let mut control = shared
         .work_control
         .lock()
         .map_err(|_| anyhow!("CPU control lock poisoned"))?;
+    let mut observed_generation = seen_generation;
 
-    while !control.shutdown && control.generation == seen_generation {
+    loop {
+        if control.shutdown {
+            return Ok(None);
+        }
+
+        if control.generation != observed_generation {
+            let generation = control.generation;
+            if let Some(work) = control.work.clone() {
+                return Ok(Some((generation, work)));
+            }
+            observed_generation = generation;
+        }
+
         control = shared
             .work_cv
             .wait(control)
             .map_err(|_| anyhow!("CPU control lock poisoned"))?;
     }
+}
 
-    if control.shutdown {
-        return Ok(None);
+fn request_work_pause(shared: &Shared) -> Result<()> {
+    let generation = {
+        let mut control = shared
+            .work_control
+            .lock()
+            .map_err(|_| anyhow!("CPU control lock poisoned"))?;
+        control.generation = control.generation.wrapping_add(1).max(1);
+        control.work = None;
+        control.generation
+    };
+
+    shared.work_generation.store(generation, Ordering::Release);
+    shared.work_cv.notify_all();
+    Ok(())
+}
+
+fn wait_for_idle(shared: &Shared) -> Result<()> {
+    if shared.active_workers.load(Ordering::Acquire) == 0 {
+        return Ok(());
     }
 
-    let generation = control.generation;
-    let work = control
-        .work
-        .clone()
-        .ok_or_else(|| anyhow!("missing work for generation {}", generation))?;
-    Ok(Some((generation, work)))
+    let mut idle_guard = shared
+        .idle_lock
+        .lock()
+        .map_err(|_| anyhow!("CPU idle lock poisoned"))?;
+    while shared.active_workers.load(Ordering::Acquire) != 0 {
+        let (next_guard, _) = shared
+            .idle_cv
+            .wait_timeout(idle_guard, Duration::from_millis(10))
+            .map_err(|_| anyhow!("CPU idle lock poisoned"))?;
+        idle_guard = next_guard;
+    }
+    Ok(())
 }
 
 fn request_shutdown(shared: &Shared) {
@@ -377,6 +429,25 @@ fn request_shutdown(shared: &Shared) {
             .store(control.generation, Ordering::Release);
     }
     shared.work_cv.notify_all();
+}
+
+fn mark_worker_active(shared: &Shared, worker_active: &mut bool) {
+    if *worker_active {
+        return;
+    }
+    shared.active_workers.fetch_add(1, Ordering::AcqRel);
+    *worker_active = true;
+}
+
+fn mark_worker_inactive(shared: &Shared, worker_active: &mut bool) {
+    if !*worker_active {
+        return;
+    }
+    let prev = shared.active_workers.fetch_sub(1, Ordering::AcqRel);
+    *worker_active = false;
+    if prev <= 1 {
+        shared.idle_cv.notify_all();
+    }
 }
 
 fn reset_hash_slots(slots: &[AtomicU64]) {
@@ -411,6 +482,13 @@ fn emit_event(shared: &Shared, event: BackendEvent) {
         Err(_) => None,
     };
     if let Some(tx) = tx {
-        let _ = tx.send(event);
+        match event {
+            BackendEvent::Solution(solution) => {
+                let _ = tx.send(BackendEvent::Solution(solution));
+            }
+            BackendEvent::Error { backend, message } => {
+                let _ = tx.try_send(BackendEvent::Error { backend, message });
+            }
+        }
     }
 }

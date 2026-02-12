@@ -13,8 +13,8 @@ use super::scheduler::NonceScheduler;
 use super::stats::{format_hashrate, median};
 use super::{
     activate_backends, backend_name_list, backend_names, collect_backend_hashes, distribute_work,
-    next_work_id, start_backend_slots, stop_backend_slots, total_lanes, BackendSlot,
-    HASH_POLL_INTERVAL, MIN_EVENT_WAIT,
+    next_work_id, quiesce_backend_slots, remove_backend_by_name, start_backend_slots,
+    stop_backend_slots, total_lanes, BackendSlot, HASH_POLL_INTERVAL, MIN_EVENT_WAIT,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -157,7 +157,7 @@ fn run_worker_benchmark(
 fn run_worker_benchmark_inner(
     cfg: &Config,
     shutdown: &AtomicBool,
-    backends: &mut [BackendSlot],
+    backends: &mut Vec<BackendSlot>,
     backend_events: &Receiver<BackendEvent>,
     restart_each_round: bool,
 ) -> Result<()> {
@@ -170,6 +170,9 @@ fn run_worker_benchmark_inner(
     for round in 0..cfg.bench_rounds {
         if shutdown.load(Ordering::Relaxed) {
             break;
+        }
+        if backends.is_empty() {
+            bail!("all benchmark backends are unavailable");
         }
 
         if restart_each_round {
@@ -195,7 +198,7 @@ fn run_worker_benchmark_inner(
 
         let mut round_hashes = 0u64;
         while Instant::now() < stop_at && !shutdown.load(Ordering::Relaxed) {
-            collect_backend_hashes(backends, epoch, None, &mut round_hashes);
+            collect_backend_hashes(backends, None, &mut round_hashes);
             let wait_for = stop_at
                 .saturating_duration_since(Instant::now())
                 .min(HASH_POLL_INTERVAL)
@@ -204,14 +207,15 @@ fn run_worker_benchmark_inner(
             crossbeam_channel::select! {
                 recv(backend_events) -> event => {
                     let event = event.map_err(|_| anyhow!("backend event channel closed"))?;
-                    handle_benchmark_backend_event(event, epoch)?;
+                    handle_benchmark_backend_event(event, epoch, backends)?;
                 }
                 recv(after(wait_for)) -> _ => {}
             }
         }
 
-        collect_backend_hashes(backends, epoch, None, &mut round_hashes);
-        drain_benchmark_backend_events(backend_events, epoch)?;
+        quiesce_backend_slots(backends)?;
+        collect_backend_hashes(backends, None, &mut round_hashes);
+        drain_benchmark_backend_events(backend_events, epoch, backends)?;
 
         let elapsed = round_start.elapsed().as_secs_f64().max(0.001);
         let hps = round_hashes as f64 / elapsed;
@@ -318,10 +322,17 @@ fn benchmark_header_base(round: u32) -> std::sync::Arc<[u8]> {
     std::sync::Arc::from(data.to_vec())
 }
 
-fn handle_benchmark_backend_event(event: BackendEvent, epoch: u64) -> Result<()> {
+fn handle_benchmark_backend_event(
+    event: BackendEvent,
+    epoch: u64,
+    backends: &mut Vec<BackendSlot>,
+) -> Result<()> {
     match event {
         BackendEvent::Solution(solution) => {
-            if solution.epoch == epoch {
+            let backend_active = backends
+                .iter()
+                .any(|slot| slot.backend.name() == solution.backend);
+            if solution.epoch == epoch && backend_active {
                 println!(
                     "[bench] unexpected solution found by {} at nonce={}",
                     solution.backend, solution.nonce
@@ -329,7 +340,17 @@ fn handle_benchmark_backend_event(event: BackendEvent, epoch: u64) -> Result<()>
             }
         }
         BackendEvent::Error { backend, message } => {
-            bail!("backend '{backend}' reported error: {message}");
+            eprintln!("[bench] backend '{backend}' runtime error: {message}");
+            let removed = remove_backend_by_name(backends, backend);
+            if removed {
+                if backends.is_empty() {
+                    bail!("all benchmark backends are unavailable after failure in '{backend}'");
+                }
+                eprintln!(
+                    "[bench] quarantined {backend}; remaining backends={}",
+                    backend_names(backends)
+                );
+            }
         }
     }
     Ok(())
@@ -338,9 +359,10 @@ fn handle_benchmark_backend_event(event: BackendEvent, epoch: u64) -> Result<()>
 fn drain_benchmark_backend_events(
     backend_events: &Receiver<BackendEvent>,
     epoch: u64,
+    backends: &mut Vec<BackendSlot>,
 ) -> Result<()> {
     while let Ok(event) = backend_events.try_recv() {
-        handle_benchmark_backend_event(event, epoch)?;
+        handle_benchmark_backend_event(event, epoch, backends)?;
     }
     Ok(())
 }
@@ -351,6 +373,7 @@ mod tests {
 
     #[test]
     fn benchmark_ignores_stale_solution_events() {
+        let mut backends = Vec::new();
         handle_benchmark_backend_event(
             BackendEvent::Solution(crate::backend::MiningSolution {
                 epoch: 99,
@@ -358,6 +381,7 @@ mod tests {
                 backend: "cpu".to_string(),
             }),
             100,
+            &mut backends,
         )
         .expect("stale benchmark solution event should be ignored");
     }

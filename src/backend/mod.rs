@@ -11,16 +11,26 @@ pub mod nvidia;
 pub const WORK_ID_MAX: u64 = (1u64 << 63) - 1;
 
 #[derive(Debug, Clone)]
-pub struct MiningWork {
+pub struct WorkTemplate {
     pub work_id: u64,
     pub epoch: u64,
     pub header_base: Arc<[u8]>,
     pub target: [u8; 32],
+    pub stop_at: Instant,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct NonceLease {
     pub start_nonce: u64,
     pub lane_offset: u64,
     pub global_stride: u64,
     pub max_iters_per_lane: u64,
-    pub stop_at: Instant,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkAssignment {
+    pub template: Arc<WorkTemplate>,
+    pub nonce_lease: NonceLease,
 }
 
 #[derive(Debug, Clone)]
@@ -50,11 +60,14 @@ pub trait PowBackend: Send {
 
     fn stop(&mut self);
 
-    fn set_work(&self, work: MiningWork) -> Result<()>;
+    fn assign_work(&self, work: WorkAssignment) -> Result<()>;
 
-    /// Return and reset hashes completed for the provided epoch.
-    /// Implementations should never report hashes from stale epochs.
-    fn take_hashes(&self, _epoch: u64) -> u64 {
+    fn quiesce(&self) -> Result<()> {
+        Ok(())
+    }
+
+    /// Return and reset hashes completed since the previous call.
+    fn take_hashes(&self) -> u64 {
         0
     }
 

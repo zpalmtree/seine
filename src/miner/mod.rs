@@ -8,12 +8,14 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
-use crossbeam_channel::{unbounded, Receiver};
+use crossbeam_channel::{bounded, Receiver};
 
 use crate::api::ApiClient;
 use crate::backend::cpu::CpuBackend;
 use crate::backend::nvidia::NvidiaBackend;
-use crate::backend::{BackendEvent, MiningWork, PowBackend, WORK_ID_MAX};
+use crate::backend::{
+    BackendEvent, NonceLease, PowBackend, WorkAssignment, WorkTemplate, WORK_ID_MAX,
+};
 use crate::config::{BackendKind, Config};
 use scheduler::NonceReservation;
 use stats::Stats;
@@ -22,6 +24,7 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const TEMPLATE_RETRY_DELAY: Duration = Duration::from_secs(2);
 const MIN_EVENT_WAIT: Duration = Duration::from_millis(1);
 const HASH_POLL_INTERVAL: Duration = Duration::from_millis(200);
+const BACKEND_EVENT_BUFFER: usize = 1024;
 
 struct BackendSlot {
     backend: Box<dyn PowBackend>,
@@ -91,7 +94,7 @@ fn activate_backends(
     mut backends: Vec<Box<dyn PowBackend>>,
 ) -> Result<(Vec<BackendSlot>, Receiver<BackendEvent>)> {
     let mut active = Vec::new();
-    let (event_tx, event_rx) = unbounded::<BackendEvent>();
+    let (event_tx, event_rx) = bounded::<BackendEvent>(BACKEND_EVENT_BUFFER);
 
     for mut backend in backends.drain(..) {
         let backend_name = backend.name();
@@ -120,11 +123,7 @@ fn activate_backends(
         bail!("no mining backend could be started");
     }
 
-    let mut lane_offset = 0u64;
-    for slot in &mut active {
-        slot.lane_offset = lane_offset;
-        lane_offset = lane_offset.wrapping_add(slot.lanes);
-    }
+    recalculate_lane_offsets(&mut active);
 
     Ok((active, event_rx))
 }
@@ -154,34 +153,35 @@ fn distribute_work(
     stop_at: Instant,
 ) -> Result<()> {
     let stride = total_lanes(backends);
+    let template = Arc::new(WorkTemplate {
+        work_id,
+        epoch,
+        header_base,
+        target,
+        stop_at,
+    });
+
     for slot in backends {
-        let work = MiningWork {
-            work_id,
-            epoch,
-            header_base: Arc::clone(&header_base),
-            target,
-            start_nonce: reservation.start_nonce,
-            lane_offset: slot.lane_offset,
-            global_stride: stride,
-            max_iters_per_lane: reservation.max_iters_per_lane,
-            stop_at,
+        let work = WorkAssignment {
+            template: Arc::clone(&template),
+            nonce_lease: NonceLease {
+                start_nonce: reservation.start_nonce,
+                lane_offset: slot.lane_offset,
+                global_stride: stride,
+                max_iters_per_lane: reservation.max_iters_per_lane,
+            },
         };
-        slot.backend
-            .set_work(work)
-            .with_context(|| format!("failed to set work for backend {}", slot.backend.name()))?;
+        slot.backend.assign_work(work).with_context(|| {
+            format!("failed to assign work for backend {}", slot.backend.name())
+        })?;
     }
     Ok(())
 }
 
-fn collect_backend_hashes(
-    backends: &[BackendSlot],
-    epoch: u64,
-    stats: Option<&Stats>,
-    round_hashes: &mut u64,
-) {
+fn collect_backend_hashes(backends: &[BackendSlot], stats: Option<&Stats>, round_hashes: &mut u64) {
     let mut collected = 0u64;
     for slot in backends {
-        collected = collected.saturating_add(slot.backend.take_hashes(epoch));
+        collected = collected.saturating_add(slot.backend.take_hashes());
     }
 
     if collected == 0 {
@@ -194,6 +194,34 @@ fn collect_backend_hashes(
     *round_hashes = round_hashes.saturating_add(collected);
 }
 
+fn quiesce_backend_slots(backends: &[BackendSlot]) -> Result<()> {
+    for slot in backends {
+        slot.backend
+            .quiesce()
+            .with_context(|| format!("failed to quiesce backend {}", slot.backend.name()))?;
+    }
+    Ok(())
+}
+
+fn remove_backend_by_name(backends: &mut Vec<BackendSlot>, backend_name: &str) -> bool {
+    let mut removed = false;
+    let mut idx = 0usize;
+    while idx < backends.len() {
+        if backends[idx].backend.name() == backend_name {
+            let mut slot = backends.remove(idx);
+            slot.backend.stop();
+            removed = true;
+            continue;
+        }
+        idx += 1;
+    }
+
+    if removed {
+        recalculate_lane_offsets(backends);
+    }
+    removed
+}
+
 fn backend_name_list(backends: &[BackendSlot]) -> Vec<String> {
     backends
         .iter()
@@ -203,6 +231,14 @@ fn backend_name_list(backends: &[BackendSlot]) -> Vec<String> {
 
 fn backend_names(backends: &[BackendSlot]) -> String {
     backend_name_list(backends).join(",")
+}
+
+fn recalculate_lane_offsets(backends: &mut [BackendSlot]) {
+    let mut lane_offset = 0u64;
+    for slot in backends {
+        slot.lane_offset = lane_offset;
+        lane_offset = lane_offset.wrapping_add(slot.lanes);
+    }
 }
 
 fn total_lanes(backends: &[BackendSlot]) -> u64 {

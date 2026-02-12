@@ -3,7 +3,7 @@ use std::sync::atomic::AtomicBool;
 use anyhow::{bail, Result};
 use crossbeam_channel::Sender;
 
-use crate::backend::{BackendEvent, MiningWork, PowBackend};
+use crate::backend::{BackendEvent, PowBackend, WorkAssignment};
 
 pub struct NvidiaBackend;
 
@@ -30,7 +30,7 @@ impl PowBackend for NvidiaBackend {
 
     fn stop(&mut self) {}
 
-    fn set_work(&self, _work: MiningWork) -> Result<()> {
+    fn assign_work(&self, _work: WorkAssignment) -> Result<()> {
         Ok(())
     }
 
