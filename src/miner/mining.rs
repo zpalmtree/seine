@@ -22,9 +22,8 @@ use crate::types::{
 
 use super::scheduler::NonceScheduler;
 use super::stats::{format_hashrate, Stats};
-use super::ui::{
-    clear_status_line, error, info, set_status_line, status_line_enabled, success, warn,
-};
+use super::tui::{TuiRenderer, TuiState};
+use super::ui::{active_tui_state, error, info, success, warn};
 use super::{
     collect_backend_hashes, distribute_work, format_round_backend_hashrate, next_event_wait,
     next_work_id, quiesce_backend_slots, total_lanes, BackendSlot, RuntimeBackendEventAction,
@@ -143,29 +142,75 @@ impl WalletPasswordSource {
     }
 }
 
-struct StatusLineGuard {
-    enabled: bool,
+const TUI_RENDER_INTERVAL: Duration = Duration::from_secs(1);
+
+struct TuiDisplay {
+    renderer: TuiRenderer,
+    state: TuiState,
+    last_render: Instant,
+    last_state_label: String,
 }
 
-impl StatusLineGuard {
-    fn new() -> Self {
-        let enabled = status_line_enabled();
-        if enabled {
-            set_status_line("state=initializing");
-        }
-        Self { enabled }
+impl TuiDisplay {
+    fn new() -> Result<Self> {
+        let tui_state = active_tui_state()
+            .ok_or_else(|| anyhow!("TUI state not initialized"))?;
+        let renderer = TuiRenderer::new()
+            .map_err(|err| anyhow!("TUI renderer init failed: {err}"))?;
+        Ok(Self {
+            renderer,
+            state: Arc::clone(tui_state),
+            last_render: Instant::now() - TUI_RENDER_INTERVAL,
+            last_state_label: String::new(),
+        })
     }
 
-    fn enabled(&self) -> bool {
-        self.enabled
-    }
-}
-
-impl Drop for StatusLineGuard {
-    fn drop(&mut self) {
-        if self.enabled {
-            clear_status_line();
+    fn update(
+        &mut self,
+        stats: &Stats,
+        backends: &[BackendSlot],
+        round_backend_hashes: &BTreeMap<u64, u64>,
+        round_hashes: u64,
+        round_start: Instant,
+        height: &str,
+        difficulty: &str,
+        epoch: u64,
+        state_label: &str,
+    ) {
+        let state_changed = self.last_state_label != state_label;
+        if !state_changed && self.last_render.elapsed() < TUI_RENDER_INTERVAL {
+            return;
         }
+
+        let snapshot = stats.snapshot();
+        let round_elapsed = round_start.elapsed().as_secs_f64().max(0.001);
+        let round_rate = format_hashrate(round_hashes as f64 / round_elapsed);
+        let backend_rate =
+            format_round_backend_hashrate(backends, round_backend_hashes, round_elapsed);
+
+        if let Ok(mut s) = self.state.lock() {
+            s.height = height.to_string();
+            s.difficulty = difficulty.to_string();
+            s.epoch = epoch;
+            s.state = state_label.to_string();
+            s.round_hashrate = round_rate;
+            s.avg_hashrate = format_hashrate(snapshot.hps);
+            s.total_hashes = snapshot.hashes;
+            s.templates = snapshot.templates;
+            s.submitted = snapshot.submitted;
+            s.accepted = snapshot.accepted;
+            s.backend_rates = backend_rate;
+        }
+
+        if let Ok(locked) = self.state.lock() {
+            let _ = self.renderer.render(&locked);
+        }
+        self.last_render = Instant::now();
+        self.last_state_label = state_label.to_string();
+    }
+
+    fn poll_quit(&self) -> bool {
+        self.renderer.poll_quit()
     }
 }
 
@@ -183,8 +228,7 @@ pub(super) fn run_mining_loop(
     let mut epoch = 0u64;
     let mut last_stats_print = Instant::now();
     let mut prefetch: Option<TemplatePrefetch> = None;
-    let _status_guard = StatusLineGuard::new();
-    let live_status = _status_guard.enabled();
+    let mut tui = TuiDisplay::new()?;
 
     let mut template = match fetch_template_with_retry(client, cfg, shutdown.as_ref()) {
         Some(t) => t,
@@ -275,18 +319,6 @@ pub(super) fn run_mining_loop(
 
         stats.bump_templates();
 
-        info(
-            "WORK",
-            format!(
-                "template h={} diff={} e={} id={} refresh={}s",
-                height,
-                difficulty,
-                epoch,
-                work_id,
-                cfg.refresh_interval.as_secs(),
-            ),
-        );
-
         distribute_work(
             backends,
             epoch,
@@ -311,20 +343,17 @@ pub(super) fn run_mining_loop(
         let mut round_backend_hashes = BTreeMap::new();
         let mut topology_changed = false;
         let mut next_hash_poll_at = Instant::now();
-        if live_status {
-            update_status_line(
-                &stats,
-                backends,
-                &round_backend_hashes,
-                round_hashes,
-                round_start,
-                &height,
-                &difficulty,
-                epoch,
-                work_id,
-                "working",
-            );
-        }
+        tui.update(
+            &stats,
+            backends,
+            &round_backend_hashes,
+            round_hashes,
+            round_start,
+            &height,
+            &difficulty,
+            epoch,
+            "working",
+        );
 
         while !shutdown.load(Ordering::Relaxed)
             && Instant::now() < stop_at
@@ -340,45 +369,40 @@ pub(super) fn run_mining_loop(
                     Some(&mut round_backend_hashes),
                 );
                 next_hash_poll_at = now + cfg.hash_poll_interval;
-                if live_status {
-                    update_status_line(
-                        &stats,
-                        backends,
-                        &round_backend_hashes,
-                        round_hashes,
-                        round_start,
-                        &height,
-                        &difficulty,
-                        epoch,
-                        work_id,
-                        "working",
-                    );
+                tui.update(
+                    &stats,
+                    backends,
+                    &round_backend_hashes,
+                    round_hashes,
+                    round_start,
+                    &height,
+                    &difficulty,
+                    epoch,
+                    "working",
+                );
+                if tui.poll_quit() {
+                    shutdown.store(true, Ordering::SeqCst);
+                    break;
                 }
             }
 
             if last_stats_print.elapsed() >= cfg.stats_interval {
-                if !live_status {
-                    stats.print();
-                }
                 last_stats_print = Instant::now();
             }
 
             if tip_signal.is_some_and(TipSignal::take_stale) {
                 stale_tip_event = true;
-                if live_status {
-                    update_status_line(
-                        &stats,
-                        backends,
-                        &round_backend_hashes,
-                        round_hashes,
-                        round_start,
-                        &height,
-                        &difficulty,
-                        epoch,
-                        work_id,
-                        "stale-tip",
-                    );
-                }
+                tui.update(
+                    &stats,
+                    backends,
+                    &round_backend_hashes,
+                    round_hashes,
+                    round_start,
+                    &height,
+                    &difficulty,
+                    epoch,
+                    "stale-tip",
+                );
                 continue;
             }
 
@@ -429,20 +453,17 @@ pub(super) fn run_mining_loop(
                 )?;
                 next_hash_poll_at = Instant::now();
                 topology_changed = false;
-                if live_status {
-                    update_status_line(
-                        &stats,
-                        backends,
-                        &round_backend_hashes,
-                        round_hashes,
-                        round_start,
-                        &height,
-                        &difficulty,
-                        epoch,
-                        work_id,
-                        "rebalanced",
-                    );
-                }
+                tui.update(
+                    &stats,
+                    backends,
+                    &round_backend_hashes,
+                    round_hashes,
+                    round_start,
+                    &height,
+                    &difficulty,
+                    epoch,
+                    "rebalanced",
+                );
             }
         }
 
@@ -457,35 +478,19 @@ pub(super) fn run_mining_loop(
             Some(&mut round_backend_hashes),
         );
         stale_tip_event |= tip_signal.is_some_and(TipSignal::take_stale);
-        if !live_status {
-            info(
-                "WORK",
-                format!(
-                    "backend throughput {}",
-                    format_round_backend_hashrate(
-                        backends,
-                        &round_backend_hashes,
-                        round_start.elapsed().as_secs_f64()
-                    )
-                ),
-            );
-        }
 
         if let Some(solution) = solved {
-            if live_status {
-                update_status_line(
-                    &stats,
-                    backends,
-                    &round_backend_hashes,
-                    round_hashes,
-                    round_start,
-                    &height,
-                    &difficulty,
-                    epoch,
-                    work_id,
-                    "solved",
-                );
-            }
+            tui.update(
+                &stats,
+                backends,
+                &round_backend_hashes,
+                round_hashes,
+                round_start,
+                &height,
+                &difficulty,
+                epoch,
+                "solved",
+            );
             success(
                 "SOLVE",
                 format!(
@@ -526,43 +531,32 @@ pub(super) fn run_mining_loop(
                 }
             }
         } else if stale_tip_event {
-            if live_status {
-                update_status_line(
-                    &stats,
-                    backends,
-                    &round_backend_hashes,
-                    round_hashes,
-                    round_start,
-                    &height,
-                    &difficulty,
-                    epoch,
-                    work_id,
-                    "stale-refresh",
-                );
-            }
-            info("WORK", "stale tip event received; refreshing template");
+            tui.update(
+                &stats,
+                backends,
+                &round_backend_hashes,
+                round_hashes,
+                round_start,
+                &height,
+                &difficulty,
+                epoch,
+                "stale-refresh",
+            );
         } else {
-            if live_status {
-                update_status_line(
-                    &stats,
-                    backends,
-                    &round_backend_hashes,
-                    round_hashes,
-                    round_start,
-                    &height,
-                    &difficulty,
-                    epoch,
-                    work_id,
-                    "refresh",
-                );
-            }
-            info("WORK", "no solution before refresh/shutdown");
+            tui.update(
+                &stats,
+                backends,
+                &round_backend_hashes,
+                round_hashes,
+                round_start,
+                &height,
+                &difficulty,
+                epoch,
+                "refresh",
+            );
         }
 
         if last_stats_print.elapsed() >= cfg.stats_interval {
-            if !live_status {
-                stats.print();
-            }
             last_stats_print = Instant::now();
         }
 
@@ -586,33 +580,6 @@ pub(super) fn run_mining_loop(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-fn update_status_line(
-    stats: &Stats,
-    backends: &[BackendSlot],
-    round_backend_hashes: &BTreeMap<u64, u64>,
-    round_hashes: u64,
-    round_start: Instant,
-    height: &str,
-    difficulty: &str,
-    epoch: u64,
-    work_id: u64,
-    state: &str,
-) {
-    let snapshot = stats.snapshot();
-    let round_elapsed = round_start.elapsed().as_secs_f64().max(0.001);
-    let round_rate = format_hashrate(round_hashes as f64 / round_elapsed);
-    let backend_rate = format_round_backend_hashrate(backends, round_backend_hashes, round_elapsed);
-
-    set_status_line(format!(
-        "state={state} h={height} diff={difficulty} e={epoch} id={work_id} round={round_rate} total={} avg={} tpl={} sub={} ok={} backends={backend_rate}",
-        snapshot.hashes,
-        format_hashrate(snapshot.hps),
-        snapshot.templates,
-        snapshot.submitted,
-        snapshot.accepted,
-    ));
-}
 
 struct TemplatePrefetch {
     handle: JoinHandle<Option<BlockTemplateResponse>>,

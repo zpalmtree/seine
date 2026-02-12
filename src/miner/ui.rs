@@ -1,6 +1,8 @@
-use std::io::{IsTerminal, Write};
+use std::io::IsTerminal;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::Instant;
+
+use super::tui::{LogEntry, LogLevel, TuiState};
 
 const FRAME_INNER_WIDTH: usize = 92;
 const KEY_WIDTH: usize = 18;
@@ -18,7 +20,7 @@ const LOGO: &[&str] = &[
 static COLOR_ENABLED: OnceLock<bool> = OnceLock::new();
 static LOG_START: OnceLock<Instant> = OnceLock::new();
 static OUTPUT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-static STATUS_LINE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+static TUI_STATE: OnceLock<TuiState> = OnceLock::new();
 
 #[derive(Clone, Copy)]
 enum Level {
@@ -94,51 +96,37 @@ pub(super) fn error(tag: &str, message: impl AsRef<str>) {
     log(Level::Error, tag, message.as_ref());
 }
 
-pub(super) fn status_line_enabled() -> bool {
-    output_is_terminal() && std::env::var_os("SEINE_NO_STATUS").is_none()
+pub(super) fn set_tui_state(state: TuiState) {
+    let _ = TUI_STATE.set(state);
 }
 
-pub(super) fn set_status_line(message: impl AsRef<str>) {
-    if !status_line_enabled() {
-        return;
-    }
-
-    let colors = use_color();
-    let max_body = terminal_columns()
-        .min(MAX_LOG_LINE_WIDTH)
-        .saturating_sub(10);
-    let clean = message.as_ref().replace(['\n', '\r'], " ");
-    let body = constrain_line(&clean, max_body.max(16));
-    let rendered = if colors {
-        format!(
-            "{} {}",
-            paint(" STATUS ", "48;5;27;1;97", true),
-            paint(&body, "1;96", true),
-        )
-    } else {
-        format!("[STATUS] {body}")
-    };
-
-    let _out_guard = lock(output_lock());
-    {
-        let mut slot = lock(status_store());
-        *slot = Some(rendered.clone());
-    }
-    draw_status_line(&rendered);
+pub(super) fn active_tui_state() -> Option<&'static TuiState> {
+    TUI_STATE.get()
 }
 
-pub(super) fn clear_status_line() {
-    if !status_line_enabled() {
-        return;
-    }
-    let _out_guard = lock(output_lock());
-    let mut slot = lock(status_store());
-    if slot.take().is_some() {
-        clear_terminal_line();
+fn level_to_tui(level: Level) -> LogLevel {
+    match level {
+        Level::Info => LogLevel::Info,
+        Level::Success => LogLevel::Success,
+        Level::Warn => LogLevel::Warn,
+        Level::Error => LogLevel::Error,
     }
 }
 
 fn log(level: Level, tag: &str, message: &str) {
+    if let Some(tui_state) = TUI_STATE.get() {
+        let entry = LogEntry {
+            elapsed_secs: log_elapsed().as_secs_f64(),
+            level: level_to_tui(level),
+            tag: tag.to_string(),
+            message: message.to_string(),
+        };
+        if let Ok(mut state) = tui_state.lock() {
+            state.push_log(entry);
+        }
+        return;
+    }
+
     let colors = use_color();
     let time_plain = format!("{:>7.1}s", log_elapsed().as_secs_f64());
     let level_plain = format!(" {:^4} ", level.label());
@@ -162,22 +150,10 @@ fn log(level: Level, tag: &str, message: &str) {
     let body = style_message(&constrained, level.body_style(), colors);
 
     let _out_guard = lock(output_lock());
-    let status_before = {
-        let slot = lock(status_store());
-        slot.clone()
-    };
-    if status_before.is_some() {
-        clear_terminal_line();
-    }
-
     if level.use_stderr() {
         eprintln!("{prefix} {body}");
     } else {
         println!("{prefix} {body}");
-    }
-
-    if let Some(status) = status_before {
-        draw_status_line(&status);
     }
 }
 
@@ -445,22 +421,8 @@ fn output_lock() -> &'static Mutex<()> {
     OUTPUT_LOCK.get_or_init(|| Mutex::new(()))
 }
 
-fn status_store() -> &'static Mutex<Option<String>> {
-    STATUS_LINE.get_or_init(|| Mutex::new(None))
-}
-
 fn lock<T>(mutex: &'static Mutex<T>) -> MutexGuard<'static, T> {
     mutex
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-fn clear_terminal_line() {
-    print!("\r\x1b[2K");
-    let _ = std::io::stdout().flush();
-}
-
-fn draw_status_line(rendered: &str) {
-    print!("\r{rendered}\x1b[K");
-    let _ = std::io::stdout().flush();
 }

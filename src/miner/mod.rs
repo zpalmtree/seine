@@ -2,6 +2,7 @@ mod bench;
 mod mining;
 mod scheduler;
 mod stats;
+mod tui;
 mod ui;
 
 use std::collections::BTreeMap;
@@ -23,7 +24,8 @@ use crate::backend::{
 use crate::config::{BackendKind, Config};
 use scheduler::NonceReservation;
 use stats::{format_hashrate, Stats};
-use ui::{error, info, startup_banner, warn};
+use tui::new_tui_state;
+use ui::{error, info, set_tui_state, warn};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const TEMPLATE_RETRY_DELAY: Duration = Duration::from_secs(2);
@@ -55,39 +57,26 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
     let cpu_ram_gib =
         (cpu_lanes as f64 * CPU_LANE_MEMORY_BYTES as f64) / (1024.0 * 1024.0 * 1024.0);
 
-    let startup_lines = vec![
-        ("Mode", "mining".to_string()),
-        ("Backends", backend_names(&backends)),
-        (
-            "Lanes",
-            format!(
-                "total={} | cpu={} (~{:.1} GiB RAM)",
-                total_lanes, cpu_lanes, cpu_ram_gib
-            ),
-        ),
-        ("API", cfg.api_url.clone()),
-        (
-            "SSE",
-            if cfg.sse_enabled { "on" } else { "off" }.to_string(),
-        ),
-        ("Refresh", format!("{}s", cfg.refresh_interval.as_secs())),
-        (
-            "Hash Poll",
-            format!("{}ms", cfg.hash_poll_interval.as_millis()),
-        ),
-        ("Event Queue", cfg.backend_event_capacity.to_string()),
-        (
-            "Accounting",
-            if cfg.strict_round_accounting {
-                "strict"
-            } else {
-                "relaxed"
-            }
-            .to_string(),
-        ),
-        ("Nonce Span/Lane", cfg.nonce_iters_per_lane.to_string()),
-    ];
-    startup_banner(&startup_lines);
+    let tui_state = new_tui_state();
+    if let Ok(mut s) = tui_state.lock() {
+        s.api_url = cfg.api_url.clone();
+        s.threads = cfg.threads;
+        s.refresh_secs = cfg.refresh_interval.as_secs();
+        s.sse_enabled = cfg.sse_enabled;
+        s.backends_desc = format!(
+            "{} ({} lanes, ~{:.1} GiB RAM)",
+            backend_names(&backends),
+            total_lanes,
+            cpu_ram_gib
+        );
+        s.accounting = if cfg.strict_round_accounting {
+            "strict".to_string()
+        } else {
+            "relaxed".to_string()
+        };
+        s.version = format!("v{}", env!("CARGO_PKG_VERSION"));
+    }
+    set_tui_state(tui_state);
 
     let tip_listener = if cfg.sse_enabled {
         Some(mining::spawn_tip_listener(
