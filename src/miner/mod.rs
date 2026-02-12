@@ -73,6 +73,8 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
         return bench::run_benchmark(cfg, shutdown.as_ref());
     }
 
+    let backend_executor = backend_executor::BackendExecutor::new();
+
     let token = cfg
         .token
         .clone()
@@ -88,7 +90,11 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
     let backend_instances = build_backend_instances(cfg);
     let (mut backends, backend_events) =
         activate_backends(backend_instances, cfg.backend_event_capacity)?;
-    enforce_deadline_policy(&mut backends, cfg.allow_best_effort_deadlines)?;
+    enforce_deadline_policy(
+        &mut backends,
+        cfg.allow_best_effort_deadlines,
+        &backend_executor,
+    )?;
     let total_lanes = total_lanes(&backends);
     let cpu_lanes = cpu_lane_count(&backends);
     let cpu_ram_gib =
@@ -231,14 +237,17 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
         cfg,
         &client,
         Arc::clone(&shutdown),
-        &mut backends,
-        &backend_events,
+        mining::MiningRuntimeBackends {
+            backends: &mut backends,
+            backend_events: &backend_events,
+            backend_executor: &backend_executor,
+        },
         tui_state,
         tip_listener.as_ref().map(mining::TipListener::signal),
     );
 
     let shutdown_requested = shutdown.load(Ordering::SeqCst);
-    stop_backend_slots(&mut backends);
+    stop_backend_slots(&mut backends, &backend_executor);
     shutdown.store(true, Ordering::SeqCst);
     if let Some(listener) = tip_listener {
         if shutdown_requested {
@@ -405,18 +414,22 @@ fn start_backend_slots(backends: &mut Vec<BackendSlot>) -> Result<()> {
     Ok(())
 }
 
-fn stop_backend_slots(backends: &mut [BackendSlot]) {
+fn stop_backend_slots(
+    backends: &mut [BackendSlot],
+    backend_executor: &backend_executor::BackendExecutor,
+) {
     for slot in backends {
         slot.backend.stop();
     }
-    backend_executor::clear_backend_workers();
+    backend_executor.clear();
 }
 
 fn distribute_work(
     backends: &mut Vec<BackendSlot>,
     options: DistributeWorkOptions<'_>,
+    backend_executor: &backend_executor::BackendExecutor,
 ) -> Result<u64> {
-    work_allocator::distribute_work(backends, options)
+    work_allocator::distribute_work(backends, options, backend_executor)
 }
 
 #[cfg(test)]
@@ -516,27 +529,33 @@ fn cancel_backend_slots(
     backends: &mut Vec<BackendSlot>,
     mode: RuntimeMode,
     control_timeout: Duration,
+    backend_executor: &backend_executor::BackendExecutor,
 ) -> Result<RuntimeBackendEventAction> {
-    backend_control::cancel_backend_slots(backends, mode, control_timeout)
+    backend_control::cancel_backend_slots(backends, mode, control_timeout, backend_executor)
 }
 
 fn quiesce_backend_slots(
     backends: &mut Vec<BackendSlot>,
     mode: RuntimeMode,
     control_timeout: Duration,
+    backend_executor: &backend_executor::BackendExecutor,
 ) -> Result<RuntimeBackendEventAction> {
-    backend_control::quiesce_backend_slots(backends, mode, control_timeout)
+    backend_control::quiesce_backend_slots(backends, mode, control_timeout, backend_executor)
 }
 
-fn remove_backend_by_id(backends: &mut Vec<BackendSlot>, backend_id: BackendInstanceId) -> bool {
+fn remove_backend_by_id(
+    backends: &mut Vec<BackendSlot>,
+    backend_id: BackendInstanceId,
+    backend_executor: &backend_executor::BackendExecutor,
+) -> bool {
     let Some(idx) = backends.iter().position(|slot| slot.id == backend_id) else {
         return false;
     };
 
     let slot = backends.remove(idx);
-    backend_executor::quarantine_backend(slot.id, Arc::clone(&slot.backend));
-    backend_executor::remove_backend_worker(slot.id, &slot.backend);
-    backend_executor::prune_backend_workers(backends);
+    backend_executor.quarantine_backend(slot.id, Arc::clone(&slot.backend));
+    backend_executor.remove_backend_worker(slot.id, &slot.backend);
+    backend_executor.prune(backends);
     true
 }
 
@@ -555,6 +574,7 @@ enum RuntimeBackendEventAction {
 fn enforce_deadline_policy(
     backends: &mut Vec<BackendSlot>,
     allow_best_effort_deadlines: bool,
+    backend_executor: &backend_executor::BackendExecutor,
 ) -> Result<()> {
     if allow_best_effort_deadlines {
         return Ok(());
@@ -579,8 +599,8 @@ fn enforce_deadline_policy(
     for slot in best_effort {
         let backend_name = slot.backend.name();
         let backend_id = slot.id;
-        backend_executor::quarantine_backend(backend_id, Arc::clone(&slot.backend));
-        backend_executor::remove_backend_worker(backend_id, &slot.backend);
+        backend_executor.quarantine_backend(backend_id, Arc::clone(&slot.backend));
+        backend_executor.remove_backend_worker(backend_id, &slot.backend);
         warn(
             "BACKEND",
             format!(
@@ -588,7 +608,7 @@ fn enforce_deadline_policy(
             ),
         );
     }
-    backend_executor::prune_backend_workers(backends);
+    backend_executor.prune(backends);
     if backends.is_empty() {
         bail!(
             "all active backends report best-effort deadlines; pass --allow-best-effort-deadlines to continue"
@@ -602,11 +622,12 @@ fn handle_runtime_backend_event(
     epoch: u64,
     backends: &mut Vec<BackendSlot>,
     mode: RuntimeMode,
+    backend_executor: &backend_executor::BackendExecutor,
 ) -> Result<(
     RuntimeBackendEventAction,
     Option<crate::backend::MiningSolution>,
 )> {
-    backend_control::handle_runtime_backend_event(event, epoch, backends, mode)
+    backend_control::handle_runtime_backend_event(event, epoch, backends, mode, backend_executor)
 }
 
 fn drain_runtime_backend_events(
@@ -614,11 +635,18 @@ fn drain_runtime_backend_events(
     epoch: u64,
     backends: &mut Vec<BackendSlot>,
     mode: RuntimeMode,
+    backend_executor: &backend_executor::BackendExecutor,
 ) -> Result<(
     RuntimeBackendEventAction,
     Vec<crate::backend::MiningSolution>,
 )> {
-    backend_control::drain_runtime_backend_events(backend_events, epoch, backends, mode)
+    backend_control::drain_runtime_backend_events(
+        backend_events,
+        epoch,
+        backends,
+        mode,
+        backend_executor,
+    )
 }
 
 fn backend_name_list(backends: &[BackendSlot]) -> Vec<String> {
@@ -1048,6 +1076,7 @@ mod tests {
 
     #[test]
     fn remove_backend_by_id_only_removes_target_instance() {
+        let backend_executor = backend_executor::BackendExecutor::new();
         let first_state = Arc::new(MockState::default());
         let second_state = Arc::new(MockState::default());
 
@@ -1063,7 +1092,7 @@ mod tests {
                 Arc::new(MockBackend::new("nvidia", 1, Arc::clone(&second_state))),
             ),
         ];
-        assert!(remove_backend_by_id(&mut backends, 22));
+        assert!(remove_backend_by_id(&mut backends, 22, &backend_executor));
         assert_eq!(backends.len(), 1);
         assert_eq!(backends[0].id, 11);
         assert_eq!(first_state.stop_calls.load(Ordering::Relaxed), 0);
@@ -1075,6 +1104,7 @@ mod tests {
 
     #[test]
     fn distribute_work_quarantines_assignment_failures_and_reassigns_lanes() {
+        let backend_executor = backend_executor::BackendExecutor::new();
         let first_state = Arc::new(MockState::default());
         let failed_state = Arc::new(MockState::default());
         let third_state = Arc::new(MockState::default());
@@ -1113,6 +1143,7 @@ mod tests {
                 assignment_timeout: Duration::from_secs(1),
                 backend_weights: None,
             },
+            &backend_executor,
         )
         .expect("distribution should continue after quarantining failing backend");
         assert_eq!(additional_span, 30);
@@ -1145,6 +1176,7 @@ mod tests {
 
     #[test]
     fn distribute_work_uses_backend_inflight_batching_hint() {
+        let backend_executor = backend_executor::BackendExecutor::new();
         let state = Arc::new(MockState::default());
         let mut backends = vec![slot(
             7,
@@ -1172,6 +1204,7 @@ mod tests {
                 assignment_timeout: Duration::from_secs(1),
                 backend_weights: None,
             },
+            &backend_executor,
         )
         .expect("distribution should succeed");
 
@@ -1197,6 +1230,7 @@ mod tests {
 
     #[test]
     fn distribute_work_timeout_cleanup_stops_backend_after_late_completion() {
+        let backend_executor = backend_executor::BackendExecutor::new();
         let slow_state = Arc::new(MockState::default());
         let mut backends = vec![slot(
             9,
@@ -1223,6 +1257,7 @@ mod tests {
                 assignment_timeout: Duration::from_millis(5),
                 backend_weights: None,
             },
+            &backend_executor,
         )
         .expect_err("timeout should quarantine the only backend");
         assert!(format!("{err:#}").contains("all mining backends are unavailable"));
@@ -1235,6 +1270,7 @@ mod tests {
 
     #[test]
     fn distribute_work_quarantines_assignment_panics_and_reassigns_lanes() {
+        let backend_executor = backend_executor::BackendExecutor::new();
         let first_state = Arc::new(MockState::default());
         let panic_state = Arc::new(MockState::default());
         let third_state = Arc::new(MockState::default());
@@ -1274,6 +1310,7 @@ mod tests {
                 assignment_timeout: Duration::from_secs(1),
                 backend_weights: None,
             },
+            &backend_executor,
         )
         .expect("distribution should continue after quarantining panicing backend");
 
@@ -1462,6 +1499,7 @@ mod tests {
 
     #[test]
     fn deadline_policy_rejects_best_effort_when_not_allowed() {
+        let backend_executor = backend_executor::BackendExecutor::new();
         let state = Arc::new(MockState::default());
         let mut backends = vec![slot(
             1,
@@ -1472,13 +1510,14 @@ mod tests {
             ),
         )];
 
-        let err = enforce_deadline_policy(&mut backends, false)
+        let err = enforce_deadline_policy(&mut backends, false, &backend_executor)
             .expect_err("best-effort backend should be rejected by default");
         assert!(format!("{err:#}").contains("--allow-best-effort-deadlines"));
     }
 
     #[test]
     fn deadline_policy_quarantines_best_effort_and_keeps_cooperative_backends() {
+        let backend_executor = backend_executor::BackendExecutor::new();
         let best_effort_state = Arc::new(MockState::default());
         let cooperative_state = Arc::new(MockState::default());
         let mut backends = vec![
@@ -1500,7 +1539,7 @@ mod tests {
             ),
         ];
 
-        enforce_deadline_policy(&mut backends, false)
+        enforce_deadline_policy(&mut backends, false, &backend_executor)
             .expect("cooperative backend should remain available");
 
         assert_eq!(backends.len(), 1);
@@ -1570,6 +1609,7 @@ mod tests {
 
     #[test]
     fn quiesce_cancels_all_backends_before_fencing_any_backend() {
+        let backend_executor = backend_executor::BackendExecutor::new();
         let trace = Arc::new(QuiesceTrace::default());
         let mut backends = vec![
             slot(
@@ -1584,8 +1624,13 @@ mod tests {
             ),
         ];
 
-        quiesce_backend_slots(&mut backends, RuntimeMode::Mining, Duration::from_secs(1))
-            .expect("quiesce should succeed");
+        quiesce_backend_slots(
+            &mut backends,
+            RuntimeMode::Mining,
+            Duration::from_secs(1),
+            &backend_executor,
+        )
+        .expect("quiesce should succeed");
 
         let events = trace
             .events
@@ -1753,6 +1798,7 @@ mod tests {
 
     #[test]
     fn quiesce_quarantines_only_failing_backend() {
+        let backend_executor = backend_executor::BackendExecutor::new();
         let fail_stop_calls = Arc::new(AtomicUsize::new(0));
         let ok_stop_calls = Arc::new(AtomicUsize::new(0));
         let mut backends = vec![
@@ -1779,8 +1825,13 @@ mod tests {
         ];
 
         let action =
-            quiesce_backend_slots(&mut backends, RuntimeMode::Mining, Duration::from_secs(1))
-                .expect("quiesce should quarantine only the failing backend");
+            quiesce_backend_slots(
+                &mut backends,
+                RuntimeMode::Mining,
+                Duration::from_secs(1),
+                &backend_executor,
+            )
+            .expect("quiesce should quarantine only the failing backend");
 
         assert_eq!(action, RuntimeBackendEventAction::TopologyChanged);
         assert_eq!(backends.len(), 1);
@@ -1794,6 +1845,7 @@ mod tests {
 
     #[test]
     fn quiesce_quarantines_backend_when_control_panics() {
+        let backend_executor = backend_executor::BackendExecutor::new();
         let panic_stop_calls = Arc::new(AtomicUsize::new(0));
         let ok_stop_calls = Arc::new(AtomicUsize::new(0));
         let mut backends = vec![
@@ -1820,8 +1872,13 @@ mod tests {
         ];
 
         let action =
-            quiesce_backend_slots(&mut backends, RuntimeMode::Mining, Duration::from_secs(1))
-                .expect("quiesce should quarantine panicing backend");
+            quiesce_backend_slots(
+                &mut backends,
+                RuntimeMode::Mining,
+                Duration::from_secs(1),
+                &backend_executor,
+            )
+            .expect("quiesce should quarantine panicing backend");
 
         assert_eq!(action, RuntimeBackendEventAction::TopologyChanged);
         assert_eq!(backends.len(), 1);

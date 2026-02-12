@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, Result};
 use argon2::{Algorithm, Argon2, Block, Version};
 use blocknet_pow_spec::{pow_params, POW_OUTPUT_LEN};
-use crossbeam_channel::{unbounded, SendTimeoutError, Sender};
+use crossbeam_channel::{bounded, SendTimeoutError, Sender};
 
 use crate::backend::{
     AssignmentSemantics, BackendCapabilities, BackendEvent, BackendInstanceId, BackendTelemetry,
@@ -20,6 +20,7 @@ const HASH_BATCH_SIZE: u64 = 64;
 const HASH_FLUSH_INTERVAL: Duration = Duration::from_millis(50);
 const STOP_CHECK_INTERVAL_HASHES: u64 = 64;
 const CRITICAL_EVENT_RETRY_WAIT: Duration = Duration::from_millis(5);
+const EVENT_DISPATCH_CAPACITY: usize = 1024;
 const SOLVED_MASK: u64 = 1u64 << 63;
 
 #[repr(align(64))]
@@ -150,7 +151,7 @@ impl CpuBackend {
 
     fn start_event_forwarder(&self) -> Result<()> {
         let instance_id = self.shared.instance_id.load(Ordering::Acquire);
-        let (dispatch_tx, dispatch_rx) = unbounded::<BackendEvent>();
+        let (dispatch_tx, dispatch_rx) = bounded::<BackendEvent>(EVENT_DISPATCH_CAPACITY.max(1));
         if let Ok(mut slot) = self.shared.event_dispatch_tx.write() {
             *slot = Some(dispatch_tx);
         } else {
@@ -355,6 +356,13 @@ impl PowBackend for CpuBackend {
     }
 
     fn cancel_work(&self) -> Result<()> {
+        if !self.shared.started.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        request_work_pause(&self.shared)
+    }
+
+    fn request_timeout_interrupt(&self) -> Result<()> {
         if !self.shared.started.load(Ordering::SeqCst) {
             return Ok(());
         }
@@ -911,8 +919,27 @@ fn emit_event(shared: &Shared, event: BackendEvent) {
         shared.dropped_events.fetch_add(1, Ordering::Relaxed);
         return;
     };
-    if dispatch_tx.send(event).is_err() {
-        shared.dropped_events.fetch_add(1, Ordering::Relaxed);
+    send_dispatch_event(shared, &dispatch_tx, event);
+}
+
+fn send_dispatch_event(shared: &Shared, tx: &Sender<BackendEvent>, event: BackendEvent) {
+    let mut queued = event;
+    loop {
+        if !shared.started.load(Ordering::Acquire) {
+            shared.dropped_events.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+
+        match tx.send_timeout(queued, CRITICAL_EVENT_RETRY_WAIT) {
+            Ok(()) => return,
+            Err(SendTimeoutError::Disconnected(_)) => {
+                shared.dropped_events.fetch_add(1, Ordering::Relaxed);
+                return;
+            }
+            Err(SendTimeoutError::Timeout(returned)) => {
+                queued = returned;
+            }
+        }
     }
 }
 

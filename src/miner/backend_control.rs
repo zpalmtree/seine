@@ -19,16 +19,18 @@ pub(super) fn cancel_backend_slots(
     backends: &mut Vec<BackendSlot>,
     mode: RuntimeMode,
     control_timeout: Duration,
+    backend_executor: &backend_executor::BackendExecutor,
 ) -> Result<RuntimeBackendEventAction> {
-    control_backend_slots(backends, mode, false, control_timeout)
+    control_backend_slots(backends, mode, false, control_timeout, backend_executor)
 }
 
 pub(super) fn quiesce_backend_slots(
     backends: &mut Vec<BackendSlot>,
     mode: RuntimeMode,
     control_timeout: Duration,
+    backend_executor: &backend_executor::BackendExecutor,
 ) -> Result<RuntimeBackendEventAction> {
-    control_backend_slots(backends, mode, true, control_timeout)
+    control_backend_slots(backends, mode, true, control_timeout, backend_executor)
 }
 
 pub(super) fn handle_runtime_backend_event(
@@ -36,6 +38,7 @@ pub(super) fn handle_runtime_backend_event(
     epoch: u64,
     backends: &mut Vec<BackendSlot>,
     mode: RuntimeMode,
+    backend_executor: &backend_executor::BackendExecutor,
 ) -> Result<(
     RuntimeBackendEventAction,
     Option<crate::backend::MiningSolution>,
@@ -86,7 +89,7 @@ pub(super) fn handle_runtime_backend_event(
                 }
             }
 
-            let removed = remove_backend_by_id(backends, backend_id);
+            let removed = remove_backend_by_id(backends, backend_id, backend_executor);
             if removed {
                 if backends.is_empty() {
                     match mode {
@@ -142,6 +145,7 @@ pub(super) fn drain_runtime_backend_events(
     epoch: u64,
     backends: &mut Vec<BackendSlot>,
     mode: RuntimeMode,
+    backend_executor: &backend_executor::BackendExecutor,
 ) -> Result<(
     RuntimeBackendEventAction,
     Vec<crate::backend::MiningSolution>,
@@ -150,7 +154,7 @@ pub(super) fn drain_runtime_backend_events(
     let mut solutions = Vec::new();
     while let Ok(event) = backend_events.try_recv() {
         let (event_action, maybe_solution) =
-            handle_runtime_backend_event(event, epoch, backends, mode)?;
+            handle_runtime_backend_event(event, epoch, backends, mode, backend_executor)?;
         if event_action == RuntimeBackendEventAction::TopologyChanged {
             action = RuntimeBackendEventAction::TopologyChanged;
         }
@@ -166,6 +170,7 @@ fn control_backend_slots(
     mode: RuntimeMode,
     include_fence: bool,
     control_timeout: Duration,
+    backend_executor: &backend_executor::BackendExecutor,
 ) -> Result<RuntimeBackendEventAction> {
     if backends.is_empty() {
         return Ok(RuntimeBackendEventAction::None);
@@ -178,18 +183,24 @@ fn control_backend_slots(
         std::mem::take(backends),
         BackendControlPhase::Cancel,
         timeout,
+        backend_executor,
     );
     merge_backend_failures(&mut failures, cancel_failures);
 
     if include_fence && !survivors.is_empty() {
         let (after_fence, fence_failures) =
-            run_backend_control_phase(survivors, BackendControlPhase::Fence, timeout);
+            run_backend_control_phase(
+                survivors,
+                BackendControlPhase::Fence,
+                timeout,
+                backend_executor,
+            );
         survivors = after_fence;
         merge_backend_failures(&mut failures, fence_failures);
     }
 
     *backends = survivors;
-    backend_executor::prune_backend_workers(backends);
+    backend_executor.prune(backends);
 
     if failures.is_empty() {
         return Ok(RuntimeBackendEventAction::None);
@@ -273,6 +284,7 @@ fn run_backend_control_phase(
     slots: Vec<BackendSlot>,
     phase: BackendControlPhase,
     timeout: Duration,
+    backend_executor: &backend_executor::BackendExecutor,
 ) -> (Vec<BackendSlot>, BackendFailureMap) {
     if slots.is_empty() {
         return (Vec::new(), BackendFailureMap::new());
@@ -297,7 +309,7 @@ fn run_backend_control_phase(
             })
         })
         .collect();
-    let mut outcomes = backend_executor::dispatch_backend_tasks(backend_tasks, timeout);
+    let mut outcomes = backend_executor.dispatch_backend_tasks(backend_tasks, timeout);
     if outcomes.len() < expected {
         outcomes.resize_with(expected, || None);
     }
@@ -316,8 +328,8 @@ fn run_backend_control_phase(
             Some(outcome) => match outcome.result {
                 Ok(()) => survivors.push((idx, slot)),
                 Err(err) => {
-                    backend_executor::quarantine_backend(backend_id, Arc::clone(&slot.backend));
-                    backend_executor::remove_backend_worker(backend_id, &slot.backend);
+                    backend_executor.quarantine_backend(backend_id, Arc::clone(&slot.backend));
+                    backend_executor.remove_backend_worker(backend_id, &slot.backend);
                     failures
                         .entry(backend_id)
                         .or_insert_with(|| (backend, Vec::new()))
@@ -326,8 +338,8 @@ fn run_backend_control_phase(
                 }
             },
             None => {
-                backend_executor::quarantine_backend(backend_id, Arc::clone(&slot.backend));
-                backend_executor::remove_backend_worker(backend_id, &slot.backend);
+                backend_executor.quarantine_backend(backend_id, Arc::clone(&slot.backend));
+                backend_executor.remove_backend_worker(backend_id, &slot.backend);
                 failures
                     .entry(backend_id)
                     .or_insert_with(|| (backend, Vec::new()))

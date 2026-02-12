@@ -26,6 +26,7 @@ pub(super) struct TopologyRedistributionOptions<'a> {
     pub work_allocation: WorkAllocation,
     pub backend_weights: Option<&'a BTreeMap<BackendInstanceId, f64>>,
     pub nonce_scheduler: &'a mut NonceScheduler,
+    pub backend_executor: &'a super::backend_executor::BackendExecutor,
     pub log_tag: &'static str,
 }
 
@@ -38,7 +39,12 @@ pub(super) fn redistribute_for_topology_change(
     }
 
     if super::backends_have_append_assignment_semantics(backends)
-        && cancel_backend_slots(backends, options.mode, options.control_timeout)?
+        && cancel_backend_slots(
+            backends,
+            options.mode,
+            options.control_timeout,
+            options.backend_executor,
+        )?
             == RuntimeBackendEventAction::TopologyChanged
         && backends.is_empty()
     {
@@ -72,6 +78,7 @@ pub(super) fn redistribute_for_topology_change(
             assignment_timeout: options.assignment_timeout,
             backend_weights: distribution_weights,
         },
+        options.backend_executor,
     )?;
     options
         .nonce_scheduler

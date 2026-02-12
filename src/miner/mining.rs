@@ -472,15 +472,25 @@ impl<'a> MiningControlPlane<'a> {
     }
 }
 
+pub(super) struct MiningRuntimeBackends<'a> {
+    pub backends: &'a mut Vec<BackendSlot>,
+    pub backend_events: &'a Receiver<BackendEvent>,
+    pub backend_executor: &'a super::backend_executor::BackendExecutor,
+}
+
 pub(super) fn run_mining_loop(
     cfg: &Config,
     client: &ApiClient,
     shutdown: Arc<AtomicBool>,
-    backends: &mut Vec<BackendSlot>,
-    backend_events: &Receiver<BackendEvent>,
+    runtime_backends: MiningRuntimeBackends<'_>,
     tui_state: Option<TuiState>,
     tip_signal: Option<&TipSignal>,
 ) -> Result<()> {
+    let MiningRuntimeBackends {
+        backends,
+        backend_events,
+        backend_executor,
+    } = runtime_backends;
     let stats = Stats::new();
     let mut nonce_scheduler = NonceScheduler::new(cfg.start_nonce, cfg.nonce_iters_per_lane);
     let mut work_id_cursor = 1u64;
@@ -589,6 +599,7 @@ pub(super) fn run_mining_loop(
                 assignment_timeout: cfg.backend_assign_timeout,
                 backend_weights: work_distribution_weights(cfg.work_allocation, &backend_weights),
             },
+            backend_executor,
         )?;
         nonce_scheduler.consume_additional_span(additional_span);
         control_plane.spawn_prefetch_if_needed();
@@ -600,6 +611,7 @@ pub(super) fn run_mining_loop(
             backends,
             backend_events,
             tip_signal,
+            backend_executor,
             stats: &stats,
             tui: &mut tui,
             last_stats_print: &mut last_stats_print,
@@ -625,20 +637,31 @@ pub(super) fn run_mining_loop(
             &mut pending_solution,
             &mut deferred_solutions,
             backends,
+            backend_executor,
         )?;
         let solved_found = pending_solution.is_some();
         let append_semantics_active = super::backends_have_append_assignment_semantics(backends);
 
         if cfg.strict_round_accounting {
             let _ =
-                quiesce_backend_slots(backends, RuntimeMode::Mining, cfg.backend_control_timeout)?;
+                quiesce_backend_slots(
+                    backends,
+                    RuntimeMode::Mining,
+                    cfg.backend_control_timeout,
+                    backend_executor,
+                )?;
         } else if should_cancel_relaxed_round(
             round_state.stale_tip_event,
             solved_found,
             append_semantics_active,
         ) {
             let _ =
-                cancel_backend_slots(backends, RuntimeMode::Mining, cfg.backend_control_timeout)?;
+                cancel_backend_slots(
+                    backends,
+                    RuntimeMode::Mining,
+                    cfg.backend_control_timeout,
+                    backend_executor,
+                )?;
         }
         let _ = drain_mining_backend_events(
             backend_events,
@@ -646,6 +669,7 @@ pub(super) fn run_mining_loop(
             &mut pending_solution,
             &mut deferred_solutions,
             backends,
+            backend_executor,
         )?;
         if let Some(solution) = pending_solution.take() {
             control_plane.submit_solution(&template, solution.clone(), &stats, &mut tui);
@@ -772,7 +796,12 @@ pub(super) fn run_mining_loop(
     }
 
     if !backends.is_empty() {
-        match quiesce_backend_slots(backends, RuntimeMode::Mining, cfg.backend_control_timeout) {
+        match quiesce_backend_slots(
+            backends,
+            RuntimeMode::Mining,
+            cfg.backend_control_timeout,
+            backend_executor,
+        ) {
             Ok(_) => {}
             Err(err) => warn("BACKEND", format!("final backend quiesce failed: {err:#}")),
         }
@@ -783,6 +812,7 @@ pub(super) fn run_mining_loop(
             &mut final_pending_solution,
             &mut deferred_solutions,
             backends,
+            backend_executor,
         ) {
             Ok(_) => {}
             Err(err) => warn(
@@ -820,6 +850,99 @@ fn should_cancel_relaxed_round(
     stale_tip_event || solved_found || append_semantics_active
 }
 
+type BackendPollState = BTreeMap<u64, (Duration, Instant)>;
+
+fn backend_poll_interval(slot: &BackendSlot, configured: Duration) -> Duration {
+    let configured = configured.max(Duration::from_millis(1));
+    let hinted = super::backend_capabilities(slot)
+        .preferred_hash_poll_interval
+        .filter(|hint| *hint > Duration::from_millis(0))
+        .map(|hint| hint.max(Duration::from_millis(1)));
+    hinted.map_or(configured, |hint| configured.min(hint))
+}
+
+fn build_backend_poll_state(backends: &[BackendSlot], configured: Duration) -> BackendPollState {
+    let now = Instant::now();
+    let mut state = BackendPollState::new();
+    for slot in backends {
+        let interval = backend_poll_interval(slot, configured);
+        state.insert(slot.id, (interval, now + interval));
+    }
+    state
+}
+
+fn sync_backend_poll_state(
+    backends: &[BackendSlot],
+    configured: Duration,
+    poll_state: &mut BackendPollState,
+) {
+    let now = Instant::now();
+    let active = backends.iter().map(|slot| slot.id).collect::<HashSet<_>>();
+    poll_state.retain(|backend_id, _| active.contains(backend_id));
+    for slot in backends {
+        poll_state.entry(slot.id).or_insert_with(|| {
+            let interval = backend_poll_interval(slot, configured);
+            (interval, now + interval)
+        });
+    }
+}
+
+fn next_backend_poll_deadline(
+    backends: &[BackendSlot],
+    configured: Duration,
+    poll_state: &mut BackendPollState,
+) -> Instant {
+    sync_backend_poll_state(backends, configured, poll_state);
+    poll_state
+        .values()
+        .map(|(_, next_poll)| *next_poll)
+        .min()
+        .unwrap_or_else(Instant::now)
+}
+
+fn collect_due_backend_hashes(
+    backends: &[BackendSlot],
+    configured: Duration,
+    poll_state: &mut BackendPollState,
+    stats: Option<&Stats>,
+    round_hashes: &mut u64,
+    round_backend_hashes: &mut BTreeMap<u64, u64>,
+    round_backend_telemetry: &mut BTreeMap<u64, BackendRoundTelemetry>,
+) {
+    sync_backend_poll_state(backends, configured, poll_state);
+    let now = Instant::now();
+    let mut collected = 0u64;
+
+    for slot in backends {
+        let Some((interval, next_poll)) = poll_state.get_mut(&slot.id) else {
+            continue;
+        };
+        if now < *next_poll {
+            continue;
+        }
+
+        let slot_hashes = slot.backend.take_hashes();
+        let telemetry = slot.backend.take_telemetry();
+        super::merge_backend_telemetry(round_backend_telemetry, slot.id, telemetry);
+
+        if slot_hashes > 0 {
+            collected = collected.saturating_add(slot_hashes);
+            let entry = round_backend_hashes.entry(slot.id).or_insert(0);
+            *entry = entry.saturating_add(slot_hashes);
+        }
+
+        *next_poll = now + *interval;
+    }
+
+    if collected == 0 {
+        return;
+    }
+    if let Some(stats) = stats {
+        stats.add_hashes(collected);
+    }
+    *round_hashes = round_hashes.saturating_add(collected);
+}
+
 struct RoundInput<'a> {
     epoch: u64,
     work_id: u64,
@@ -837,6 +960,7 @@ struct RoundRuntime<'a> {
     backends: &'a mut Vec<BackendSlot>,
     backend_events: &'a Receiver<BackendEvent>,
     tip_signal: Option<&'a TipSignal>,
+    backend_executor: &'a super::backend_executor::BackendExecutor,
     stats: &'a Stats,
     tui: &'a mut Option<TuiDisplay>,
     last_stats_print: &'a mut Instant,
@@ -853,9 +977,8 @@ impl<'a> RoundRuntime<'a> {
         let mut round_backend_hashes = BTreeMap::new();
         let mut round_backend_telemetry = BTreeMap::new();
         let mut topology_changed = false;
-        let mut hash_poll_interval =
-            super::effective_hash_poll_interval(self.backends, self.cfg.hash_poll_interval);
-        let mut next_hash_poll_at = Instant::now() + hash_poll_interval;
+        let mut backend_poll_state =
+            build_backend_poll_state(self.backends, self.cfg.hash_poll_interval);
         update_tui(
             self.tui,
             self.stats,
@@ -876,16 +999,17 @@ impl<'a> RoundRuntime<'a> {
             && solved.is_none()
             && !stale_tip_event
         {
-            let now = Instant::now();
-            if now >= next_hash_poll_at {
-                collect_backend_hashes(
-                    self.backends,
-                    Some(self.stats),
-                    &mut round_hashes,
-                    Some(&mut round_backend_hashes),
-                    Some(&mut round_backend_telemetry),
-                );
-                next_hash_poll_at = now + hash_poll_interval;
+            let hashes_before = round_hashes;
+            collect_due_backend_hashes(
+                self.backends,
+                self.cfg.hash_poll_interval,
+                &mut backend_poll_state,
+                Some(self.stats),
+                &mut round_hashes,
+                &mut round_backend_hashes,
+                &mut round_backend_telemetry,
+            );
+            if round_hashes != hashes_before {
                 update_tui(
                     self.tui,
                     self.stats,
@@ -928,6 +1052,8 @@ impl<'a> RoundRuntime<'a> {
                 continue;
             }
 
+            let next_hash_poll_at =
+                next_backend_poll_deadline(self.backends, self.cfg.hash_poll_interval, &mut backend_poll_state);
             let wait_for = next_event_wait(
                 input.stop_at,
                 *self.last_stats_print,
@@ -945,6 +1071,7 @@ impl<'a> RoundRuntime<'a> {
                         &mut solved,
                         self.deferred_solutions,
                         self.backends,
+                        self.backend_executor,
                     )? == BackendEventAction::TopologyChanged
                     {
                         topology_changed = true;
@@ -974,15 +1101,15 @@ impl<'a> RoundRuntime<'a> {
                         work_allocation: self.cfg.work_allocation,
                         backend_weights: Some(self.backend_weights),
                         nonce_scheduler: self.nonce_scheduler,
+                        backend_executor: self.backend_executor,
                         log_tag: "BACKEND",
                     },
                 )?;
                 if self.backends.is_empty() {
                     break;
                 }
-                hash_poll_interval =
-                    super::effective_hash_poll_interval(self.backends, self.cfg.hash_poll_interval);
-                next_hash_poll_at = Instant::now() + hash_poll_interval;
+                backend_poll_state =
+                    build_backend_poll_state(self.backends, self.cfg.hash_poll_interval);
                 topology_changed = false;
                 update_tui(
                     self.tui,
@@ -1035,16 +1162,29 @@ fn resolve_next_template(
     }
 
     if let Some(task) = prefetch.as_mut() {
-        let latest_tip_sequence = current_tip_sequence(tip_signal);
-        if task.pending_tip_sequence().is_none() {
+        let prefetch_budget = cfg.prefetch_wait.max(Duration::from_millis(1));
+        let prefetch_started = Instant::now();
+        loop {
+            let latest_tip_sequence = current_tip_sequence(tip_signal);
             task.request_if_idle(latest_tip_sequence);
-        }
 
-        if let Some((tip_sequence, template)) = task.wait_for_result(cfg.prefetch_wait) {
-            if tip_sequence == latest_tip_sequence {
+            let remaining = prefetch_budget
+                .saturating_sub(prefetch_started.elapsed())
+                .max(Duration::from_millis(1));
+            let Some((tip_sequence, template)) = task.wait_for_result(remaining) else {
+                break;
+            };
+            let latest_after_wait = current_tip_sequence(tip_signal);
+            if tip_sequence == latest_after_wait {
                 if let Some(template) = template {
                     return Some(template);
                 }
+                break;
+            }
+
+            task.request_if_idle(latest_after_wait);
+            if prefetch_started.elapsed() >= prefetch_budget {
+                break;
             }
         }
     }
@@ -1058,9 +1198,15 @@ fn handle_mining_backend_event(
     solved: &mut Option<MiningSolution>,
     deferred_solutions: &mut Vec<MiningSolution>,
     backends: &mut Vec<BackendSlot>,
+    backend_executor: &super::backend_executor::BackendExecutor,
 ) -> Result<BackendEventAction> {
-    let (action, maybe_solution) =
-        super::handle_runtime_backend_event(event, epoch, backends, RuntimeMode::Mining)?;
+    let (action, maybe_solution) = super::handle_runtime_backend_event(
+        event,
+        epoch,
+        backends,
+        RuntimeMode::Mining,
+        backend_executor,
+    )?;
     if let Some(solution) = maybe_solution {
         if solution.epoch == epoch {
             if solved.is_none() {
@@ -1089,9 +1235,15 @@ fn drain_mining_backend_events(
     solved: &mut Option<MiningSolution>,
     deferred_solutions: &mut Vec<MiningSolution>,
     backends: &mut Vec<BackendSlot>,
+    backend_executor: &super::backend_executor::BackendExecutor,
 ) -> Result<BackendEventAction> {
-    let (action, solutions) =
-        super::drain_runtime_backend_events(backend_events, epoch, backends, RuntimeMode::Mining)?;
+    let (action, solutions) = super::drain_runtime_backend_events(
+        backend_events,
+        epoch,
+        backends,
+        RuntimeMode::Mining,
+        backend_executor,
+    )?;
     for solution in solutions {
         if solution.epoch == epoch {
             if solved.is_none() {
@@ -1553,6 +1705,7 @@ mod tests {
 
     #[test]
     fn stale_solution_is_ignored_for_current_epoch() {
+        let backend_executor = super::super::backend_executor::BackendExecutor::new();
         let mut solved = None;
         let mut deferred = Vec::new();
         let mut backends = Vec::new();
@@ -1568,6 +1721,7 @@ mod tests {
             &mut solved,
             &mut deferred,
             &mut backends,
+            &backend_executor,
         )
         .expect("stale solution handling should succeed");
 
@@ -1578,6 +1732,7 @@ mod tests {
 
     #[test]
     fn stale_solution_from_active_backend_is_deferred() {
+        let backend_executor = super::super::backend_executor::BackendExecutor::new();
         let mut solved = None;
         let mut deferred = Vec::new();
         let mut backends = vec![BackendSlot {
@@ -1597,6 +1752,7 @@ mod tests {
             &mut solved,
             &mut deferred,
             &mut backends,
+            &backend_executor,
         )
         .expect("stale solution should be deferred");
 
@@ -1608,6 +1764,7 @@ mod tests {
 
     #[test]
     fn same_epoch_solution_is_deferred_when_one_is_already_selected() {
+        let backend_executor = super::super::backend_executor::BackendExecutor::new();
         let mut solved = Some(MiningSolution {
             epoch: 42,
             nonce: 7,
@@ -1632,6 +1789,7 @@ mod tests {
             &mut solved,
             &mut deferred,
             &mut backends,
+            &backend_executor,
         )
         .expect("extra same-epoch solution should be deferred");
 
@@ -1644,6 +1802,7 @@ mod tests {
 
     #[test]
     fn drain_mining_backend_events_keeps_all_solutions() {
+        let backend_executor = super::super::backend_executor::BackendExecutor::new();
         let (event_tx, event_rx) = crossbeam_channel::bounded(8);
         let mut solved = None;
         let mut deferred = Vec::new();
@@ -1679,8 +1838,15 @@ mod tests {
             .expect("enqueue additional current solution");
 
         let action =
-            drain_mining_backend_events(&event_rx, 42, &mut solved, &mut deferred, &mut backends)
-                .expect("drain should succeed");
+            drain_mining_backend_events(
+                &event_rx,
+                42,
+                &mut solved,
+                &mut deferred,
+                &mut backends,
+                &backend_executor,
+            )
+            .expect("drain should succeed");
 
         assert_eq!(action, BackendEventAction::None);
         assert_eq!(solved.as_ref().map(|solution| solution.nonce), Some(3));
@@ -1803,6 +1969,7 @@ mod tests {
 
     #[test]
     fn backend_error_reports_topology_change_when_backend_is_removed() {
+        let backend_executor = super::super::backend_executor::BackendExecutor::new();
         let mut solved = None;
         let mut deferred = Vec::new();
         let mut backends = vec![
@@ -1828,6 +1995,7 @@ mod tests {
             &mut solved,
             &mut deferred,
             &mut backends,
+            &backend_executor,
         )
         .expect("backend removal should be handled");
 

@@ -17,7 +17,8 @@ pub(super) struct TemplatePrefetch {
     request_tx: Option<Sender<PrefetchRequest>>,
     result_rx: Receiver<PrefetchResult>,
     done_rx: Receiver<()>,
-    pending_tip_sequence: Option<u64>,
+    inflight_tip_sequence: Option<u64>,
+    desired_tip_sequence: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -63,34 +64,45 @@ impl TemplatePrefetch {
             request_tx: Some(request_tx),
             result_rx,
             done_rx,
-            pending_tip_sequence: None,
+            inflight_tip_sequence: None,
+            desired_tip_sequence: None,
         }
     }
 
-    pub(super) fn pending_tip_sequence(&self) -> Option<u64> {
-        self.pending_tip_sequence
-    }
-
-    pub(super) fn request_if_idle(&mut self, tip_sequence: u64) {
-        if self.pending_tip_sequence.is_some() {
-            return;
-        }
+    fn queue_desired_request(&mut self) -> bool {
         let Some(request_tx) = self.request_tx.as_ref() else {
-            return;
+            return false;
+        };
+        let Some(tip_sequence) = self.desired_tip_sequence else {
+            return false;
         };
         match request_tx.try_send(PrefetchRequest { tip_sequence }) {
             Ok(()) => {
-                self.pending_tip_sequence = Some(tip_sequence);
+                self.inflight_tip_sequence = Some(tip_sequence);
+                true
             }
             Err(TrySendError::Full(_)) => {
-                // Worker already has a queued request; mark pending to avoid spin.
-                self.pending_tip_sequence = Some(tip_sequence);
+                self.inflight_tip_sequence = Some(tip_sequence);
+                true
             }
             Err(TrySendError::Disconnected(_)) => {
                 self.request_tx = None;
-                self.pending_tip_sequence = None;
+                self.inflight_tip_sequence = None;
+                self.desired_tip_sequence = None;
+                false
             }
         }
+    }
+
+    pub(super) fn request_if_idle(&mut self, tip_sequence: u64) {
+        let desired = self
+            .desired_tip_sequence
+            .map_or(tip_sequence, |current| current.max(tip_sequence));
+        self.desired_tip_sequence = Some(desired);
+        if self.inflight_tip_sequence.is_some() {
+            return;
+        }
+        let _ = self.queue_desired_request();
     }
 
     pub(super) fn wait_for_result(
@@ -103,22 +115,32 @@ impl TemplatePrefetch {
                 while let Ok(next) = self.result_rx.try_recv() {
                     result = next;
                 }
-                self.pending_tip_sequence = None;
+                self.inflight_tip_sequence = None;
+                let desired = self.desired_tip_sequence;
+                if desired.is_some_and(|pending| result.tip_sequence >= pending) {
+                    self.desired_tip_sequence = None;
+                } else {
+                    let _ = self.queue_desired_request();
+                }
                 Some((result.tip_sequence, result.template))
             }
             Err(RecvTimeoutError::Timeout) => {
-                // Release pending marker so callers can enqueue a fresher request.
-                self.pending_tip_sequence = None;
+                if self.inflight_tip_sequence.is_none() {
+                    let _ = self.queue_desired_request();
+                }
                 None
             }
             Err(RecvTimeoutError::Disconnected) => {
-                self.pending_tip_sequence = None;
+                self.inflight_tip_sequence = None;
+                self.desired_tip_sequence = None;
                 None
             }
         }
     }
 
     pub(super) fn detach(mut self) {
+        self.inflight_tip_sequence = None;
+        self.desired_tip_sequence = None;
         self.request_tx = None;
         if let Some(handle) = self.handle.take() {
             drop(handle);
@@ -126,7 +148,8 @@ impl TemplatePrefetch {
     }
 
     pub(super) fn shutdown_for(&mut self, wait: Duration) -> bool {
-        self.pending_tip_sequence = None;
+        self.inflight_tip_sequence = None;
+        self.desired_tip_sequence = None;
         self.request_tx = None;
         let wait = wait.max(Duration::from_millis(1));
         let done = matches!(
@@ -178,7 +201,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn prefetch_timeout_clears_pending_marker() {
+    fn prefetch_timeout_keeps_inflight_marker() {
         let (request_tx, _request_rx) = bounded::<PrefetchRequest>(1);
         let (_result_tx, result_rx) = bounded::<PrefetchResult>(1);
         let (_done_tx, done_rx) = bounded::<()>(1);
@@ -187,11 +210,12 @@ mod tests {
             request_tx: Some(request_tx),
             result_rx,
             done_rx,
-            pending_tip_sequence: Some(7),
+            inflight_tip_sequence: Some(7),
+            desired_tip_sequence: Some(7),
         };
 
         assert!(prefetch.wait_for_result(Duration::from_millis(1)).is_none());
-        assert!(prefetch.pending_tip_sequence.is_none());
+        assert_eq!(prefetch.inflight_tip_sequence, Some(7));
     }
 
     #[test]
@@ -207,11 +231,12 @@ mod tests {
             request_tx: Some(request_tx),
             result_rx,
             done_rx,
-            pending_tip_sequence: None,
+            inflight_tip_sequence: None,
+            desired_tip_sequence: None,
         };
 
         prefetch.request_if_idle(2);
-        assert_eq!(prefetch.pending_tip_sequence, Some(2));
+        assert_eq!(prefetch.inflight_tip_sequence, Some(2));
     }
 
     #[test]
@@ -224,7 +249,8 @@ mod tests {
             request_tx: Some(request_tx),
             result_rx,
             done_rx,
-            pending_tip_sequence: Some(7),
+            inflight_tip_sequence: Some(7),
+            desired_tip_sequence: Some(7),
         };
 
         result_tx
@@ -244,6 +270,6 @@ mod tests {
             .wait_for_result(Duration::from_millis(1))
             .expect("a prefetched result should be returned");
         assert_eq!(result.0, 7);
-        assert!(prefetch.pending_tip_sequence.is_none());
+        assert!(prefetch.inflight_tip_sequence.is_none());
     }
 }

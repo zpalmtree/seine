@@ -35,6 +35,7 @@ struct DispatchFailure {
 pub(super) fn distribute_work(
     backends: &mut Vec<BackendSlot>,
     options: DistributeWorkOptions<'_>,
+    backend_executor: &backend_executor::BackendExecutor,
 ) -> Result<u64> {
     let mut attempt_start_nonce = options.reservation.start_nonce;
     let mut additional_span_consumed = 0u64;
@@ -90,9 +91,14 @@ pub(super) fn distribute_work(
         }
 
         let (survivors, failures) =
-            dispatch_assignment_tasks(dispatch_tasks, slots_by_idx, options.assignment_timeout);
+            dispatch_assignment_tasks(
+                dispatch_tasks,
+                slots_by_idx,
+                options.assignment_timeout,
+                backend_executor,
+            );
         *backends = survivors;
-        backend_executor::prune_backend_workers(backends);
+        backend_executor.prune(backends);
 
         if failures.is_empty() {
             return Ok(additional_span_consumed);
@@ -136,6 +142,7 @@ fn dispatch_assignment_tasks(
     tasks: Vec<DispatchTask>,
     mut slots_by_idx: Vec<Option<BackendSlot>>,
     timeout: Duration,
+    backend_executor: &backend_executor::BackendExecutor,
 ) -> (Vec<BackendSlot>, Vec<DispatchFailure>) {
     if tasks.is_empty() {
         return (Vec::new(), Vec::new());
@@ -159,7 +166,7 @@ fn dispatch_assignment_tasks(
             },
         })
         .collect();
-    let mut outcomes = backend_executor::dispatch_backend_tasks(backend_tasks, timeout);
+    let mut outcomes = backend_executor.dispatch_backend_tasks(backend_tasks, timeout);
     if outcomes.len() < expected {
         outcomes.resize_with(expected, || None);
     }
@@ -177,8 +184,8 @@ fn dispatch_assignment_tasks(
             Some(outcome) => match outcome.result {
                 Ok(()) => survivors.push((idx, slot)),
                 Err(err) => {
-                    backend_executor::quarantine_backend(backend_id, Arc::clone(&slot.backend));
-                    backend_executor::remove_backend_worker(backend_id, &slot.backend);
+                    backend_executor.quarantine_backend(backend_id, Arc::clone(&slot.backend));
+                    backend_executor.remove_backend_worker(backend_id, &slot.backend);
                     failures.push(DispatchFailure {
                         backend_id,
                         backend,
@@ -187,8 +194,8 @@ fn dispatch_assignment_tasks(
                 }
             },
             None => {
-                backend_executor::quarantine_backend(backend_id, Arc::clone(&slot.backend));
-                backend_executor::remove_backend_worker(backend_id, &slot.backend);
+                backend_executor.quarantine_backend(backend_id, Arc::clone(&slot.backend));
+                backend_executor.remove_backend_worker(backend_id, &slot.backend);
                 failures.push(DispatchFailure {
                     backend_id,
                     backend,

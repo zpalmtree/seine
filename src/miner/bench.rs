@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -151,14 +151,117 @@ struct WorkerBenchmarkIdentity {
 
 type BackendEventAction = RuntimeBackendEventAction;
 const BENCH_REPORT_SCHEMA_VERSION: u32 = 2;
+type BackendPollState = BTreeMap<BackendInstanceId, (Duration, Instant)>;
+
+fn backend_poll_interval(slot: &BackendSlot, configured: Duration) -> Duration {
+    let configured = configured.max(Duration::from_millis(1));
+    let hinted = super::backend_capabilities(slot)
+        .preferred_hash_poll_interval
+        .filter(|hint| *hint > Duration::from_millis(0))
+        .map(|hint| hint.max(Duration::from_millis(1)));
+    hinted.map_or(configured, |hint| configured.min(hint))
+}
+
+fn build_backend_poll_state(backends: &[BackendSlot], configured: Duration) -> BackendPollState {
+    let now = Instant::now();
+    let mut state = BackendPollState::new();
+    for slot in backends {
+        let interval = backend_poll_interval(slot, configured);
+        state.insert(slot.id, (interval, now + interval));
+    }
+    state
+}
+
+fn sync_backend_poll_state(
+    backends: &[BackendSlot],
+    configured: Duration,
+    poll_state: &mut BackendPollState,
+) {
+    let now = Instant::now();
+    let active = backends.iter().map(|slot| slot.id).collect::<HashSet<_>>();
+    poll_state.retain(|backend_id, _| active.contains(backend_id));
+    for slot in backends {
+        poll_state.entry(slot.id).or_insert_with(|| {
+            let interval = backend_poll_interval(slot, configured);
+            (interval, now + interval)
+        });
+    }
+}
+
+fn collect_due_backend_hashes(
+    backends: &[BackendSlot],
+    configured: Duration,
+    poll_state: &mut BackendPollState,
+    round_hashes: &mut u64,
+    round_backend_hashes: &mut BTreeMap<BackendInstanceId, u64>,
+    round_backend_telemetry: &mut BTreeMap<BackendInstanceId, BackendRoundTelemetry>,
+) {
+    sync_backend_poll_state(backends, configured, poll_state);
+    let now = Instant::now();
+    let mut collected = 0u64;
+
+    for slot in backends {
+        let Some((interval, next_poll)) = poll_state.get_mut(&slot.id) else {
+            continue;
+        };
+        if now < *next_poll {
+            continue;
+        }
+
+        let slot_hashes = slot.backend.take_hashes();
+        let telemetry = slot.backend.take_telemetry();
+        merge_round_telemetry(
+            round_backend_telemetry,
+            slot.id,
+            BackendRoundTelemetry {
+                dropped_events: telemetry.dropped_events,
+                completed_assignments: telemetry.completed_assignments,
+                completed_assignment_hashes: telemetry.completed_assignment_hashes,
+                completed_assignment_micros: telemetry.completed_assignment_micros,
+                peak_active_lanes: telemetry.active_lanes,
+                peak_pending_work: telemetry.pending_work,
+                peak_inflight_assignment_hashes: telemetry.inflight_assignment_hashes,
+                peak_inflight_assignment_micros: telemetry.inflight_assignment_micros,
+            },
+        );
+
+        if slot_hashes > 0 {
+            collected = collected.saturating_add(slot_hashes);
+            let entry = round_backend_hashes.entry(slot.id).or_insert(0);
+            *entry = entry.saturating_add(slot_hashes);
+        }
+
+        *next_poll = now + *interval;
+    }
+
+    *round_hashes = round_hashes.saturating_add(collected);
+}
+
+fn next_backend_poll_deadline(
+    backends: &[BackendSlot],
+    configured: Duration,
+    poll_state: &mut BackendPollState,
+) -> Instant {
+    sync_backend_poll_state(backends, configured, poll_state);
+    poll_state
+        .values()
+        .map(|(_, next_poll)| *next_poll)
+        .min()
+        .unwrap_or_else(Instant::now)
+}
 
 pub(super) fn run_benchmark(cfg: &Config, shutdown: &AtomicBool) -> Result<()> {
     let instances = super::build_backend_instances(cfg);
+    let backend_executor = super::backend_executor::BackendExecutor::new();
 
     match cfg.bench_kind {
         BenchKind::Kernel => run_kernel_benchmark(cfg, shutdown, instances),
-        BenchKind::Backend => run_worker_benchmark(cfg, shutdown, instances, false),
-        BenchKind::EndToEnd => run_worker_benchmark(cfg, shutdown, instances, true),
+        BenchKind::Backend => {
+            run_worker_benchmark(cfg, shutdown, instances, false, &backend_executor)
+        }
+        BenchKind::EndToEnd => {
+            run_worker_benchmark(cfg, shutdown, instances, true, &backend_executor)
+        }
     }
 }
 
@@ -346,9 +449,14 @@ fn run_worker_benchmark(
     shutdown: &AtomicBool,
     instances: Vec<Arc<dyn PowBackend>>,
     restart_each_round: bool,
+    backend_executor: &super::backend_executor::BackendExecutor,
 ) -> Result<()> {
     let (mut backends, backend_events) = activate_backends(instances, cfg.backend_event_capacity)?;
-    super::enforce_deadline_policy(&mut backends, cfg.allow_best_effort_deadlines)?;
+    super::enforce_deadline_policy(
+        &mut backends,
+        cfg.allow_best_effort_deadlines,
+        backend_executor,
+    )?;
     let identity = worker_benchmark_identity(&backends);
     let bench_kind = if restart_each_round {
         "end_to_end"
@@ -409,7 +517,7 @@ fn run_worker_benchmark(
     startup_banner(&lines);
 
     if restart_each_round {
-        stop_backend_slots(&mut backends);
+        stop_backend_slots(&mut backends, backend_executor);
     }
 
     let result = run_worker_benchmark_inner(
@@ -419,8 +527,9 @@ fn run_worker_benchmark(
         &backend_events,
         restart_each_round,
         &identity,
+        backend_executor,
     );
-    stop_backend_slots(&mut backends);
+    stop_backend_slots(&mut backends, backend_executor);
     result
 }
 
@@ -431,6 +540,7 @@ fn run_worker_benchmark_inner(
     backend_events: &Receiver<BackendEvent>,
     restart_each_round: bool,
     identity: &WorkerBenchmarkIdentity,
+    backend_executor: &super::backend_executor::BackendExecutor,
 ) -> Result<()> {
     let impossible_target = [0u8; 32];
     let mut runs = Vec::with_capacity(cfg.bench_rounds as usize);
@@ -473,28 +583,26 @@ fn run_worker_benchmark_inner(
                 assignment_timeout: cfg.backend_assign_timeout,
                 backend_weights: work_distribution_weights(cfg.work_allocation, &backend_weights),
             },
+            backend_executor,
         )?;
         scheduler.consume_additional_span(additional_span);
 
         let mut round_hashes = 0u64;
         let mut round_backend_hashes = BTreeMap::new();
         let mut round_backend_telemetry = BTreeMap::new();
-        let hash_poll_interval =
-            super::effective_hash_poll_interval(backends, cfg.hash_poll_interval);
-        let mut next_hash_poll_at = Instant::now() + hash_poll_interval;
+        let mut backend_poll_state = build_backend_poll_state(backends, cfg.hash_poll_interval);
         while Instant::now() < stop_at && !shutdown.load(Ordering::Relaxed) {
+            collect_due_backend_hashes(
+                backends,
+                cfg.hash_poll_interval,
+                &mut backend_poll_state,
+                &mut round_hashes,
+                &mut round_backend_hashes,
+                &mut round_backend_telemetry,
+            );
             let now = Instant::now();
-            if now >= next_hash_poll_at {
-                collect_backend_hashes(
-                    backends,
-                    None,
-                    &mut round_hashes,
-                    Some(&mut round_backend_hashes),
-                    Some(&mut round_backend_telemetry),
-                );
-                next_hash_poll_at = now + hash_poll_interval;
-            }
-            let now = Instant::now();
+            let next_hash_poll_at =
+                next_backend_poll_deadline(backends, cfg.hash_poll_interval, &mut backend_poll_state);
             let wait_for = stop_at
                 .saturating_duration_since(now)
                 .min(next_hash_poll_at.saturating_duration_since(now))
@@ -503,7 +611,7 @@ fn run_worker_benchmark_inner(
             crossbeam_channel::select! {
                 recv(backend_events) -> event => {
                     let event = event.map_err(|_| anyhow!("backend event channel closed"))?;
-                    if handle_benchmark_backend_event(event, epoch, backends)?
+                    if handle_benchmark_backend_event(event, epoch, backends, backend_executor)?
                         == BackendEventAction::TopologyChanged
                     {
                         ensure_worker_topology_identity(
@@ -532,7 +640,12 @@ fn run_worker_benchmark_inner(
             .as_secs_f64()
             .max(0.001);
         let fence_start = Instant::now();
-        if quiesce_backend_slots(backends, RuntimeMode::Bench, cfg.backend_control_timeout)?
+        if quiesce_backend_slots(
+            backends,
+            RuntimeMode::Bench,
+            cfg.backend_control_timeout,
+            backend_executor,
+        )?
             == BackendEventAction::TopologyChanged
         {
             ensure_worker_topology_identity(
@@ -552,7 +665,7 @@ fn run_worker_benchmark_inner(
             Some(&mut late_backend_hashes),
             Some(&mut late_backend_telemetry),
         );
-        if drain_benchmark_backend_events(backend_events, epoch, backends)?
+        if drain_benchmark_backend_events(backend_events, epoch, backends, backend_executor)?
             == BackendEventAction::TopologyChanged
         {
             ensure_worker_topology_identity(
@@ -630,7 +743,7 @@ fn run_worker_benchmark_inner(
         );
 
         if restart_each_round {
-            stop_backend_slots(backends);
+            stop_backend_slots(backends, backend_executor);
         }
     }
 
@@ -1233,9 +1346,15 @@ fn handle_benchmark_backend_event(
     event: BackendEvent,
     epoch: u64,
     backends: &mut Vec<BackendSlot>,
+    backend_executor: &super::backend_executor::BackendExecutor,
 ) -> Result<BackendEventAction> {
-    let (action, _) =
-        super::handle_runtime_backend_event(event, epoch, backends, RuntimeMode::Bench)?;
+    let (action, _) = super::handle_runtime_backend_event(
+        event,
+        epoch,
+        backends,
+        RuntimeMode::Bench,
+        backend_executor,
+    )?;
     Ok(action)
 }
 
@@ -1243,9 +1362,15 @@ fn drain_benchmark_backend_events(
     backend_events: &Receiver<BackendEvent>,
     epoch: u64,
     backends: &mut Vec<BackendSlot>,
+    backend_executor: &super::backend_executor::BackendExecutor,
 ) -> Result<BackendEventAction> {
-    let (action, _) =
-        super::drain_runtime_backend_events(backend_events, epoch, backends, RuntimeMode::Bench)?;
+    let (action, _) = super::drain_runtime_backend_events(
+        backend_events,
+        epoch,
+        backends,
+        RuntimeMode::Bench,
+        backend_executor,
+    )?;
     Ok(action)
 }
 
@@ -1346,6 +1471,7 @@ mod tests {
 
     #[test]
     fn benchmark_ignores_stale_solution_events() {
+        let backend_executor = super::super::backend_executor::BackendExecutor::new();
         let mut backends = Vec::new();
         let action = handle_benchmark_backend_event(
             BackendEvent::Solution(crate::backend::MiningSolution {
@@ -1356,6 +1482,7 @@ mod tests {
             }),
             100,
             &mut backends,
+            &backend_executor,
         )
         .expect("stale benchmark solution event should be ignored");
         assert_eq!(action, BackendEventAction::None);
