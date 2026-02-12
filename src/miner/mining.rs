@@ -512,6 +512,12 @@ pub(super) fn run_mining_loop(
                 Ok(resp) => {
                     if resp.accepted {
                         stats.bump_accepted();
+                        if let Some(tui_st) = active_tui_state() {
+                            if let Ok(mut s) = tui_st.lock() {
+                                let elapsed = s.started_at.elapsed().as_secs();
+                                s.block_found_ticks.push(elapsed);
+                            }
+                        }
                         let height = resp
                             .height
                             .map(|h| h.to_string())

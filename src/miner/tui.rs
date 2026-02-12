@@ -106,6 +106,9 @@ pub struct TuiStateInner {
 
     // Log
     pub log_entries: VecDeque<LogEntry>,
+
+    // Wave markers for mined blocks (elapsed seconds when each block was accepted)
+    pub block_found_ticks: Vec<u64>,
 }
 
 impl TuiStateInner {
@@ -135,6 +138,8 @@ impl TuiStateInner {
             started_at: Instant::now(),
 
             log_entries: VecDeque::with_capacity(LOG_CAPACITY),
+
+            block_found_ticks: Vec::new(),
         }
     }
 
@@ -261,70 +266,84 @@ fn draw_header(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
     let tick = state.started_at.elapsed().as_secs();
 
     let title = format!(" seine {} ", state.version);
-    let uptime_text = format!("uptime {uptime} ");
+    let uptime_text = format!(" uptime {uptime} ");
 
     let inner_width = area.width.saturating_sub(2) as usize;
-    let padding = inner_width.saturating_sub(uptime_text.len());
 
-    let wave_line = wave_decoration(inner_width, tick);
-    let uptime_line = Line::from(vec![
-        Span::raw(" ".repeat(padding.max(1))),
-        Span::styled(uptime_text, DIM_STYLE),
-    ]);
+    let mut lines = wave_lines(inner_width, tick, &state.block_found_ticks);
+
+    // Overlay uptime on the last wave row
+    if let Some(last) = lines.last_mut() {
+        let uptime_len = uptime_text.chars().count();
+        let keep = inner_width.saturating_sub(uptime_len);
+        last.spans.truncate(keep);
+        last.spans.push(Span::styled(uptime_text, DIM_STYLE));
+    }
 
     let block = Block::default()
         .title(Span::styled(title, TITLE_STYLE))
         .borders(Borders::ALL)
         .border_style(BORDER_STYLE);
 
-    let paragraph = Paragraph::new(vec![wave_line, uptime_line]).block(block);
+    let paragraph = Paragraph::new(lines).block(block);
     frame.render_widget(paragraph, area);
 }
 
-fn wave_decoration(width: usize, tick: u64) -> Line<'static> {
-    const WAVE: Color = Color::Rgb(50, 90, 140);
-    const DOT: Color = Color::Rgb(40, 55, 75);
+fn wave_lines(width: usize, tick: u64, block_ticks: &[u64]) -> Vec<Line<'static>> {
+    const CREST_COLOR: Color = Color::Rgb(65, 125, 175);
+    const WAVE_COLOR: Color = Color::Rgb(45, 85, 130);
+    const BLOCK_COLOR: Color = Color::Rgb(230, 190, 60);
 
-    let pattern: &[(&str, Color)] = &[
-        ("·", DOT),
-        (" ", DOT),
-        ("~", WAVE),
-        (" ", DOT),
-        ("≈", WAVE),
-        (" ", DOT),
-        ("~", WAVE),
-        (" ", DOT),
-        ("·", DOT),
-        (" ", DOT),
-        ("~", WAVE),
-        (" ", DOT),
-        ("≈", WAVE),
-        (" ", DOT),
-        ("≈", WAVE),
-        (" ", DOT),
-    ];
+    // Two dense layers (coprime lengths so they drift in/out of phase)
+    let upper: Vec<char> = "≈ ~ ≈ ≈ ~ ≈ ~ ≈ ≈ ~ ~ ≈ ".chars().collect();
+    let lower: Vec<char> = "~ · ≈ · ~ ≈ ~ · ≈ · ~ ".chars().collect();
 
-    let offset = (tick as usize) % pattern.len();
-    let mut spans = Vec::new();
-    let mut total = 0;
-    let mut idx = offset;
+    // Block indicators scroll left from right edge on the crest row
+    let block_cols: Vec<usize> = block_ticks
+        .iter()
+        .filter_map(|&bt| {
+            let age = tick.saturating_sub(bt) as usize;
+            (age < width).then(|| width - 1 - age)
+        })
+        .collect();
 
-    while total < width {
-        let (text, color) = pattern[idx % pattern.len()];
-        let chars: usize = text.chars().count();
-        let remaining = width - total;
-        if chars <= remaining {
+    vec![
+        wave_row(width, tick as usize, &upper, CREST_COLOR, &block_cols, BLOCK_COLOR),
+        wave_row(width, tick as usize, &lower, WAVE_COLOR, &[], BLOCK_COLOR),
+    ]
+}
+
+fn wave_row(
+    width: usize,
+    offset_base: usize,
+    pattern: &[char],
+    color: Color,
+    block_cols: &[usize],
+    block_color: Color,
+) -> Line<'static> {
+    let plen = pattern.len();
+    let offset = offset_base % plen;
+    let mut spans = Vec::with_capacity(width);
+
+    for i in 0..width {
+        if block_cols.contains(&i) {
             spans.push(Span::styled(
-                text.to_string(),
-                Style::default().fg(color),
+                "◆",
+                Style::default()
+                    .fg(block_color)
+                    .add_modifier(Modifier::BOLD),
             ));
-            total += chars;
         } else {
-            let clipped: String = text.chars().take(remaining).collect();
-            spans.push(Span::styled(clipped, Style::default().fg(color)));
-            total += remaining;
+            let ch = pattern[(offset + i) % plen];
+            if ch == ' ' {
+                spans.push(Span::raw(" "));
+            } else {
+                spans.push(Span::styled(
+                    ch.to_string(),
+                    Style::default().fg(color),
+                ));
+            }
         }
-        idx += 1;
     }
 
     Line::from(spans)
