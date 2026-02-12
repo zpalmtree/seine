@@ -871,28 +871,7 @@ fn build_backend_poll_state(backends: &[BackendSlot], configured: Duration) -> B
     state
 }
 
-fn sync_backend_poll_state(
-    backends: &[BackendSlot],
-    configured: Duration,
-    poll_state: &mut BackendPollState,
-) {
-    let now = Instant::now();
-    let active = backends.iter().map(|slot| slot.id).collect::<HashSet<_>>();
-    poll_state.retain(|backend_id, _| active.contains(backend_id));
-    for slot in backends {
-        poll_state.entry(slot.id).or_insert_with(|| {
-            let interval = backend_poll_interval(slot, configured);
-            (interval, now + interval)
-        });
-    }
-}
-
-fn next_backend_poll_deadline(
-    backends: &[BackendSlot],
-    configured: Duration,
-    poll_state: &mut BackendPollState,
-) -> Instant {
-    sync_backend_poll_state(backends, configured, poll_state);
+fn next_backend_poll_deadline(poll_state: &BackendPollState) -> Instant {
     poll_state
         .values()
         .map(|(_, next_poll)| *next_poll)
@@ -909,14 +888,14 @@ fn collect_due_backend_hashes(
     round_backend_hashes: &mut BTreeMap<u64, u64>,
     round_backend_telemetry: &mut BTreeMap<u64, BackendRoundTelemetry>,
 ) {
-    sync_backend_poll_state(backends, configured, poll_state);
     let now = Instant::now();
     let mut collected = 0u64;
 
     for slot in backends {
-        let Some((interval, next_poll)) = poll_state.get_mut(&slot.id) else {
-            continue;
-        };
+        let (interval, next_poll) = poll_state.entry(slot.id).or_insert_with(|| {
+            let interval = backend_poll_interval(slot, configured);
+            (interval, now + interval)
+        });
         if now < *next_poll {
             continue;
         }
@@ -1052,8 +1031,7 @@ impl<'a> RoundRuntime<'a> {
                 continue;
             }
 
-            let next_hash_poll_at =
-                next_backend_poll_deadline(self.backends, self.cfg.hash_poll_interval, &mut backend_poll_state);
+            let next_hash_poll_at = next_backend_poll_deadline(&backend_poll_state);
             let wait_for = next_event_wait(
                 input.stop_at,
                 *self.last_stats_print,

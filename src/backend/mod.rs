@@ -342,7 +342,7 @@ pub trait PowBackend: Send + Sync {
     /// Runtime may call this from watchdog paths when assignment/control calls
     /// overrun their deadline. Implementations should avoid long blocking work.
     fn request_timeout_interrupt(&self) -> Result<()> {
-        self.cancel_work()
+        Ok(())
     }
 
     /// Request backend cancellation before a soft deadline.
