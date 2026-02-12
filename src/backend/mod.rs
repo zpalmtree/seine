@@ -6,7 +6,78 @@ use anyhow::Result;
 use crossbeam_channel::Sender;
 
 pub mod cpu;
+#[cfg(feature = "nvidia")]
 pub mod nvidia;
+#[cfg(not(feature = "nvidia"))]
+pub mod nvidia {
+    use std::sync::atomic::AtomicBool;
+
+    use anyhow::{bail, Result};
+    use crossbeam_channel::Sender;
+
+    use super::{
+        BackendEvent, BackendInstanceId, BenchBackend, PowBackend, PreemptionGranularity,
+        WorkAssignment,
+    };
+
+    pub struct NvidiaBackend {
+        _instance_id: BackendInstanceId,
+    }
+
+    impl NvidiaBackend {
+        pub fn new() -> Self {
+            Self { _instance_id: 0 }
+        }
+    }
+
+    impl PowBackend for NvidiaBackend {
+        fn name(&self) -> &'static str {
+            "nvidia"
+        }
+
+        fn lanes(&self) -> usize {
+            1
+        }
+
+        fn set_instance_id(&mut self, id: BackendInstanceId) {
+            self._instance_id = id;
+        }
+
+        fn set_event_sink(&mut self, _sink: Sender<BackendEvent>) {}
+
+        fn start(&mut self) -> Result<()> {
+            bail!("NVIDIA backend is disabled in this build (rebuild with --features nvidia)")
+        }
+
+        fn stop(&mut self) {}
+
+        fn assign_work(&self, _work: WorkAssignment) -> Result<()> {
+            Ok(())
+        }
+
+        fn cancel_work(&self) -> Result<()> {
+            Ok(())
+        }
+
+        fn fence(&self) -> Result<()> {
+            Ok(())
+        }
+
+        fn preemption_granularity(&self) -> PreemptionGranularity {
+            PreemptionGranularity::Unknown
+        }
+
+        fn bench_backend(&self) -> Option<&dyn BenchBackend> {
+            Some(self)
+        }
+    }
+
+    impl BenchBackend for NvidiaBackend {
+        fn kernel_bench(&self, _seconds: u64, _shutdown: &AtomicBool) -> Result<u64> {
+            bail!("kernel benchmark is not implemented for nvidia backend")
+        }
+    }
+}
 
 pub const WORK_ID_MAX: u64 = (1u64 << 63) - 1;
 pub type BackendInstanceId = u64;
@@ -48,6 +119,16 @@ pub enum BackendEvent {
         backend: &'static str,
         message: String,
     },
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BackendTelemetry {
+    pub active_lanes: u64,
+    pub pending_work: u64,
+    pub dropped_events: u64,
+    pub completed_assignments: u64,
+    pub completed_assignment_hashes: u64,
+    pub completed_assignment_micros: u64,
 }
 
 pub trait BenchBackend: Send {
@@ -105,6 +186,11 @@ pub trait PowBackend: Send {
     /// Return and reset hashes completed since the previous call.
     fn take_hashes(&self) -> u64 {
         0
+    }
+
+    /// Return and reset backend-local telemetry counters since the previous call.
+    fn take_telemetry(&self) -> BackendTelemetry {
+        BackendTelemetry::default()
     }
 
     fn preemption_granularity(&self) -> PreemptionGranularity {

@@ -59,6 +59,12 @@ Select multiple backends (comma-separated or repeated flag). Unavailable backend
 ./target/release/seine --backend cpu,nvidia --threads 1
 ```
 
+Build with NVIDIA support enabled:
+
+```bash
+cargo build --release --features nvidia
+```
+
 Run headless/plain logs (no fullscreen TUI):
 
 ```bash

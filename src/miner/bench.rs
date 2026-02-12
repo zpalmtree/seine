@@ -17,9 +17,9 @@ use super::stats::{format_hashrate, median};
 use super::ui::{info, startup_banner, success, warn};
 use super::{
     activate_backends, backend_name_list, backend_names, collect_backend_hashes, distribute_work,
-    format_round_backend_hashrate, next_work_id, quiesce_backend_slots, start_backend_slots,
-    stop_backend_slots, total_lanes, BackendSlot, RuntimeBackendEventAction, RuntimeMode,
-    MIN_EVENT_WAIT,
+    format_round_backend_hashrate, format_round_backend_telemetry, next_work_id,
+    quiesce_backend_slots, start_backend_slots, stop_backend_slots, total_lanes,
+    BackendRoundTelemetry, BackendSlot, RuntimeBackendEventAction, RuntimeMode, MIN_EVENT_WAIT,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,6 +28,18 @@ struct BenchBackendRun {
     backend: String,
     hashes: u64,
     hps: f64,
+    #[serde(default)]
+    peak_active_lanes: u64,
+    #[serde(default)]
+    peak_pending_work: u64,
+    #[serde(default)]
+    dropped_events: u64,
+    #[serde(default)]
+    completed_assignments: u64,
+    #[serde(default)]
+    completed_assignment_hashes: u64,
+    #[serde(default)]
+    completed_assignment_secs: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -298,6 +310,7 @@ fn run_worker_benchmark_inner(
 
         let mut round_hashes = 0u64;
         let mut round_backend_hashes = BTreeMap::new();
+        let mut round_backend_telemetry = BTreeMap::new();
         let mut topology_changed = false;
         let mut next_hash_poll_at = Instant::now();
         while Instant::now() < stop_at && !shutdown.load(Ordering::Relaxed) {
@@ -308,6 +321,7 @@ fn run_worker_benchmark_inner(
                     None,
                     &mut round_hashes,
                     Some(&mut round_backend_hashes),
+                    Some(&mut round_backend_telemetry),
                 );
                 next_hash_poll_at = now + cfg.hash_poll_interval;
             }
@@ -367,6 +381,7 @@ fn run_worker_benchmark_inner(
             None,
             &mut round_hashes,
             Some(&mut round_backend_hashes),
+            Some(&mut round_backend_telemetry),
         );
 
         let counted_hashes = round_hashes;
@@ -380,11 +395,13 @@ fn run_worker_benchmark_inner(
         let fence_elapsed = fence_start.elapsed().as_secs_f64();
         let mut late_hashes = 0u64;
         let mut late_backend_hashes = BTreeMap::new();
+        let mut late_backend_telemetry = BTreeMap::new();
         collect_backend_hashes(
             backends,
             None,
             &mut late_hashes,
             Some(&mut late_backend_hashes),
+            Some(&mut late_backend_telemetry),
         );
         drain_benchmark_backend_events(backend_events, epoch, backends)?;
 
@@ -392,12 +409,19 @@ fn run_worker_benchmark_inner(
             let entry = round_backend_hashes.entry(backend_id).or_insert(0);
             *entry = entry.saturating_add(hashes);
         }
+        for (backend_id, telemetry) in late_backend_telemetry {
+            merge_round_telemetry(&mut round_backend_telemetry, backend_id, telemetry);
+        }
 
         let round_hashes = counted_hashes.saturating_add(late_hashes);
         let measured_elapsed = (counted_elapsed + fence_elapsed).max(0.001);
         let hps = round_hashes as f64 / measured_elapsed;
-        let backend_runs =
-            build_backend_round_stats(backends, &round_backend_hashes, measured_elapsed);
+        let backend_runs = build_backend_round_stats(
+            backends,
+            &round_backend_hashes,
+            &round_backend_telemetry,
+            measured_elapsed,
+        );
 
         info(
             "BENCH",
@@ -414,6 +438,10 @@ fn run_worker_benchmark_inner(
                 format_round_backend_hashrate(backends, &round_backend_hashes, measured_elapsed),
             ),
         );
+        let telemetry_line = format_round_backend_telemetry(backends, &round_backend_telemetry);
+        if telemetry_line != "none" {
+            info("BENCH", format!("telemetry | {telemetry_line}"));
+        }
 
         runs.push(BenchRun {
             round: round + 1,
@@ -677,9 +705,32 @@ fn benchmark_environment() -> BenchEnvironment {
     }
 }
 
+fn merge_round_telemetry(
+    round_backend_telemetry: &mut BTreeMap<BackendInstanceId, BackendRoundTelemetry>,
+    backend_id: BackendInstanceId,
+    telemetry: BackendRoundTelemetry,
+) {
+    let entry = round_backend_telemetry.entry(backend_id).or_default();
+    entry.dropped_events = entry
+        .dropped_events
+        .saturating_add(telemetry.dropped_events);
+    entry.completed_assignments = entry
+        .completed_assignments
+        .saturating_add(telemetry.completed_assignments);
+    entry.completed_assignment_hashes = entry
+        .completed_assignment_hashes
+        .saturating_add(telemetry.completed_assignment_hashes);
+    entry.completed_assignment_micros = entry
+        .completed_assignment_micros
+        .saturating_add(telemetry.completed_assignment_micros);
+    entry.peak_active_lanes = entry.peak_active_lanes.max(telemetry.peak_active_lanes);
+    entry.peak_pending_work = entry.peak_pending_work.max(telemetry.peak_pending_work);
+}
+
 fn build_backend_round_stats(
     backends: &[BackendSlot],
     round_backend_hashes: &BTreeMap<BackendInstanceId, u64>,
+    round_backend_telemetry: &BTreeMap<BackendInstanceId, BackendRoundTelemetry>,
     elapsed_secs: f64,
 ) -> Vec<BenchBackendRun> {
     let elapsed_secs = elapsed_secs.max(0.001);
@@ -690,11 +741,21 @@ fn build_backend_round_stats(
             .find(|slot| slot.id == *backend_id)
             .map(|slot| slot.backend.name().to_string())
             .unwrap_or_else(|| "unknown".to_string());
+        let telemetry = round_backend_telemetry
+            .get(backend_id)
+            .copied()
+            .unwrap_or_default();
         runs.push(BenchBackendRun {
             backend_id: *backend_id,
             backend,
             hashes: *hashes,
             hps: *hashes as f64 / elapsed_secs,
+            peak_active_lanes: telemetry.peak_active_lanes,
+            peak_pending_work: telemetry.peak_pending_work,
+            dropped_events: telemetry.dropped_events,
+            completed_assignments: telemetry.completed_assignments,
+            completed_assignment_hashes: telemetry.completed_assignment_hashes,
+            completed_assignment_secs: telemetry.completed_assignment_micros as f64 / 1_000_000.0,
         });
     }
     runs

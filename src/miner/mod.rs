@@ -20,8 +20,8 @@ use crate::api::ApiClient;
 use crate::backend::cpu::CpuBackend;
 use crate::backend::nvidia::NvidiaBackend;
 use crate::backend::{
-    BackendEvent, BackendInstanceId, NonceChunk, PowBackend, PreemptionGranularity, WorkAssignment,
-    WorkTemplate, WORK_ID_MAX,
+    BackendEvent, BackendInstanceId, BackendTelemetry, NonceChunk, PowBackend,
+    PreemptionGranularity, WorkAssignment, WorkTemplate, WORK_ID_MAX,
 };
 use crate::config::{BackendKind, Config, UiMode, WorkAllocation};
 use scheduler::NonceReservation;
@@ -46,6 +46,16 @@ struct DistributeWorkOptions<'a> {
     reservation: NonceReservation,
     stop_at: Instant,
     backend_weights: Option<&'a BTreeMap<BackendInstanceId, f64>>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct BackendRoundTelemetry {
+    dropped_events: u64,
+    completed_assignments: u64,
+    completed_assignment_hashes: u64,
+    completed_assignment_micros: u64,
+    peak_active_lanes: u64,
+    peak_pending_work: u64,
 }
 
 pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
@@ -450,13 +460,20 @@ fn collect_backend_hashes(
     stats: Option<&Stats>,
     round_hashes: &mut u64,
     mut round_backend_hashes: Option<&mut BTreeMap<BackendInstanceId, u64>>,
+    mut round_backend_telemetry: Option<&mut BTreeMap<BackendInstanceId, BackendRoundTelemetry>>,
 ) {
     let mut collected = 0u64;
     for slot in backends {
         let slot_hashes = slot.backend.take_hashes();
+        let telemetry = slot.backend.take_telemetry();
+        if let Some(per_backend_telemetry) = round_backend_telemetry.as_deref_mut() {
+            merge_backend_telemetry(per_backend_telemetry, slot.id, telemetry);
+        }
+
         if slot_hashes == 0 {
             continue;
         }
+
         collected = collected.saturating_add(slot_hashes);
         if let Some(per_backend) = round_backend_hashes.as_deref_mut() {
             let entry = per_backend.entry(slot.id).or_insert(0);
@@ -472,6 +489,38 @@ fn collect_backend_hashes(
         stats.add_hashes(collected);
     }
     *round_hashes = round_hashes.saturating_add(collected);
+}
+
+fn merge_backend_telemetry(
+    per_backend_telemetry: &mut BTreeMap<BackendInstanceId, BackendRoundTelemetry>,
+    backend_id: BackendInstanceId,
+    telemetry: BackendTelemetry,
+) {
+    if telemetry.active_lanes == 0
+        && telemetry.pending_work == 0
+        && telemetry.dropped_events == 0
+        && telemetry.completed_assignments == 0
+        && telemetry.completed_assignment_hashes == 0
+        && telemetry.completed_assignment_micros == 0
+    {
+        return;
+    }
+
+    let entry = per_backend_telemetry.entry(backend_id).or_default();
+    entry.dropped_events = entry
+        .dropped_events
+        .saturating_add(telemetry.dropped_events);
+    entry.completed_assignments = entry
+        .completed_assignments
+        .saturating_add(telemetry.completed_assignments);
+    entry.completed_assignment_hashes = entry
+        .completed_assignment_hashes
+        .saturating_add(telemetry.completed_assignment_hashes);
+    entry.completed_assignment_micros = entry
+        .completed_assignment_micros
+        .saturating_add(telemetry.completed_assignment_micros);
+    entry.peak_active_lanes = entry.peak_active_lanes.max(telemetry.active_lanes);
+    entry.peak_pending_work = entry.peak_pending_work.max(telemetry.pending_work);
 }
 
 fn quiesce_backend_slots(backends: &[BackendSlot]) -> Result<()> {
@@ -688,6 +737,42 @@ fn format_round_backend_hashrate(
         parts.push(format!(
             "{backend_name}#{backend_id}={}",
             format_hashrate(hps)
+        ));
+    }
+
+    if parts.is_empty() {
+        "none".to_string()
+    } else {
+        parts.join(", ")
+    }
+}
+
+fn format_round_backend_telemetry(
+    backends: &[BackendSlot],
+    round_backend_telemetry: &BTreeMap<BackendInstanceId, BackendRoundTelemetry>,
+) -> String {
+    let mut parts = Vec::new();
+    for (backend_id, telemetry) in round_backend_telemetry {
+        if telemetry.dropped_events == 0
+            && telemetry.completed_assignments == 0
+            && telemetry.peak_active_lanes == 0
+            && telemetry.peak_pending_work == 0
+        {
+            continue;
+        }
+        let backend_name = backends
+            .iter()
+            .find(|slot| slot.id == *backend_id)
+            .map(|slot| slot.backend.name())
+            .unwrap_or("unknown");
+        parts.push(format!(
+            "{backend_name}#{backend_id}:active_peak={} pending_peak={} drops={} assignments={} assignment_hashes={} assignment_secs={:.3}",
+            telemetry.peak_active_lanes,
+            telemetry.peak_pending_work,
+            telemetry.dropped_events,
+            telemetry.completed_assignments,
+            telemetry.completed_assignment_hashes,
+            telemetry.completed_assignment_micros as f64 / 1_000_000.0,
         ));
     }
 

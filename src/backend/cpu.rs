@@ -6,10 +6,10 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, Result};
 use argon2::{Algorithm, Argon2, Block, Version};
 use blocknet_pow_spec::{pow_params, POW_OUTPUT_LEN};
-use crossbeam_channel::Sender;
+use crossbeam_channel::{Sender, TrySendError};
 
 use crate::backend::{
-    BackendEvent, BackendInstanceId, BenchBackend, MiningSolution, PowBackend,
+    BackendEvent, BackendInstanceId, BackendTelemetry, BenchBackend, MiningSolution, PowBackend,
     PreemptionGranularity, WorkAssignment, WORK_ID_MAX,
 };
 use crate::config::CpuAffinityMode;
@@ -18,6 +18,8 @@ use crate::types::hash_meets_target;
 const HASH_BATCH_SIZE: u64 = 64;
 const HASH_FLUSH_INTERVAL: Duration = Duration::from_millis(50);
 const STOP_CHECK_INTERVAL_HASHES: u64 = 64;
+const SOLUTION_EVENT_BACKOFF_EVERY: u64 = 64;
+const SOLUTION_EVENT_BACKOFF_SLEEP: Duration = Duration::from_micros(50);
 const SOLVED_MASK: u64 = 1u64 << 63;
 
 struct ControlState {
@@ -38,6 +40,14 @@ struct Shared {
     idle_lock: Mutex<()>,
     idle_cv: Condvar,
     hash_slots: Vec<AtomicU64>,
+    assignment_hashes: AtomicU64,
+    assignment_generation: AtomicU64,
+    assignment_reported_generation: AtomicU64,
+    assignment_started_at: Mutex<Option<Instant>>,
+    completed_assignments: AtomicU64,
+    completed_assignment_hashes: AtomicU64,
+    completed_assignment_micros: AtomicU64,
+    dropped_events: AtomicU64,
     event_sink: RwLock<Option<Sender<BackendEvent>>>,
 }
 
@@ -70,6 +80,14 @@ impl CpuBackend {
                 idle_lock: Mutex::new(()),
                 idle_cv: Condvar::new(),
                 hash_slots: (0..lanes).map(|_| AtomicU64::new(0)).collect(),
+                assignment_hashes: AtomicU64::new(0),
+                assignment_generation: AtomicU64::new(0),
+                assignment_reported_generation: AtomicU64::new(0),
+                assignment_started_at: Mutex::new(None),
+                completed_assignments: AtomicU64::new(0),
+                completed_assignment_hashes: AtomicU64::new(0),
+                completed_assignment_micros: AtomicU64::new(0),
+                dropped_events: AtomicU64::new(0),
                 event_sink: RwLock::new(None),
             }),
             worker_handles: Vec::new(),
@@ -105,7 +123,23 @@ impl PowBackend for CpuBackend {
         self.shared.error_emitted.store(false, Ordering::SeqCst);
         self.shared.work_generation.store(0, Ordering::SeqCst);
         self.shared.active_workers.store(0, Ordering::SeqCst);
+        self.shared.assignment_hashes.store(0, Ordering::SeqCst);
+        self.shared.assignment_generation.store(0, Ordering::SeqCst);
+        self.shared
+            .assignment_reported_generation
+            .store(0, Ordering::SeqCst);
+        self.shared.completed_assignments.store(0, Ordering::SeqCst);
+        self.shared
+            .completed_assignment_hashes
+            .store(0, Ordering::SeqCst);
+        self.shared
+            .completed_assignment_micros
+            .store(0, Ordering::SeqCst);
+        self.shared.dropped_events.store(0, Ordering::SeqCst);
         reset_hash_slots(&self.shared.hash_slots);
+        if let Ok(mut started_at) = self.shared.assignment_started_at.lock() {
+            *started_at = None;
+        }
 
         {
             let mut control = self
@@ -144,6 +178,7 @@ impl PowBackend for CpuBackend {
 
         request_shutdown(&self.shared);
         let _ = wait_for_idle(&self.shared);
+        maybe_finalize_assignment(&self.shared);
 
         for handle in self.worker_handles.drain(..) {
             let _ = handle.join();
@@ -153,7 +188,23 @@ impl PowBackend for CpuBackend {
         self.shared.error_emitted.store(false, Ordering::SeqCst);
         self.shared.work_generation.store(0, Ordering::SeqCst);
         self.shared.active_workers.store(0, Ordering::SeqCst);
+        self.shared.assignment_hashes.store(0, Ordering::SeqCst);
+        self.shared.assignment_generation.store(0, Ordering::SeqCst);
+        self.shared
+            .assignment_reported_generation
+            .store(0, Ordering::SeqCst);
+        self.shared.completed_assignments.store(0, Ordering::SeqCst);
+        self.shared
+            .completed_assignment_hashes
+            .store(0, Ordering::SeqCst);
+        self.shared
+            .completed_assignment_micros
+            .store(0, Ordering::SeqCst);
+        self.shared.dropped_events.store(0, Ordering::SeqCst);
         reset_hash_slots(&self.shared.hash_slots);
+        if let Ok(mut started_at) = self.shared.assignment_started_at.lock() {
+            *started_at = None;
+        }
 
         if let Ok(mut control) = self.shared.work_control.lock() {
             control.shutdown = false;
@@ -190,6 +241,7 @@ impl PowBackend for CpuBackend {
         self.shared
             .work_generation
             .store(generation, Ordering::Release);
+        start_assignment(&self.shared, generation);
         self.shared.work_cv.notify_all();
         Ok(())
     }
@@ -214,6 +266,23 @@ impl PowBackend for CpuBackend {
             .iter()
             .map(|slot| slot.swap(0, Ordering::AcqRel))
             .sum()
+    }
+
+    fn take_telemetry(&self) -> BackendTelemetry {
+        BackendTelemetry {
+            active_lanes: self.shared.active_workers.load(Ordering::Acquire) as u64,
+            pending_work: u64::from(has_pending_work(&self.shared)),
+            dropped_events: self.shared.dropped_events.swap(0, Ordering::AcqRel),
+            completed_assignments: self.shared.completed_assignments.swap(0, Ordering::AcqRel),
+            completed_assignment_hashes: self
+                .shared
+                .completed_assignment_hashes
+                .swap(0, Ordering::AcqRel),
+            completed_assignment_micros: self
+                .shared
+                .completed_assignment_micros
+                .swap(0, Ordering::AcqRel),
+        }
     }
 
     fn preemption_granularity(&self) -> PreemptionGranularity {
@@ -484,6 +553,9 @@ fn request_work_pause(shared: &Shared) -> Result<()> {
 
     shared.work_generation.store(generation, Ordering::Release);
     shared.work_cv.notify_all();
+    if shared.active_workers.load(Ordering::Acquire) == 0 {
+        maybe_finalize_assignment(shared);
+    }
     Ok(())
 }
 
@@ -515,6 +587,66 @@ fn request_shutdown(shared: &Shared) {
             .store(control.generation, Ordering::Release);
     }
     shared.work_cv.notify_all();
+    if shared.active_workers.load(Ordering::Acquire) == 0 {
+        maybe_finalize_assignment(shared);
+    }
+}
+
+fn has_pending_work(shared: &Shared) -> bool {
+    shared
+        .work_control
+        .lock()
+        .map(|control| control.work.is_some() && !control.shutdown)
+        .unwrap_or(false)
+}
+
+fn start_assignment(shared: &Shared, generation: u64) {
+    shared.assignment_hashes.store(0, Ordering::Release);
+    shared
+        .assignment_generation
+        .store(generation, Ordering::Release);
+    if let Ok(mut started_at) = shared.assignment_started_at.lock() {
+        *started_at = Some(Instant::now());
+    }
+}
+
+fn maybe_finalize_assignment(shared: &Shared) {
+    let generation = shared.assignment_generation.load(Ordering::Acquire);
+    if generation == 0 {
+        return;
+    }
+
+    let mut seen = shared
+        .assignment_reported_generation
+        .load(Ordering::Acquire);
+    while generation > seen {
+        match shared.assignment_reported_generation.compare_exchange(
+            seen,
+            generation,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => {
+                let started_at = match shared.assignment_started_at.lock() {
+                    Ok(mut slot) => slot.take(),
+                    Err(_) => None,
+                };
+                if let Some(started_at) = started_at {
+                    let micros = started_at.elapsed().as_micros().min(u64::MAX as u128) as u64;
+                    let hashes = shared.assignment_hashes.swap(0, Ordering::AcqRel);
+                    shared.completed_assignments.fetch_add(1, Ordering::AcqRel);
+                    shared
+                        .completed_assignment_hashes
+                        .fetch_add(hashes, Ordering::AcqRel);
+                    shared
+                        .completed_assignment_micros
+                        .fetch_add(micros, Ordering::AcqRel);
+                }
+                return;
+            }
+            Err(current) => seen = current,
+        }
+    }
 }
 
 fn mark_worker_active(shared: &Shared, worker_active: &mut bool) {
@@ -532,6 +664,7 @@ fn mark_worker_inactive(shared: &Shared, worker_active: &mut bool) {
     let prev = shared.active_workers.fetch_sub(1, Ordering::AcqRel);
     *worker_active = false;
     if prev <= 1 {
+        maybe_finalize_assignment(shared);
         shared.idle_cv.notify_all();
     }
 }
@@ -549,6 +682,9 @@ fn flush_hashes(shared: &Shared, thread_idx: usize, pending_hashes: &mut u64) {
     if let Some(slot) = shared.hash_slots.get(thread_idx) {
         slot.fetch_add(*pending_hashes, Ordering::Relaxed);
     }
+    shared
+        .assignment_hashes
+        .fetch_add(*pending_hashes, Ordering::Relaxed);
     *pending_hashes = 0;
 }
 
@@ -571,8 +707,40 @@ fn emit_event(shared: &Shared, event: BackendEvent) {
         Ok(slot) => slot.clone(),
         Err(_) => None,
     };
-    if let Some(tx) = tx {
-        let _ = tx.send(event);
+    let Some(tx) = tx else {
+        return;
+    };
+
+    match event {
+        BackendEvent::Solution(solution) => {
+            let mut queued = BackendEvent::Solution(solution);
+            let mut attempts = 0u64;
+            loop {
+                match tx.try_send(queued) {
+                    Ok(()) => return,
+                    Err(TrySendError::Disconnected(_)) => return,
+                    Err(TrySendError::Full(returned)) => {
+                        queued = returned;
+                        attempts = attempts.saturating_add(1);
+                        if !shared.started.load(Ordering::Acquire) {
+                            return;
+                        }
+                        if attempts.is_multiple_of(SOLUTION_EVENT_BACKOFF_EVERY) {
+                            thread::sleep(SOLUTION_EVENT_BACKOFF_SLEEP);
+                        } else {
+                            thread::yield_now();
+                        }
+                    }
+                }
+            }
+        }
+        other => match tx.try_send(other) {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) => {
+                shared.dropped_events.fetch_add(1, Ordering::AcqRel);
+            }
+            Err(TrySendError::Disconnected(_)) => {}
+        },
     }
 }
 

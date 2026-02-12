@@ -30,9 +30,10 @@ pub(super) use super::tip::{spawn_tip_listener, TipListener, TipSignal};
 use super::tui::{TuiRenderer, TuiState};
 use super::ui::{error, info, mined, set_tui_state, success, warn};
 use super::{
-    collect_backend_hashes, distribute_work, format_round_backend_hashrate, next_event_wait,
-    next_work_id, quiesce_backend_slots, total_lanes, BackendSlot, RuntimeBackendEventAction,
-    RuntimeMode, TEMPLATE_RETRY_DELAY,
+    collect_backend_hashes, distribute_work, format_round_backend_hashrate,
+    format_round_backend_telemetry, next_event_wait, next_work_id, quiesce_backend_slots,
+    total_lanes, BackendRoundTelemetry, BackendSlot, RuntimeBackendEventAction, RuntimeMode,
+    TEMPLATE_RETRY_DELAY,
 };
 
 type BackendEventAction = RuntimeBackendEventAction;
@@ -106,6 +107,22 @@ enum TokenRefreshOutcome {
     Unchanged,
     Unavailable,
     Failed(String),
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum RoundEndReason {
+    Refresh,
+    Solved,
+    StaleTip,
+    Shutdown,
+}
+
+struct MiningControlPlane<'a> {
+    client: &'a ApiClient,
+    cfg: &'a Config,
+    shutdown: Arc<AtomicBool>,
+    tip_signal: Option<&'a TipSignal>,
+    prefetch: Option<TemplatePrefetch>,
 }
 
 struct TuiDisplay {
@@ -278,6 +295,104 @@ fn current_tip_sequence(tip_signal: Option<&TipSignal>) -> u64 {
     tip_signal.map(TipSignal::snapshot_sequence).unwrap_or(0)
 }
 
+impl<'a> MiningControlPlane<'a> {
+    fn new(
+        client: &'a ApiClient,
+        cfg: &'a Config,
+        shutdown: Arc<AtomicBool>,
+        tip_signal: Option<&'a TipSignal>,
+    ) -> Self {
+        Self {
+            client,
+            cfg,
+            shutdown,
+            tip_signal,
+            prefetch: None,
+        }
+    }
+
+    fn fetch_initial_template(
+        &mut self,
+        tui: &mut Option<TuiDisplay>,
+    ) -> Option<BlockTemplateResponse> {
+        fetch_template_with_retry(self.client, self.cfg, self.shutdown.as_ref(), tui)
+    }
+
+    fn spawn_prefetch_if_needed(&mut self) {
+        if self.prefetch.is_none() {
+            self.prefetch = Some(TemplatePrefetch::spawn(
+                self.client.clone(),
+                self.cfg.clone(),
+                Arc::clone(&self.shutdown),
+                current_tip_sequence(self.tip_signal),
+            ));
+        }
+    }
+
+    fn resolve_next_template(
+        &mut self,
+        tui: &mut Option<TuiDisplay>,
+    ) -> Option<BlockTemplateResponse> {
+        resolve_next_template(
+            &mut self.prefetch,
+            self.client,
+            self.cfg,
+            &self.shutdown,
+            self.tip_signal,
+            tui,
+        )
+    }
+
+    fn submit_solution(
+        &self,
+        template: &BlockTemplateResponse,
+        solution: MiningSolution,
+        stats: &Stats,
+        tui: &mut Option<TuiDisplay>,
+    ) {
+        let template_id = template.template_id.clone();
+        let mut solved_block = template.block.clone();
+        set_block_nonce(&mut solved_block, solution.nonce);
+
+        stats.bump_submitted();
+        match self
+            .client
+            .submit_block(&solved_block, template_id.as_deref(), solution.nonce)
+        {
+            Ok(resp) => {
+                if resp.accepted {
+                    stats.bump_accepted();
+                    if let Some(display) = tui.as_mut() {
+                        display.mark_block_found();
+                    }
+                    let height = resp
+                        .height
+                        .map(|h| h.to_string())
+                        .unwrap_or_else(|| "unknown".to_string());
+                    let hash = resp.hash.unwrap_or_else(|| "unknown".to_string());
+                    mined("SUBMIT", format!("block accepted at height {height}"));
+                    mined("SUBMIT", format!("hash {}", compact_hash(&hash)));
+                } else {
+                    warn("SUBMIT", "rejected by daemon");
+                }
+            }
+            Err(err) => {
+                error("SUBMIT", format!("submit failed: {err:#}"));
+            }
+        }
+    }
+
+    fn finish(mut self) {
+        if let Some(prefetch_task) = self.prefetch.take() {
+            if self.shutdown.load(Ordering::Relaxed) {
+                prefetch_task.detach();
+            } else {
+                let _ = prefetch_task.join();
+            }
+        }
+    }
+}
+
 pub(super) fn run_mining_loop(
     cfg: &Config,
     client: &ApiClient,
@@ -292,11 +407,11 @@ pub(super) fn run_mining_loop(
     let mut work_id_cursor = 1u64;
     let mut epoch = 0u64;
     let mut last_stats_print = Instant::now();
-    let mut prefetch: Option<TemplatePrefetch> = None;
     let mut tui = init_tui_display(tui_state, Arc::clone(&shutdown));
     let mut backend_weights = seed_backend_weights(backends);
+    let mut control_plane = MiningControlPlane::new(client, cfg, Arc::clone(&shutdown), tip_signal);
 
-    let mut template = match fetch_template_with_retry(client, cfg, shutdown.as_ref(), &mut tui) {
+    let mut template = match control_plane.fetch_initial_template(&mut tui) {
         Some(t) => t,
         None => {
             stats.print();
@@ -318,14 +433,7 @@ pub(super) fn run_mining_loop(
                 if !sleep_with_shutdown(shutdown.as_ref(), TEMPLATE_RETRY_DELAY) {
                     break;
                 }
-                let Some(next_template) = resolve_next_template(
-                    &mut prefetch,
-                    client,
-                    cfg,
-                    &shutdown,
-                    tip_signal,
-                    &mut tui,
-                ) else {
+                let Some(next_template) = control_plane.resolve_next_template(&mut tui) else {
                     break;
                 };
                 template = next_template;
@@ -345,9 +453,7 @@ pub(super) fn run_mining_loop(
             if !sleep_with_shutdown(shutdown.as_ref(), TEMPLATE_RETRY_DELAY) {
                 break;
             }
-            let Some(next_template) =
-                resolve_next_template(&mut prefetch, client, cfg, &shutdown, tip_signal, &mut tui)
-            else {
+            let Some(next_template) = control_plane.resolve_next_template(&mut tui) else {
                 break;
             };
             template = next_template;
@@ -361,14 +467,7 @@ pub(super) fn run_mining_loop(
                 if !sleep_with_shutdown(shutdown.as_ref(), TEMPLATE_RETRY_DELAY) {
                     break;
                 }
-                let Some(next_template) = resolve_next_template(
-                    &mut prefetch,
-                    client,
-                    cfg,
-                    &shutdown,
-                    tip_signal,
-                    &mut tui,
-                ) else {
+                let Some(next_template) = control_plane.resolve_next_template(&mut tui) else {
                     break;
                 };
                 template = next_template;
@@ -410,20 +509,14 @@ pub(super) fn run_mining_loop(
             },
         )?;
         nonce_scheduler.consume_additional_span(additional_span);
-        if prefetch.is_none() {
-            prefetch = Some(TemplatePrefetch::spawn(
-                client.clone(),
-                cfg.clone(),
-                Arc::clone(&shutdown),
-                current_tip_sequence(tip_signal),
-            ));
-        }
+        control_plane.spawn_prefetch_if_needed();
 
         let round_start = Instant::now();
         let mut solved: Option<MiningSolution> = None;
         let mut stale_tip_event = false;
         let mut round_hashes = 0u64;
         let mut round_backend_hashes = BTreeMap::new();
+        let mut round_backend_telemetry = BTreeMap::new();
         let mut topology_changed = false;
         let mut next_hash_poll_at = Instant::now();
         update_tui(
@@ -453,6 +546,7 @@ pub(super) fn run_mining_loop(
                     Some(&stats),
                     &mut round_hashes,
                     Some(&mut round_backend_hashes),
+                    Some(&mut round_backend_telemetry),
                 );
                 next_hash_poll_at = now + cfg.hash_poll_interval;
                 update_tui(
@@ -580,15 +674,35 @@ pub(super) fn run_mining_loop(
             Some(&stats),
             &mut round_hashes,
             Some(&mut round_backend_hashes),
+            Some(&mut round_backend_telemetry),
         );
         stale_tip_event |= tip_signal.is_some_and(TipSignal::take_stale);
+        let round_end_reason = if shutdown.load(Ordering::Relaxed) {
+            RoundEndReason::Shutdown
+        } else if solved.is_some() {
+            RoundEndReason::Solved
+        } else if stale_tip_event {
+            RoundEndReason::StaleTip
+        } else {
+            RoundEndReason::Refresh
+        };
+        let round_elapsed_secs = round_start.elapsed().as_secs_f64();
         update_backend_weights(
             &mut backend_weights,
-            backends,
-            &round_backend_hashes,
-            round_start.elapsed().as_secs_f64(),
-            cfg.work_allocation,
+            WeightUpdateInputs {
+                backends,
+                round_backend_hashes: &round_backend_hashes,
+                round_backend_telemetry: &round_backend_telemetry,
+                round_elapsed_secs,
+                mode: cfg.work_allocation,
+                round_end_reason,
+                refresh_interval: cfg.refresh_interval,
+            },
         );
+        let telemetry_line = format_round_backend_telemetry(backends, &round_backend_telemetry);
+        if telemetry_line != "none" {
+            info("BACKEND", format!("telemetry | {telemetry_line}"));
+        }
 
         if let Some(solution) = solved {
             update_tui(
@@ -614,35 +728,7 @@ pub(super) fn run_mining_loop(
                     solution.backend_id,
                 ),
             );
-
-            let template_id = template.template_id.clone();
-            let mut solved_block = template.block;
-            set_block_nonce(&mut solved_block, solution.nonce);
-
-            stats.bump_submitted();
-
-            match client.submit_block(&solved_block, template_id.as_deref(), solution.nonce) {
-                Ok(resp) => {
-                    if resp.accepted {
-                        stats.bump_accepted();
-                        if let Some(display) = tui.as_mut() {
-                            display.mark_block_found();
-                        }
-                        let height = resp
-                            .height
-                            .map(|h| h.to_string())
-                            .unwrap_or_else(|| "unknown".to_string());
-                        let hash = resp.hash.unwrap_or_else(|| "unknown".to_string());
-                        mined("SUBMIT", format!("block accepted at height {height}"));
-                        mined("SUBMIT", format!("hash {}", compact_hash(&hash)));
-                    } else {
-                        warn("SUBMIT", "rejected by daemon");
-                    }
-                }
-                Err(err) => {
-                    error("SUBMIT", format!("submit failed: {err:#}"));
-                }
-            }
+            control_plane.submit_solution(&template, solution, &stats, &mut tui);
         } else if stale_tip_event {
             update_tui(
                 &mut tui,
@@ -686,21 +772,13 @@ pub(super) fn run_mining_loop(
             break;
         }
 
-        let Some(next_template) =
-            resolve_next_template(&mut prefetch, client, cfg, &shutdown, tip_signal, &mut tui)
-        else {
+        let Some(next_template) = control_plane.resolve_next_template(&mut tui) else {
             break;
         };
         template = next_template;
     }
 
-    if let Some(prefetch_task) = prefetch {
-        if shutdown.load(Ordering::Relaxed) {
-            prefetch_task.detach();
-        } else {
-            let _ = prefetch_task.join();
-        }
-    }
+    control_plane.finish();
 
     stats.print();
     info("MINER", "stopped");
@@ -968,30 +1046,59 @@ fn work_distribution_weights(
     }
 }
 
-fn update_backend_weights(
-    backend_weights: &mut BTreeMap<u64, f64>,
-    backends: &[BackendSlot],
-    round_backend_hashes: &BTreeMap<u64, u64>,
+struct WeightUpdateInputs<'a> {
+    backends: &'a [BackendSlot],
+    round_backend_hashes: &'a BTreeMap<u64, u64>,
+    round_backend_telemetry: &'a BTreeMap<u64, BackendRoundTelemetry>,
     round_elapsed_secs: f64,
     mode: WorkAllocation,
+    round_end_reason: RoundEndReason,
+    refresh_interval: Duration,
+}
+
+fn update_backend_weights(
+    backend_weights: &mut BTreeMap<u64, f64>,
+    inputs: WeightUpdateInputs<'_>,
 ) {
-    if mode == WorkAllocation::Static {
+    if inputs.mode == WorkAllocation::Static {
         backend_weights.clear();
-        for slot in backends {
+        for slot in inputs.backends {
             backend_weights.insert(slot.id, slot.lanes.max(1) as f64);
         }
         return;
     }
 
-    let elapsed = round_elapsed_secs.max(0.001);
-    let alpha = 0.35f64;
-    backend_weights.retain(|backend_id, _| backends.iter().any(|slot| slot.id == *backend_id));
+    if inputs.round_end_reason != RoundEndReason::Refresh {
+        return;
+    }
+    // Skip adaptive updates when a round exits too early; those samples are luck/network-biased.
+    if inputs.round_elapsed_secs < inputs.refresh_interval.as_secs_f64().max(0.001) * 0.5 {
+        return;
+    }
 
-    for slot in backends {
+    let elapsed = inputs.round_elapsed_secs.max(0.001);
+    let alpha = 0.35f64;
+    backend_weights
+        .retain(|backend_id, _| inputs.backends.iter().any(|slot| slot.id == *backend_id));
+
+    for slot in inputs.backends {
         let baseline = slot.lanes.max(1) as f64;
         let prior = backend_weights.get(&slot.id).copied().unwrap_or(baseline);
-        let observed_hashes = round_backend_hashes.get(&slot.id).copied().unwrap_or(0);
-        let observed_hps = observed_hashes as f64 / elapsed;
+        let observed_hashes = inputs
+            .round_backend_hashes
+            .get(&slot.id)
+            .copied()
+            .unwrap_or(0);
+        let observed_secs = inputs
+            .round_backend_telemetry
+            .get(&slot.id)
+            .and_then(|metrics| {
+                (metrics.completed_assignment_micros > 0)
+                    .then_some(metrics.completed_assignment_micros as f64 / 1_000_000.0)
+            })
+            .unwrap_or(elapsed)
+            .max(0.001);
+        let observed_hps = observed_hashes as f64 / observed_secs;
         let next = if observed_hps > 0.0 {
             ((1.0 - alpha) * prior) + (alpha * observed_hps)
         } else {
@@ -1344,16 +1451,64 @@ mod tests {
         let mut round_hashes = BTreeMap::new();
         round_hashes.insert(1, 10_000);
         round_hashes.insert(2, 1_000);
+        let mut round_telemetry = BTreeMap::new();
+        round_telemetry.insert(
+            1,
+            BackendRoundTelemetry {
+                completed_assignment_micros: 1_000_000,
+                ..BackendRoundTelemetry::default()
+            },
+        );
+        round_telemetry.insert(
+            2,
+            BackendRoundTelemetry {
+                completed_assignment_micros: 1_000_000,
+                ..BackendRoundTelemetry::default()
+            },
+        );
 
         update_backend_weights(
             &mut weights,
-            &backends,
-            &round_hashes,
-            1.0,
-            WorkAllocation::Adaptive,
+            WeightUpdateInputs {
+                backends: &backends,
+                round_backend_hashes: &round_hashes,
+                round_backend_telemetry: &round_telemetry,
+                round_elapsed_secs: 1.0,
+                mode: WorkAllocation::Adaptive,
+                round_end_reason: RoundEndReason::Refresh,
+                refresh_interval: Duration::from_secs(1),
+            },
         );
 
         assert!(weights.get(&1).copied().unwrap_or(0.0) > weights.get(&2).copied().unwrap_or(0.0));
+    }
+
+    #[test]
+    fn adaptive_weight_update_skips_solved_rounds() {
+        let backends = vec![BackendSlot {
+            id: 7,
+            backend: Box::new(NoopBackend::new("cpu")),
+            lanes: 1,
+        }];
+        let mut weights = seed_backend_weights(&backends);
+        let mut round_hashes = BTreeMap::new();
+        round_hashes.insert(7, 10_000);
+        let round_telemetry = BTreeMap::new();
+
+        update_backend_weights(
+            &mut weights,
+            WeightUpdateInputs {
+                backends: &backends,
+                round_backend_hashes: &round_hashes,
+                round_backend_telemetry: &round_telemetry,
+                round_elapsed_secs: 1.0,
+                mode: WorkAllocation::Adaptive,
+                round_end_reason: RoundEndReason::Solved,
+                refresh_interval: Duration::from_secs(1),
+            },
+        );
+
+        assert_eq!(weights.get(&7).copied(), Some(1.0));
     }
 
     #[test]
@@ -1366,13 +1521,19 @@ mod tests {
         let mut weights = BTreeMap::new();
         weights.insert(9, 999.0);
         let round_hashes = BTreeMap::new();
+        let round_telemetry = BTreeMap::new();
 
         update_backend_weights(
             &mut weights,
-            &backends,
-            &round_hashes,
-            1.0,
-            WorkAllocation::Static,
+            WeightUpdateInputs {
+                backends: &backends,
+                round_backend_hashes: &round_hashes,
+                round_backend_telemetry: &round_telemetry,
+                round_elapsed_secs: 1.0,
+                mode: WorkAllocation::Static,
+                round_end_reason: RoundEndReason::Refresh,
+                refresh_interval: Duration::from_secs(1),
+            },
         );
 
         assert_eq!(weights.get(&9).copied(), Some(3.0));
