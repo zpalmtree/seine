@@ -644,6 +644,7 @@ pub(super) fn run_mining_loop(
             control_plane.submit_solution(&template, solution.clone(), &stats, &mut tui);
             submitted_solution = Some(solution);
         }
+        drop_solution_from_deferred(&mut deferred_solutions, submitted_solution.as_ref());
         submit_deferred_solutions(
             &control_plane,
             epoch,
@@ -781,9 +782,10 @@ pub(super) fn run_mining_loop(
                 format!("final backend event drain failed: {err:#}"),
             ),
         }
-        if let Some(solution) = final_pending_solution {
-            control_plane.submit_solution(&template, solution, &stats, &mut tui);
+        if let Some(solution) = final_pending_solution.as_ref() {
+            control_plane.submit_solution(&template, solution.clone(), &stats, &mut tui);
         }
+        drop_solution_from_deferred(&mut deferred_solutions, final_pending_solution.as_ref());
         submit_deferred_solutions(
             &control_plane,
             epoch,
@@ -1119,12 +1121,7 @@ fn submit_deferred_solutions(
 
     let mut queued = Vec::new();
     std::mem::swap(&mut queued, deferred_solutions);
-    let mut seen = HashSet::new();
-    for solution in queued {
-        if !seen.insert((solution.epoch, solution.backend_id, solution.nonce)) {
-            continue;
-        }
-
+    for solution in dedupe_queued_solutions(queued) {
         let Some(template) = template_for_solution_epoch(
             current_epoch,
             current_template,
@@ -1142,6 +1139,32 @@ fn submit_deferred_solutions(
         };
         control_plane.submit_solution(template, solution, stats, tui);
     }
+}
+
+fn dedupe_queued_solutions(queued: Vec<MiningSolution>) -> Vec<MiningSolution> {
+    let mut seen = HashSet::new();
+
+    let mut deduped = Vec::with_capacity(queued.len());
+    for solution in queued {
+        if seen.insert((solution.epoch, solution.backend_id, solution.nonce)) {
+            deduped.push(solution);
+        }
+    }
+    deduped
+}
+
+fn drop_solution_from_deferred(
+    deferred_solutions: &mut Vec<MiningSolution>,
+    primary_submitted: Option<&MiningSolution>,
+) {
+    let Some(solution) = primary_submitted else {
+        return;
+    };
+    deferred_solutions.retain(|candidate| {
+        !(candidate.epoch == solution.epoch
+            && candidate.backend_id == solution.backend_id
+            && candidate.nonce == solution.nonce)
+    });
 }
 
 fn template_for_solution_epoch<'a>(
@@ -1660,6 +1683,79 @@ mod tests {
         assert!(deferred
             .iter()
             .any(|solution| solution.epoch == 42 && solution.nonce == 9));
+    }
+
+    #[test]
+    fn dedupe_queued_solutions_skips_repeated_solutions() {
+        let queued = vec![
+            MiningSolution {
+                epoch: 4,
+                nonce: 7,
+                backend_id: 1,
+                backend: "cpu",
+            },
+            MiningSolution {
+                epoch: 5,
+                nonce: 9,
+                backend_id: 1,
+                backend: "cpu",
+            },
+            MiningSolution {
+                epoch: 4,
+                nonce: 7,
+                backend_id: 1,
+                backend: "cpu",
+            },
+            MiningSolution {
+                epoch: 4,
+                nonce: 7,
+                backend_id: 1,
+                backend: "cpu",
+            },
+            MiningSolution {
+                epoch: 4,
+                nonce: 7,
+                backend_id: 1,
+                backend: "cpu",
+            },
+        ];
+
+        let deduped = dedupe_queued_solutions(queued);
+        assert_eq!(deduped.len(), 2);
+        assert!(deduped
+            .iter()
+            .any(|solution| solution.epoch == 4 && solution.nonce == 7));
+        assert!(deduped
+            .iter()
+            .any(|solution| solution.epoch == 5 && solution.nonce == 9));
+    }
+
+    #[test]
+    fn drop_solution_from_deferred_filters_primary_solution() {
+        let primary = MiningSolution {
+            epoch: 5,
+            nonce: 42,
+            backend_id: 1,
+            backend: "cpu",
+        };
+        let mut deferred = vec![
+            MiningSolution {
+                epoch: 5,
+                nonce: 42,
+                backend_id: 1,
+                backend: "cpu",
+            },
+            MiningSolution {
+                epoch: 5,
+                nonce: 9,
+                backend_id: 1,
+                backend: "cpu",
+            },
+        ];
+
+        drop_solution_from_deferred(&mut deferred, Some(&primary));
+        assert_eq!(deferred.len(), 1);
+        assert_eq!(deferred[0].nonce, 9);
     }
 
     #[test]
