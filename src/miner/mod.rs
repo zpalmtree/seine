@@ -7,6 +7,7 @@ mod round_control;
 mod runtime;
 mod scheduler;
 mod stats;
+mod template_prefetch;
 mod tip;
 mod tui;
 mod ui;
@@ -1405,6 +1406,34 @@ mod tests {
         assert!(counts[0] > counts[1]);
         assert!(counts[0] >= 2);
         assert!(counts[1] >= 2);
+    }
+
+    #[test]
+    fn nonce_counts_adaptive_boosts_new_backend_exploration_share() {
+        let state_a = Arc::new(MockState::default());
+        let state_b = Arc::new(MockState::default());
+        let backends = vec![
+            slot(
+                10,
+                1,
+                Arc::new(MockBackend::new("cpu", 1, Arc::clone(&state_a))),
+            ),
+            slot(
+                20,
+                1,
+                Arc::new(MockBackend::new("cpu", 1, Arc::clone(&state_b))),
+            ),
+        ];
+        let mut weights = BTreeMap::new();
+        weights.insert(10, 1_000_000.0);
+
+        let counts = compute_backend_nonce_counts(&backends, 100, Some(&weights));
+        assert_eq!(counts.iter().copied().sum::<u64>(), 200);
+        assert!(
+            counts[1] > 2,
+            "new backend should receive exploration work beyond lane minimum: {:?}",
+            counts
+        );
     }
 
     #[test]

@@ -10,6 +10,9 @@ use super::backend_executor::{self, BackendTask, BackendTaskKind};
 use super::ui::warn;
 use super::{backend_capabilities, backend_names, total_lanes, BackendSlot, DistributeWorkOptions};
 
+const ADAPTIVE_WEIGHT_FLOOR_PER_LANE_FRAC: f64 = 0.01;
+const ADAPTIVE_NEW_BACKEND_BOOST_PER_LANE_FRAC: f64 = 0.10;
+
 enum DispatchAssignments {
     Single(WorkAssignment),
     Batch(Vec<WorkAssignment>),
@@ -236,18 +239,48 @@ pub(super) fn compute_backend_nonce_counts(
     }
 
     let weights_map = backend_weights.expect("weights should be present");
+    let mut known_weight_sum = 0.0f64;
+    let mut known_lane_sum = 0.0f64;
+    for slot in backends {
+        if let Some(observed_weight) = weights_map
+            .get(&slot.id)
+            .copied()
+            .filter(|weight| weight.is_finite() && *weight > 0.0)
+        {
+            known_weight_sum += observed_weight;
+            known_lane_sum += slot.lanes.max(1) as f64;
+        }
+    }
+    let per_lane_reference = if known_lane_sum > 0.0 {
+        known_weight_sum / known_lane_sum
+    } else {
+        let fallback_lanes = base_counts.iter().copied().sum::<u64>().max(1) as f64;
+        (allocation_counts.iter().copied().sum::<u64>() as f64) / fallback_lanes
+    };
+
     let mut weights = Vec::with_capacity(backends.len());
     let mut sum_weights = 0.0f64;
     for (idx, slot) in backends.iter().enumerate() {
+        let lanes = slot.lanes.max(1) as f64;
         let fallback = allocation_counts
             .get(idx)
             .copied()
             .unwrap_or_else(|| slot.lanes.max(1)) as f64;
-        let weight = weights_map
+        let observed = weights_map
             .get(&slot.id)
             .copied()
-            .filter(|w| w.is_finite() && *w > 0.0)
-            .unwrap_or(fallback);
+            .filter(|weight| weight.is_finite() && *weight > 0.0);
+        let mut weight = observed.unwrap_or(fallback);
+        if per_lane_reference.is_finite() && per_lane_reference > 0.0 {
+            // Keep exploration signal alive so newly added/recovered devices can be remeasured.
+            let mut exploration_floor =
+                lanes * per_lane_reference * ADAPTIVE_WEIGHT_FLOOR_PER_LANE_FRAC;
+            if observed.is_none() {
+                exploration_floor = exploration_floor
+                    .max(lanes * per_lane_reference * ADAPTIVE_NEW_BACKEND_BOOST_PER_LANE_FRAC);
+            }
+            weight = weight.max(exploration_floor);
+        }
         sum_weights += weight;
         weights.push(weight);
     }

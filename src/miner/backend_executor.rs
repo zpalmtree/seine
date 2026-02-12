@@ -70,13 +70,7 @@ fn spawn_backend_worker(
     let thread_name = format!("seine-backend-{backend}-{backend_id}");
     let spawn_result = thread::Builder::new().name(thread_name).spawn(move || {
         while let Ok(command) = cmd_rx.recv() {
-            match command {
-                BackendWorkerCommand::Run {
-                    task,
-                    timeout,
-                    outcome_tx,
-                } => run_backend_task(task, timeout, outcome_tx),
-            }
+            run_backend_command(command);
         }
     });
 
@@ -128,8 +122,14 @@ pub(super) fn quarantine_backend(backend: Arc<dyn PowBackend>) {
     {
         warn(
             "BACKEND",
-            "failed to spawn backend quarantine worker; skipping synchronous stop to avoid runtime stall",
+            "failed to spawn backend quarantine worker; running synchronous stop fallback",
         );
+        if panic::catch_unwind(AssertUnwindSafe(|| backend.stop())).is_err() {
+            warn(
+                "BACKEND",
+                "backend stop panicked during synchronous quarantine fallback",
+            );
+        }
     }
 }
 
@@ -220,7 +220,13 @@ pub(super) fn dispatch_backend_tasks(
     outcomes
 }
 
-fn run_backend_task(task: BackendTask, timeout: Duration, outcome_tx: Sender<BackendTaskOutcome>) {
+fn run_backend_command(command: BackendWorkerCommand) {
+    let BackendWorkerCommand::Run {
+        task,
+        timeout,
+        outcome_tx,
+    } = command;
+
     let BackendTask {
         idx,
         backend_id,
@@ -229,51 +235,10 @@ fn run_backend_task(task: BackendTask, timeout: Duration, outcome_tx: Sender<Bac
         kind,
         ..
     } = task;
-    let started = Instant::now();
-    let deadline = started + timeout.max(Duration::from_millis(1));
+    let deadline = Instant::now() + timeout.max(Duration::from_millis(1));
     let action_label = kind.action_label();
-    let (result_tx, result_rx) = bounded::<Result<()>>(1);
-    let call_backend = Arc::clone(&backend_handle);
-    let call_kind = kind;
-    let call_thread_name = format!("seine-backend-call-{backend}-{backend_id}");
-    let result = match thread::Builder::new()
-        .name(call_thread_name)
-        .spawn(move || {
-            let result = run_backend_call(call_backend, call_kind, deadline);
-            let _ = result_tx.send(result);
-        }) {
-        Ok(call_handle) => match result_rx.recv_timeout(timeout) {
-            Ok(result) => {
-                let _ = call_handle.join();
-                result
-            }
-            Err(RecvTimeoutError::Timeout) => {
-                // Detached by design: backend may be stuck in an uninterruptible call.
-                drop(call_handle);
-                Err(anyhow!(
-                    "{} call exceeded {}ms deadline; backend quarantined",
-                    action_label,
-                    timeout.as_millis()
-                ))
-            }
-            Err(RecvTimeoutError::Disconnected) => {
-                if call_handle.join().is_err() {
-                    Err(anyhow!("{} task panicked", action_label))
-                } else {
-                    Err(anyhow!(
-                        "{} worker exited without returning an outcome",
-                        action_label
-                    ))
-                }
-            }
-        },
-        Err(_) => Err(anyhow!(
-            "{} dispatch failed: could not spawn call worker for {}#{}",
-            action_label,
-            backend,
-            backend_id
-        )),
-    };
+    let result = run_backend_call(Arc::clone(&backend_handle), kind, deadline)
+        .map_err(|err| anyhow!("{action_label} failed for {backend}#{backend_id}: {err:#}"));
     let send_result = outcome_tx.send(BackendTaskOutcome { idx, result });
     if send_result.is_err() {
         quarantine_backend(backend_handle);

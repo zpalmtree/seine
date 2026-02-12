@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
 use blocknet_pow_spec::POW_HEADER_BASE_LEN;
-use crossbeam_channel::{bounded, Receiver, RecvTimeoutError, Sender, TrySendError};
+use crossbeam_channel::{bounded, Receiver, Sender, TrySendError};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::terminal::is_raw_mode_enabled;
 
@@ -31,6 +31,7 @@ use super::runtime::{
 };
 use super::scheduler::NonceScheduler;
 use super::stats::{format_hashrate, Stats};
+use super::template_prefetch::TemplatePrefetch;
 pub(super) use super::tip::{spawn_tip_listener, TipListener, TipSignal};
 use super::tui::{TuiRenderer, TuiState};
 use super::ui::{error, info, mined, set_tui_state, success, warn};
@@ -996,132 +997,6 @@ impl<'a> RoundRuntime<'a> {
     }
 }
 
-struct TemplatePrefetch {
-    handle: Option<JoinHandle<()>>,
-    request_tx: Option<Sender<PrefetchRequest>>,
-    result_rx: Receiver<PrefetchResult>,
-    done_rx: Receiver<()>,
-    pending_tip_sequence: Option<u64>,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct PrefetchRequest {
-    tip_sequence: u64,
-}
-
-#[derive(Debug)]
-struct PrefetchResult {
-    tip_sequence: u64,
-    template: Option<BlockTemplateResponse>,
-}
-
-impl TemplatePrefetch {
-    fn spawn(client: ApiClient, cfg: Config, shutdown: Arc<AtomicBool>) -> Self {
-        let (request_tx, request_rx) = bounded::<PrefetchRequest>(1);
-        let (result_tx, result_rx) = bounded::<PrefetchResult>(1);
-        let (done_tx, done_rx) = bounded::<()>(1);
-
-        let handle = thread::spawn(move || {
-            while !shutdown.load(Ordering::Relaxed) {
-                let request = match request_rx.recv_timeout(Duration::from_millis(100)) {
-                    Ok(request) => request,
-                    Err(RecvTimeoutError::Timeout) => continue,
-                    Err(RecvTimeoutError::Disconnected) => break,
-                };
-                let template = fetch_template_prefetch_once(&client, &cfg, shutdown.as_ref());
-                if result_tx
-                    .send(PrefetchResult {
-                        tip_sequence: request.tip_sequence,
-                        template,
-                    })
-                    .is_err()
-                {
-                    break;
-                }
-            }
-            let _ = done_tx.send(());
-        });
-
-        Self {
-            handle: Some(handle),
-            request_tx: Some(request_tx),
-            result_rx,
-            done_rx,
-            pending_tip_sequence: None,
-        }
-    }
-
-    fn request_if_idle(&mut self, tip_sequence: u64) {
-        if self.pending_tip_sequence.is_some() {
-            return;
-        }
-        let Some(request_tx) = self.request_tx.as_ref() else {
-            return;
-        };
-        match request_tx.try_send(PrefetchRequest { tip_sequence }) {
-            Ok(()) => {
-                self.pending_tip_sequence = Some(tip_sequence);
-            }
-            Err(TrySendError::Full(_)) => {
-                // The worker already has a queued request; treat as pending to avoid spin.
-                self.pending_tip_sequence = Some(tip_sequence);
-            }
-            Err(TrySendError::Disconnected(_)) => {
-                self.request_tx = None;
-                self.pending_tip_sequence = None;
-            }
-        }
-    }
-
-    fn wait_for_result(&mut self, wait: Duration) -> Option<PrefetchResult> {
-        let wait = wait.max(Duration::from_millis(1));
-        match self.result_rx.recv_timeout(wait) {
-            Ok(result) => {
-                self.pending_tip_sequence = None;
-                Some(result)
-            }
-            Err(RecvTimeoutError::Timeout) => {
-                // Release the pending marker so callers can enqueue a fresher request.
-                self.pending_tip_sequence = None;
-                None
-            }
-            Err(RecvTimeoutError::Disconnected) => {
-                self.pending_tip_sequence = None;
-                None
-            }
-        }
-    }
-
-    fn detach(mut self) {
-        self.request_tx = None;
-        if let Some(handle) = self.handle.take() {
-            drop(handle);
-        }
-    }
-
-    fn shutdown_for(&mut self, wait: Duration) -> bool {
-        self.pending_tip_sequence = None;
-        self.request_tx = None;
-        let wait = wait.max(Duration::from_millis(1));
-        let done = matches!(
-            self.done_rx.recv_timeout(wait),
-            Ok(()) | Err(RecvTimeoutError::Disconnected)
-        );
-
-        if done {
-            if let Some(handle) = self.handle.take() {
-                if handle.join().is_err() {
-                    error("TEMPLATE", "prefetch thread panicked");
-                }
-            }
-        } else if let Some(handle) = self.handle.take() {
-            drop(handle);
-        }
-
-        done
-    }
-}
-
 fn resolve_next_template(
     prefetch: &mut Option<TemplatePrefetch>,
     client: &ApiClient,
@@ -1147,13 +1022,13 @@ fn resolve_next_template(
 
     if let Some(task) = prefetch.as_mut() {
         let latest_tip_sequence = current_tip_sequence(tip_signal);
-        if task.pending_tip_sequence.is_none() {
+        if task.pending_tip_sequence().is_none() {
             task.request_if_idle(latest_tip_sequence);
         }
 
-        if let Some(prefetched) = task.wait_for_result(cfg.prefetch_wait) {
-            if prefetched.tip_sequence == latest_tip_sequence {
-                if let Some(template) = prefetched.template {
+        if let Some((tip_sequence, template)) = task.wait_for_result(cfg.prefetch_wait) {
+            if tip_sequence == latest_tip_sequence {
+                if let Some(template) = template {
                     return Some(template);
                 }
             }
@@ -1384,31 +1259,6 @@ fn fetch_template_with_retry(
     }
 
     None
-}
-
-fn fetch_template_prefetch_once(
-    client: &ApiClient,
-    cfg: &Config,
-    shutdown: &AtomicBool,
-) -> Option<BlockTemplateResponse> {
-    if shutdown.load(Ordering::Relaxed) {
-        return None;
-    }
-
-    match client.get_block_template() {
-        Ok(template) => Some(template),
-        Err(err) if is_unauthorized_error(&err) => {
-            if matches!(
-                refresh_api_token_from_cookie(client, cfg.token_cookie_path.as_deref()),
-                TokenRefreshOutcome::Refreshed
-            ) {
-                client.get_block_template().ok()
-            } else {
-                None
-            }
-        }
-        Err(_) => None,
-    }
 }
 
 fn compact_hash(hash: &str) -> String {
@@ -1920,43 +1770,6 @@ mod tests {
         );
 
         assert_eq!(weights.get(&9).copied(), Some(3.0));
-    }
-
-    #[test]
-    fn prefetch_timeout_clears_pending_marker() {
-        let (request_tx, _request_rx) = bounded::<PrefetchRequest>(1);
-        let (_result_tx, result_rx) = bounded::<PrefetchResult>(1);
-        let (_done_tx, done_rx) = bounded::<()>(1);
-        let mut prefetch = TemplatePrefetch {
-            handle: None,
-            request_tx: Some(request_tx),
-            result_rx,
-            done_rx,
-            pending_tip_sequence: Some(7),
-        };
-
-        assert!(prefetch.wait_for_result(Duration::from_millis(1)).is_none());
-        assert!(prefetch.pending_tip_sequence.is_none());
-    }
-
-    #[test]
-    fn prefetch_full_queue_marks_request_pending() {
-        let (request_tx, _request_rx) = bounded::<PrefetchRequest>(1);
-        request_tx
-            .try_send(PrefetchRequest { tip_sequence: 1 })
-            .expect("prefill request channel should succeed");
-        let (_result_tx, result_rx) = bounded::<PrefetchResult>(1);
-        let (_done_tx, done_rx) = bounded::<()>(1);
-        let mut prefetch = TemplatePrefetch {
-            handle: None,
-            request_tx: Some(request_tx),
-            result_rx,
-            done_rx,
-            pending_tip_sequence: None,
-        };
-
-        prefetch.request_if_idle(2);
-        assert_eq!(prefetch.pending_tip_sequence, Some(2));
     }
 
     #[test]

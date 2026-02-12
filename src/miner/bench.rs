@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -1068,13 +1068,39 @@ fn build_backend_round_stats(
     elapsed_secs: f64,
 ) -> Vec<BenchBackendRun> {
     let elapsed_secs = elapsed_secs.max(0.001);
-    let mut runs = Vec::with_capacity(round_backend_hashes.len());
+    let mut runs = Vec::with_capacity(backends.len().max(round_backend_hashes.len()));
+    let mut seen = BTreeSet::new();
+
+    for slot in backends {
+        let backend_id = slot.id;
+        seen.insert(backend_id);
+        let hashes = round_backend_hashes.get(&backend_id).copied().unwrap_or(0);
+        let telemetry = round_backend_telemetry
+            .get(&backend_id)
+            .copied()
+            .unwrap_or_default();
+        runs.push(BenchBackendRun {
+            backend_id,
+            backend: slot.backend.name().to_string(),
+            hashes,
+            hps: hashes as f64 / elapsed_secs,
+            peak_active_lanes: telemetry.peak_active_lanes,
+            peak_pending_work: telemetry.peak_pending_work,
+            peak_inflight_assignment_hashes: telemetry.peak_inflight_assignment_hashes,
+            peak_inflight_assignment_secs: telemetry.peak_inflight_assignment_micros as f64
+                / 1_000_000.0,
+            dropped_events: telemetry.dropped_events,
+            completed_assignments: telemetry.completed_assignments,
+            completed_assignment_hashes: telemetry.completed_assignment_hashes,
+            completed_assignment_secs: telemetry.completed_assignment_micros as f64 / 1_000_000.0,
+        });
+    }
+
     for (backend_id, hashes) in round_backend_hashes {
-        let backend = backends
-            .iter()
-            .find(|slot| slot.id == *backend_id)
-            .map(|slot| slot.backend.name().to_string())
-            .unwrap_or_else(|| "unknown".to_string());
+        if seen.contains(backend_id) {
+            continue;
+        }
+        let backend = "unknown".to_string();
         let telemetry = round_backend_telemetry
             .get(backend_id)
             .copied()
@@ -1121,6 +1147,38 @@ fn drain_benchmark_backend_events(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
+    use anyhow::Result;
+    use crossbeam_channel::Sender;
+
+    use crate::backend::{BackendEvent, BackendInstanceId, PowBackend, WorkAssignment};
+
+    struct NoopBackend;
+
+    impl PowBackend for NoopBackend {
+        fn name(&self) -> &'static str {
+            "noop"
+        }
+
+        fn lanes(&self) -> usize {
+            1
+        }
+
+        fn set_instance_id(&self, _id: BackendInstanceId) {}
+
+        fn set_event_sink(&self, _sink: Sender<BackendEvent>) {}
+
+        fn start(&self) -> Result<()> {
+            Ok(())
+        }
+
+        fn stop(&self) {}
+
+        fn assign_work(&self, _work: WorkAssignment) -> Result<()> {
+            Ok(())
+        }
+    }
 
     fn sample_report() -> BenchReport {
         BenchReport {
@@ -1246,5 +1304,27 @@ mod tests {
         assert!(!relaxed_issues
             .iter()
             .any(|issue| issue.contains("git mismatch")));
+    }
+
+    #[test]
+    fn backend_round_stats_include_zero_hash_backends() {
+        let backends = vec![BackendSlot {
+            id: 7,
+            backend: Arc::new(NoopBackend),
+            lanes: 1,
+        }];
+        let round_backend_hashes = BTreeMap::new();
+        let round_backend_telemetry = BTreeMap::new();
+
+        let runs = build_backend_round_stats(
+            &backends,
+            &round_backend_hashes,
+            &round_backend_telemetry,
+            1.0,
+        );
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].backend_id, 7);
+        assert_eq!(runs[0].backend, "noop");
+        assert_eq!(runs[0].hashes, 0);
     }
 }

@@ -12,7 +12,7 @@ Current status:
   - Backends explicitly advertise deadline semantics (`cooperative` vs `best-effort`) so timeout behavior is visible before mixing heterogeneous devices.
   - Mining mode supports adaptive weighted nonce allocation (`--work-allocation adaptive`) based on observed backend throughput, with `--work-allocation static` available for fixed lane-based splitting.
   - NVIDIA backend topology supports multiple explicit device instances via `--nvidia-devices` (for example `--backend nvidia --nvidia-devices 0,1`).
-  - Runtime is split into `src/miner/{mining,tip,bench,scheduler,stats,work_allocator,backend_control,round_control}.rs` to keep orchestration, scheduling, and backend control isolated for faster iteration.
+  - Runtime is split into `src/miner/{mining,template_prefetch,tip,bench,scheduler,stats,work_allocator,backend_control,round_control}.rs` to keep orchestration, scheduling, and backend control isolated for faster iteration.
 
 ## Test
 
