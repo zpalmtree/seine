@@ -816,7 +816,7 @@ fn stream_tip_events(
     signal: &TipSignal,
     shutdown: &AtomicBool,
 ) -> Result<()> {
-    let mut event_name = String::new();
+    let mut frame = SseFrameState::default();
     let reader = BufReader::new(resp);
 
     for line_result in reader.lines() {
@@ -825,32 +825,57 @@ fn stream_tip_events(
         }
 
         let line = line_result.context("failed reading SSE event stream")?;
-        process_sse_line(&line, &mut event_name, signal);
+        process_sse_line(&line, &mut frame, signal);
     }
+    process_sse_frame(&frame, signal);
 
     Ok(())
 }
 
-fn process_sse_line(line: &str, event_name: &mut String, signal: &TipSignal) {
-    if let Some(name) = line.strip_prefix("event:") {
-        *event_name = name.trim().to_string();
-        return;
-    }
+#[derive(Default)]
+struct SseFrameState {
+    event_name: String,
+    data_lines: Vec<String>,
+}
 
+impl SseFrameState {
+    fn reset(&mut self) {
+        self.event_name.clear();
+        self.data_lines.clear();
+    }
+}
+
+fn process_sse_line(line: &str, frame: &mut SseFrameState, signal: &TipSignal) {
     if line.is_empty() {
-        event_name.clear();
+        process_sse_frame(frame, signal);
+        frame.reset();
         return;
     }
 
-    if event_name != "new_block" || !line.starts_with("data:") {
+    if line.starts_with(':') {
         return;
     }
 
-    let payload = line
-        .strip_prefix("data:")
-        .map(str::trim)
-        .unwrap_or_default();
-    if let Some(event) = extract_new_block_event(payload) {
+    let (field, raw_value) = line
+        .split_once(':')
+        .map_or((line, ""), |(f, rest)| (f, rest));
+    let value = raw_value.strip_prefix(' ').unwrap_or(raw_value);
+
+    match field {
+        "event" => frame.event_name = value.to_string(),
+        "data" => frame.data_lines.push(value.to_string()),
+        // `id` and `retry` are intentionally ignored for now.
+        _ => {}
+    }
+}
+
+fn process_sse_frame(frame: &SseFrameState, signal: &TipSignal) {
+    if frame.event_name != "new_block" || frame.data_lines.is_empty() {
+        return;
+    }
+
+    let payload = frame.data_lines.join("\n");
+    if let Some(event) = extract_new_block_event(&payload) {
         signal.mark_stale_for_new_block(&event.hash, event.height);
         return;
     }
@@ -1138,6 +1163,17 @@ mod tests {
         }
     }
 
+    fn emit_new_block(signal: &TipSignal, hash: &str, height: u64) {
+        let mut frame = SseFrameState::default();
+        process_sse_line("event: new_block", &mut frame, signal);
+        process_sse_line(
+            &format!("data: {{\"hash\":\"{hash}\",\"height\":{height}}}"),
+            &mut frame,
+            signal,
+        );
+        process_sse_line("", &mut frame, signal);
+    }
+
     #[test]
     fn stale_solution_is_ignored_for_current_epoch() {
         let mut solved = None;
@@ -1167,13 +1203,11 @@ mod tests {
             BackendSlot {
                 id: 1,
                 backend: Box::new(NoopBackend::new("cpu")),
-                lane_offset: 0,
                 lanes: 1,
             },
             BackendSlot {
                 id: 2,
                 backend: Box::new(NoopBackend::new("cpu")),
-                lane_offset: 1,
                 lanes: 1,
             },
         ];
@@ -1206,45 +1240,20 @@ mod tests {
     #[test]
     fn duplicate_new_block_hashes_are_coalesced() {
         let signal = TipSignal::new(false);
-        let mut event_name = String::new();
-
-        process_sse_line("event: new_block", &mut event_name, &signal);
-        process_sse_line(
-            "data: {\"hash\":\"abc\",\"height\":1}",
-            &mut event_name,
-            &signal,
-        );
+        emit_new_block(&signal, "abc", 1);
         assert!(signal.take_stale());
 
-        process_sse_line("event: new_block", &mut event_name, &signal);
-        process_sse_line(
-            "data: {\"hash\":\"abc\",\"height\":1}",
-            &mut event_name,
-            &signal,
-        );
+        emit_new_block(&signal, "abc", 1);
         assert!(!signal.take_stale());
     }
 
     #[test]
     fn duplicate_new_block_hashes_across_reconnects_are_coalesced() {
         let signal = TipSignal::new(false);
-        let mut first_stream_event = String::new();
-
-        process_sse_line("event: new_block", &mut first_stream_event, &signal);
-        process_sse_line(
-            "data: {\"hash\":\"abc\",\"height\":1}",
-            &mut first_stream_event,
-            &signal,
-        );
+        emit_new_block(&signal, "abc", 1);
         assert!(signal.take_stale());
 
-        let mut second_stream_event = String::new();
-        process_sse_line("event: new_block", &mut second_stream_event, &signal);
-        process_sse_line(
-            "data: {\"hash\":\"abc\",\"height\":1}",
-            &mut second_stream_event,
-            &signal,
-        );
+        emit_new_block(&signal, "abc", 1);
         assert!(!signal.take_stale());
     }
 
@@ -1252,36 +1261,19 @@ mod tests {
     fn historical_new_block_events_are_ignored() {
         let signal = TipSignal::new(false);
         signal.set_current_template_height(1761);
-        let mut event_name = String::new();
 
-        process_sse_line("event: new_block", &mut event_name, &signal);
-        process_sse_line(
-            "data: {\"hash\":\"old\",\"height\":1759}",
-            &mut event_name,
-            &signal,
-        );
+        emit_new_block(&signal, "old", 1759);
         assert!(!signal.take_stale());
 
-        process_sse_line("event: new_block", &mut event_name, &signal);
-        process_sse_line(
-            "data: {\"hash\":\"tip\",\"height\":1760}",
-            &mut event_name,
-            &signal,
-        );
+        emit_new_block(&signal, "tip", 1760);
         assert!(signal.take_stale());
     }
 
     #[test]
     fn setting_template_height_clears_only_historical_stale_state() {
         let signal = TipSignal::new(false);
-        let mut event_name = String::new();
 
-        process_sse_line("event: new_block", &mut event_name, &signal);
-        process_sse_line(
-            "data: {\"hash\":\"old\",\"height\":1750}",
-            &mut event_name,
-            &signal,
-        );
+        emit_new_block(&signal, "old", 1750);
         assert!(signal.stale.load(Ordering::Acquire));
 
         signal.set_current_template_height(1762);
@@ -1291,23 +1283,37 @@ mod tests {
     #[test]
     fn new_block_hash_change_triggers_refresh() {
         let signal = TipSignal::new(false);
-        let mut event_name = String::new();
 
-        process_sse_line("event: new_block", &mut event_name, &signal);
-        process_sse_line(
-            "data: {\"hash\":\"abc\",\"height\":1}",
-            &mut event_name,
-            &signal,
-        );
+        emit_new_block(&signal, "abc", 1);
         let _ = signal.take_stale();
 
-        process_sse_line("event: new_block", &mut event_name, &signal);
-        process_sse_line(
-            "data: {\"hash\":\"def\",\"height\":2}",
-            &mut event_name,
-            &signal,
-        );
+        emit_new_block(&signal, "def", 2);
         assert!(signal.take_stale());
+    }
+
+    #[test]
+    fn multiline_new_block_payload_is_parsed() {
+        let signal = TipSignal::new(false);
+        let mut frame = SseFrameState::default();
+
+        process_sse_line("event: new_block", &mut frame, &signal);
+        process_sse_line("data: {\"hash\":\"abc\",", &mut frame, &signal);
+        process_sse_line("data: \"height\":123}", &mut frame, &signal);
+        process_sse_line("", &mut frame, &signal);
+
+        assert!(signal.take_stale());
+    }
+
+    #[test]
+    fn sse_comment_lines_are_ignored() {
+        let signal = TipSignal::new(false);
+        let mut frame = SseFrameState::default();
+
+        process_sse_line(": ping", &mut frame, &signal);
+        process_sse_line(": keepalive", &mut frame, &signal);
+        process_sse_line("", &mut frame, &signal);
+
+        assert!(!signal.take_stale());
     }
 
     #[test]
@@ -1320,44 +1326,22 @@ mod tests {
     #[test]
     fn same_height_hash_change_is_coalesced() {
         let signal = TipSignal::new(false);
-        let mut event_name = String::new();
 
-        process_sse_line("event: new_block", &mut event_name, &signal);
-        process_sse_line(
-            "data: {\"hash\":\"abc\",\"height\":1782}",
-            &mut event_name,
-            &signal,
-        );
+        emit_new_block(&signal, "abc", 1782);
         assert!(signal.take_stale());
 
-        process_sse_line("event: new_block", &mut event_name, &signal);
-        process_sse_line(
-            "data: {\"hash\":\"def\",\"height\":1782}",
-            &mut event_name,
-            &signal,
-        );
+        emit_new_block(&signal, "def", 1782);
         assert!(!signal.take_stale());
     }
 
     #[test]
     fn same_height_hash_change_can_trigger_refresh_when_enabled() {
         let signal = TipSignal::new(true);
-        let mut event_name = String::new();
 
-        process_sse_line("event: new_block", &mut event_name, &signal);
-        process_sse_line(
-            "data: {\"hash\":\"abc\",\"height\":1782}",
-            &mut event_name,
-            &signal,
-        );
+        emit_new_block(&signal, "abc", 1782);
         assert!(signal.take_stale());
 
-        process_sse_line("event: new_block", &mut event_name, &signal);
-        process_sse_line(
-            "data: {\"hash\":\"def\",\"height\":1782}",
-            &mut event_name,
-            &signal,
-        );
+        emit_new_block(&signal, "def", 1782);
         assert!(signal.take_stale());
     }
 }

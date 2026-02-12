@@ -3,7 +3,10 @@ use std::sync::atomic::AtomicBool;
 use anyhow::{bail, Result};
 use crossbeam_channel::Sender;
 
-use crate::backend::{BackendEvent, BackendInstanceId, BenchBackend, PowBackend, WorkAssignment};
+use crate::backend::{
+    BackendEvent, BackendInstanceId, BenchBackend, PowBackend, PreemptionGranularity,
+    WorkAssignment,
+};
 
 pub struct NvidiaBackend {
     _instance_id: BackendInstanceId,
@@ -46,6 +49,11 @@ impl PowBackend for NvidiaBackend {
 
     fn fence(&self) -> Result<()> {
         Ok(())
+    }
+
+    fn preemption_granularity(&self) -> PreemptionGranularity {
+        // Placeholder until the CUDA worker model is implemented.
+        PreemptionGranularity::Unknown
     }
 
     fn bench_backend(&self) -> Option<&dyn BenchBackend> {

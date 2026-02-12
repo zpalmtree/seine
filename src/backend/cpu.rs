@@ -9,8 +9,8 @@ use blocknet_pow_spec::{pow_params, POW_OUTPUT_LEN};
 use crossbeam_channel::{Sender, TrySendError};
 
 use crate::backend::{
-    BackendEvent, BackendInstanceId, BenchBackend, MiningSolution, PowBackend, WorkAssignment,
-    WORK_ID_MAX,
+    BackendEvent, BackendInstanceId, BenchBackend, MiningSolution, PowBackend,
+    PreemptionGranularity, WorkAssignment, WORK_ID_MAX,
 };
 use crate::config::CpuAffinityMode;
 use crate::types::hash_meets_target;
@@ -212,6 +212,10 @@ impl PowBackend for CpuBackend {
             .sum()
     }
 
+    fn preemption_granularity(&self) -> PreemptionGranularity {
+        PreemptionGranularity::Hashes(1)
+    }
+
     fn bench_backend(&self) -> Option<&dyn BenchBackend> {
         Some(self)
     }
@@ -295,6 +299,8 @@ fn cpu_worker_loop(shared: Arc<Shared>, thread_idx: usize, core_id: Option<core_
     let mut worker_active = false;
     let mut nonce = 0u64;
     let mut lane_iters = 0u64;
+    let lane_stride = shared.hash_slots.len().max(1) as u64;
+    let mut lane_quota = 0u64;
     let mut pending_hashes = 0u64;
     let mut last_flush = Instant::now();
 
@@ -307,16 +313,21 @@ fn cpu_worker_loop(shared: Arc<Shared>, thread_idx: usize, core_id: Option<core_
             }
             match wait_for_work_update(&shared, local_generation) {
                 Ok(Some((generation, work))) => {
-                    nonce = work
-                        .nonce_lease
-                        .start_nonce
-                        .wrapping_add(work.nonce_lease.lane_offset)
-                        .wrapping_add(thread_idx as u64);
+                    nonce = work.nonce_chunk.start_nonce.wrapping_add(thread_idx as u64);
                     lane_iters = 0;
+                    lane_quota = lane_quota_for_chunk(
+                        work.nonce_chunk.nonce_count,
+                        thread_idx as u64,
+                        lane_stride,
+                    );
                     last_flush = Instant::now();
                     local_generation = generation;
                     local_work = Some(work);
-                    mark_worker_active(&shared, &mut worker_active);
+                    if lane_quota > 0 {
+                        mark_worker_active(&shared, &mut worker_active);
+                    } else {
+                        local_work = None;
+                    }
                     continue;
                 }
                 Ok(None) => break,
@@ -335,9 +346,8 @@ fn cpu_worker_loop(shared: Arc<Shared>, thread_idx: usize, core_id: Option<core_
             continue;
         };
         let template = &work.template;
-        let lease = &work.nonce_lease;
 
-        if lane_iters >= lease.max_iters_per_lane || Instant::now() >= template.stop_at {
+        if lane_iters >= lane_quota || Instant::now() >= template.stop_at {
             flush_hashes(&shared, thread_idx, &mut pending_hashes);
             mark_worker_inactive(&shared, &mut worker_active);
             local_work = None;
@@ -400,11 +410,19 @@ fn cpu_worker_loop(shared: Arc<Shared>, thread_idx: usize, core_id: Option<core_
             }
         }
 
-        nonce = nonce.wrapping_add(lease.global_stride.max(1));
+        nonce = nonce.wrapping_add(lane_stride);
     }
 
     flush_hashes(&shared, thread_idx, &mut pending_hashes);
     mark_worker_inactive(&shared, &mut worker_active);
+}
+
+fn lane_quota_for_chunk(nonce_count: u64, lane_idx: u64, lane_stride: u64) -> u64 {
+    let stride = lane_stride.max(1);
+    if nonce_count == 0 || lane_idx >= nonce_count {
+        return 0;
+    }
+    1 + (nonce_count - 1 - lane_idx) / stride
 }
 
 fn wait_for_work_update(
@@ -565,5 +583,25 @@ fn emit_event(shared: &Shared, event: BackendEvent) {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::lane_quota_for_chunk;
+
+    #[test]
+    fn lane_quota_even_chunk_distribution() {
+        assert_eq!(lane_quota_for_chunk(40, 0, 4), 10);
+        assert_eq!(lane_quota_for_chunk(40, 1, 4), 10);
+        assert_eq!(lane_quota_for_chunk(40, 3, 4), 10);
+    }
+
+    #[test]
+    fn lane_quota_handles_partial_tail() {
+        assert_eq!(lane_quota_for_chunk(5, 0, 4), 2);
+        assert_eq!(lane_quota_for_chunk(5, 1, 4), 1);
+        assert_eq!(lane_quota_for_chunk(5, 3, 4), 1);
+        assert_eq!(lane_quota_for_chunk(5, 6, 4), 0);
     }
 }

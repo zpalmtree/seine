@@ -153,6 +153,10 @@ struct Cli {
     /// Compare benchmark average H/s against a previous JSON report.
     #[arg(long)]
     bench_baseline: Option<PathBuf>,
+
+    /// Fail benchmark run if average H/s regresses below baseline by more than this percent.
+    #[arg(long)]
+    bench_fail_below_pct: Option<f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -182,6 +186,7 @@ pub struct Config {
     pub bench_rounds: u32,
     pub bench_output: Option<PathBuf>,
     pub bench_baseline: Option<PathBuf>,
+    pub bench_fail_below_pct: Option<f64>,
 }
 
 impl Config {
@@ -198,6 +203,17 @@ impl Config {
         }
         if cli.hash_poll_ms == 0 {
             bail!("hash-poll-ms must be >= 1");
+        }
+        if let Some(threshold) = cli.bench_fail_below_pct {
+            if !cli.bench {
+                bail!("--bench-fail-below-pct can only be used with --bench");
+            }
+            if !threshold.is_finite() || threshold < 0.0 {
+                bail!("--bench-fail-below-pct must be a finite number >= 0");
+            }
+            if cli.bench_baseline.is_none() {
+                bail!("--bench-fail-below-pct requires --bench-baseline");
+            }
         }
 
         let backends = dedupe_backends(&cli.backends);
@@ -240,6 +256,7 @@ impl Config {
             bench_rounds: cli.bench_rounds.max(1),
             bench_output: cli.bench_output,
             bench_baseline: cli.bench_baseline,
+            bench_fail_below_pct: cli.bench_fail_below_pct,
         })
     }
 }
@@ -424,6 +441,7 @@ mod tests {
             bench_rounds: 3,
             bench_output: None,
             bench_baseline: None,
+            bench_fail_below_pct: None,
         }
     }
 

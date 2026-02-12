@@ -6,6 +6,7 @@ Current status:
 - CPU backend: implemented (Argon2id, consensus-compatible params).
 - NVIDIA backend: scaffolded interface only (not implemented yet).
 - Runtime architecture: supports multiple backends in one process with persistent workers, configurable bounded backend event queues, coalesced tip notifications (deduped across SSE reconnects), template prefetch overlap to reduce round-boundary idle, and optional strict quiesce barriers for round-accurate hash accounting.
+  - Runtime assigns disjoint nonce chunks per backend per round (backend-local scheduling inside each chunk) so CPU and future GPU implementations can iterate independently without nonce overlap.
   - Runtime is split into `src/miner/{mining,bench,scheduler,stats}.rs` to keep orchestration, benchmarking, nonce scheduling, and telemetry isolated for faster iteration.
 
 ## Test
@@ -77,7 +78,7 @@ Run headless/plain logs (no fullscreen TUI):
   - `--hash-poll-ms` (default `200`) controls backend hash counter polling cadence.
   - `--stats-secs` (default `10`) controls periodic stats log emission cadence.
   - `--request-timeout-secs` (default `10`) controls JSON API request timeout for template/submit/wallet calls.
-  - `--events-stream-timeout-secs` (default `10`) controls SSE stream connection timeout per attempt.
+  - `--events-stream-timeout-secs` (default `10`) controls SSE connect timeout per attempt (stream itself is long-lived).
   - `--cpu-affinity` (`auto` or `off`) controls CPU worker pinning policy for better repeatability on NUMA/SMT hosts.
   - `--ui` (`auto`, `tui`, `plain`) controls rendering mode. `auto` enables TUI only when stdout/stderr are terminals.
   - `--relaxed-accounting` disables per-round quiesce barriers (higher throughput, less exact round accounting).
@@ -85,6 +86,7 @@ Run headless/plain logs (no fullscreen TUI):
 - A backend runtime fault quarantines only that backend; mining continues on remaining active backends when possible.
 - This miner is intentionally external so consensus-critical validation remains in the daemon.
 - Nonce space is reserved deterministically per epoch via `--nonce-iters-per-lane` (default `2^36` iterations per lane), avoiding overlap between refresh rounds without relying on sampled hash counters.
+  - The runtime logs backend preemption granularity on startup so strict round-accounting fence behavior is visible (`per-hash`, `every N hashes`, or `unknown`).
 
 ## Performance Benchmarking
 
@@ -104,4 +106,10 @@ Compare against a previous baseline:
 
 ```bash
 cargo run --release -- --bench --bench-kind backend --backend cpu --threads 1 --bench-secs 20 --bench-rounds 3 --bench-baseline bench.json
+```
+
+Fail CI on regression versus baseline (example: fail below `-5%`):
+
+```bash
+cargo run --release -- --bench --bench-kind backend --backend cpu --threads 1 --bench-secs 20 --bench-rounds 3 --bench-baseline bench.json --bench-fail-below-pct 5
 ```

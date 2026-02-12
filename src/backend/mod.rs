@@ -21,17 +21,15 @@ pub struct WorkTemplate {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct NonceLease {
+pub struct NonceChunk {
     pub start_nonce: u64,
-    pub lane_offset: u64,
-    pub global_stride: u64,
-    pub max_iters_per_lane: u64,
+    pub nonce_count: u64,
 }
 
 #[derive(Debug, Clone)]
 pub struct WorkAssignment {
     pub template: Arc<WorkTemplate>,
-    pub nonce_lease: NonceLease,
+    pub nonce_chunk: NonceChunk,
 }
 
 #[derive(Debug, Clone)]
@@ -54,6 +52,24 @@ pub enum BackendEvent {
 
 pub trait BenchBackend: Send {
     fn kernel_bench(&self, seconds: u64, shutdown: &AtomicBool) -> Result<u64>;
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum PreemptionGranularity {
+    /// Backend checks cancel/work-generation boundaries at least every N hashes.
+    Hashes(u64),
+    /// Backend-specific or currently unknown granularity.
+    Unknown,
+}
+
+impl PreemptionGranularity {
+    pub fn describe(self) -> String {
+        match self {
+            Self::Hashes(1) => "per-hash".to_string(),
+            Self::Hashes(n) => format!("every {n} hashes"),
+            Self::Unknown => "unknown".to_string(),
+        }
+    }
 }
 
 pub trait PowBackend: Send {
@@ -89,6 +105,10 @@ pub trait PowBackend: Send {
     /// Return and reset hashes completed since the previous call.
     fn take_hashes(&self) -> u64 {
         0
+    }
+
+    fn preemption_granularity(&self) -> PreemptionGranularity {
+        PreemptionGranularity::Unknown
     }
 
     fn bench_backend(&self) -> Option<&dyn BenchBackend> {

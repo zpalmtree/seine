@@ -59,7 +59,6 @@ pub struct ApiClient {
     json_client: Client,
     stream_client: Client,
     base_url: String,
-    events_stream_timeout: Duration,
 }
 
 impl ApiClient {
@@ -87,7 +86,7 @@ impl ApiClient {
         // Dedicated SSE client without global request timeout.
         let stream_client = Client::builder()
             .default_headers(headers)
-            .connect_timeout(Duration::from_secs(10))
+            .connect_timeout(events_stream_timeout)
             .build()
             .context("failed to build HTTP stream client")?;
 
@@ -95,7 +94,6 @@ impl ApiClient {
             json_client,
             stream_client,
             base_url,
-            events_stream_timeout,
         })
     }
 
@@ -148,7 +146,6 @@ impl ApiClient {
         let url = format!("{}/api/events", self.base_url);
         self.stream_client
             .get(url)
-            .timeout(self.events_stream_timeout)
             .send()
             .context("request to events endpoint failed")
     }

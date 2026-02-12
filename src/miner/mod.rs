@@ -19,8 +19,8 @@ use crate::api::ApiClient;
 use crate::backend::cpu::CpuBackend;
 use crate::backend::nvidia::NvidiaBackend;
 use crate::backend::{
-    BackendEvent, BackendInstanceId, NonceLease, PowBackend, WorkAssignment, WorkTemplate,
-    WORK_ID_MAX,
+    BackendEvent, BackendInstanceId, NonceChunk, PowBackend, PreemptionGranularity, WorkAssignment,
+    WorkTemplate, WORK_ID_MAX,
 };
 use crate::config::{BackendKind, Config, UiMode};
 use scheduler::NonceReservation;
@@ -34,7 +34,6 @@ const MIN_EVENT_WAIT: Duration = Duration::from_millis(1);
 struct BackendSlot {
     id: BackendInstanceId,
     backend: Box<dyn PowBackend>,
-    lane_offset: u64,
     lanes: u64,
 }
 
@@ -77,6 +76,37 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
             cpu_ram_gib
         ),
     );
+    info(
+        "MINER",
+        format!("preemption | {}", backend_preemption_profiles(&backends)),
+    );
+    if cfg.strict_round_accounting {
+        let constrained: Vec<String> = backends
+            .iter()
+            .filter_map(|slot| {
+                let granularity = slot.backend.preemption_granularity();
+                if matches!(granularity, PreemptionGranularity::Hashes(1)) {
+                    None
+                } else {
+                    Some(format!(
+                        "{}#{}={}",
+                        slot.backend.name(),
+                        slot.id,
+                        granularity.describe()
+                    ))
+                }
+            })
+            .collect();
+        if !constrained.is_empty() {
+            warn(
+                "MINER",
+                format!(
+                    "strict accounting fence latency depends on backend preemption ({})",
+                    constrained.join(", ")
+                ),
+            );
+        }
+    }
 
     let tip_listener = if cfg.sse_enabled {
         Some(mining::spawn_tip_listener(
@@ -190,7 +220,6 @@ fn activate_backends(
                 active.push(BackendSlot {
                     id: backend_id,
                     backend,
-                    lane_offset: 0,
                     lanes,
                 });
             }
@@ -207,8 +236,6 @@ fn activate_backends(
     if active.is_empty() {
         bail!("no mining backend could be started");
     }
-
-    recalculate_lane_offsets(&mut active);
 
     Ok((active, event_rx))
 }
@@ -241,12 +268,16 @@ fn distribute_work(
     reservation: NonceReservation,
     stop_at: Instant,
 ) -> Result<()> {
+    let mut attempt_start_nonce = reservation.start_nonce;
     loop {
         if backends.is_empty() {
             bail!("all mining backends are unavailable");
         }
 
-        let stride = total_lanes(backends);
+        let total_lanes = total_lanes(backends);
+        let attempt_span = total_lanes
+            .saturating_mul(reservation.max_iters_per_lane)
+            .max(total_lanes);
         let template = Arc::new(WorkTemplate {
             work_id,
             epoch,
@@ -255,15 +286,18 @@ fn distribute_work(
             stop_at,
         });
         let mut failed_indices = Vec::new();
+        let mut chunk_start = attempt_start_nonce;
 
         for (idx, slot) in backends.iter().enumerate() {
+            let nonce_count = slot
+                .lanes
+                .saturating_mul(reservation.max_iters_per_lane)
+                .max(slot.lanes);
             let work = WorkAssignment {
                 template: Arc::clone(&template),
-                nonce_lease: NonceLease {
-                    start_nonce: reservation.start_nonce,
-                    lane_offset: slot.lane_offset,
-                    global_stride: stride,
-                    max_iters_per_lane: reservation.max_iters_per_lane,
+                nonce_chunk: NonceChunk {
+                    start_nonce: chunk_start,
+                    nonce_count,
                 },
             };
             if let Err(err) = slot.backend.assign_work(work) {
@@ -277,6 +311,7 @@ fn distribute_work(
                 );
                 failed_indices.push(idx);
             }
+            chunk_start = chunk_start.wrapping_add(nonce_count);
         }
 
         if failed_indices.is_empty() {
@@ -301,12 +336,13 @@ fn distribute_work(
             bail!("all mining backends are unavailable after assignment failure");
         }
 
-        recalculate_lane_offsets(backends);
+        attempt_start_nonce = attempt_start_nonce.wrapping_add(attempt_span);
         warn(
             "BACKEND",
             format!(
-                "retrying work assignment with remaining={}",
-                backend_names(backends)
+                "retrying work assignment with remaining={} start_nonce={}",
+                backend_names(backends),
+                attempt_start_nonce
             ),
         );
     }
@@ -361,7 +397,6 @@ fn remove_backend_by_id(backends: &mut Vec<BackendSlot>, backend_id: BackendInst
 
     let mut slot = backends.remove(idx);
     slot.backend.stop();
-    recalculate_lane_offsets(backends);
     true
 }
 
@@ -513,6 +548,21 @@ fn backend_names(backends: &[BackendSlot]) -> String {
     backend_name_list(backends).join(",")
 }
 
+fn backend_preemption_profiles(backends: &[BackendSlot]) -> String {
+    backends
+        .iter()
+        .map(|slot| {
+            format!(
+                "{}#{}={}",
+                slot.backend.name(),
+                slot.id,
+                slot.backend.preemption_granularity().describe()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn cpu_lane_count(backends: &[BackendSlot]) -> u64 {
     backends
         .iter()
@@ -548,14 +598,6 @@ fn format_round_backend_hashrate(
         "none".to_string()
     } else {
         parts.join(", ")
-    }
-}
-
-fn recalculate_lane_offsets(backends: &mut [BackendSlot]) {
-    let mut lane_offset = 0u64;
-    for slot in backends {
-        slot.lane_offset = lane_offset;
-        lane_offset = lane_offset.wrapping_add(slot.lanes);
     }
 }
 
@@ -604,7 +646,7 @@ mod tests {
         fail_next_assign: AtomicBool,
         assign_calls: AtomicUsize,
         stop_calls: AtomicUsize,
-        last_lease: Mutex<Option<NonceLease>>,
+        last_chunk: Mutex<Option<NonceChunk>>,
     }
 
     struct MockBackend {
@@ -650,20 +692,15 @@ mod tests {
             }
             *self
                 .state
-                .last_lease
+                .last_chunk
                 .lock()
-                .expect("mock lease lock should not be poisoned") = Some(work.nonce_lease);
+                .expect("mock chunk lock should not be poisoned") = Some(work.nonce_chunk);
             Ok(())
         }
     }
 
     fn slot(id: BackendInstanceId, lanes: u64, backend: Box<dyn PowBackend>) -> BackendSlot {
-        BackendSlot {
-            id,
-            backend,
-            lane_offset: 0,
-            lanes,
-        }
+        BackendSlot { id, backend, lanes }
     }
 
     #[test]
@@ -700,8 +737,6 @@ mod tests {
                 Box::new(MockBackend::new("nvidia", 1, Arc::clone(&second_state))),
             ),
         ];
-        recalculate_lane_offsets(&mut backends);
-
         assert!(remove_backend_by_id(&mut backends, 22));
         assert_eq!(backends.len(), 1);
         assert_eq!(backends[0].id, 11);
@@ -733,8 +768,6 @@ mod tests {
                 Box::new(MockBackend::new("nvidia", 1, Arc::clone(&third_state))),
             ),
         ];
-        recalculate_lane_offsets(&mut backends);
-
         distribute_work(
             &mut backends,
             1,
@@ -752,24 +785,23 @@ mod tests {
         assert_eq!(backends.len(), 2);
         assert_eq!(backends[0].id, 1);
         assert_eq!(backends[1].id, 3);
-        assert_eq!(backends[0].lane_offset, 0);
-        assert_eq!(backends[1].lane_offset, 2);
 
-        let first_lease = first_state
-            .last_lease
+        let first_chunk = first_state
+            .last_chunk
             .lock()
-            .expect("first lease lock should not be poisoned")
+            .expect("first chunk lock should not be poisoned")
             .expect("first backend should receive work");
-        let third_lease = third_state
-            .last_lease
+        let third_chunk = third_state
+            .last_chunk
             .lock()
-            .expect("third lease lock should not be poisoned")
+            .expect("third chunk lock should not be poisoned")
             .expect("third backend should receive work");
 
-        assert_eq!(first_lease.global_stride, 3);
-        assert_eq!(first_lease.lane_offset, 0);
-        assert_eq!(third_lease.global_stride, 3);
-        assert_eq!(third_lease.lane_offset, 2);
+        // Retry after assignment failure moves to a fresh nonce reservation window.
+        assert_eq!(first_chunk.start_nonce, 140);
+        assert_eq!(first_chunk.nonce_count, 20);
+        assert_eq!(third_chunk.start_nonce, 160);
+        assert_eq!(third_chunk.nonce_count, 10);
         assert_eq!(failed_state.stop_calls.load(Ordering::Relaxed), 1);
     }
 

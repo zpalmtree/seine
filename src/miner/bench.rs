@@ -48,6 +48,8 @@ struct BenchReport {
     environment: BenchEnvironment,
     bench_kind: String,
     backends: Vec<String>,
+    #[serde(default)]
+    preemption: Vec<String>,
     total_lanes: u64,
     cpu_threads: usize,
     bench_secs: u64,
@@ -109,8 +111,15 @@ fn run_kernel_benchmark(
         ("Mode", "benchmark".to_string()),
         ("Kind", "kernel".to_string()),
         ("Backend", backend.name().to_string()),
+        ("Preemption", backend.preemption_granularity().describe()),
         ("Rounds", cfg.bench_rounds.to_string()),
         ("Seconds/Round", cfg.bench_secs.to_string()),
+        (
+            "Regress Gate",
+            cfg.bench_fail_below_pct
+                .map(|pct| format!("-{pct:.2}%"))
+                .unwrap_or_else(|| "off".to_string()),
+        ),
     ];
     startup_banner(&lines);
 
@@ -157,6 +166,11 @@ fn run_kernel_benchmark(
             environment,
             bench_kind: "kernel".to_string(),
             backends: vec![backend.name().to_string()],
+            preemption: vec![format!(
+                "{}={}",
+                backend.name(),
+                backend.preemption_granularity().describe()
+            )],
             total_lanes: backend.lanes() as u64,
             cpu_threads: cfg.threads,
             bench_secs: cfg.bench_secs,
@@ -187,6 +201,7 @@ fn run_worker_benchmark(
         ("Mode", "benchmark".to_string()),
         ("Kind", bench_kind.to_string()),
         ("Backends", backend_names(&backends)),
+        ("Preemption", super::backend_preemption_profiles(&backends)),
         ("Lanes", total_lanes(&backends).to_string()),
         ("Rounds", cfg.bench_rounds.to_string()),
         ("Seconds/Round", cfg.bench_secs.to_string()),
@@ -204,6 +219,12 @@ fn run_worker_benchmark(
             .to_string(),
         ),
         ("Measurement", "counted window + end fence".to_string()),
+        (
+            "Regress Gate",
+            cfg.bench_fail_below_pct
+                .map(|pct| format!("-{pct:.2}%"))
+                .unwrap_or_else(|| "off".to_string()),
+        ),
     ];
     startup_banner(&lines);
 
@@ -385,6 +406,17 @@ fn run_worker_benchmark_inner(
                 "backend".to_string()
             },
             backends: backend_name_list(backends),
+            preemption: backends
+                .iter()
+                .map(|slot| {
+                    format!(
+                        "{}#{}={}",
+                        slot.backend.name(),
+                        slot.id,
+                        slot.backend.preemption_granularity().describe()
+                    )
+                })
+                .collect(),
             total_lanes: total_lanes(backends),
             cpu_threads: cfg.threads,
             bench_secs: cfg.bench_secs,
@@ -423,6 +455,7 @@ fn summarize_benchmark(cfg: &Config, mut report: BenchReport) -> Result<()> {
         ),
     );
 
+    let mut baseline_delta_pct = None;
     if let Some(path) = &cfg.bench_baseline {
         let baseline_text = std::fs::read_to_string(path)
             .with_context(|| format!("failed to read baseline file {}", path.display()))?;
@@ -430,6 +463,7 @@ fn summarize_benchmark(cfg: &Config, mut report: BenchReport) -> Result<()> {
             .with_context(|| format!("failed to parse baseline JSON {}", path.display()))?;
         if baseline.avg_hps > 0.0 {
             let delta_pct = ((report.avg_hps - baseline.avg_hps) / baseline.avg_hps) * 100.0;
+            baseline_delta_pct = Some(delta_pct);
             info(
                 "BENCH",
                 format!(
@@ -447,6 +481,26 @@ fn summarize_benchmark(cfg: &Config, mut report: BenchReport) -> Result<()> {
         std::fs::write(path, json)
             .with_context(|| format!("failed to write benchmark report {}", path.display()))?;
         success("BENCH", format!("wrote report to {}", path.display()));
+    }
+
+    if let Some(threshold_pct) = cfg.bench_fail_below_pct {
+        let delta_pct = baseline_delta_pct.ok_or_else(|| {
+            anyhow!("--bench-fail-below-pct requires a baseline report with avg_hps > 0")
+        })?;
+        if delta_pct < -threshold_pct {
+            bail!(
+                "benchmark regression gate failed: delta={:+.2}% is below allowed -{:.2}%",
+                delta_pct,
+                threshold_pct
+            );
+        }
+        success(
+            "BENCH",
+            format!(
+                "regression gate passed | delta={:+.2}% | threshold=-{:.2}%",
+                delta_pct, threshold_pct
+            ),
+        );
     }
 
     Ok(())
