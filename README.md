@@ -115,8 +115,12 @@ Run headless/plain logs (no fullscreen TUI):
       - CPU stop/deadline checks are additionally time-bounded to keep round-end late-hash skew stable under coarse hash-interval settings.
     - `--cpu-hash-flush-ms` (default `50`) controls time-based hash counter flush cadence.
     - `--cpu-event-dispatch-capacity` (default `256`) controls internal CPU backend event dispatch buffering.
-    - `--cpu-autotune-threads` enables startup kernel autotuning and selects the best measured per-instance thread count.
+    - CPU thread autotuning is enabled by default when `--threads` is omitted.
+      - Results are persisted to `<data-dir>/seine.cpu-autotune.json` and reused on subsequent runs.
+      - `--cpu-autotune-threads` forces autotuning even when `--threads` is set.
+      - `--disable-cpu-autotune-threads` disables autotuning.
       - `--cpu-autotune-min-threads`, `--cpu-autotune-max-threads`, and `--cpu-autotune-secs` bound autotuner search range and sample length.
+      - `--cpu-autotune-config` overrides the persisted autotune config path.
   - `--stats-secs` (default `10`) controls periodic stats log emission cadence.
   - `--work-allocation` (`adaptive` or `static`) controls backend nonce-chunk splitting policy in mining mode.
     - Adaptive mode now also incorporates solved/stale rounds with reduced gain so weights stay fresh under frequent tip churn.

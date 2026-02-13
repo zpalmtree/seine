@@ -20,14 +20,16 @@ mod wallet;
 mod work_allocator;
 
 use std::collections::BTreeMap;
+use std::fs;
 use std::io::IsTerminal;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Result};
 use blocknet_pow_spec::CPU_LANE_MEMORY_BYTES;
 use crossbeam_channel::{bounded, Receiver, Sender};
+use serde::{Deserialize, Serialize};
 
 use crate::api::ApiClient;
 use crate::backend::cpu::{CpuBackend, CpuBackendTuning};
@@ -48,6 +50,7 @@ use ui::{info, warn};
 const TEMPLATE_RETRY_DELAY: Duration = Duration::from_secs(2);
 const MIN_EVENT_WAIT: Duration = Duration::from_millis(1);
 const BACKEND_EVENT_SOURCE_CAPACITY_MAX: usize = 256;
+const CPU_AUTOTUNE_RECORD_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy)]
 struct BackendRuntimePolicy {
@@ -111,6 +114,20 @@ pub(super) struct BackendRoundTelemetry {
     control_execution_latency_samples: u64,
     control_execution_latency_p95_micros: u64,
     control_execution_latency_max_micros: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CpuAutotuneRecord {
+    schema_version: u32,
+    profile: String,
+    affinity: String,
+    cpu_instances: usize,
+    min_threads: usize,
+    max_threads: usize,
+    selected_threads: usize,
+    measured_hps: f64,
+    autotune_secs: u64,
+    timestamp_unix_secs: u64,
 }
 
 pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
@@ -455,6 +472,27 @@ fn maybe_autotune_cpu_threads(
     }
 
     let autotune_secs = cfg.cpu_autotune_secs.max(1);
+    if let Some(record) = load_cpu_autotune_record(
+        cfg,
+        tag,
+        cpu_instance_count,
+        min_threads,
+        max_threads,
+        autotune_secs,
+    ) {
+        apply_cpu_threads(cfg, record.selected_threads);
+        info(
+            tag,
+            format!(
+                "cpu-autotune | loaded threads={} hps={} from {}",
+                record.selected_threads,
+                format_hashrate(record.measured_hps),
+                cfg.cpu_autotune_config_path.display()
+            ),
+        );
+        return Ok(());
+    }
+
     info(
         tag,
         format!(
@@ -515,14 +553,7 @@ fn maybe_autotune_cpu_threads(
         return Ok(());
     }
 
-    cfg.threads = best_threads;
-    for spec in cfg
-        .backend_specs
-        .iter_mut()
-        .filter(|spec| spec.kind == BackendKind::Cpu)
-    {
-        spec.cpu_threads = Some(best_threads);
-    }
+    apply_cpu_threads(cfg, best_threads);
     info(
         tag,
         format!(
@@ -531,6 +562,129 @@ fn maybe_autotune_cpu_threads(
             format_hashrate(best_hps)
         ),
     );
+    if let Err(err) = persist_cpu_autotune_record(
+        cfg,
+        cpu_instance_count,
+        min_threads,
+        max_threads,
+        best_threads,
+        best_hps,
+        autotune_secs,
+    ) {
+        warn(
+            tag,
+            format!(
+                "cpu-autotune | failed to persist {} ({err:#})",
+                cfg.cpu_autotune_config_path.display()
+            ),
+        );
+    } else {
+        info(
+            tag,
+            format!(
+                "cpu-autotune | wrote {}",
+                cfg.cpu_autotune_config_path.display()
+            ),
+        );
+    }
+    Ok(())
+}
+
+fn apply_cpu_threads(cfg: &mut Config, threads: usize) {
+    let threads = threads.max(1);
+    cfg.threads = threads;
+    for spec in cfg
+        .backend_specs
+        .iter_mut()
+        .filter(|spec| spec.kind == BackendKind::Cpu)
+    {
+        spec.cpu_threads = Some(threads);
+    }
+}
+
+fn load_cpu_autotune_record(
+    cfg: &Config,
+    tag: &str,
+    cpu_instance_count: usize,
+    min_threads: usize,
+    max_threads: usize,
+    autotune_secs: u64,
+) -> Option<CpuAutotuneRecord> {
+    let raw = match fs::read_to_string(&cfg.cpu_autotune_config_path) {
+        Ok(raw) => raw,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(err) => {
+            warn(
+                tag,
+                format!(
+                    "cpu-autotune | failed reading {} ({err})",
+                    cfg.cpu_autotune_config_path.display()
+                ),
+            );
+            return None;
+        }
+    };
+
+    let record = match serde_json::from_str::<CpuAutotuneRecord>(&raw) {
+        Ok(record) => record,
+        Err(err) => {
+            warn(
+                tag,
+                format!(
+                    "cpu-autotune | invalid config {} ({err})",
+                    cfg.cpu_autotune_config_path.display()
+                ),
+            );
+            return None;
+        }
+    };
+
+    if record.schema_version != CPU_AUTOTUNE_RECORD_SCHEMA_VERSION
+        || record.profile != cpu_profile_label(cfg.cpu_profile)
+        || record.affinity != cpu_affinity_label(cfg.cpu_affinity)
+        || record.cpu_instances != cpu_instance_count
+        || record.autotune_secs != autotune_secs
+        || record.selected_threads < min_threads
+        || record.selected_threads > max_threads
+    {
+        return None;
+    }
+
+    Some(record)
+}
+
+fn persist_cpu_autotune_record(
+    cfg: &Config,
+    cpu_instance_count: usize,
+    min_threads: usize,
+    max_threads: usize,
+    selected_threads: usize,
+    measured_hps: f64,
+    autotune_secs: u64,
+) -> Result<()> {
+    if let Some(parent) = cfg.cpu_autotune_config_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)?;
+        }
+    }
+
+    let record = CpuAutotuneRecord {
+        schema_version: CPU_AUTOTUNE_RECORD_SCHEMA_VERSION,
+        profile: cpu_profile_label(cfg.cpu_profile).to_string(),
+        affinity: cpu_affinity_label(cfg.cpu_affinity).to_string(),
+        cpu_instances: cpu_instance_count,
+        min_threads,
+        max_threads,
+        selected_threads,
+        measured_hps,
+        autotune_secs,
+        timestamp_unix_secs: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_secs())
+            .unwrap_or(0),
+    };
+    let payload = serde_json::to_string_pretty(&record)?;
+    fs::write(&cfg.cpu_autotune_config_path, payload)?;
     Ok(())
 }
 
@@ -546,6 +700,13 @@ fn cpu_profile_label(profile: CpuPerformanceProfile) -> &'static str {
         CpuPerformanceProfile::Balanced => "balanced",
         CpuPerformanceProfile::Throughput => "throughput",
         CpuPerformanceProfile::Efficiency => "efficiency",
+    }
+}
+
+fn cpu_affinity_label(affinity: crate::config::CpuAffinityMode) -> &'static str {
+    match affinity {
+        crate::config::CpuAffinityMode::Off => "off",
+        crate::config::CpuAffinityMode::Auto => "auto",
     }
 }
 
@@ -1732,6 +1893,7 @@ mod tests {
             cpu_autotune_min_threads: 1,
             cpu_autotune_max_threads: None,
             cpu_autotune_secs: 2,
+            cpu_autotune_config_path: std::path::PathBuf::from("./data/seine.cpu-autotune.json"),
             backend_assign_timeout: Duration::from_millis(1_000),
             backend_assign_timeout_strikes: 3,
             backend_control_timeout: Duration::from_millis(60_000),

@@ -58,6 +58,7 @@ const DEFAULT_CPU_CONTROL_CHECK_INTERVAL_HASHES: u64 = 1;
 const DEFAULT_CPU_HASH_FLUSH_MS: u64 = 50;
 const DEFAULT_CPU_EVENT_DISPATCH_CAPACITY: usize = 256;
 const DEFAULT_CPU_AUTOTUNE_SECS: u64 = 2;
+const DEFAULT_CPU_AUTOTUNE_CONFIG_FILE: &str = "seine.cpu-autotune.json";
 
 #[derive(Debug, Clone, Copy)]
 struct CpuProfileDefaults {
@@ -235,6 +236,10 @@ struct Cli {
     #[arg(long, action = ArgAction::SetTrue)]
     cpu_autotune_threads: bool,
 
+    /// Disable startup CPU kernel autotuning.
+    #[arg(long, action = ArgAction::SetTrue)]
+    disable_cpu_autotune_threads: bool,
+
     /// Minimum per-instance CPU thread count considered by autotuner.
     #[arg(long, default_value_t = 1)]
     cpu_autotune_min_threads: usize,
@@ -246,6 +251,10 @@ struct Cli {
     /// Benchmark duration (seconds) for each autotuner thread candidate.
     #[arg(long, default_value_t = DEFAULT_CPU_AUTOTUNE_SECS)]
     cpu_autotune_secs: u64,
+
+    /// Path for persisted CPU autotune result (default: <data-dir>/seine.cpu-autotune.json).
+    #[arg(long)]
+    cpu_autotune_config: Option<PathBuf>,
 
     /// Maximum time to wait for one backend assignment dispatch call, in milliseconds.
     #[arg(long, default_value_t = 1000)]
@@ -403,6 +412,7 @@ pub struct Config {
     pub cpu_autotune_min_threads: usize,
     pub cpu_autotune_max_threads: Option<usize>,
     pub cpu_autotune_secs: u64,
+    pub cpu_autotune_config_path: PathBuf,
     pub backend_assign_timeout: Duration,
     pub backend_assign_timeout_strikes: u32,
     pub backend_control_timeout: Duration,
@@ -467,6 +477,9 @@ impl Config {
             if value == 0 {
                 bail!("cpu-event-dispatch-capacity must be >= 1");
             }
+        }
+        if cli.cpu_autotune_threads && cli.disable_cpu_autotune_threads {
+            bail!("cannot use both --cpu-autotune-threads and --disable-cpu-autotune-threads");
         }
         if cli.cpu_autotune_min_threads == 0 {
             bail!("cpu-autotune-min-threads must be >= 1");
@@ -541,6 +554,16 @@ impl Config {
         };
         let profile_defaults = cpu_profile_defaults(cli.cpu_profile, auto_threads_cap);
         let resolved_threads = cli.threads.unwrap_or(profile_defaults.threads);
+        let cpu_autotune_default_enabled = cli.threads.is_none() && cpu_backend_instances > 0;
+        let cpu_autotune_threads = if cli.disable_cpu_autotune_threads {
+            false
+        } else {
+            cli.cpu_autotune_threads || cpu_autotune_default_enabled
+        };
+        let cpu_autotune_config_path = cli
+            .cpu_autotune_config
+            .clone()
+            .unwrap_or_else(|| cli.data_dir.join(DEFAULT_CPU_AUTOTUNE_CONFIG_FILE));
         let effective_hash_poll_ms = cli.hash_poll_ms.unwrap_or(profile_defaults.hash_poll_ms);
         let effective_cpu_hash_batch_size = cli
             .cpu_hash_batch_size
@@ -602,10 +625,11 @@ impl Config {
             cpu_control_check_interval_hashes: effective_cpu_control_check_interval_hashes,
             cpu_hash_flush_interval: Duration::from_millis(effective_cpu_hash_flush_ms),
             cpu_event_dispatch_capacity: effective_cpu_event_dispatch_capacity,
-            cpu_autotune_threads: cli.cpu_autotune_threads,
+            cpu_autotune_threads,
             cpu_autotune_min_threads: cli.cpu_autotune_min_threads,
             cpu_autotune_max_threads: cli.cpu_autotune_max_threads,
             cpu_autotune_secs: cli.cpu_autotune_secs.max(1),
+            cpu_autotune_config_path,
             backend_assign_timeout: Duration::from_millis(cli.backend_assign_timeout_ms),
             backend_assign_timeout_strikes: cli.backend_assign_timeout_strikes.max(1),
             backend_control_timeout: Duration::from_millis(cli.backend_control_timeout_ms),
@@ -1013,9 +1037,11 @@ mod tests {
             cpu_hash_flush_ms: Some(DEFAULT_CPU_HASH_FLUSH_MS),
             cpu_event_dispatch_capacity: Some(DEFAULT_CPU_EVENT_DISPATCH_CAPACITY),
             cpu_autotune_threads: false,
+            disable_cpu_autotune_threads: false,
             cpu_autotune_min_threads: 1,
             cpu_autotune_max_threads: None,
             cpu_autotune_secs: DEFAULT_CPU_AUTOTUNE_SECS,
+            cpu_autotune_config: None,
             backend_assign_timeout_ms: 1000,
             backend_assign_timeout_ms_per_instance: Vec::new(),
             backend_assign_timeout_strikes: 3,
@@ -1272,5 +1298,46 @@ mod tests {
         assert_eq!(efficiency.threads, 4);
         assert_eq!(efficiency.hash_poll_ms, 400);
         assert_eq!(efficiency.cpu_hash_batch_size, 32);
+    }
+
+    #[test]
+    fn cpu_autotune_defaults_on_when_threads_omitted() {
+        let mut cli = sample_cli();
+        cli.threads = None;
+        let backends = cli.backends.clone();
+        let cpu_backend_instances = backends
+            .iter()
+            .filter(|kind| matches!(kind, BackendKind::Cpu))
+            .count();
+        let auto_threads_cap = auto_cpu_threads(cpu_backend_instances);
+        let defaults = cpu_profile_defaults(cli.cpu_profile, auto_threads_cap);
+        let cpu_autotune_default_enabled = cli.threads.is_none() && cpu_backend_instances > 0;
+        let cpu_autotune_threads = if cli.disable_cpu_autotune_threads {
+            false
+        } else {
+            cli.cpu_autotune_threads || cpu_autotune_default_enabled
+        };
+        let resolved_threads = cli.threads.unwrap_or(defaults.threads);
+        assert!(cpu_autotune_threads);
+        assert!(resolved_threads >= 1);
+    }
+
+    #[test]
+    fn cpu_autotune_disable_flag_wins_over_default() {
+        let mut cli = sample_cli();
+        cli.threads = None;
+        cli.disable_cpu_autotune_threads = true;
+        let backends = cli.backends.clone();
+        let cpu_backend_instances = backends
+            .iter()
+            .filter(|kind| matches!(kind, BackendKind::Cpu))
+            .count();
+        let cpu_autotune_default_enabled = cli.threads.is_none() && cpu_backend_instances > 0;
+        let cpu_autotune_threads = if cli.disable_cpu_autotune_threads {
+            false
+        } else {
+            cli.cpu_autotune_threads || cpu_autotune_default_enabled
+        };
+        assert!(!cpu_autotune_threads);
     }
 }
