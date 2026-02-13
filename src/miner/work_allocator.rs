@@ -106,6 +106,7 @@ pub(super) fn distribute_work(
             return Ok(additional_span_consumed);
         }
 
+        let has_non_quarantined_failures = failures.iter().any(|failure| !failure.quarantined);
         for failure in failures {
             warn(
                 "BACKEND",
@@ -126,7 +127,7 @@ pub(super) fn distribute_work(
                 warn(
                     "BACKEND",
                     format!(
-                        "keeping {}#{} active; retrying assignment",
+                        "keeping {}#{} active; continuing current assignment window",
                         failure.backend, failure.backend_id
                     ),
                 );
@@ -135,6 +136,14 @@ pub(super) fn distribute_work(
 
         if backends.is_empty() {
             bail!("all mining backends are unavailable after assignment failure");
+        }
+
+        if has_non_quarantined_failures {
+            warn(
+                "BACKEND",
+                "assignment timeout without quarantine; deferring redistribution to next round",
+            );
+            return Ok(additional_span_consumed);
         }
 
         first_attempt = false;

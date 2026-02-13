@@ -46,8 +46,11 @@ const RECENT_TEMPLATE_CACHE_MIN: usize = 16;
 const RECENT_TEMPLATE_CACHE_MAX: usize = 512;
 const RECENT_TEMPLATE_CACHE_HEADROOM_ROUNDS: usize = 4;
 const RECENT_SUBMITTED_SOLUTIONS_CAPACITY: usize = 4096;
+const DEFERRED_SOLUTIONS_CAPACITY: usize = 8192;
 const SUBMIT_REQUEST_CAPACITY: usize = 128;
 const SUBMIT_RESULT_CAPACITY: usize = 128;
+const SUBMIT_BACKLOG_CAPACITY: usize = 512;
+const SUBMIT_BACKLOG_FLUSH_WAIT: Duration = Duration::from_millis(10);
 
 #[derive(Default)]
 struct RetryTracker {
@@ -136,6 +139,12 @@ struct SubmitWorker {
     done_rx: Receiver<()>,
 }
 
+enum SubmitEnqueueOutcome {
+    Queued,
+    Full(SubmitRequest),
+    Closed(SubmitRequest),
+}
+
 impl SubmitWorker {
     fn spawn(client: ApiClient, shutdown: Arc<AtomicBool>) -> Self {
         let (request_tx, request_rx) = bounded::<SubmitRequest>(SUBMIT_REQUEST_CAPACITY);
@@ -179,16 +188,15 @@ impl SubmitWorker {
         }
     }
 
-    fn submit(&self, request: SubmitRequest) -> Option<SubmitRequest> {
+    fn submit(&self, request: SubmitRequest) -> SubmitEnqueueOutcome {
         let Some(request_tx) = self.request_tx.as_ref() else {
-            return Some(request);
+            return SubmitEnqueueOutcome::Closed(request);
         };
 
         match request_tx.try_send(request) {
-            Ok(()) => None,
-            Err(TrySendError::Full(request)) | Err(TrySendError::Disconnected(request)) => {
-                Some(request)
-            }
+            Ok(()) => SubmitEnqueueOutcome::Queued,
+            Err(TrySendError::Full(request)) => SubmitEnqueueOutcome::Full(request),
+            Err(TrySendError::Disconnected(request)) => SubmitEnqueueOutcome::Closed(request),
         }
     }
 
@@ -301,6 +309,7 @@ struct MiningControlPlane<'a> {
     tip_signal: Option<&'a TipSignal>,
     prefetch: Option<TemplatePrefetch>,
     submit_worker: Option<SubmitWorker>,
+    submit_backlog: VecDeque<SubmitRequest>,
 }
 
 struct RoundLoopState {
@@ -337,8 +346,91 @@ impl<'a> MiningControlPlane<'a> {
                 Arc::clone(&shutdown),
             )),
             submit_worker: Some(SubmitWorker::spawn(client.clone(), Arc::clone(&shutdown))),
+            submit_backlog: VecDeque::with_capacity(SUBMIT_BACKLOG_CAPACITY),
             shutdown,
             tip_signal,
+        }
+    }
+
+    fn ensure_submit_worker(&mut self) {
+        if self.submit_worker.is_some() {
+            return;
+        }
+        self.submit_worker = Some(SubmitWorker::spawn(
+            self.client.clone(),
+            Arc::clone(&self.shutdown),
+        ));
+    }
+
+    fn enqueue_submit_request(&mut self, request: SubmitRequest) {
+        if self.submit_backlog.len() >= SUBMIT_BACKLOG_CAPACITY {
+            warn(
+                "SUBMIT",
+                format!(
+                    "submit backlog full ({}); dropping epoch={} nonce={} backend={}#{}",
+                    SUBMIT_BACKLOG_CAPACITY,
+                    request.solution.epoch,
+                    request.solution.nonce,
+                    request.solution.backend,
+                    request.solution.backend_id
+                ),
+            );
+            return;
+        }
+        self.submit_backlog.push_back(request);
+    }
+
+    fn flush_submit_backlog(&mut self) {
+        if self.submit_backlog.is_empty() {
+            return;
+        }
+
+        self.ensure_submit_worker();
+        while let Some(request) = self.submit_backlog.pop_front() {
+            let Some(worker) = self.submit_worker.as_ref() else {
+                self.submit_backlog.push_front(request);
+                break;
+            };
+
+            match worker.submit(request) {
+                SubmitEnqueueOutcome::Queued => {}
+                SubmitEnqueueOutcome::Full(request) => {
+                    self.submit_backlog.push_front(request);
+                    break;
+                }
+                SubmitEnqueueOutcome::Closed(request) => {
+                    warn("SUBMIT", "submit worker disconnected; respawning");
+                    self.submit_worker = None;
+                    self.submit_backlog.push_front(request);
+                    self.ensure_submit_worker();
+                    break;
+                }
+            }
+        }
+    }
+
+    fn flush_submit_backlog_for(
+        &mut self,
+        max_wait: Duration,
+        stats: &Stats,
+        tui: &mut Option<TuiDisplay>,
+    ) {
+        let max_wait = max_wait.max(Duration::from_millis(1));
+        let deadline = Instant::now() + max_wait;
+
+        while !self.submit_backlog.is_empty() && Instant::now() < deadline {
+            self.flush_submit_backlog();
+            if let Some(worker) = self.submit_worker.as_ref() {
+                worker.drain_results(stats, tui);
+            }
+            if self.submit_backlog.is_empty() {
+                break;
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            thread::sleep(remaining.min(SUBMIT_BACKLOG_FLUSH_WAIT));
         }
     }
 
@@ -370,7 +462,7 @@ impl<'a> MiningControlPlane<'a> {
     }
 
     fn submit_solution(
-        &self,
+        &mut self,
         template: &BlockTemplateResponse,
         solution: MiningSolution,
         stats: &Stats,
@@ -385,34 +477,43 @@ impl<'a> MiningControlPlane<'a> {
     }
 
     fn submit_template(
-        &self,
+        &mut self,
         template: SubmitTemplate,
         solution: MiningSolution,
         stats: &Stats,
         tui: &mut Option<TuiDisplay>,
     ) {
         stats.bump_submitted();
-
-        let mut request = SubmitRequest { template, solution };
-        if let Some(worker) = self.submit_worker.as_ref() {
-            if let Some(returned) = worker.submit(request) {
-                request = returned;
-            } else {
-                return;
-            }
-        }
-
-        let result = process_submit_request(self.client, request);
-        handle_submit_result(result, stats, tui);
+        self.enqueue_submit_request(SubmitRequest { template, solution });
+        self.flush_submit_backlog();
+        self.drain_submit_results(stats, tui);
     }
 
-    fn drain_submit_results(&self, stats: &Stats, tui: &mut Option<TuiDisplay>) {
+    fn drain_submit_results(&mut self, stats: &Stats, tui: &mut Option<TuiDisplay>) {
+        self.flush_submit_backlog();
         if let Some(worker) = self.submit_worker.as_ref() {
             worker.drain_results(stats, tui);
         }
+        self.flush_submit_backlog();
     }
 
     fn finish(mut self, stats: &Stats, tui: &mut Option<TuiDisplay>) {
+        if self.shutdown.load(Ordering::Relaxed) {
+            self.submit_backlog.clear();
+        } else {
+            self.flush_submit_backlog_for(self.cfg.submit_join_wait, stats, tui);
+            if !self.submit_backlog.is_empty() {
+                warn(
+                    "SUBMIT",
+                    format!(
+                        "dropping {} queued submit request(s) during shutdown",
+                        self.submit_backlog.len()
+                    ),
+                );
+                self.submit_backlog.clear();
+            }
+        }
+
         if let Some(mut submit_worker) = self.submit_worker.take() {
             if self.shutdown.load(Ordering::Relaxed) {
                 submit_worker.detach();
@@ -678,7 +779,7 @@ pub(super) fn run_mining_loop(
         }
         drop_solution_from_deferred(&mut deferred_solutions, submitted_solution.as_ref());
         submit_deferred_solutions(
-            &control_plane,
+            &mut control_plane,
             epoch,
             &template,
             DeferredSubmitState {
@@ -852,7 +953,7 @@ pub(super) fn run_mining_loop(
         }
         drop_solution_from_deferred(&mut deferred_solutions, final_pending_solution.as_ref());
         submit_deferred_solutions(
-            &control_plane,
+            &mut control_plane,
             epoch,
             &template,
             DeferredSubmitState {
@@ -1242,10 +1343,10 @@ fn handle_mining_backend_event(
             if solved.is_none() {
                 *solved = Some(solution);
             } else {
-                deferred_solutions.push(solution);
+                push_deferred_solution(deferred_solutions, solution);
             }
         } else if solution.epoch < epoch {
-            deferred_solutions.push(solution);
+            push_deferred_solution(deferred_solutions, solution);
         } else {
             warn(
                 "BACKEND",
@@ -1279,10 +1380,10 @@ fn drain_mining_backend_events(
             if solved.is_none() {
                 *solved = Some(solution);
             } else {
-                deferred_solutions.push(solution);
+                push_deferred_solution(deferred_solutions, solution);
             }
         } else if solution.epoch < epoch {
-            deferred_solutions.push(solution);
+            push_deferred_solution(deferred_solutions, solution);
         } else {
             warn(
                 "BACKEND",
@@ -1296,6 +1397,24 @@ fn drain_mining_backend_events(
     Ok(action)
 }
 
+fn push_deferred_solution(deferred_solutions: &mut Vec<MiningSolution>, solution: MiningSolution) {
+    if deferred_solutions.len() >= DEFERRED_SOLUTIONS_CAPACITY {
+        let drop_count = deferred_solutions
+            .len()
+            .saturating_sub(DEFERRED_SOLUTIONS_CAPACITY)
+            .saturating_add(1);
+        deferred_solutions.drain(0..drop_count);
+        warn(
+            "BACKEND",
+            format!(
+                "deferred solution queue reached capacity ({}); dropped {} oldest queued solution(s)",
+                DEFERRED_SOLUTIONS_CAPACITY, drop_count
+            ),
+        );
+    }
+    deferred_solutions.push(solution);
+}
+
 struct DeferredSubmitState<'a> {
     recent_templates: &'a VecDeque<RecentTemplateEntry>,
     deferred_solutions: &'a mut Vec<MiningSolution>,
@@ -1306,7 +1425,7 @@ struct DeferredSubmitState<'a> {
 }
 
 fn submit_deferred_solutions(
-    control_plane: &MiningControlPlane<'_>,
+    control_plane: &mut MiningControlPlane<'_>,
     current_epoch: u64,
     current_template: &BlockTemplateResponse,
     state: DeferredSubmitState<'_>,
@@ -1804,6 +1923,25 @@ mod tests {
         drop_solution_from_deferred(&mut deferred, Some(&primary));
         assert_eq!(deferred.len(), 1);
         assert_eq!(deferred[0].nonce, 9);
+    }
+
+    #[test]
+    fn deferred_solution_queue_is_bounded() {
+        let mut deferred = Vec::new();
+        for idx in 0..(DEFERRED_SOLUTIONS_CAPACITY as u64 + 3) {
+            push_deferred_solution(
+                &mut deferred,
+                MiningSolution {
+                    epoch: idx,
+                    nonce: idx,
+                    backend_id: 1,
+                    backend: "cpu",
+                },
+            );
+        }
+
+        assert_eq!(deferred.len(), DEFERRED_SOLUTIONS_CAPACITY);
+        assert_eq!(deferred[0].epoch, 3);
     }
 
     #[test]

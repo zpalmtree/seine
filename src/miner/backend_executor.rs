@@ -519,6 +519,7 @@ fn perform_quarantine_stop(
     backend_handle: Arc<dyn PowBackend>,
     worker_tx: Option<Sender<BackendWorkerCommand>>,
 ) {
+    let mut should_run_fallback_stop = true;
     if let Some(worker_tx) = worker_tx {
         let (done_tx, done_rx) = bounded::<()>(1);
         let stop_command = BackendWorkerCommand::Stop {
@@ -529,6 +530,7 @@ fn perform_quarantine_stop(
         };
         match worker_tx.send_timeout(stop_command, BACKEND_STOP_ENQUEUE_TIMEOUT) {
             Ok(()) => {
+                should_run_fallback_stop = false;
                 if matches!(
                     done_rx.recv_timeout(BACKEND_STOP_ACK_TIMEOUT),
                     Err(RecvTimeoutError::Timeout)
@@ -540,19 +542,21 @@ fn perform_quarantine_stop(
                         ),
                     );
                 }
-                return;
             }
             Err(SendTimeoutError::Timeout(_)) => {
                 warn(
                     "BACKEND",
                     format!(
-                        "backend stop command enqueue timed out for {backend}#{backend_id}; detached"
+                        "backend stop command enqueue timed out for {backend}#{backend_id}; running synchronous stop fallback"
                     ),
                 );
-                return;
             }
             Err(SendTimeoutError::Disconnected(_)) => {}
         }
+    }
+
+    if !should_run_fallback_stop {
+        return;
     }
 
     if panic::catch_unwind(AssertUnwindSafe(|| backend_handle.stop())).is_err() {
@@ -773,6 +777,31 @@ mod tests {
         executor.quarantine_backend(9, backend);
 
         thread::sleep(Duration::from_millis(140));
+        assert_eq!(stops.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn quarantine_falls_back_to_synchronous_stop_when_stop_enqueue_times_out() {
+        let stops = Arc::new(AtomicUsize::new(0));
+        let backend = Arc::new(StopCountingBackend::new(Arc::clone(&stops))) as Arc<dyn PowBackend>;
+        let (worker_tx, _worker_rx) = bounded::<BackendWorkerCommand>(1);
+        let (outcome_tx, _outcome_rx) = bounded::<BackendTaskOutcome>(1);
+        worker_tx
+            .send(BackendWorkerCommand::Run {
+                task: BackendTask {
+                    idx: 0,
+                    backend_id: 5,
+                    backend: "stop-counter",
+                    backend_handle: Arc::clone(&backend),
+                    kind: BackendTaskKind::Cancel,
+                },
+                deadline: Instant::now() + Duration::from_secs(1),
+                outcome_tx,
+            })
+            .expect("prefill backend worker queue should succeed");
+
+        perform_quarantine_stop(5, "stop-counter", backend, Some(worker_tx));
+
         assert_eq!(stops.load(Ordering::Relaxed), 1);
     }
 
