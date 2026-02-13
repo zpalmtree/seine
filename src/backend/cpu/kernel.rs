@@ -11,7 +11,7 @@ use crate::types::hash_meets_target;
 use super::{
     emit_error, emit_event, flush_hashes, lane_quota_for_chunk, mark_startup_failed,
     mark_worker_active, mark_worker_inactive, mark_worker_ready, pow_params, request_shutdown,
-    should_flush_hashes, wait_for_work_update, Shared, SOLVED_MASK,
+    request_work_pause, should_flush_hashes, wait_for_work_update, Shared, SOLVED_MASK,
 };
 
 pub(super) fn cpu_worker_loop(
@@ -95,22 +95,22 @@ pub(super) fn cpu_worker_loop(
         };
         let template = &work.template;
 
+        if lane_iters >= lane_quota {
+            flush_hashes(&shared, thread_idx, &mut pending_hashes);
+            mark_worker_inactive(&shared, &mut worker_active);
+            local_work = None;
+            continue;
+        }
+
+        if shared.solution_state.load(Ordering::Acquire) != template.work_id {
+            flush_hashes(&shared, thread_idx, &mut pending_hashes);
+            mark_worker_inactive(&shared, &mut worker_active);
+            local_work = None;
+            continue;
+        }
+
         if control_hashes_remaining == 0 {
-            if lane_iters >= lane_quota {
-                flush_hashes(&shared, thread_idx, &mut pending_hashes);
-                mark_worker_inactive(&shared, &mut worker_active);
-                local_work = None;
-                continue;
-            }
-
             if Instant::now() >= template.stop_at {
-                flush_hashes(&shared, thread_idx, &mut pending_hashes);
-                mark_worker_inactive(&shared, &mut worker_active);
-                local_work = None;
-                continue;
-            }
-
-            if shared.solution_state.load(Ordering::Acquire) != template.work_id {
                 flush_hashes(&shared, thread_idx, &mut pending_hashes);
                 mark_worker_inactive(&shared, &mut worker_active);
                 local_work = None;
@@ -164,6 +164,16 @@ pub(super) fn cpu_worker_loop(
                 )
                 .is_ok()
             {
+                if let Err(err) = request_work_pause(&shared) {
+                    emit_error(
+                        &shared,
+                        format!(
+                            "cpu thread {thread_idx}: failed to pause workers after solution ({err})"
+                        ),
+                    );
+                    request_shutdown(&shared);
+                    break;
+                }
                 emit_event(
                     &shared,
                     BackendEvent::Solution(MiningSolution {
@@ -173,6 +183,10 @@ pub(super) fn cpu_worker_loop(
                         backend: "cpu",
                     }),
                 );
+                flush_hashes(&shared, thread_idx, &mut pending_hashes);
+                mark_worker_inactive(&shared, &mut worker_active);
+                local_work = None;
+                continue;
             }
         }
 

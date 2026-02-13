@@ -1551,7 +1551,7 @@ mod tests {
             backend_event_capacity: 1024,
             hash_poll_interval: Duration::from_millis(200),
             cpu_hash_batch_size: 64,
-            cpu_control_check_interval_hashes: 256,
+            cpu_control_check_interval_hashes: 1,
             cpu_hash_flush_interval: Duration::from_millis(50),
             cpu_event_dispatch_capacity: 256,
             backend_assign_timeout: Duration::from_millis(1_000),

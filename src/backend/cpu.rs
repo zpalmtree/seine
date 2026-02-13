@@ -21,7 +21,7 @@ mod events;
 mod kernel;
 
 const DEFAULT_HASH_BATCH_SIZE: u64 = 64;
-const DEFAULT_CONTROL_CHECK_INTERVAL_HASHES: u64 = 256;
+const DEFAULT_CONTROL_CHECK_INTERVAL_HASHES: u64 = 1;
 const DEFAULT_HASH_FLUSH_INTERVAL: Duration = Duration::from_millis(50);
 const NONBLOCKING_POLL_MIN: Duration = Duration::from_micros(50);
 const NONBLOCKING_POLL_MAX: Duration = Duration::from_millis(1);

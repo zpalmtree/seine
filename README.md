@@ -107,7 +107,7 @@ Run headless/plain logs (no fullscreen TUI):
     - Runtime may tighten this cadence based on backend capability hints (for example future GPU backends) while preserving the configured upper bound.
   - CPU backend hot-path tuning knobs for faster perf iteration:
     - `--cpu-hash-batch-size` (default `64`) controls per-worker hash counter flush batch size.
-    - `--cpu-control-check-interval-hashes` (default `256`) controls per-worker control/deadline check cadence.
+    - `--cpu-control-check-interval-hashes` (default `1`) controls per-worker control/deadline check cadence.
     - `--cpu-hash-flush-ms` (default `50`) controls time-based hash counter flush cadence.
     - `--cpu-event-dispatch-capacity` (default `256`) controls internal CPU backend event dispatch buffering.
   - `--stats-secs` (default `10`) controls periodic stats log emission cadence.

@@ -158,7 +158,7 @@ struct Cli {
     cpu_hash_batch_size: u64,
 
     /// CPU worker control check cadence in hashes.
-    #[arg(long, default_value_t = 256)]
+    #[arg(long, default_value_t = 1)]
     cpu_control_check_interval_hashes: u64,
 
     /// CPU worker hash flush interval in milliseconds.
@@ -847,7 +847,7 @@ mod tests {
             backend_event_capacity: 1024,
             hash_poll_ms: 200,
             cpu_hash_batch_size: 64,
-            cpu_control_check_interval_hashes: 256,
+            cpu_control_check_interval_hashes: 1,
             cpu_hash_flush_ms: 50,
             cpu_event_dispatch_capacity: 256,
             backend_assign_timeout_ms: 1000,
