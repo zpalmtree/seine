@@ -327,17 +327,14 @@ impl BackendExecutor {
         build_backend_telemetry(counters, latencies, assignment_timeout_strikes)
     }
 
-    pub(super) fn take_backend_telemetry_batch<'a, I>(
-        &self,
-        backends: I,
-    ) -> BTreeMap<BackendInstanceId, BackendTelemetry>
+    pub(super) fn take_backend_telemetry_ordered<'a, I>(&self, backends: I) -> Vec<BackendTelemetry>
     where
         I: IntoIterator<Item = &'a BackendSlot>,
     {
         let mut timeout_counters = self.task_timeout_counters.lock().ok();
         let mut latency_counters = self.task_latency_counters.lock().ok();
         let assignment_timeout_strikes = self.assignment_timeout_strikes.lock().ok();
-        let mut telemetry = BTreeMap::new();
+        let mut telemetry = Vec::new();
 
         for slot in backends {
             let key = backend_worker_key(slot.id, &slot.backend);
@@ -354,9 +351,7 @@ impl BackendExecutor {
                 .and_then(|map| map.get(&key).copied())
                 .unwrap_or(0);
             let entry = build_backend_telemetry(counters, latencies, strikes);
-            if !is_backend_telemetry_zero(entry) {
-                telemetry.insert(slot.id, entry);
-            }
+            telemetry.push(entry);
         }
 
         telemetry
@@ -394,26 +389,6 @@ fn build_backend_telemetry(
     }
 }
 
-fn is_backend_telemetry_zero(telemetry: BackendTelemetry) -> bool {
-    telemetry.assignment_enqueue_timeouts == 0
-        && telemetry.assignment_execution_timeouts == 0
-        && telemetry.control_enqueue_timeouts == 0
-        && telemetry.control_execution_timeouts == 0
-        && telemetry.assignment_timeout_strikes == 0
-        && telemetry.assignment_enqueue_latency_samples == 0
-        && telemetry.assignment_enqueue_latency_p95_micros == 0
-        && telemetry.assignment_enqueue_latency_max_micros == 0
-        && telemetry.assignment_execution_latency_samples == 0
-        && telemetry.assignment_execution_latency_p95_micros == 0
-        && telemetry.assignment_execution_latency_max_micros == 0
-        && telemetry.control_enqueue_latency_samples == 0
-        && telemetry.control_enqueue_latency_p95_micros == 0
-        && telemetry.control_enqueue_latency_max_micros == 0
-        && telemetry.control_execution_latency_samples == 0
-        && telemetry.control_execution_latency_p95_micros == 0
-        && telemetry.control_execution_latency_max_micros == 0
-}
-
 fn backend_worker_key(
     backend_id: BackendInstanceId,
     backend_handle: &Arc<dyn PowBackend>,
@@ -433,13 +408,16 @@ fn normalized_backend_capabilities(backend_handle: &Arc<dyn PowBackend>) -> Back
 
 fn backend_worker_queue_capacity(backend_handle: &Arc<dyn PowBackend>) -> usize {
     let capabilities = normalized_backend_capabilities(backend_handle);
-    let requested = capabilities.max_inflight_assignments.max(1) as usize;
-    let queue_depth = if capabilities.assignment_semantics == AssignmentSemantics::Append {
-        requested
+    let default_depth = if capabilities.assignment_semantics == AssignmentSemantics::Append {
+        capabilities.max_inflight_assignments.max(1)
     } else {
         1
     };
-    queue_depth.clamp(1, BACKEND_WORKER_QUEUE_CAPACITY_MAX)
+    let requested_depth = capabilities
+        .preferred_worker_queue_depth
+        .unwrap_or(default_depth)
+        .max(1) as usize;
+    requested_depth.clamp(1, BACKEND_WORKER_QUEUE_CAPACITY_MAX)
 }
 
 fn run_backend_worker_command(command: BackendWorkerCommand) -> bool {
@@ -1505,6 +1483,7 @@ mod tests {
         max_inflight_assignments: u32,
         assignment_semantics: AssignmentSemantics,
         supports_batching: bool,
+        preferred_worker_queue_depth: Option<u32>,
         nonblocking_poll_min: Option<Duration>,
         nonblocking_poll_max: Option<Duration>,
     }
@@ -1515,6 +1494,7 @@ mod tests {
                 max_inflight_assignments,
                 assignment_semantics: AssignmentSemantics::Replace,
                 supports_batching: false,
+                preferred_worker_queue_depth: None,
                 nonblocking_poll_min: None,
                 nonblocking_poll_max: None,
             }
@@ -1527,6 +1507,11 @@ mod tests {
 
         fn with_batching(mut self, supports_batching: bool) -> Self {
             self.supports_batching = supports_batching;
+            self
+        }
+
+        fn with_worker_queue_depth_hint(mut self, preferred_worker_queue_depth: u32) -> Self {
+            self.preferred_worker_queue_depth = Some(preferred_worker_queue_depth);
             self
         }
 
@@ -1580,6 +1565,7 @@ mod tests {
             BackendCapabilities {
                 max_inflight_assignments: self.max_inflight_assignments,
                 assignment_semantics: self.assignment_semantics,
+                preferred_worker_queue_depth: self.preferred_worker_queue_depth,
                 nonblocking_poll_min: self.nonblocking_poll_min,
                 nonblocking_poll_max: self.nonblocking_poll_max,
                 ..BackendCapabilities::default()
@@ -1621,6 +1607,17 @@ mod tests {
             backend_worker_queue_capacity(&backend),
             BACKEND_WORKER_QUEUE_CAPACITY_MAX
         );
+    }
+
+    #[test]
+    fn worker_queue_capacity_can_override_replace_semantics_default_depth() {
+        let backend = Arc::new(
+            CapabilityBackend::new(1)
+                .with_assignment_semantics(AssignmentSemantics::Replace)
+                .with_worker_queue_depth_hint(8),
+        ) as Arc<dyn PowBackend>;
+
+        assert_eq!(backend_worker_queue_capacity(&backend), 8);
     }
 
     #[test]

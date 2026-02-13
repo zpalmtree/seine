@@ -76,6 +76,7 @@ impl PowBackend for NvidiaBackend {
             preferred_assignment_timeout: None,
             preferred_control_timeout: None,
             preferred_assignment_timeout_strikes: None,
+            preferred_worker_queue_depth: None,
             max_inflight_assignments: 1,
             deadline_support: DeadlineSupport::BestEffort,
             assignment_semantics: AssignmentSemantics::Replace,

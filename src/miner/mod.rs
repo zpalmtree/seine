@@ -9,6 +9,7 @@ mod round_control;
 mod round_driver;
 mod runtime;
 mod scheduler;
+mod solution_cache;
 mod stats;
 mod submit;
 mod template_prefetch;
@@ -571,15 +572,13 @@ fn collect_backend_hashes(
     mut round_backend_telemetry: Option<&mut BTreeMap<BackendInstanceId, BackendRoundTelemetry>>,
 ) {
     let mut collected = 0u64;
-    let mut runtime_telemetry = backend_executor.take_backend_telemetry_batch(backends.iter());
-    for slot in backends {
+    let runtime_telemetry = backend_executor.take_backend_telemetry_ordered(backends.iter());
+    for (slot, runtime) in backends.iter().zip(runtime_telemetry.into_iter()) {
         let slot_hashes = slot.backend.take_hashes();
         let telemetry = slot.backend.take_telemetry();
         if let Some(per_backend_telemetry) = round_backend_telemetry.as_deref_mut() {
             merge_backend_telemetry(per_backend_telemetry, slot.id, telemetry);
-            if let Some(runtime) = runtime_telemetry.remove(&slot.id) {
-                merge_backend_telemetry(per_backend_telemetry, slot.id, runtime);
-            }
+            merge_backend_telemetry(per_backend_telemetry, slot.id, runtime);
         }
 
         if slot_hashes == 0 {
@@ -618,16 +617,14 @@ fn collect_round_backend_samples(
     }
 
     let mut collected = 0u64;
-    let mut runtime_telemetry =
-        backend_executor.take_backend_telemetry_batch(due_slots.iter().copied());
-    for slot in due_slots {
+    let runtime_telemetry =
+        backend_executor.take_backend_telemetry_ordered(due_slots.iter().copied());
+    for (slot, runtime) in due_slots.into_iter().zip(runtime_telemetry.into_iter()) {
         let backend_id = slot.id;
         let hashes = slot.backend.take_hashes();
         let telemetry = slot.backend.take_telemetry();
         merge_backend_telemetry(round_backend_telemetry, backend_id, telemetry);
-        if let Some(runtime) = runtime_telemetry.remove(&backend_id) {
-            merge_backend_telemetry(round_backend_telemetry, backend_id, runtime);
-        }
+        merge_backend_telemetry(round_backend_telemetry, backend_id, runtime);
         if hashes > 0 {
             collected = collected.saturating_add(hashes);
             let entry = round_backend_hashes.entry(backend_id).or_insert(0);
@@ -950,13 +947,14 @@ fn backend_chunk_profiles(backends: &[BackendSlot], default_iters_per_lane: u64)
             let deadline_support = capabilities.deadline_support.describe();
             let assignment_semantics = capabilities.assignment_semantics.describe();
             let execution_model = capabilities.execution_model.describe();
-            let worker_queue_depth = if capabilities.assignment_semantics
-                == crate::backend::AssignmentSemantics::Append
-            {
-                inflight
-            } else {
-                1
-            };
+            let worker_queue_depth = capabilities.preferred_worker_queue_depth.unwrap_or_else(|| {
+                if capabilities.assignment_semantics == crate::backend::AssignmentSemantics::Append
+                {
+                    inflight
+                } else {
+                    1
+                }
+            });
             let nonblocking_poll = match (
                 capabilities.nonblocking_poll_min,
                 capabilities.nonblocking_poll_max,
@@ -1418,6 +1416,7 @@ mod tests {
                 preferred_assignment_timeout: None,
                 preferred_control_timeout: None,
                 preferred_assignment_timeout_strikes: None,
+                preferred_worker_queue_depth: None,
                 max_inflight_assignments: self.max_inflight_assignments.max(1),
                 deadline_support: self.deadline_support,
                 assignment_semantics: self.assignment_semantics,

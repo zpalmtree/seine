@@ -25,6 +25,18 @@ use super::runtime::{
     RoundEndReason, WeightUpdateInputs,
 };
 use super::scheduler::NonceScheduler;
+use super::solution_cache::{
+    already_submitted_solution, dedupe_queued_solutions, drop_solution_from_deferred,
+    push_deferred_solution, recent_template_cache_size_from_timeouts,
+    recent_template_retention_from_timeouts, remember_recent_template,
+    remember_submitted_solution, submit_template_for_solution_epoch, RecentTemplateEntry,
+    RECENT_TEMPLATE_CACHE_MAX_BYTES,
+};
+#[cfg(test)]
+use super::solution_cache::{
+    DEFERRED_SOLUTIONS_CAPACITY, RECENT_SUBMITTED_SOLUTIONS_CAPACITY, RECENT_TEMPLATE_CACHE_MAX,
+    RECENT_TEMPLATE_CACHE_MIN,
+};
 use super::stats::Stats;
 #[cfg(test)]
 use super::submit::{process_submit_request, SubmitOutcome};
@@ -43,12 +55,6 @@ use super::{
 type BackendEventAction = RuntimeBackendEventAction;
 
 const RETRY_LOG_INTERVAL: Duration = Duration::from_secs(10);
-const RECENT_TEMPLATE_CACHE_MIN: usize = 16;
-const RECENT_TEMPLATE_CACHE_MAX: usize = 512;
-const RECENT_TEMPLATE_CACHE_HEADROOM_ROUNDS: usize = 4;
-const RECENT_TEMPLATE_CACHE_MAX_BYTES: usize = 64 * 1024 * 1024;
-const RECENT_SUBMITTED_SOLUTIONS_CAPACITY: usize = 4096;
-const DEFERRED_SOLUTIONS_CAPACITY: usize = 8192;
 const SUBMIT_BACKLOG_CAPACITY: usize = 512;
 const SUBMIT_BACKLOG_HARD_CAPACITY: usize = 4096;
 const SUBMIT_BACKLOG_FLUSH_WAIT: Duration = Duration::from_millis(10);
@@ -113,13 +119,6 @@ struct RoundLoopState {
     round_hashes: u64,
     round_backend_hashes: BTreeMap<u64, u64>,
     round_backend_telemetry: BTreeMap<u64, BackendRoundTelemetry>,
-}
-
-struct RecentTemplateEntry {
-    epoch: u64,
-    recorded_at: Instant,
-    submit_template: SubmitTemplate,
-    estimated_bytes: usize,
 }
 
 struct PreparedTemplate {
@@ -199,8 +198,7 @@ impl<'a> MiningControlPlane<'a> {
         }
 
         self.enforce_submit_backpressure(stats, tui);
-
-        self.submit_backlog.push_back(request);
+        self.push_submit_backlog_bounded(request);
     }
 
     fn maybe_log_submit_backpressure(&mut self, message: String) {
@@ -244,11 +242,28 @@ impl<'a> MiningControlPlane<'a> {
 
         if self.submit_backlog.len() >= SUBMIT_BACKLOG_HARD_CAPACITY {
             self.maybe_log_submit_backpressure(format!(
-                "submit backlog remains saturated after {}ms backpressure budget; preserving queued requests and allowing temporary growth (queued={})",
+                "submit backlog remains saturated after {}ms backpressure budget; new submit requests will evict oldest queued entries (queued={})",
                 SUBMIT_BACKLOG_BACKPRESSURE_WAIT_BUDGET.as_millis(),
                 self.submit_backlog.len()
             ));
         }
+    }
+
+    fn push_submit_backlog_bounded(&mut self, request: SubmitRequest) {
+        if self.submit_backlog.len() >= SUBMIT_BACKLOG_HARD_CAPACITY {
+            let drop_count = self
+                .submit_backlog
+                .len()
+                .saturating_sub(SUBMIT_BACKLOG_HARD_CAPACITY)
+                .saturating_add(1);
+            self.submit_backlog.drain(0..drop_count);
+            self.maybe_log_submit_backpressure(format!(
+                "submit backlog hard cap reached ({}); dropped {} oldest queued submit request(s)",
+                SUBMIT_BACKLOG_HARD_CAPACITY,
+                drop_count
+            ));
+        }
+        self.submit_backlog.push_back(request);
     }
 
     fn flush_submit_backlog(&mut self) {
@@ -1551,31 +1566,6 @@ fn route_mining_solution(
     }
 }
 
-fn push_deferred_solution(deferred_solutions: &mut Vec<MiningSolution>, solution: MiningSolution) {
-    if deferred_solutions
-        .iter()
-        .any(|queued| queued.epoch == solution.epoch && queued.nonce == solution.nonce)
-    {
-        return;
-    }
-
-    if deferred_solutions.len() >= DEFERRED_SOLUTIONS_CAPACITY {
-        let drop_count = deferred_solutions
-            .len()
-            .saturating_sub(DEFERRED_SOLUTIONS_CAPACITY)
-            .saturating_add(1);
-        deferred_solutions.drain(0..drop_count);
-        warn(
-            "BACKEND",
-            format!(
-                "deferred solution queue reached capacity ({}); dropped {} oldest queued solution(s)",
-                DEFERRED_SOLUTIONS_CAPACITY, drop_count
-            ),
-        );
-    }
-    deferred_solutions.push(solution);
-}
-
 struct DeferredSubmitState<'a> {
     recent_templates: &'a VecDeque<RecentTemplateEntry>,
     deferred_solutions: &'a mut Vec<MiningSolution>,
@@ -1625,116 +1615,6 @@ fn submit_deferred_solutions(
     }
 }
 
-fn dedupe_queued_solutions(queued: Vec<MiningSolution>) -> Vec<MiningSolution> {
-    let mut seen = HashSet::new();
-
-    let mut deduped = Vec::with_capacity(queued.len());
-    for solution in queued {
-        if seen.insert((solution.epoch, solution.nonce)) {
-            deduped.push(solution);
-        }
-    }
-    deduped
-}
-
-fn drop_solution_from_deferred(
-    deferred_solutions: &mut Vec<MiningSolution>,
-    primary_submitted: Option<&MiningSolution>,
-) {
-    let Some(solution) = primary_submitted else {
-        return;
-    };
-    deferred_solutions.retain(|candidate| {
-        !(candidate.epoch == solution.epoch && candidate.nonce == solution.nonce)
-    });
-}
-
-fn submit_template_for_solution_epoch(
-    current_epoch: u64,
-    current_submit_template: &SubmitTemplate,
-    recent_templates: &VecDeque<RecentTemplateEntry>,
-    solution_epoch: u64,
-) -> Option<SubmitTemplate> {
-    if solution_epoch == current_epoch {
-        return Some(current_submit_template.clone());
-    }
-    for entry in recent_templates.iter().rev() {
-        if entry.epoch == solution_epoch {
-            return Some(entry.submit_template.clone());
-        }
-    }
-    None
-}
-
-fn remember_recent_template(
-    recent_templates: &mut VecDeque<RecentTemplateEntry>,
-    recent_templates_bytes: &mut usize,
-    epoch: u64,
-    submit_template: SubmitTemplate,
-    retention: Duration,
-    max_entries: usize,
-    max_bytes: usize,
-) {
-    let retention = retention.max(Duration::from_millis(1));
-    let max_entries = max_entries.max(1);
-    let max_bytes = max_bytes.max(1);
-    let now = Instant::now();
-    let estimated_bytes = submit_template_estimated_bytes(&submit_template).max(1);
-    recent_templates.push_back(RecentTemplateEntry {
-        epoch,
-        recorded_at: now,
-        submit_template,
-        estimated_bytes,
-    });
-    *recent_templates_bytes = recent_templates_bytes.saturating_add(estimated_bytes);
-
-    while let Some(front) = recent_templates.front() {
-        let over_capacity = recent_templates.len() > max_entries;
-        let over_bytes = *recent_templates_bytes > max_bytes;
-        let stale_by_age = now.saturating_duration_since(front.recorded_at) > retention;
-        if !over_capacity && !stale_by_age && !over_bytes {
-            break;
-        }
-        if let Some(removed) = recent_templates.pop_front() {
-            *recent_templates_bytes =
-                recent_templates_bytes.saturating_sub(removed.estimated_bytes);
-        }
-    }
-}
-
-fn submit_template_estimated_bytes(template: &SubmitTemplate) -> usize {
-    match template {
-        SubmitTemplate::Compact { template_id } => template_id.len().saturating_add(32),
-        SubmitTemplate::FullBlock { block } => serde_json::to_vec(block.as_ref())
-            .map(|encoded| encoded.len())
-            .unwrap_or(8 * 1024 * 1024),
-    }
-}
-
-fn already_submitted_solution(
-    submitted_solution_keys: &HashSet<(u64, u64)>,
-    solution: &MiningSolution,
-) -> bool {
-    submitted_solution_keys.contains(&(solution.epoch, solution.nonce))
-}
-
-fn remember_submitted_solution(
-    submitted_solution_order: &mut VecDeque<(u64, u64)>,
-    submitted_solution_keys: &mut HashSet<(u64, u64)>,
-    solution: &MiningSolution,
-) {
-    let key = (solution.epoch, solution.nonce);
-    if !submitted_solution_keys.insert(key) {
-        return;
-    }
-    submitted_solution_order.push_back(key);
-    while submitted_solution_order.len() > RECENT_SUBMITTED_SOLUTIONS_CAPACITY {
-        if let Some(expired) = submitted_solution_order.pop_front() {
-            submitted_solution_keys.remove(&expired);
-        }
-    }
-}
-
 fn recent_template_cache_size(cfg: &Config) -> usize {
     recent_template_cache_size_from_timeouts(
         cfg.refresh_interval,
@@ -1755,40 +1635,6 @@ fn recent_template_retention(cfg: &Config) -> Duration {
 
 fn recent_template_cache_max_bytes() -> usize {
     RECENT_TEMPLATE_CACHE_MAX_BYTES
-}
-
-fn recent_template_retention_from_timeouts(
-    refresh_interval: Duration,
-    backend_control_timeout: Duration,
-    backend_assign_timeout: Duration,
-    prefetch_wait: Duration,
-) -> Duration {
-    let refresh_interval = refresh_interval.max(Duration::from_millis(1));
-    refresh_interval
-        .saturating_add(backend_control_timeout)
-        .saturating_add(backend_assign_timeout)
-        .saturating_add(prefetch_wait)
-}
-
-fn recent_template_cache_size_from_timeouts(
-    refresh_interval: Duration,
-    backend_control_timeout: Duration,
-    backend_assign_timeout: Duration,
-    prefetch_wait: Duration,
-) -> usize {
-    let refresh_millis = refresh_interval.max(Duration::from_millis(1)).as_millis();
-    let grace_millis = backend_control_timeout
-        .as_millis()
-        .saturating_add(backend_assign_timeout.as_millis())
-        .saturating_add(prefetch_wait.as_millis())
-        .saturating_add(refresh_millis);
-    let rounds_needed = grace_millis
-        .saturating_div(refresh_millis)
-        .saturating_add(RECENT_TEMPLATE_CACHE_HEADROOM_ROUNDS as u128);
-    rounds_needed.clamp(
-        RECENT_TEMPLATE_CACHE_MIN as u128,
-        RECENT_TEMPLATE_CACHE_MAX as u128,
-    ) as usize
 }
 
 #[cfg(test)]

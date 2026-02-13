@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, Result};
 use argon2::{Algorithm, Argon2, Block, Version};
 use blocknet_pow_spec::{pow_params, POW_OUTPUT_LEN};
-use crossbeam_channel::{bounded, Sender};
+use crossbeam_channel::{unbounded, Sender};
 
 use crate::backend::{
     AssignmentSemantics, BackendCapabilities, BackendEvent, BackendExecutionModel,
@@ -28,7 +28,6 @@ const NONBLOCKING_POLL_MAX: Duration = Duration::from_millis(1);
 const CRITICAL_EVENT_RETRY_WAIT: Duration = Duration::from_millis(5);
 const CRITICAL_EVENT_RETRY_MAX_WAIT: Duration = Duration::from_millis(100);
 const ERROR_EVENT_MAX_BLOCK: Duration = Duration::from_millis(500);
-const EVENT_DISPATCH_CAPACITY: usize = 1024;
 const SOLVED_MASK: u64 = 1u64 << 63;
 const STARTUP_READY_WAIT_SLICE: Duration = Duration::from_millis(50);
 const STARTUP_READY_TIMEOUT_BASE: Duration = Duration::from_secs(15);
@@ -173,7 +172,7 @@ impl CpuBackend {
 
     fn start_event_forwarder(&self) -> Result<()> {
         let instance_id = self.shared.instance_id.load(Ordering::Acquire);
-        let (dispatch_tx, dispatch_rx) = bounded::<BackendEvent>(EVENT_DISPATCH_CAPACITY.max(1));
+        let (dispatch_tx, dispatch_rx) = unbounded::<BackendEvent>();
         if let Ok(mut slot) = self.shared.event_dispatch_tx.write() {
             *slot = Some(dispatch_tx);
         } else {
@@ -493,6 +492,7 @@ impl PowBackend for CpuBackend {
             preferred_assignment_timeout: None,
             preferred_control_timeout: None,
             preferred_assignment_timeout_strikes: None,
+            preferred_worker_queue_depth: None,
             max_inflight_assignments: 1,
             deadline_support: DeadlineSupport::Cooperative,
             assignment_semantics: AssignmentSemantics::Replace,

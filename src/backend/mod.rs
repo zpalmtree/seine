@@ -89,6 +89,7 @@ pub mod nvidia {
                 preferred_assignment_timeout: None,
                 preferred_control_timeout: None,
                 preferred_assignment_timeout_strikes: None,
+                preferred_worker_queue_depth: None,
                 max_inflight_assignments: 1,
                 deadline_support: DeadlineSupport::BestEffort,
                 assignment_semantics: AssignmentSemantics::Replace,
@@ -266,6 +267,11 @@ pub struct BackendCapabilities {
     pub preferred_control_timeout: Option<Duration>,
     /// Preferred backend-specific assignment timeout strike threshold.
     pub preferred_assignment_timeout_strikes: Option<u32>,
+    /// Preferred per-backend executor queue depth for dispatch/control requests.
+    ///
+    /// When unset, runtime uses backend semantics defaults (`append` backends use
+    /// `max_inflight_assignments`, `replace` backends use depth `1`).
+    pub preferred_worker_queue_depth: Option<u32>,
     /// Maximum number of in-flight assignments this backend can queue efficiently.
     /// Runtime may split one reservation into this many chunks for dispatch.
     pub max_inflight_assignments: u32,
@@ -290,6 +296,7 @@ impl Default for BackendCapabilities {
             preferred_assignment_timeout: None,
             preferred_control_timeout: None,
             preferred_assignment_timeout_strikes: None,
+            preferred_worker_queue_depth: None,
             max_inflight_assignments: 1,
             deadline_support: DeadlineSupport::BestEffort,
             assignment_semantics: AssignmentSemantics::Replace,
@@ -318,6 +325,9 @@ pub fn normalize_backend_capabilities(
     capabilities.preferred_assignment_timeout_strikes = capabilities
         .preferred_assignment_timeout_strikes
         .map(|strikes| strikes.max(1));
+    capabilities.preferred_worker_queue_depth = capabilities
+        .preferred_worker_queue_depth
+        .map(|depth| depth.max(1));
 
     capabilities.nonblocking_poll_min = capabilities
         .nonblocking_poll_min
