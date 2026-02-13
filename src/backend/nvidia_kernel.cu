@@ -3,6 +3,8 @@
 
 extern "C" {
 
+constexpr unsigned int ARGON2_COOP_THREADS = 32U;
+
 __device__ __forceinline__ unsigned long long blamka(
     unsigned long long x,
     unsigned long long y
@@ -56,71 +58,140 @@ __device__ __forceinline__ void permute_round(
     permute_step(v3, v4, v9, v14);
 }
 
-__device__ __forceinline__ void compress_block(
+__device__ __forceinline__ void compress_block_coop(
     const unsigned long long *rhs,
     const unsigned long long *lhs,
     unsigned long long *out,
     unsigned long long *scratch_r,
-    unsigned long long *scratch_q
+    unsigned long long *scratch_q,
+    unsigned int tid
 ) {
-#pragma unroll
-    for (int i = 0; i < 128; ++i) {
-        unsigned long long r = rhs[i] ^ lhs[i];
+    for (unsigned int i = tid; i < 128U; i += ARGON2_COOP_THREADS) {
+        const unsigned long long r = rhs[i] ^ lhs[i];
         scratch_r[i] = r;
         scratch_q[i] = r;
     }
+    __syncthreads();
 
-#pragma unroll
-    for (int row = 0; row < 8; ++row) {
-        unsigned long long *v = scratch_q + row * 16;
+    if (tid < 8U) {
+        const unsigned int base = tid * 16U;
+        unsigned long long v0 = scratch_q[base + 0U];
+        unsigned long long v1 = scratch_q[base + 1U];
+        unsigned long long v2 = scratch_q[base + 2U];
+        unsigned long long v3 = scratch_q[base + 3U];
+        unsigned long long v4 = scratch_q[base + 4U];
+        unsigned long long v5 = scratch_q[base + 5U];
+        unsigned long long v6 = scratch_q[base + 6U];
+        unsigned long long v7 = scratch_q[base + 7U];
+        unsigned long long v8 = scratch_q[base + 8U];
+        unsigned long long v9 = scratch_q[base + 9U];
+        unsigned long long v10 = scratch_q[base + 10U];
+        unsigned long long v11 = scratch_q[base + 11U];
+        unsigned long long v12 = scratch_q[base + 12U];
+        unsigned long long v13 = scratch_q[base + 13U];
+        unsigned long long v14 = scratch_q[base + 14U];
+        unsigned long long v15 = scratch_q[base + 15U];
+
         permute_round(
-            v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7],
-            v[8], v[9], v[10], v[11], v[12], v[13], v[14], v[15]
+            v0, v1, v2, v3, v4, v5, v6, v7,
+            v8, v9, v10, v11, v12, v13, v14, v15
         );
-    }
 
-#pragma unroll
-    for (int i = 0; i < 8; ++i) {
-        const int b = i * 2;
+        scratch_q[base + 0U] = v0;
+        scratch_q[base + 1U] = v1;
+        scratch_q[base + 2U] = v2;
+        scratch_q[base + 3U] = v3;
+        scratch_q[base + 4U] = v4;
+        scratch_q[base + 5U] = v5;
+        scratch_q[base + 6U] = v6;
+        scratch_q[base + 7U] = v7;
+        scratch_q[base + 8U] = v8;
+        scratch_q[base + 9U] = v9;
+        scratch_q[base + 10U] = v10;
+        scratch_q[base + 11U] = v11;
+        scratch_q[base + 12U] = v12;
+        scratch_q[base + 13U] = v13;
+        scratch_q[base + 14U] = v14;
+        scratch_q[base + 15U] = v15;
+    }
+    __syncthreads();
+
+    if (tid < 8U) {
+        const unsigned int b = tid * 2U;
+        unsigned long long v0 = scratch_q[b];
+        unsigned long long v1 = scratch_q[b + 1U];
+        unsigned long long v2 = scratch_q[b + 16U];
+        unsigned long long v3 = scratch_q[b + 17U];
+        unsigned long long v4 = scratch_q[b + 32U];
+        unsigned long long v5 = scratch_q[b + 33U];
+        unsigned long long v6 = scratch_q[b + 48U];
+        unsigned long long v7 = scratch_q[b + 49U];
+        unsigned long long v8 = scratch_q[b + 64U];
+        unsigned long long v9 = scratch_q[b + 65U];
+        unsigned long long v10 = scratch_q[b + 80U];
+        unsigned long long v11 = scratch_q[b + 81U];
+        unsigned long long v12 = scratch_q[b + 96U];
+        unsigned long long v13 = scratch_q[b + 97U];
+        unsigned long long v14 = scratch_q[b + 112U];
+        unsigned long long v15 = scratch_q[b + 113U];
+
         permute_round(
-            scratch_q[b], scratch_q[b + 1],
-            scratch_q[b + 16], scratch_q[b + 17],
-            scratch_q[b + 32], scratch_q[b + 33],
-            scratch_q[b + 48], scratch_q[b + 49],
-            scratch_q[b + 64], scratch_q[b + 65],
-            scratch_q[b + 80], scratch_q[b + 81],
-            scratch_q[b + 96], scratch_q[b + 97],
-            scratch_q[b + 112], scratch_q[b + 113]
+            v0, v1, v2, v3, v4, v5, v6, v7,
+            v8, v9, v10, v11, v12, v13, v14, v15
         );
-    }
 
-#pragma unroll
-    for (int i = 0; i < 128; ++i) {
+        scratch_q[b] = v0;
+        scratch_q[b + 1U] = v1;
+        scratch_q[b + 16U] = v2;
+        scratch_q[b + 17U] = v3;
+        scratch_q[b + 32U] = v4;
+        scratch_q[b + 33U] = v5;
+        scratch_q[b + 48U] = v6;
+        scratch_q[b + 49U] = v7;
+        scratch_q[b + 64U] = v8;
+        scratch_q[b + 65U] = v9;
+        scratch_q[b + 80U] = v10;
+        scratch_q[b + 81U] = v11;
+        scratch_q[b + 96U] = v12;
+        scratch_q[b + 97U] = v13;
+        scratch_q[b + 112U] = v14;
+        scratch_q[b + 113U] = v15;
+    }
+    __syncthreads();
+
+    for (unsigned int i = tid; i < 128U; i += ARGON2_COOP_THREADS) {
         out[i] = scratch_q[i] ^ scratch_r[i];
     }
+    __syncthreads();
 }
 
-__device__ __forceinline__ void update_address_block(
+__device__ __forceinline__ void update_address_block_coop(
     unsigned long long *address_block,
     unsigned long long *input_block,
     const unsigned long long *zero_block,
     unsigned long long *scratch_r,
-    unsigned long long *scratch_q
+    unsigned long long *scratch_q,
+    unsigned int tid
 ) {
-    input_block[6] += 1ULL;
-    compress_block(
+    if (tid == 0U) {
+        input_block[6] += 1ULL;
+    }
+    __syncthreads();
+    compress_block_coop(
         zero_block,
         input_block,
         address_block,
         scratch_r,
-        scratch_q
+        scratch_q,
+        tid
     );
-    compress_block(
+    compress_block_coop(
         zero_block,
         address_block,
         address_block,
         scratch_r,
-        scratch_q
+        scratch_q,
+        tid
     );
 }
 
@@ -157,8 +228,9 @@ __global__ void argon2id_fill_kernel(
     unsigned long long *out_last_blocks,
     unsigned long long *out_hashes_done
 ) {
-    const unsigned int lane = blockIdx.x * blockDim.x + threadIdx.x;
-    if (lane >= lanes_active || m_blocks < 8U) {
+    const unsigned int lane = blockIdx.x;
+    const unsigned int tid = threadIdx.x;
+    if (lane >= lanes_active || tid >= ARGON2_COOP_THREADS || m_blocks < 8U) {
         return;
     }
 
@@ -169,23 +241,22 @@ __global__ void argon2id_fill_kernel(
     const unsigned long long *seed =
         seed_blocks + static_cast<unsigned long long>(lane) * 256ULL;
 
-#pragma unroll
-    for (int i = 0; i < 256; ++i) {
+    for (unsigned int i = tid; i < 256U; i += ARGON2_COOP_THREADS) {
         memory[i] = seed[i];
     }
+    __syncthreads();
 
     const unsigned int segment_length = m_blocks / 4U;
     const unsigned int lane_length = m_blocks;
 
-    unsigned long long address_block[128];
-    unsigned long long input_block[128];
-    unsigned long long zero_block[128];
-    unsigned long long block_tmp[128];
-    unsigned long long scratch_r[128];
-    unsigned long long scratch_q[128];
+    __shared__ unsigned long long address_block[128];
+    __shared__ unsigned long long input_block[128];
+    __shared__ unsigned long long zero_block[128];
+    __shared__ unsigned long long block_tmp[128];
+    __shared__ unsigned long long scratch_r[128];
+    __shared__ unsigned long long scratch_q[128];
 
-#pragma unroll
-    for (int i = 0; i < 128; ++i) {
+    for (unsigned int i = tid; i < 128U; i += ARGON2_COOP_THREADS) {
         address_block[i] = 0ULL;
         input_block[i] = 0ULL;
         zero_block[i] = 0ULL;
@@ -193,22 +264,25 @@ __global__ void argon2id_fill_kernel(
         scratch_r[i] = 0ULL;
         scratch_q[i] = 0ULL;
     }
+    __syncthreads();
 
     for (unsigned int pass = 0; pass < t_cost; ++pass) {
         for (unsigned int slice = 0; slice < 4U; ++slice) {
             const bool data_independent = (pass == 0U && slice < 2U);
             if (data_independent) {
-#pragma unroll
-                for (int i = 0; i < 128; ++i) {
+                for (unsigned int i = tid; i < 128U; i += ARGON2_COOP_THREADS) {
                     address_block[i] = 0ULL;
                     input_block[i] = 0ULL;
                 }
-                input_block[0] = static_cast<unsigned long long>(pass);
-                input_block[1] = 0ULL; // lane index (p=1)
-                input_block[2] = static_cast<unsigned long long>(slice);
-                input_block[3] = static_cast<unsigned long long>(m_blocks);
-                input_block[4] = static_cast<unsigned long long>(t_cost);
-                input_block[5] = 2ULL; // Argon2id
+                if (tid == 0U) {
+                    input_block[0] = static_cast<unsigned long long>(pass);
+                    input_block[1] = 0ULL; // lane index (p=1)
+                    input_block[2] = static_cast<unsigned long long>(slice);
+                    input_block[3] = static_cast<unsigned long long>(m_blocks);
+                    input_block[4] = static_cast<unsigned long long>(t_cost);
+                    input_block[5] = 2ULL; // Argon2id
+                }
+                __syncthreads();
             }
 
             const unsigned int first_block =
@@ -226,14 +300,16 @@ __global__ void argon2id_fill_kernel(
                 if (data_independent) {
                     const unsigned int address_index = block & 127U;
                     if (address_index == 0U) {
-                        update_address_block(
+                        update_address_block_coop(
                             address_block,
                             input_block,
                             zero_block,
                             scratch_r,
-                            scratch_q
+                            scratch_q,
+                            tid
                         );
                     }
+                    __syncthreads();
                     rand64 = address_block[address_index];
                 } else {
                     rand64 = memory[static_cast<unsigned long long>(prev_index) * 128ULL];
@@ -269,27 +345,27 @@ __global__ void argon2id_fill_kernel(
                         static_cast<unsigned long long>(lane_length)
                     );
 
-                compress_block(
+                compress_block_coop(
                     memory + static_cast<unsigned long long>(prev_index) * 128ULL,
                     memory + static_cast<unsigned long long>(ref_index) * 128ULL,
                     block_tmp,
                     scratch_r,
-                    scratch_q
+                    scratch_q,
+                    tid
                 );
 
                 const unsigned long long dst_offset =
                     static_cast<unsigned long long>(cur_index) * 128ULL;
                 if (pass == 0U) {
-#pragma unroll
-                    for (int i = 0; i < 128; ++i) {
+                    for (unsigned int i = tid; i < 128U; i += ARGON2_COOP_THREADS) {
                         memory[dst_offset + static_cast<unsigned long long>(i)] = block_tmp[i];
                     }
                 } else {
-#pragma unroll
-                    for (int i = 0; i < 128; ++i) {
+                    for (unsigned int i = tid; i < 128U; i += ARGON2_COOP_THREADS) {
                         memory[dst_offset + static_cast<unsigned long long>(i)] ^= block_tmp[i];
                     }
                 }
+                __syncthreads();
 
                 prev_index = cur_index;
                 cur_index += 1U;
@@ -301,12 +377,12 @@ __global__ void argon2id_fill_kernel(
         memory + (static_cast<unsigned long long>(lane_length) - 1ULL) * 128ULL;
     unsigned long long *out =
         out_last_blocks + static_cast<unsigned long long>(lane) * 128ULL;
-#pragma unroll
-    for (int i = 0; i < 128; ++i) {
+    for (unsigned int i = tid; i < 128U; i += ARGON2_COOP_THREADS) {
         out[i] = last[i];
     }
+    __syncthreads();
 
-    if (out_hashes_done != nullptr) {
+    if (tid == 0U && out_hashes_done != nullptr) {
         atomicAdd(out_hashes_done, 1ULL);
     }
 }

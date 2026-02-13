@@ -31,6 +31,7 @@ const CUDA_KERNEL_SRC: &str = include_str!("nvidia_kernel.cu");
 const MAX_RECOMMENDED_LANES: usize = 16;
 const CMD_CHANNEL_CAPACITY: usize = 256;
 const EVENT_SEND_WAIT: Duration = Duration::from_millis(5);
+const KERNEL_THREADS: u32 = 32;
 const ARGON2_VERSION_V13: u32 = 0x13;
 const ARGON2_ALGORITHM_ID: u32 = 2; // Argon2id
 
@@ -163,7 +164,7 @@ impl CudaArgon2Engine {
         let t_cost = params.t_cost();
 
         let lane_bytes = CPU_LANE_MEMORY_BYTES.max(u64::from(m_blocks) * 1024);
-        let memory_budget_mib = memory_free_mib.unwrap_or(memory_total_mib).max(1);
+        let memory_budget_mib = memory_total_mib.max(memory_free_mib.unwrap_or(0)).max(1);
         let memory_budget_bytes = memory_budget_mib.saturating_mul(1024 * 1024);
         let usable_bytes = memory_budget_bytes;
         let by_memory = usize::try_from((usable_bytes / lane_bytes).max(1)).unwrap_or(1);
@@ -297,10 +298,10 @@ impl CudaArgon2Engine {
 
         let lanes_u32 = u32::try_from(lanes).map_err(|_| anyhow!("lane count overflow"))?;
         let cfg = LaunchConfig {
-            // One lane per CUDA block keeps each long-running lane independent and avoids
-            // burning per-thread local memory on inactive threads.
+            // One cooperative block per lane. Threads in the block collaborate on Argon2
+            // compression and memory transfer for that lane.
             grid_dim: (lanes_u32, 1, 1),
-            block_dim: (1, 1, 1),
+            block_dim: (KERNEL_THREADS, 1, 1),
             shared_mem_bytes: 0,
         };
 
