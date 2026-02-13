@@ -103,6 +103,7 @@ struct BenchConfigFingerprint {
     backend_event_capacity: usize,
     hash_poll_ms: u64,
     backend_assign_timeout_ms: u64,
+    backend_assign_timeout_strikes: u32,
     backend_control_timeout_ms: u64,
     bench_warmup_rounds: u32,
     allow_best_effort_deadlines: bool,
@@ -164,6 +165,7 @@ const BENCH_REPORT_COMPAT_MIN_SCHEMA_VERSION: u32 = 2;
 pub(super) fn run_benchmark(cfg: &Config, shutdown: &AtomicBool) -> Result<()> {
     let instances = super::build_backend_instances(cfg);
     let backend_executor = super::backend_executor::BackendExecutor::new();
+    backend_executor.set_assignment_timeout_threshold(cfg.backend_assign_timeout_strikes);
 
     match cfg.bench_kind {
         BenchKind::Kernel => run_kernel_benchmark(cfg, shutdown, instances),
@@ -420,6 +422,10 @@ fn run_worker_benchmark(
         (
             "Assign Timeout",
             format!("{}ms", cfg.backend_assign_timeout.as_millis()),
+        ),
+        (
+            "Assign Strikes",
+            cfg.backend_assign_timeout_strikes.to_string(),
         ),
         (
             "Control Timeout",
@@ -910,6 +916,15 @@ fn baseline_compatibility_issues(
                 current.config_fingerprint.backend_assign_timeout_ms
             ));
         }
+        if baseline.config_fingerprint.backend_assign_timeout_strikes
+            != current.config_fingerprint.backend_assign_timeout_strikes
+        {
+            issues.push(format!(
+                "backend_assign_timeout_strikes mismatch baseline={} current={}",
+                baseline.config_fingerprint.backend_assign_timeout_strikes,
+                current.config_fingerprint.backend_assign_timeout_strikes
+            ));
+        }
         if baseline.config_fingerprint.backend_control_timeout_ms
             != current.config_fingerprint.backend_control_timeout_ms
         {
@@ -1135,6 +1150,7 @@ fn benchmark_config_fingerprint(cfg: &Config) -> BenchConfigFingerprint {
         backend_event_capacity: cfg.backend_event_capacity,
         hash_poll_ms: cfg.hash_poll_interval.as_millis() as u64,
         backend_assign_timeout_ms: cfg.backend_assign_timeout.as_millis() as u64,
+        backend_assign_timeout_strikes: cfg.backend_assign_timeout_strikes,
         backend_control_timeout_ms: cfg.backend_control_timeout.as_millis() as u64,
         bench_warmup_rounds: cfg.bench_warmup_rounds,
         allow_best_effort_deadlines: cfg.allow_best_effort_deadlines,
@@ -1375,6 +1391,7 @@ mod tests {
                 backend_event_capacity: 1024,
                 hash_poll_ms: 200,
                 backend_assign_timeout_ms: 1000,
+                backend_assign_timeout_strikes: 1,
                 backend_control_timeout_ms: 60_000,
                 bench_warmup_rounds: 0,
                 allow_best_effort_deadlines: false,

@@ -77,6 +77,7 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
     }
 
     let backend_executor = backend_executor::BackendExecutor::new();
+    backend_executor.set_assignment_timeout_threshold(cfg.backend_assign_timeout_strikes);
 
     let token = cfg
         .token
@@ -172,8 +173,9 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
     info(
         "MINER",
         format!(
-            "timeouts | assign={}ms control={}ms prefetch_wait={}ms tip_join_wait={}ms submit_join_wait={}ms",
+            "timeouts | assign={}ms assign_strikes={} control={}ms prefetch_wait={}ms tip_join_wait={}ms submit_join_wait={}ms",
             cfg.backend_assign_timeout.as_millis(),
+            cfg.backend_assign_timeout_strikes,
             cfg.backend_control_timeout.as_millis(),
             cfg.prefetch_wait.as_millis(),
             cfg.tip_listener_join_wait.as_millis(),

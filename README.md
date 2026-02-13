@@ -96,7 +96,8 @@ Run headless/plain logs (no fullscreen TUI):
   - Same-height competing hash events are coalesced by default; pass `--refresh-on-same-height` for aggressive tip freshness.
 - Runtime tuning knobs for performance iteration:
   - `--backend-event-capacity` (default `1024`) controls bounded backend event queue size.
-  - `--backend-assign-timeout-ms` (default `1000`) bounds per-backend assignment dispatch calls; timed-out backends are quarantined.
+  - `--backend-assign-timeout-ms` (default `1000`) bounds per-backend assignment dispatch calls.
+  - `--backend-assign-timeout-strikes` (default `1`) sets consecutive assignment timeout strikes before backend quarantine.
   - `--backend-control-timeout-ms` (default `60000`) bounds `cancel/fence` control calls; timed-out backends are quarantined.
   - By default, backends reporting best-effort deadlines are quarantined; pass `--allow-best-effort-deadlines` to keep them active.
   - Active backends run a startup deadline probe (`cancel`/`fence`) with a bounded watchdog timeout before mining/benchmark rounds begin; probe failures are quarantined.
@@ -111,7 +112,7 @@ Run headless/plain logs (no fullscreen TUI):
   - `--prefetch-wait-ms` (default `250`) bounds how long mining waits for prefetched templates before falling back to direct fetch.
   - `--tip-listener-join-wait-ms` (default `250`) bounds shutdown wait for SSE listener thread before detaching.
   - `--submit-join-wait-ms` (default `2000`) bounds shutdown wait for submit worker thread before detaching.
-  - Late-solution template retention is timeout-aware (derived from refresh/control/assign/prefetch timing) with time-based eviction and a bounded cache to reduce stale drops during backend lag/spiky tip churn.
+  - Late-solution template retention is timeout-aware (derived from refresh/control/assign/prefetch timing) with time-based eviction and a bounded cache (entry and memory caps) to reduce stale drops during backend lag/spiky tip churn.
   - Deferred solution submission deduplicates by `(epoch, nonce)` across backends and suppresses repeat submit attempts across later rounds.
   - `--cpu-affinity` (`auto` or `off`) controls CPU worker pinning policy for better repeatability on NUMA/SMT hosts.
   - `--ui` (`auto`, `tui`, `plain`) controls rendering mode. `auto` enables TUI only when stdout/stderr are terminals.

@@ -137,6 +137,10 @@ struct Cli {
     #[arg(long, default_value_t = 1000)]
     backend_assign_timeout_ms: u64,
 
+    /// Consecutive assignment timeouts before backend quarantine.
+    #[arg(long, default_value_t = 1)]
+    backend_assign_timeout_strikes: u32,
+
     /// Maximum time to wait for backend cancel/fence control calls, in milliseconds.
     #[arg(long, default_value_t = 60_000)]
     backend_control_timeout_ms: u64,
@@ -245,6 +249,7 @@ pub struct Config {
     pub backend_event_capacity: usize,
     pub hash_poll_interval: Duration,
     pub backend_assign_timeout: Duration,
+    pub backend_assign_timeout_strikes: u32,
     pub backend_control_timeout: Duration,
     pub allow_best_effort_deadlines: bool,
     pub prefetch_wait: Duration,
@@ -285,6 +290,9 @@ impl Config {
         }
         if cli.backend_assign_timeout_ms == 0 {
             bail!("backend-assign-timeout-ms must be >= 1");
+        }
+        if cli.backend_assign_timeout_strikes == 0 {
+            bail!("backend-assign-timeout-strikes must be >= 1");
         }
         if cli.backend_control_timeout_ms == 0 {
             bail!("backend-control-timeout-ms must be >= 1");
@@ -346,6 +354,7 @@ impl Config {
             backend_event_capacity: cli.backend_event_capacity,
             hash_poll_interval: Duration::from_millis(cli.hash_poll_ms),
             backend_assign_timeout: Duration::from_millis(cli.backend_assign_timeout_ms),
+            backend_assign_timeout_strikes: cli.backend_assign_timeout_strikes.max(1),
             backend_control_timeout: Duration::from_millis(cli.backend_control_timeout_ms),
             allow_best_effort_deadlines: cli.allow_best_effort_deadlines,
             prefetch_wait: Duration::from_millis(cli.prefetch_wait_ms),
@@ -611,6 +620,7 @@ mod tests {
             backend_event_capacity: 1024,
             hash_poll_ms: 200,
             backend_assign_timeout_ms: 1000,
+            backend_assign_timeout_strikes: 1,
             backend_control_timeout_ms: 60_000,
             allow_best_effort_deadlines: false,
             prefetch_wait_ms: 250,

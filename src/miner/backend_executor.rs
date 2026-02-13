@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::panic::{self, AssertUnwindSafe};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -73,8 +74,9 @@ pub(super) struct AssignmentTimeoutDecision {
     pub should_quarantine: bool,
 }
 
-const ASSIGNMENT_TIMEOUT_STRIKES_BEFORE_QUARANTINE: u32 = 3;
+const DEFAULT_ASSIGNMENT_TIMEOUT_STRIKES_BEFORE_QUARANTINE: u32 = 3;
 const BACKEND_STOP_ACK_TIMEOUT: Duration = Duration::from_secs(1);
+const BACKEND_STOP_ACK_GRACE_TIMEOUT: Duration = Duration::from_secs(2);
 const BACKEND_STOP_ENQUEUE_TIMEOUT: Duration = Duration::from_millis(100);
 
 #[derive(Clone)]
@@ -82,6 +84,7 @@ pub(super) struct BackendExecutor {
     workers: Arc<Mutex<BTreeMap<BackendWorkerKey, BackendWorker>>>,
     quarantined: Arc<Mutex<BTreeSet<BackendWorkerKey>>>,
     assignment_timeout_strikes: Arc<Mutex<BTreeMap<BackendWorkerKey, u32>>>,
+    assignment_timeout_threshold: Arc<AtomicU32>,
 }
 
 impl BackendExecutor {
@@ -90,7 +93,21 @@ impl BackendExecutor {
             workers: Arc::new(Mutex::new(BTreeMap::new())),
             quarantined: Arc::new(Mutex::new(BTreeSet::new())),
             assignment_timeout_strikes: Arc::new(Mutex::new(BTreeMap::new())),
+            assignment_timeout_threshold: Arc::new(AtomicU32::new(
+                DEFAULT_ASSIGNMENT_TIMEOUT_STRIKES_BEFORE_QUARANTINE,
+            )),
         }
+    }
+
+    pub(super) fn set_assignment_timeout_threshold(&self, threshold: u32) {
+        self.assignment_timeout_threshold
+            .store(threshold.max(1), Ordering::Release);
+    }
+
+    fn assignment_timeout_threshold(&self) -> u32 {
+        self.assignment_timeout_threshold
+            .load(Ordering::Acquire)
+            .max(1)
     }
 }
 
@@ -276,7 +293,7 @@ impl BackendExecutor {
         backend_handle: &Arc<dyn PowBackend>,
     ) -> AssignmentTimeoutDecision {
         let key = backend_worker_key(backend_id, backend_handle);
-        let threshold = ASSIGNMENT_TIMEOUT_STRIKES_BEFORE_QUARANTINE;
+        let threshold = self.assignment_timeout_threshold();
         let mut strikes_map = match self.assignment_timeout_strikes.lock() {
             Ok(map) => map,
             Err(_) => {
@@ -530,17 +547,39 @@ fn perform_quarantine_stop(
         };
         match worker_tx.send_timeout(stop_command, BACKEND_STOP_ENQUEUE_TIMEOUT) {
             Ok(()) => {
-                should_run_fallback_stop = false;
-                if matches!(
-                    done_rx.recv_timeout(BACKEND_STOP_ACK_TIMEOUT),
-                    Err(RecvTimeoutError::Timeout)
-                ) {
-                    warn(
-                        "BACKEND",
-                        format!(
-                            "backend stop is still in progress for {backend}#{backend_id}; detached"
-                        ),
-                    );
+                match done_rx.recv_timeout(BACKEND_STOP_ACK_TIMEOUT) {
+                    Ok(()) | Err(RecvTimeoutError::Disconnected) => {
+                        should_run_fallback_stop = false;
+                    }
+                    Err(RecvTimeoutError::Timeout) => {
+                        warn(
+                            "BACKEND",
+                            format!(
+                                "backend stop is still in progress for {backend}#{backend_id}; requesting interrupt before fallback"
+                            ),
+                        );
+                        if let Err(err) = backend_handle.request_timeout_interrupt() {
+                            warn(
+                                "BACKEND",
+                                format!(
+                                    "backend stop interrupt failed for {backend}#{backend_id}: {err:#}"
+                                ),
+                            );
+                        }
+                        match done_rx.recv_timeout(BACKEND_STOP_ACK_GRACE_TIMEOUT) {
+                            Ok(()) | Err(RecvTimeoutError::Disconnected) => {
+                                should_run_fallback_stop = false;
+                            }
+                            Err(RecvTimeoutError::Timeout) => {
+                                warn(
+                                    "BACKEND",
+                                    format!(
+                                        "backend stop did not acknowledge for {backend}#{backend_id}; running synchronous stop fallback"
+                                    ),
+                                );
+                            }
+                        }
+                    }
                 }
             }
             Err(SendTimeoutError::Timeout(_)) => {

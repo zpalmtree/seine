@@ -45,6 +45,7 @@ const RETRY_LOG_INTERVAL: Duration = Duration::from_secs(10);
 const RECENT_TEMPLATE_CACHE_MIN: usize = 16;
 const RECENT_TEMPLATE_CACHE_MAX: usize = 512;
 const RECENT_TEMPLATE_CACHE_HEADROOM_ROUNDS: usize = 4;
+const RECENT_TEMPLATE_CACHE_MAX_BYTES: usize = 64 * 1024 * 1024;
 const RECENT_SUBMITTED_SOLUTIONS_CAPACITY: usize = 4096;
 const DEFERRED_SOLUTIONS_CAPACITY: usize = 8192;
 const SUBMIT_REQUEST_CAPACITY: usize = 128;
@@ -95,7 +96,7 @@ impl RetryTracker {
 #[derive(Debug, Clone)]
 enum SubmitTemplate {
     Compact { template_id: String },
-    FullBlock { block: TemplateBlock },
+    FullBlock { block: Arc<TemplateBlock> },
 }
 
 impl SubmitTemplate {
@@ -111,7 +112,7 @@ impl SubmitTemplate {
             }
         } else {
             Self::FullBlock {
-                block: template.block.clone(),
+                block: Arc::new(template.block.clone()),
             }
         }
     }
@@ -244,7 +245,8 @@ fn process_submit_request(client: &ApiClient, request: SubmitRequest) -> SubmitR
                 Err(err) => SubmitOutcome::Error(format!("{err:#}")),
             }
         }
-        SubmitTemplate::FullBlock { mut block } => {
+        SubmitTemplate::FullBlock { block } => {
+            let mut block = (*block).clone();
             set_block_nonce(&mut block, nonce);
             match client.submit_block(&block, None, nonce) {
                 Ok(resp) => SubmitOutcome::Response(resp),
@@ -324,6 +326,14 @@ struct RecentTemplateEntry {
     epoch: u64,
     recorded_at: Instant,
     submit_template: SubmitTemplate,
+    estimated_bytes: usize,
+}
+
+struct PreparedTemplate {
+    header_base: Arc<[u8]>,
+    target: [u8; 32],
+    height: String,
+    difficulty: String,
 }
 
 fn current_tip_sequence(tip_signal: Option<&TipSignal>) -> u64 {
@@ -462,21 +472,6 @@ impl<'a> MiningControlPlane<'a> {
         )
     }
 
-    fn submit_solution(
-        &mut self,
-        template: &BlockTemplateResponse,
-        solution: MiningSolution,
-        stats: &Stats,
-        tui: &mut Option<TuiDisplay>,
-    ) {
-        self.submit_template(
-            SubmitTemplate::from_template(template),
-            solution,
-            stats,
-            tui,
-        );
-    }
-
     fn submit_template(
         &mut self,
         template: SubmitTemplate,
@@ -554,6 +549,84 @@ pub(super) struct MiningRuntimeBackends<'a> {
     pub backend_executor: &'a super::backend_executor::BackendExecutor,
 }
 
+fn prepare_round_template(
+    template: &mut BlockTemplateResponse,
+    control_plane: &mut MiningControlPlane<'_>,
+    shutdown: &AtomicBool,
+    tip_signal: Option<&TipSignal>,
+    tui: &mut Option<TuiDisplay>,
+) -> Option<PreparedTemplate> {
+    loop {
+        if shutdown.load(Ordering::Relaxed) {
+            return None;
+        }
+
+        let header_base = match decode_hex(&template.header_base, "header_base") {
+            Ok(v) => v,
+            Err(err) => {
+                warn("TEMPLATE", format!("decode error: {err:#}"));
+                if !sleep_with_shutdown(shutdown, TEMPLATE_RETRY_DELAY) {
+                    return None;
+                }
+                let next_template = control_plane.resolve_next_template(tui)?;
+                *template = next_template;
+                continue;
+            }
+        };
+
+        if header_base.len() != POW_HEADER_BASE_LEN {
+            warn(
+                "TEMPLATE",
+                format!(
+                    "header_base length mismatch: expected {} bytes, got {}",
+                    POW_HEADER_BASE_LEN,
+                    header_base.len()
+                ),
+            );
+            if !sleep_with_shutdown(shutdown, TEMPLATE_RETRY_DELAY) {
+                return None;
+            }
+            let next_template = control_plane.resolve_next_template(tui)?;
+            *template = next_template;
+            continue;
+        }
+
+        let target = match parse_target(&template.target) {
+            Ok(target) => target,
+            Err(err) => {
+                warn("TEMPLATE", format!("target parse error: {err:#}"));
+                if !sleep_with_shutdown(shutdown, TEMPLATE_RETRY_DELAY) {
+                    return None;
+                }
+                let next_template = control_plane.resolve_next_template(tui)?;
+                *template = next_template;
+                continue;
+            }
+        };
+        let header_base: Arc<[u8]> = Arc::from(header_base);
+
+        let template_height_u64 = template_height(&template.block);
+        if let Some(height) = template_height_u64 {
+            if let Some(signal) = tip_signal {
+                signal.set_current_template_height(height);
+            }
+        }
+        let height = template_height_u64
+            .map(|h| h.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        let difficulty = template_difficulty(&template.block)
+            .map(|d| d.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        return Some(PreparedTemplate {
+            header_base,
+            target,
+            height,
+            difficulty,
+        });
+    }
+}
+
 pub(super) fn run_mining_loop(
     cfg: &Config,
     client: &ApiClient,
@@ -577,7 +650,9 @@ pub(super) fn run_mining_loop(
     let mut control_plane = MiningControlPlane::new(client, cfg, Arc::clone(&shutdown), tip_signal);
     let recent_template_retention = recent_template_retention(cfg);
     let recent_template_cache_size = recent_template_cache_size(cfg);
+    let recent_template_cache_max_bytes = recent_template_cache_max_bytes();
     let mut recent_templates = VecDeque::<RecentTemplateEntry>::new();
+    let mut recent_templates_bytes = 0usize;
     let mut deferred_solutions = Vec::<MiningSolution>::new();
     let mut submitted_solution_keys = HashSet::<(u64, u64)>::new();
     let mut submitted_solution_order = VecDeque::<(u64, u64)>::new();
@@ -594,9 +669,10 @@ pub(super) fn run_mining_loop(
     info(
         "MINER",
         format!(
-            "template-history | max={} retention={}s",
+            "template-history | max={} retention={}s cap={}MiB",
             recent_template_cache_size,
-            recent_template_retention.as_secs_f64()
+            recent_template_retention.as_secs_f64(),
+            recent_template_cache_max_bytes / (1024 * 1024)
         ),
     );
 
@@ -607,68 +683,22 @@ pub(super) fn run_mining_loop(
 
         control_plane.drain_submit_results(&stats, &mut tui);
 
-        let header_base = match decode_hex(&template.header_base, "header_base") {
-            Ok(v) => v,
-            Err(err) => {
-                warn("TEMPLATE", format!("decode error: {err:#}"));
-                if !sleep_with_shutdown(shutdown.as_ref(), TEMPLATE_RETRY_DELAY) {
-                    break;
-                }
-                let Some(next_template) = control_plane.resolve_next_template(&mut tui) else {
-                    break;
-                };
-                template = next_template;
-                continue;
-            }
+        let Some(prepared_template) = prepare_round_template(
+            &mut template,
+            &mut control_plane,
+            shutdown.as_ref(),
+            tip_signal,
+            &mut tui,
+        ) else {
+            break;
         };
-
-        if header_base.len() != POW_HEADER_BASE_LEN {
-            warn(
-                "TEMPLATE",
-                format!(
-                    "header_base length mismatch: expected {} bytes, got {}",
-                    POW_HEADER_BASE_LEN,
-                    header_base.len()
-                ),
-            );
-            if !sleep_with_shutdown(shutdown.as_ref(), TEMPLATE_RETRY_DELAY) {
-                break;
-            }
-            let Some(next_template) = control_plane.resolve_next_template(&mut tui) else {
-                break;
-            };
-            template = next_template;
-            continue;
-        }
-
-        let target = match parse_target(&template.target) {
-            Ok(t) => t,
-            Err(err) => {
-                warn("TEMPLATE", format!("target parse error: {err:#}"));
-                if !sleep_with_shutdown(shutdown.as_ref(), TEMPLATE_RETRY_DELAY) {
-                    break;
-                }
-                let Some(next_template) = control_plane.resolve_next_template(&mut tui) else {
-                    break;
-                };
-                template = next_template;
-                continue;
-            }
-        };
-        let header_base: Arc<[u8]> = Arc::from(header_base);
-
-        let template_height_u64 = template_height(&template.block);
-        if let Some(height) = template_height_u64 {
-            if let Some(signal) = tip_signal {
-                signal.set_current_template_height(height);
-            }
-        }
-        let height = template_height_u64
-            .map(|h| h.to_string())
-            .unwrap_or_else(|| "unknown".to_string());
-        let difficulty = template_difficulty(&template.block)
-            .map(|d| d.to_string())
-            .unwrap_or_else(|| "unknown".to_string());
+        let PreparedTemplate {
+            header_base,
+            target,
+            height,
+            difficulty,
+        } = prepared_template;
+        let current_submit_template = SubmitTemplate::from_template(&template);
 
         epoch = epoch.wrapping_add(1).max(1);
         let work_id = next_work_id(&mut work_id_cursor);
@@ -769,7 +799,12 @@ pub(super) fn run_mining_loop(
                     ),
                 );
             } else {
-                control_plane.submit_solution(&template, solution.clone(), &stats, &mut tui);
+                control_plane.submit_template(
+                    current_submit_template.clone(),
+                    solution.clone(),
+                    &stats,
+                    &mut tui,
+                );
                 remember_submitted_solution(
                     &mut submitted_solution_order,
                     &mut submitted_solution_keys,
@@ -782,7 +817,7 @@ pub(super) fn run_mining_loop(
         submit_deferred_solutions(
             &mut control_plane,
             epoch,
-            &template,
+            &current_submit_template,
             DeferredSubmitState {
                 recent_templates: &recent_templates,
                 deferred_solutions: &mut deferred_solutions,
@@ -901,15 +936,18 @@ pub(super) fn run_mining_loop(
         };
         remember_recent_template(
             &mut recent_templates,
+            &mut recent_templates_bytes,
             epoch,
-            template,
+            current_submit_template,
             recent_template_retention,
             recent_template_cache_size,
+            recent_template_cache_max_bytes,
         );
         template = next_template;
     }
 
     if !backends.is_empty() {
+        let final_submit_template = SubmitTemplate::from_template(&template);
         match quiesce_backend_slots(
             backends,
             RuntimeMode::Mining,
@@ -944,7 +982,12 @@ pub(super) fn run_mining_loop(
                     ),
                 );
             } else {
-                control_plane.submit_solution(&template, solution.clone(), &stats, &mut tui);
+                control_plane.submit_template(
+                    final_submit_template.clone(),
+                    solution.clone(),
+                    &stats,
+                    &mut tui,
+                );
                 remember_submitted_solution(
                     &mut submitted_solution_order,
                     &mut submitted_solution_keys,
@@ -956,7 +999,7 @@ pub(super) fn run_mining_loop(
         submit_deferred_solutions(
             &mut control_plane,
             epoch,
-            &template,
+            &final_submit_template,
             DeferredSubmitState {
                 recent_templates: &recent_templates,
                 deferred_solutions: &mut deferred_solutions,
@@ -1234,12 +1277,6 @@ fn resolve_next_template(
                 warn("TEMPLATE", "prefetch worker disconnected; respawned");
                 continue;
             }
-            network_retry.note_failure(
-                "NETWORK",
-                "failed to fetch blocktemplate; retrying",
-                "still failing to fetch blocktemplate; retrying",
-                true,
-            );
             render_tui_now(tui);
             continue;
         };
@@ -1435,7 +1472,7 @@ struct DeferredSubmitState<'a> {
 fn submit_deferred_solutions(
     control_plane: &mut MiningControlPlane<'_>,
     current_epoch: u64,
-    current_template: &BlockTemplateResponse,
+    current_submit_template: &SubmitTemplate,
     state: DeferredSubmitState<'_>,
 ) {
     if state.deferred_solutions.is_empty() {
@@ -1450,7 +1487,7 @@ fn submit_deferred_solutions(
         }
         let Some(submit_template) = submit_template_for_solution_epoch(
             current_epoch,
-            current_template,
+            current_submit_template,
             state.recent_templates,
             solution.epoch,
         ) else {
@@ -1498,12 +1535,12 @@ fn drop_solution_from_deferred(
 
 fn submit_template_for_solution_epoch(
     current_epoch: u64,
-    current_template: &BlockTemplateResponse,
+    current_submit_template: &SubmitTemplate,
     recent_templates: &VecDeque<RecentTemplateEntry>,
     solution_epoch: u64,
 ) -> Option<SubmitTemplate> {
     if solution_epoch == current_epoch {
-        return Some(SubmitTemplate::from_template(current_template));
+        return Some(current_submit_template.clone());
     }
     for entry in recent_templates.iter().rev() {
         if entry.epoch == solution_epoch {
@@ -1515,26 +1552,45 @@ fn submit_template_for_solution_epoch(
 
 fn remember_recent_template(
     recent_templates: &mut VecDeque<RecentTemplateEntry>,
+    recent_templates_bytes: &mut usize,
     epoch: u64,
-    template: BlockTemplateResponse,
+    submit_template: SubmitTemplate,
     retention: Duration,
     max_entries: usize,
+    max_bytes: usize,
 ) {
     let retention = retention.max(Duration::from_millis(1));
     let max_entries = max_entries.max(1);
+    let max_bytes = max_bytes.max(1);
     let now = Instant::now();
+    let estimated_bytes = submit_template_estimated_bytes(&submit_template).max(1);
     recent_templates.push_back(RecentTemplateEntry {
         epoch,
         recorded_at: now,
-        submit_template: SubmitTemplate::from_template(&template),
+        submit_template,
+        estimated_bytes,
     });
+    *recent_templates_bytes = recent_templates_bytes.saturating_add(estimated_bytes);
+
     while let Some(front) = recent_templates.front() {
         let over_capacity = recent_templates.len() > max_entries;
+        let over_bytes = *recent_templates_bytes > max_bytes;
         let stale_by_age = now.saturating_duration_since(front.recorded_at) > retention;
-        if !over_capacity && !stale_by_age {
+        if !over_capacity && !stale_by_age && !over_bytes {
             break;
         }
-        recent_templates.pop_front();
+        if let Some(removed) = recent_templates.pop_front() {
+            *recent_templates_bytes = recent_templates_bytes.saturating_sub(removed.estimated_bytes);
+        }
+    }
+}
+
+fn submit_template_estimated_bytes(template: &SubmitTemplate) -> usize {
+    match template {
+        SubmitTemplate::Compact { template_id } => template_id.len().saturating_add(32),
+        SubmitTemplate::FullBlock { block } => serde_json::to_vec(block.as_ref())
+            .map(|encoded| encoded.len())
+            .unwrap_or(8 * 1024 * 1024),
     }
 }
 
@@ -1578,6 +1634,10 @@ fn recent_template_retention(cfg: &Config) -> Duration {
         cfg.backend_assign_timeout,
         cfg.prefetch_wait,
     )
+}
+
+fn recent_template_cache_max_bytes() -> usize {
+    RECENT_TEMPLATE_CACHE_MAX_BYTES
 }
 
 fn recent_template_retention_from_timeouts(
@@ -1979,13 +2039,14 @@ mod tests {
 
     #[test]
     fn template_selection_matches_current_or_previous_epoch() {
-        let current = sample_template("curr");
-        let previous = sample_template("prev");
+        let current = SubmitTemplate::from_template(&sample_template("curr"));
+        let previous = SubmitTemplate::from_template(&sample_template("prev"));
         let mut recent = VecDeque::new();
         recent.push_back(RecentTemplateEntry {
             epoch: 9,
             recorded_at: Instant::now(),
-            submit_template: SubmitTemplate::from_template(&previous),
+            submit_template: previous,
+            estimated_bytes: 128,
         });
 
         assert!(submit_template_for_solution_epoch(10, &current, &recent, 10).is_some());
@@ -1997,13 +2058,16 @@ mod tests {
     fn remember_recent_template_keeps_bounded_history() {
         let max_entries = 6usize;
         let mut recent = VecDeque::new();
+        let mut bytes = 0usize;
         for epoch in 1..=(max_entries as u64 + 2) {
             remember_recent_template(
                 &mut recent,
+                &mut bytes,
                 epoch,
-                sample_template("tmpl"),
+                SubmitTemplate::from_template(&sample_template("tmpl")),
                 Duration::from_secs(60),
                 max_entries,
+                usize::MAX,
             );
         }
 
@@ -2018,17 +2082,21 @@ mod tests {
     #[test]
     fn remember_recent_template_evicts_by_age() {
         let mut recent = VecDeque::new();
+        let mut bytes = 256usize;
         recent.push_back(RecentTemplateEntry {
             epoch: 1,
             recorded_at: Instant::now() - Duration::from_secs(10),
             submit_template: SubmitTemplate::from_template(&sample_template("old")),
+            estimated_bytes: 256,
         });
         remember_recent_template(
             &mut recent,
+            &mut bytes,
             2,
-            sample_template("new"),
+            SubmitTemplate::from_template(&sample_template("new")),
             Duration::from_secs(1),
             64,
+            usize::MAX,
         );
 
         assert_eq!(recent.len(), 1);
