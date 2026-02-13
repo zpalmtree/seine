@@ -323,31 +323,95 @@ impl BackendExecutor {
             .and_then(|map| map.get(&key).copied())
             .unwrap_or(0);
 
-        if counters.is_zero() && latencies.is_zero() && assignment_timeout_strikes == 0 {
-            return BackendTelemetry::default();
+        build_backend_telemetry(counters, latencies, assignment_timeout_strikes)
+    }
+
+    pub(super) fn take_backend_telemetry_batch(
+        &self,
+        backends: &[BackendSlot],
+    ) -> BTreeMap<BackendInstanceId, BackendTelemetry> {
+        if backends.is_empty() {
+            return BTreeMap::new();
         }
 
-        BackendTelemetry {
-            assignment_enqueue_timeouts: counters.assignment_enqueue,
-            assignment_execution_timeouts: counters.assignment_execution,
-            control_enqueue_timeouts: counters.control_enqueue,
-            control_execution_timeouts: counters.control_execution,
-            assignment_timeout_strikes,
-            assignment_enqueue_latency_samples: latencies.assignment_enqueue.sample_count,
-            assignment_enqueue_latency_p95_micros: latencies.assignment_enqueue.p95_micros(),
-            assignment_enqueue_latency_max_micros: latencies.assignment_enqueue.max_micros,
-            assignment_execution_latency_samples: latencies.assignment_execution.sample_count,
-            assignment_execution_latency_p95_micros: latencies.assignment_execution.p95_micros(),
-            assignment_execution_latency_max_micros: latencies.assignment_execution.max_micros,
-            control_enqueue_latency_samples: latencies.control_enqueue.sample_count,
-            control_enqueue_latency_p95_micros: latencies.control_enqueue.p95_micros(),
-            control_enqueue_latency_max_micros: latencies.control_enqueue.max_micros,
-            control_execution_latency_samples: latencies.control_execution.sample_count,
-            control_execution_latency_p95_micros: latencies.control_execution.p95_micros(),
-            control_execution_latency_max_micros: latencies.control_execution.max_micros,
-            ..BackendTelemetry::default()
+        let mut timeout_counters = self.task_timeout_counters.lock().ok();
+        let mut latency_counters = self.task_latency_counters.lock().ok();
+        let assignment_timeout_strikes = self.assignment_timeout_strikes.lock().ok();
+        let mut telemetry = BTreeMap::new();
+
+        for slot in backends {
+            let key = backend_worker_key(slot.id, &slot.backend);
+            let counters = timeout_counters
+                .as_mut()
+                .and_then(|map| map.remove(&key))
+                .unwrap_or_default();
+            let latencies = latency_counters
+                .as_mut()
+                .and_then(|map| map.remove(&key))
+                .unwrap_or_default();
+            let strikes = assignment_timeout_strikes
+                .as_ref()
+                .and_then(|map| map.get(&key).copied())
+                .unwrap_or(0);
+            let entry = build_backend_telemetry(counters, latencies, strikes);
+            if !is_backend_telemetry_zero(entry) {
+                telemetry.insert(slot.id, entry);
+            }
         }
+
+        telemetry
     }
+}
+
+fn build_backend_telemetry(
+    counters: BackendTimeoutCounters,
+    latencies: BackendTaskLatencyCounters,
+    assignment_timeout_strikes: u32,
+) -> BackendTelemetry {
+    if counters.is_zero() && latencies.is_zero() && assignment_timeout_strikes == 0 {
+        return BackendTelemetry::default();
+    }
+
+    BackendTelemetry {
+        assignment_enqueue_timeouts: counters.assignment_enqueue,
+        assignment_execution_timeouts: counters.assignment_execution,
+        control_enqueue_timeouts: counters.control_enqueue,
+        control_execution_timeouts: counters.control_execution,
+        assignment_timeout_strikes,
+        assignment_enqueue_latency_samples: latencies.assignment_enqueue.sample_count,
+        assignment_enqueue_latency_p95_micros: latencies.assignment_enqueue.p95_micros(),
+        assignment_enqueue_latency_max_micros: latencies.assignment_enqueue.max_micros,
+        assignment_execution_latency_samples: latencies.assignment_execution.sample_count,
+        assignment_execution_latency_p95_micros: latencies.assignment_execution.p95_micros(),
+        assignment_execution_latency_max_micros: latencies.assignment_execution.max_micros,
+        control_enqueue_latency_samples: latencies.control_enqueue.sample_count,
+        control_enqueue_latency_p95_micros: latencies.control_enqueue.p95_micros(),
+        control_enqueue_latency_max_micros: latencies.control_enqueue.max_micros,
+        control_execution_latency_samples: latencies.control_execution.sample_count,
+        control_execution_latency_p95_micros: latencies.control_execution.p95_micros(),
+        control_execution_latency_max_micros: latencies.control_execution.max_micros,
+        ..BackendTelemetry::default()
+    }
+}
+
+fn is_backend_telemetry_zero(telemetry: BackendTelemetry) -> bool {
+    telemetry.assignment_enqueue_timeouts == 0
+        && telemetry.assignment_execution_timeouts == 0
+        && telemetry.control_enqueue_timeouts == 0
+        && telemetry.control_execution_timeouts == 0
+        && telemetry.assignment_timeout_strikes == 0
+        && telemetry.assignment_enqueue_latency_samples == 0
+        && telemetry.assignment_enqueue_latency_p95_micros == 0
+        && telemetry.assignment_enqueue_latency_max_micros == 0
+        && telemetry.assignment_execution_latency_samples == 0
+        && telemetry.assignment_execution_latency_p95_micros == 0
+        && telemetry.assignment_execution_latency_max_micros == 0
+        && telemetry.control_enqueue_latency_samples == 0
+        && telemetry.control_enqueue_latency_p95_micros == 0
+        && telemetry.control_enqueue_latency_max_micros == 0
+        && telemetry.control_execution_latency_samples == 0
+        && telemetry.control_execution_latency_p95_micros == 0
+        && telemetry.control_execution_latency_max_micros == 0
 }
 
 fn backend_worker_key(
@@ -1104,34 +1168,39 @@ fn perform_quarantine_stop(
                 warn(
                     "BACKEND",
                     format!(
-                        "backend stop command enqueue timed out for {backend}#{backend_id}; requesting interrupt and retrying stop enqueue"
+                        "backend stop command enqueue timed out for {backend}#{backend_id}; requesting interrupt and retrying with grace deadline"
                     ),
                 );
                 request_backend_stop_interrupt(backend_id, backend, &backend_handle);
 
-                match enqueue_stop_command(BACKEND_STOP_ACK_GRACE_TIMEOUT) {
-                    Ok(done_rx) => {
+                let (done_tx, done_rx) = bounded::<()>(1);
+                let stop_command = BackendWorkerCommand::Stop {
+                    backend_id,
+                    backend,
+                    backend_handle: Arc::clone(&backend_handle),
+                    done_tx,
+                };
+                let retry_deadline = Instant::now()
+                    .checked_add(BACKEND_STOP_ACK_GRACE_TIMEOUT)
+                    .unwrap_or_else(Instant::now);
+                match enqueue_backend_command_until_deadline(
+                    &worker_tx,
+                    stop_command,
+                    retry_deadline,
+                ) {
+                    EnqueueCommandStatus::Enqueued => {
                         wait_for_stop_ack(backend_id, backend, &backend_handle, done_rx);
                     }
-                    Err(SendTimeoutError::Timeout(_)) => {
+                    EnqueueCommandStatus::DeadlineElapsed => {
                         warn(
                             "BACKEND",
                             format!(
-                                "backend stop command is still saturated for {backend}#{backend_id}; handing off deferred stop waiter"
+                                "backend stop command remained saturated for {backend}#{backend_id} through grace deadline; running fallback stop"
                             ),
                         );
-                        if !spawn_deferred_stop_handoff(
-                            backend_id,
-                            backend,
-                            Arc::clone(&backend_handle),
-                            worker_tx.clone(),
-                        ) {
-                            should_run_fallback_stop = true;
-                        }
-                    }
-                    Err(SendTimeoutError::Disconnected(_)) => {
                         should_run_fallback_stop = true;
                     }
+                    EnqueueCommandStatus::Disconnected => should_run_fallback_stop = true,
                 }
             }
             Err(SendTimeoutError::Disconnected(_)) => {
@@ -1191,48 +1260,6 @@ fn request_backend_stop_interrupt(
     }
 }
 
-fn spawn_deferred_stop_handoff(
-    backend_id: BackendInstanceId,
-    backend: &'static str,
-    backend_handle: Arc<dyn PowBackend>,
-    worker_tx: Sender<BackendWorkerCommand>,
-) -> bool {
-    let thread_name = format!("seine-backend-stop-handoff-{backend}-{backend_id}");
-    thread::Builder::new()
-        .name(thread_name)
-        .spawn(move || {
-            let (done_tx, done_rx) = bounded::<()>(1);
-            let stop_command = BackendWorkerCommand::Stop {
-                backend_id,
-                backend,
-                backend_handle: Arc::clone(&backend_handle),
-                done_tx,
-            };
-            let deadline = Instant::now()
-                .checked_add(BACKEND_STOP_ACK_GRACE_TIMEOUT)
-                .unwrap_or_else(Instant::now);
-            match enqueue_backend_command_until_deadline(&worker_tx, stop_command, deadline) {
-                EnqueueCommandStatus::Enqueued => {
-                    wait_for_stop_ack(backend_id, backend, &backend_handle, done_rx)
-                }
-                EnqueueCommandStatus::DeadlineElapsed => {
-                    warn(
-                        "BACKEND",
-                        format!(
-                            "backend stop handoff enqueue timed out for {backend}#{backend_id}; running fallback stop"
-                        ),
-                    );
-                    request_backend_stop_interrupt(backend_id, backend, &backend_handle);
-                    run_synchronous_stop_fallback(backend_id, backend, backend_handle);
-                }
-                EnqueueCommandStatus::Disconnected => {
-                    run_synchronous_stop_fallback(backend_id, backend, backend_handle);
-                }
-            }
-        })
-        .is_ok()
-}
-
 fn run_synchronous_stop_fallback(
     backend_id: BackendInstanceId,
     backend: &'static str,
@@ -1269,7 +1296,9 @@ fn run_synchronous_stop_fallback(
             Err(RecvTimeoutError::Timeout) => {
                 warn(
                     "BACKEND",
-                    format!("backend stop fallback timed out for {backend}#{backend_id}; detached"),
+                    format!(
+                        "backend stop fallback timed out for {backend}#{backend_id}; detached (process restart may be required if backend is hard-hung)"
+                    ),
                 );
                 drop(handle);
             }
@@ -1462,6 +1491,14 @@ mod tests {
         fn assign_work(&self, _work: WorkAssignment) -> Result<()> {
             Ok(())
         }
+
+        fn cancel_work(&self) -> Result<()> {
+            Ok(())
+        }
+
+        fn fence(&self) -> Result<()> {
+            Ok(())
+        }
     }
 
     struct CapabilityBackend {
@@ -1524,6 +1561,14 @@ mod tests {
         fn stop(&self) {}
 
         fn assign_work(&self, _work: WorkAssignment) -> Result<()> {
+            Ok(())
+        }
+
+        fn cancel_work(&self) -> Result<()> {
+            Ok(())
+        }
+
+        fn fence(&self) -> Result<()> {
             Ok(())
         }
 
@@ -1623,6 +1668,14 @@ mod tests {
         }
 
         fn assign_work(&self, _work: WorkAssignment) -> Result<()> {
+            Ok(())
+        }
+
+        fn cancel_work(&self) -> Result<()> {
+            Ok(())
+        }
+
+        fn fence(&self) -> Result<()> {
             Ok(())
         }
     }
@@ -1776,6 +1829,14 @@ mod tests {
             Ok(())
         }
 
+        fn cancel_work(&self) -> Result<()> {
+            Ok(())
+        }
+
+        fn fence(&self) -> Result<()> {
+            Ok(())
+        }
+
         fn request_timeout_interrupt(&self) -> Result<()> {
             self.interrupts.fetch_add(1, Ordering::Relaxed);
             Ok(())
@@ -1783,7 +1844,7 @@ mod tests {
     }
 
     #[test]
-    fn quarantine_avoids_synchronous_stop_when_stop_enqueue_times_out() {
+    fn quarantine_falls_back_to_direct_stop_when_worker_queue_stays_saturated() {
         let stops = Arc::new(AtomicUsize::new(0));
         let interrupts = Arc::new(AtomicUsize::new(0));
         let backend = Arc::new(StopInterruptBackend::new(
@@ -1809,68 +1870,8 @@ mod tests {
 
         perform_quarantine_stop(5, "stop-counter", backend, Some(worker_tx));
 
-        assert_eq!(stops.load(Ordering::Relaxed), 0);
-        assert!(interrupts.load(Ordering::Relaxed) >= 1);
-    }
-
-    #[test]
-    fn deferred_stop_handoff_enqueues_stop_after_queue_capacity_returns() {
-        let stops = Arc::new(AtomicUsize::new(0));
-        let interrupts = Arc::new(AtomicUsize::new(0));
-        let backend = Arc::new(StopInterruptBackend::new(
-            Arc::clone(&stops),
-            Arc::clone(&interrupts),
-        )) as Arc<dyn PowBackend>;
-        let (worker_tx, worker_rx) = bounded::<BackendWorkerCommand>(1);
-        let (outcome_tx, _outcome_rx) = bounded::<BackendTaskOutcome>(1);
-
-        worker_tx
-            .send(BackendWorkerCommand::Run {
-                task: BackendTask {
-                    idx: 0,
-                    backend_id: 5,
-                    backend: "stop-counter",
-                    backend_handle: Arc::clone(&backend),
-                    kind: BackendTaskKind::Cancel,
-                    timeout: Duration::from_secs(1),
-                },
-                deadline: Instant::now() + Duration::from_secs(1),
-                outcome_tx,
-            })
-            .expect("prefill backend worker queue should succeed");
-
-        assert!(spawn_deferred_stop_handoff(
-            5,
-            "stop-counter",
-            Arc::clone(&backend),
-            worker_tx,
-        ));
-
-        let first = worker_rx
-            .recv_timeout(Duration::from_millis(100))
-            .expect("first command should be present");
-        assert!(matches!(first, BackendWorkerCommand::Run { .. }));
-
-        let stop = worker_rx
-            .recv_timeout(Duration::from_secs(1))
-            .expect("stop handoff should enqueue once capacity is available");
-        match stop {
-            BackendWorkerCommand::Stop {
-                backend_id,
-                backend,
-                backend_handle,
-                done_tx,
-            } => {
-                assert_eq!(backend_id, 5);
-                assert_eq!(backend, "stop-counter");
-                backend_handle.stop();
-                let _ = done_tx.send(());
-            }
-            BackendWorkerCommand::Run { .. } => panic!("expected stop command"),
-        }
-
         assert_eq!(stops.load(Ordering::Relaxed), 1);
-        assert_eq!(interrupts.load(Ordering::Relaxed), 0);
+        assert!(interrupts.load(Ordering::Relaxed) >= 1);
     }
 
     struct CountingBackend {
@@ -1906,6 +1907,14 @@ mod tests {
 
         fn assign_work(&self, _work: WorkAssignment) -> Result<()> {
             self.assign_calls.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+
+        fn cancel_work(&self) -> Result<()> {
+            Ok(())
+        }
+
+        fn fence(&self) -> Result<()> {
             Ok(())
         }
     }
@@ -1970,6 +1979,14 @@ mod tests {
 
         fn assign_work(&self, _work: WorkAssignment) -> Result<()> {
             thread::sleep(self.delay);
+            Ok(())
+        }
+
+        fn cancel_work(&self) -> Result<()> {
+            Ok(())
+        }
+
+        fn fence(&self) -> Result<()> {
             Ok(())
         }
 
@@ -2324,6 +2341,14 @@ mod tests {
         fn stop(&self) {}
 
         fn assign_work(&self, _work: WorkAssignment) -> Result<()> {
+            Ok(())
+        }
+
+        fn cancel_work(&self) -> Result<()> {
+            Ok(())
+        }
+
+        fn fence(&self) -> Result<()> {
             Ok(())
         }
 

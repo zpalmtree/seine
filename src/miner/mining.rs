@@ -1869,6 +1869,14 @@ mod tests {
         fn assign_work(&self, _work: WorkAssignment) -> Result<()> {
             Ok(())
         }
+
+        fn cancel_work(&self) -> Result<()> {
+            Ok(())
+        }
+
+        fn fence(&self) -> Result<()> {
+            Ok(())
+        }
     }
 
     fn submit_test_client(server: &MockServer) -> ApiClient {

@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, Result};
 use argon2::{Algorithm, Argon2, Block, Version};
 use blocknet_pow_spec::{pow_params, POW_OUTPUT_LEN};
-use crossbeam_channel::{bounded, SendTimeoutError, Sender};
+use crossbeam_channel::{bounded, Sender};
 
 use crate::backend::{
     AssignmentSemantics, BackendCapabilities, BackendEvent, BackendExecutionModel,
@@ -14,7 +14,11 @@ use crate::backend::{
     PreemptionGranularity, WorkAssignment, WORK_ID_MAX,
 };
 use crate::config::CpuAffinityMode;
-use crate::types::hash_meets_target;
+
+#[path = "cpu/events.rs"]
+mod events;
+#[path = "cpu/kernel.rs"]
+mod kernel;
 
 const HASH_BATCH_SIZE: u64 = 64;
 const CONTROL_CHECK_INTERVAL_HASHES: u64 = 256;
@@ -557,167 +561,7 @@ impl BenchBackend for CpuBackend {
 }
 
 fn cpu_worker_loop(shared: Arc<Shared>, thread_idx: usize, core_id: Option<core_affinity::CoreId>) {
-    if let Some(core_id) = core_id {
-        let _ = core_affinity::set_for_current(core_id);
-    }
-
-    let params = match pow_params() {
-        Ok(p) => p,
-        Err(_) => {
-            mark_startup_failed(&shared);
-            emit_error(
-                &shared,
-                format!("cpu thread {thread_idx}: invalid Argon2 params"),
-            );
-            request_shutdown(&shared);
-            return;
-        }
-    };
-
-    let mut memory_blocks = vec![Block::default(); params.block_count()];
-    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
-    let mut output = [0u8; POW_OUTPUT_LEN];
-    mark_worker_ready(&shared);
-    let mut local_generation = 0u64;
-    let mut local_work: Option<Arc<WorkAssignment>> = None;
-    let mut worker_active = false;
-    let mut nonce = 0u64;
-    let mut lane_iters = 0u64;
-    let lane_stride = shared.hash_slots.len().max(1) as u64;
-    let mut lane_quota = 0u64;
-    let mut pending_hashes = 0u64;
-    let mut next_flush_at = Instant::now() + HASH_FLUSH_INTERVAL;
-    let mut control_hashes_remaining = 0u64;
-
-    loop {
-        let global_generation = shared.work_generation.load(Ordering::Acquire);
-        if global_generation != local_generation || local_work.is_none() {
-            if local_work.is_some() {
-                flush_hashes(&shared, thread_idx, &mut pending_hashes);
-                mark_worker_inactive(&shared, &mut worker_active);
-            }
-            match wait_for_work_update(&shared, local_generation) {
-                Ok(Some((generation, work))) => {
-                    nonce = work.nonce_chunk.start_nonce.wrapping_add(thread_idx as u64);
-                    lane_iters = 0;
-                    lane_quota = lane_quota_for_chunk(
-                        work.nonce_chunk.nonce_count,
-                        thread_idx as u64,
-                        lane_stride,
-                    );
-                    next_flush_at = Instant::now() + HASH_FLUSH_INTERVAL;
-                    control_hashes_remaining = 0;
-                    local_generation = generation;
-                    local_work = Some(work);
-                    if lane_quota > 0 {
-                        mark_worker_active(&shared, &mut worker_active);
-                    } else {
-                        local_work = None;
-                    }
-                    continue;
-                }
-                Ok(None) => break,
-                Err(err) => {
-                    emit_error(
-                        &shared,
-                        format!("cpu thread {thread_idx}: control wait failed ({err})"),
-                    );
-                    request_shutdown(&shared);
-                    break;
-                }
-            }
-        }
-
-        let Some(work) = local_work.as_ref() else {
-            continue;
-        };
-        let template = &work.template;
-
-        if control_hashes_remaining == 0 {
-            if lane_iters >= lane_quota {
-                flush_hashes(&shared, thread_idx, &mut pending_hashes);
-                mark_worker_inactive(&shared, &mut worker_active);
-                local_work = None;
-                continue;
-            }
-
-            if Instant::now() >= template.stop_at {
-                flush_hashes(&shared, thread_idx, &mut pending_hashes);
-                mark_worker_inactive(&shared, &mut worker_active);
-                local_work = None;
-                continue;
-            }
-
-            if shared.solution_state.load(Ordering::Acquire) != template.work_id {
-                flush_hashes(&shared, thread_idx, &mut pending_hashes);
-                mark_worker_inactive(&shared, &mut worker_active);
-                local_work = None;
-                continue;
-            }
-
-            control_hashes_remaining = lane_quota
-                .saturating_sub(lane_iters)
-                .clamp(1, CONTROL_CHECK_INTERVAL_HASHES);
-        }
-
-        let nonce_bytes = nonce.to_le_bytes();
-        if argon2
-            .hash_password_into_with_memory(
-                &nonce_bytes,
-                &template.header_base,
-                &mut output,
-                &mut memory_blocks,
-            )
-            .is_err()
-        {
-            emit_error(
-                &shared,
-                format!("cpu thread {thread_idx}: hash_password_into_with_memory failed"),
-            );
-            request_shutdown(&shared);
-            break;
-        }
-
-        lane_iters = lane_iters.saturating_add(1);
-        control_hashes_remaining = control_hashes_remaining.saturating_sub(1);
-        pending_hashes = pending_hashes.saturating_add(1);
-
-        let now = Instant::now();
-        let should_flush = should_flush_hashes(pending_hashes, now, next_flush_at);
-        if should_flush {
-            flush_hashes(&shared, thread_idx, &mut pending_hashes);
-            next_flush_at = now + HASH_FLUSH_INTERVAL;
-        }
-
-        if hash_meets_target(&output, &template.target) {
-            let solved_state = SOLVED_MASK | template.work_id;
-            if shared
-                .solution_state
-                .compare_exchange(
-                    template.work_id,
-                    solved_state,
-                    Ordering::SeqCst,
-                    Ordering::SeqCst,
-                )
-                .is_ok()
-            {
-                emit_event(
-                    &shared,
-                    BackendEvent::Solution(MiningSolution {
-                        epoch: template.epoch,
-                        nonce,
-                        backend_id: shared.instance_id.load(Ordering::Acquire),
-                        backend: "cpu",
-                    }),
-                );
-            }
-        }
-
-        nonce = nonce.wrapping_add(lane_stride);
-    }
-
-    flush_hashes(&shared, thread_idx, &mut pending_hashes);
-    mark_worker_inactive(&shared, &mut worker_active);
+    kernel::cpu_worker_loop(shared, thread_idx, core_id);
 }
 
 fn lane_quota_for_chunk(nonce_count: u64, lane_idx: u64, lane_stride: u64) -> u64 {
@@ -1024,121 +868,15 @@ fn should_flush_hashes(pending_hashes: u64, now: Instant, next_flush_at: Instant
 }
 
 fn emit_error(shared: &Shared, message: String) {
-    if shared.error_emitted.swap(true, Ordering::AcqRel) {
-        return;
-    }
-    emit_event(
-        shared,
-        BackendEvent::Error {
-            backend_id: shared.instance_id.load(Ordering::Acquire),
-            backend: "cpu",
-            message,
-        },
-    );
+    events::emit_error(shared, message);
 }
 
 fn emit_event(shared: &Shared, event: BackendEvent) {
-    let dispatch_tx = match shared.event_dispatch_tx.read() {
-        Ok(slot) => slot.clone(),
-        Err(_) => None,
-    };
-    let Some(dispatch_tx) = dispatch_tx else {
-        shared.dropped_events.fetch_add(1, Ordering::Relaxed);
-        return;
-    };
-    send_dispatch_event(shared, &dispatch_tx, event);
-}
-
-fn send_dispatch_event(shared: &Shared, tx: &Sender<BackendEvent>, event: BackendEvent) {
-    send_event_with_backpressure(shared, tx, event, EventDelivery::Lossless);
+    events::emit_event(shared, event);
 }
 
 fn forward_event(shared: &Shared, event: BackendEvent) {
-    let tx = match shared.event_sink.read() {
-        Ok(slot) => slot.clone(),
-        Err(_) => None,
-    };
-    let Some(tx) = tx else {
-        shared.dropped_events.fetch_add(1, Ordering::Relaxed);
-        return;
-    };
-
-    match event {
-        BackendEvent::Solution(solution) => {
-            send_critical_event(
-                shared,
-                &tx,
-                BackendEvent::Solution(solution),
-                EventDelivery::Lossless,
-            );
-        }
-        BackendEvent::Error {
-            backend_id,
-            backend,
-            message,
-        } => {
-            send_critical_event(
-                shared,
-                &tx,
-                BackendEvent::Error {
-                    backend_id,
-                    backend,
-                    message,
-                },
-                EventDelivery::BestEffort(ERROR_EVENT_MAX_BLOCK),
-            );
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-enum EventDelivery {
-    Lossless,
-    BestEffort(Duration),
-}
-
-fn send_critical_event(
-    shared: &Shared,
-    tx: &Sender<BackendEvent>,
-    event: BackendEvent,
-    delivery: EventDelivery,
-) {
-    send_event_with_backpressure(shared, tx, event, delivery);
-}
-
-fn send_event_with_backpressure(
-    shared: &Shared,
-    tx: &Sender<BackendEvent>,
-    event: BackendEvent,
-    delivery: EventDelivery,
-) {
-    let mut queued = event;
-    let started_at = Instant::now();
-    let mut retry_wait = CRITICAL_EVENT_RETRY_WAIT;
-    loop {
-        if !shared.started.load(Ordering::Acquire) {
-            shared.dropped_events.fetch_add(1, Ordering::Relaxed);
-            return;
-        }
-
-        match tx.send_timeout(queued, retry_wait) {
-            Ok(()) => return,
-            Err(SendTimeoutError::Disconnected(_)) => {
-                shared.dropped_events.fetch_add(1, Ordering::Relaxed);
-                return;
-            }
-            Err(SendTimeoutError::Timeout(returned)) => {
-                if let EventDelivery::BestEffort(max_block) = delivery {
-                    if started_at.elapsed() >= max_block {
-                        shared.dropped_events.fetch_add(1, Ordering::Relaxed);
-                        return;
-                    }
-                }
-                queued = returned;
-                retry_wait = (retry_wait.saturating_mul(2)).min(CRITICAL_EVENT_RETRY_MAX_WAIT);
-            }
-        }
-    }
+    events::forward_event(shared, event);
 }
 
 #[cfg(test)]

@@ -120,6 +120,14 @@ mod tests {
             Ok(())
         }
 
+        fn cancel_work(&self) -> Result<()> {
+            Ok(())
+        }
+
+        fn fence(&self) -> Result<()> {
+            Ok(())
+        }
+
         fn take_hashes(&self) -> u64 {
             self.hashes.swap(0, Ordering::AcqRel)
         }

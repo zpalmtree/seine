@@ -585,29 +585,37 @@ fn run_worker_benchmark_inner(
         let mut round_backend_hashes = BTreeMap::new();
         let mut round_backend_telemetry = BTreeMap::new();
         let mut backend_poll_state = build_backend_poll_state(backends, cfg.hash_poll_interval);
-        while Instant::now() < stop_at && !shutdown.load(Ordering::Relaxed) {
-            let step =
-                super::round_driver::drive_round_step(super::round_driver::RoundDriverInput {
-                    backends,
-                    backend_events,
-                    backend_executor,
-                    configured_hash_poll_interval: cfg.hash_poll_interval,
-                    poll_state: &mut backend_poll_state,
-                    round_backend_hashes: &mut round_backend_hashes,
-                    round_backend_telemetry: &mut round_backend_telemetry,
-                    stop_at,
-                    extra_deadline: None,
-                })?;
-            round_hashes = round_hashes.saturating_add(step.collected_hashes);
-
-            if let Some(event) = step.event {
-                if handle_benchmark_backend_event(event, epoch, backends, backend_executor)?
-                    == BackendEventAction::TopologyChanged
-                {
-                    ensure_worker_topology_identity(backends, identity, &phase_label)?;
+        let mut round_driver = super::round_driver::RoundDriverContext {
+            backends,
+            backend_events,
+            backend_executor,
+            configured_hash_poll_interval: cfg.hash_poll_interval,
+            poll_state: &mut backend_poll_state,
+            round_backend_hashes: &mut round_backend_hashes,
+            round_backend_telemetry: &mut round_backend_telemetry,
+        };
+        super::round_driver::run_round_window(
+            &mut round_driver,
+            shutdown,
+            stop_at,
+            || None,
+            |_driver| Ok(super::round_driver::RoundWindowControl::Continue),
+            |driver, step| {
+                round_hashes = round_hashes.saturating_add(step.collected_hashes);
+                if let Some(event) = step.event {
+                    if handle_benchmark_backend_event(
+                        event,
+                        epoch,
+                        driver.backends,
+                        backend_executor,
+                    )? == BackendEventAction::TopologyChanged
+                    {
+                        ensure_worker_topology_identity(driver.backends, identity, &phase_label)?;
+                    }
                 }
-            }
-        }
+                Ok(super::round_driver::RoundWindowControl::Continue)
+            },
+        )?;
 
         collect_backend_hashes(
             backends,
@@ -1499,6 +1507,14 @@ mod tests {
         fn stop(&self) {}
 
         fn assign_work(&self, _work: WorkAssignment) -> Result<()> {
+            Ok(())
+        }
+
+        fn cancel_work(&self) -> Result<()> {
+            Ok(())
+        }
+
+        fn fence(&self) -> Result<()> {
             Ok(())
         }
     }

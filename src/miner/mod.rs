@@ -571,13 +571,15 @@ fn collect_backend_hashes(
     mut round_backend_telemetry: Option<&mut BTreeMap<BackendInstanceId, BackendRoundTelemetry>>,
 ) {
     let mut collected = 0u64;
+    let mut runtime_telemetry = backend_executor.take_backend_telemetry_batch(backends);
     for slot in backends {
         let slot_hashes = slot.backend.take_hashes();
         let telemetry = slot.backend.take_telemetry();
         if let Some(per_backend_telemetry) = round_backend_telemetry.as_deref_mut() {
             merge_backend_telemetry(per_backend_telemetry, slot.id, telemetry);
-            let runtime_telemetry = backend_executor.take_backend_telemetry(slot.id, &slot.backend);
-            merge_backend_telemetry(per_backend_telemetry, slot.id, runtime_telemetry);
+            if let Some(runtime) = runtime_telemetry.remove(&slot.id) {
+                merge_backend_telemetry(per_backend_telemetry, slot.id, runtime);
+            }
         }
 
         if slot_hashes == 0 {
@@ -610,6 +612,7 @@ fn collect_round_backend_samples(
     round_backend_telemetry: &mut BTreeMap<BackendInstanceId, BackendRoundTelemetry>,
 ) -> u64 {
     let mut collected = 0u64;
+    let mut runtime_telemetry = backend_executor.take_backend_telemetry_batch(backends);
     hash_poll::collect_due_backend_samples(
         backends,
         configured_hash_poll_interval,
@@ -617,9 +620,9 @@ fn collect_round_backend_samples(
         |sample| {
             let backend_id = sample.slot.id;
             merge_backend_telemetry(round_backend_telemetry, backend_id, sample.telemetry);
-            let runtime_telemetry =
-                backend_executor.take_backend_telemetry(backend_id, &sample.slot.backend);
-            merge_backend_telemetry(round_backend_telemetry, backend_id, runtime_telemetry);
+            if let Some(runtime) = runtime_telemetry.remove(&backend_id) {
+                merge_backend_telemetry(round_backend_telemetry, backend_id, runtime);
+            }
             if sample.hashes > 0 {
                 collected = collected.saturating_add(sample.hashes);
                 let entry = round_backend_hashes.entry(backend_id).or_insert(0);
@@ -1384,6 +1387,14 @@ mod tests {
             for assignment in work {
                 self.assign_work(assignment.clone())?;
             }
+            Ok(())
+        }
+
+        fn cancel_work(&self) -> Result<()> {
+            Ok(())
+        }
+
+        fn fence(&self) -> Result<()> {
             Ok(())
         }
 

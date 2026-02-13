@@ -569,7 +569,10 @@ pub trait PowBackend: Send + Sync {
 
     /// Request the backend to stop processing the current assignment.
     fn cancel_work(&self) -> Result<()> {
-        Ok(())
+        Err(anyhow!(
+            "backend {} does not implement cancel_work()",
+            self.name()
+        ))
     }
 
     /// Request an immediate, non-blocking timeout interrupt.
@@ -577,7 +580,7 @@ pub trait PowBackend: Send + Sync {
     /// Runtime may call this from watchdog paths when assignment/control calls
     /// overrun their deadline. Implementations should avoid long blocking work.
     fn request_timeout_interrupt(&self) -> Result<()> {
-        Ok(())
+        self.cancel_work()
     }
 
     /// Request backend cancellation before a soft deadline.
@@ -599,7 +602,10 @@ pub trait PowBackend: Send + Sync {
 
     /// Wait until all backend workers have observed the most recent control action.
     fn fence(&self) -> Result<()> {
-        Ok(())
+        Err(anyhow!(
+            "backend {} does not implement fence()",
+            self.name()
+        ))
     }
 
     /// Wait for backend quiesce/fence before a soft deadline.
