@@ -57,7 +57,7 @@ impl TemplatePrefetch {
                     request.tip_sequence = request.tip_sequence.max(next.tip_sequence);
                 }
 
-                let outcome = fetch_template_prefetch_once(&client, &cfg, shutdown.as_ref());
+                let outcome = fetch_template_once(&client, &cfg, shutdown.as_ref());
                 if result_tx
                     .send(PrefetchResult {
                         tip_sequence: request.tip_sequence,
@@ -187,12 +187,10 @@ impl TemplatePrefetch {
 }
 
 fn prefetch_request_timeout(cfg: &Config) -> Duration {
-    let min_timeout = Duration::from_millis(200);
-    let burst_timeout = cfg.prefetch_wait.max(min_timeout).saturating_mul(4);
-    burst_timeout.min(cfg.request_timeout.max(min_timeout))
+    cfg.request_timeout.max(Duration::from_millis(200))
 }
 
-fn fetch_template_prefetch_once(
+pub(super) fn fetch_template_once(
     client: &ApiClient,
     cfg: &Config,
     shutdown: &AtomicBool,

@@ -44,7 +44,7 @@ use super::submit::process_submit_request;
 use super::submit::{
     SubmitEnqueueOutcome, SubmitOutcome, SubmitRequest, SubmitResult, SubmitTemplate, SubmitWorker,
 };
-use super::template_prefetch::{PrefetchOutcome, TemplatePrefetch};
+use super::template_prefetch::{fetch_template_once, PrefetchOutcome, TemplatePrefetch};
 pub(super) use super::tip::{spawn_tip_listener, TipListener, TipSignal};
 use super::tui::TuiState;
 use super::ui::{error, info, mined, success, warn};
@@ -1016,29 +1016,27 @@ pub(super) fn run_mining_loop(
                         solution.epoch, solution.nonce
                     ),
                 );
+            } else if control_plane.submit_template(
+                final_submit_template.clone(),
+                solution.clone(),
+                &stats,
+                &mut tui,
+            ) {
+                inflight_solution_keys.insert(key);
+                final_enqueued_solution = final_pending_solution.clone();
             } else {
-                if control_plane.submit_template(
-                    final_submit_template.clone(),
+                warn(
+                    "SUBMIT",
+                    format!(
+                        "submit queue saturated; deferring solution epoch={} nonce={}",
+                        solution.epoch, solution.nonce
+                    ),
+                );
+                push_deferred_solution_indexed(
+                    &mut deferred_solutions,
+                    &mut deferred_solution_keys,
                     solution.clone(),
-                    &stats,
-                    &mut tui,
-                ) {
-                    inflight_solution_keys.insert(key);
-                    final_enqueued_solution = final_pending_solution.clone();
-                } else {
-                    warn(
-                        "SUBMIT",
-                        format!(
-                            "submit queue saturated; deferring solution epoch={} nonce={}",
-                            solution.epoch, solution.nonce
-                        ),
-                    );
-                    push_deferred_solution_indexed(
-                        &mut deferred_solutions,
-                        &mut deferred_solution_keys,
-                        solution.clone(),
-                    );
-                }
+                );
             }
         }
         drop_solution_from_deferred_indexed(
@@ -1483,7 +1481,16 @@ fn resolve_next_template(
             let closed = task.is_closed();
             (result, closed)
         };
-        let Some((tip_sequence, outcome)) = prefetch_result else {
+        let outcome = if let Some((tip_sequence, outcome)) = prefetch_result {
+            let latest_after_wait = current_tip_sequence(tip_signal);
+            if tip_sequence < latest_after_wait {
+                if let Some(task) = prefetch.as_mut() {
+                    task.request_if_idle(latest_after_wait);
+                }
+                continue;
+            }
+            outcome
+        } else {
             if prefetch_closed {
                 *prefetch = Some(TemplatePrefetch::spawn(
                     client.clone(),
@@ -1494,16 +1501,8 @@ fn resolve_next_template(
                 continue;
             }
             render_tui_now(tui);
-            continue;
+            fetch_template_once(client, cfg, shutdown.as_ref())
         };
-
-        let latest_after_wait = current_tip_sequence(tip_signal);
-        if tip_sequence < latest_after_wait {
-            if let Some(task) = prefetch.as_mut() {
-                task.request_if_idle(latest_after_wait);
-            }
-            continue;
-        }
 
         match outcome {
             PrefetchOutcome::Template(template) => {

@@ -202,33 +202,48 @@ fn dispatch_assignment_tasks(
         return (Vec::new(), Vec::new(), 0);
     }
 
-    let expected = tasks.len().max(slots_by_idx.len());
+    let max_task_idx = tasks.iter().map(|task| task.idx).max();
+    let expected = slots_by_idx
+        .len()
+        .max(max_task_idx.map_or(0, |idx| idx.saturating_add(1)));
     if slots_by_idx.len() < expected {
         slots_by_idx.resize_with(expected, || None);
     }
 
-    let mut span_end_offsets = BTreeMap::new();
-    let mut task_timeouts = BTreeMap::new();
-    let mut task_timeout_strikes = BTreeMap::new();
+    let default_timeout = Duration::from_millis(1);
+    let mut span_end_offsets = vec![0u64; expected];
+    let mut task_timeouts = vec![default_timeout; expected];
+    let mut task_timeout_strikes = vec![1u32; expected];
     let backend_tasks = tasks
         .into_iter()
         .map(|task| {
-            span_end_offsets.insert(task.idx, task.span_end_offset);
-            task_timeouts.insert(
-                task.idx,
-                task.assignment_timeout.max(Duration::from_millis(1)),
-            );
-            task_timeout_strikes.insert(task.idx, task.assignment_timeout_strikes.max(1));
+            let DispatchTask {
+                idx,
+                backend_id,
+                backend,
+                backend_handle,
+                assignments,
+                span_end_offset,
+                assignment_timeout,
+                assignment_timeout_strikes,
+            } = task;
+            let timeout = assignment_timeout.max(default_timeout);
+            let timeout_strikes = assignment_timeout_strikes.max(1);
+            if idx < expected {
+                span_end_offsets[idx] = span_end_offset;
+                task_timeouts[idx] = timeout;
+                task_timeout_strikes[idx] = timeout_strikes;
+            }
             BackendTask {
-                idx: task.idx,
-                backend_id: task.backend_id,
-                backend: task.backend,
-                backend_handle: task.backend_handle,
-                kind: match task.assignments {
+                idx,
+                backend_id,
+                backend,
+                backend_handle,
+                kind: match assignments {
                     DispatchAssignments::Single(work) => BackendTaskKind::Assign(work),
                     DispatchAssignments::Batch(batch) => BackendTaskKind::AssignBatch(batch),
                 },
-                timeout: task.assignment_timeout.max(Duration::from_millis(1)),
+                timeout,
             }
         })
         .collect();
@@ -245,12 +260,9 @@ fn dispatch_assignment_tasks(
         let Some(slot) = slots_by_idx.get_mut(idx).and_then(Option::take) else {
             continue;
         };
-        let span_end_offset = span_end_offsets.get(&idx).copied().unwrap_or(0);
-        let timeout = task_timeouts
-            .get(&idx)
-            .copied()
-            .unwrap_or_else(|| Duration::from_millis(1));
-        let timeout_strikes = task_timeout_strikes.get(&idx).copied().unwrap_or(1);
+        let span_end_offset = span_end_offsets.get(idx).copied().unwrap_or(0);
+        let timeout = task_timeouts.get(idx).copied().unwrap_or(default_timeout);
+        let timeout_strikes = task_timeout_strikes.get(idx).copied().unwrap_or(1);
         let backend_id = slot.id;
         let backend = slot.backend.name();
         match outcome_slot.take() {
