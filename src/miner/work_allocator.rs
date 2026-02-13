@@ -8,7 +8,9 @@ use crate::backend::{
     AssignmentSemantics, BackendInstanceId, NonceChunk, PowBackend, WorkAssignment, WorkTemplate,
 };
 
-use super::backend_executor::{self, BackendTask, BackendTaskKind};
+use super::backend_executor::{
+    self, BackendTask, BackendTaskDispatchResult, BackendTaskKind, BackendTaskTimeoutKind,
+};
 use super::ui::warn;
 use super::{backend_capabilities, backend_names, total_lanes, BackendSlot, DistributeWorkOptions};
 
@@ -26,6 +28,7 @@ struct DispatchTask {
     backend: &'static str,
     backend_handle: Arc<dyn PowBackend>,
     assignments: DispatchAssignments,
+    span_end_offset: u64,
 }
 
 struct DispatchFailure {
@@ -42,7 +45,7 @@ pub(super) fn distribute_work(
 ) -> Result<u64> {
     let mut attempt_start_nonce = options.reservation.start_nonce;
     let mut additional_span_consumed = 0u64;
-    let mut first_attempt = true;
+    let mut remaining_reserved_span = options.reservation.reserved_span;
     let mut non_quarantined_retry_used = false;
     loop {
         if backends.is_empty() {
@@ -59,12 +62,6 @@ pub(super) fn distribute_work(
         );
         let total_lanes = total_lanes(backends);
         let attempt_span = nonce_counts.iter().copied().sum::<u64>().max(total_lanes);
-        let attempt_additional = if first_attempt {
-            attempt_span.saturating_sub(options.reservation.reserved_span)
-        } else {
-            attempt_span
-        };
-        additional_span_consumed = additional_span_consumed.saturating_add(attempt_additional);
         let template = Arc::new(WorkTemplate {
             work_id: options.work_id,
             epoch: options.epoch,
@@ -74,6 +71,7 @@ pub(super) fn distribute_work(
         });
 
         let mut chunk_start = attempt_start_nonce;
+        let mut chunk_offset = 0u64;
         let mut dispatch_tasks = Vec::with_capacity(backends.len());
         let mut slots_by_idx = Vec::with_capacity(backends.len());
         for (idx, slot) in std::mem::take(backends).into_iter().enumerate() {
@@ -94,18 +92,20 @@ pub(super) fn distribute_work(
                 preferred_dispatch_nonce_count,
             );
 
+            chunk_offset = chunk_offset.saturating_add(nonce_count);
             dispatch_tasks.push(DispatchTask {
                 idx,
                 backend_id: slot.id,
                 backend: slot.backend.name(),
                 backend_handle: Arc::clone(&slot.backend),
                 assignments,
+                span_end_offset: chunk_offset,
             });
             slots_by_idx.push(Some(slot));
             chunk_start = chunk_start.wrapping_add(nonce_count);
         }
 
-        let (survivors, failures) = dispatch_assignment_tasks(
+        let (survivors, failures, attempt_consumed_span) = dispatch_assignment_tasks(
             dispatch_tasks,
             slots_by_idx,
             options.assignment_timeout,
@@ -113,6 +113,11 @@ pub(super) fn distribute_work(
         );
         *backends = survivors;
         backend_executor.prune(backends);
+
+        let covered_by_reserved = remaining_reserved_span.min(attempt_consumed_span);
+        remaining_reserved_span = remaining_reserved_span.saturating_sub(covered_by_reserved);
+        additional_span_consumed = additional_span_consumed
+            .saturating_add(attempt_consumed_span.saturating_sub(covered_by_reserved));
 
         if failures.is_empty() {
             return Ok(additional_span_consumed);
@@ -160,27 +165,29 @@ pub(super) fn distribute_work(
             }
 
             non_quarantined_retry_used = true;
-            first_attempt = false;
-            attempt_start_nonce = attempt_start_nonce.wrapping_add(attempt_span);
+            attempt_start_nonce = attempt_start_nonce.wrapping_add(attempt_consumed_span);
             warn(
                 "BACKEND",
                 format!(
-                    "assignment timeout without quarantine; redistributing immediately with remaining={} start_nonce={}",
+                    "assignment timeout without quarantine; redistributing immediately with remaining={} start_nonce={} consumed_span={} attempted_span={}",
                     backend_names(backends),
-                    attempt_start_nonce
+                    attempt_start_nonce,
+                    attempt_consumed_span,
+                    attempt_span,
                 ),
             );
             continue;
         }
 
-        first_attempt = false;
-        attempt_start_nonce = attempt_start_nonce.wrapping_add(attempt_span);
+        attempt_start_nonce = attempt_start_nonce.wrapping_add(attempt_consumed_span);
         warn(
             "BACKEND",
             format!(
-                "retrying work assignment with remaining={} start_nonce={}",
+                "retrying work assignment with remaining={} start_nonce={} consumed_span={} attempted_span={}",
                 backend_names(backends),
-                attempt_start_nonce
+                attempt_start_nonce,
+                attempt_consumed_span,
+                attempt_span,
             ),
         );
     }
@@ -191,9 +198,9 @@ fn dispatch_assignment_tasks(
     mut slots_by_idx: Vec<Option<BackendSlot>>,
     timeout: Duration,
     backend_executor: &backend_executor::BackendExecutor,
-) -> (Vec<BackendSlot>, Vec<DispatchFailure>) {
+) -> (Vec<BackendSlot>, Vec<DispatchFailure>, u64) {
     if tasks.is_empty() {
-        return (Vec::new(), Vec::new());
+        return (Vec::new(), Vec::new(), 0);
     }
 
     let timeout = timeout.max(Duration::from_millis(1));
@@ -201,17 +208,22 @@ fn dispatch_assignment_tasks(
     if slots_by_idx.len() < expected {
         slots_by_idx.resize_with(expected, || None);
     }
+
+    let mut span_end_offsets = BTreeMap::new();
     let backend_tasks = tasks
         .into_iter()
-        .map(|task| BackendTask {
-            idx: task.idx,
-            backend_id: task.backend_id,
-            backend: task.backend,
-            backend_handle: task.backend_handle,
-            kind: match task.assignments {
-                DispatchAssignments::Single(work) => BackendTaskKind::Assign(work),
-                DispatchAssignments::Batch(batch) => BackendTaskKind::AssignBatch(batch),
-            },
+        .map(|task| {
+            span_end_offsets.insert(task.idx, task.span_end_offset);
+            BackendTask {
+                idx: task.idx,
+                backend_id: task.backend_id,
+                backend: task.backend,
+                backend_handle: task.backend_handle,
+                kind: match task.assignments {
+                    DispatchAssignments::Single(work) => BackendTaskKind::Assign(work),
+                    DispatchAssignments::Batch(batch) => BackendTaskKind::AssignBatch(batch),
+                },
+            }
         })
         .collect();
     let mut outcomes = backend_executor.dispatch_backend_tasks(backend_tasks, timeout);
@@ -221,31 +233,34 @@ fn dispatch_assignment_tasks(
 
     let mut survivors = Vec::new();
     let mut failures = Vec::new();
+    let mut consumed_span = 0u64;
 
     for (idx, outcome_slot) in outcomes.iter_mut().enumerate().take(expected) {
         let Some(slot) = slots_by_idx.get_mut(idx).and_then(Option::take) else {
             continue;
         };
+        let span_end_offset = span_end_offsets.get(&idx).copied().unwrap_or(0);
         let backend_id = slot.id;
         let backend = slot.backend.name();
         match outcome_slot.take() {
-            Some(outcome) => match outcome.result {
-                Ok(()) => {
-                    backend_executor.note_assignment_success(backend_id, &slot.backend);
-                    survivors.push((idx, slot));
-                }
-                Err(err) => {
-                    backend_executor.quarantine_backend(backend_id, Arc::clone(&slot.backend));
-                    backend_executor.remove_backend_worker(backend_id, &slot.backend);
-                    failures.push(DispatchFailure {
-                        backend_id,
-                        backend,
-                        reason: format!("{err:#}"),
-                        quarantined: true,
-                    });
-                }
-            },
-            None => {
+            Some(BackendTaskDispatchResult::Completed(Ok(()))) => {
+                consumed_span = consumed_span.max(span_end_offset);
+                backend_executor.note_assignment_success(backend_id, &slot.backend);
+                survivors.push((idx, slot));
+            }
+            Some(BackendTaskDispatchResult::Completed(Err(err))) => {
+                consumed_span = consumed_span.max(span_end_offset);
+                backend_executor.quarantine_backend(backend_id, Arc::clone(&slot.backend));
+                backend_executor.remove_backend_worker(backend_id, &slot.backend);
+                failures.push(DispatchFailure {
+                    backend_id,
+                    backend,
+                    reason: format!("{err:#}"),
+                    quarantined: true,
+                });
+            }
+            Some(BackendTaskDispatchResult::TimedOut(BackendTaskTimeoutKind::Execution)) | None => {
+                consumed_span = consumed_span.max(span_end_offset);
                 let timeout_decision =
                     backend_executor.note_assignment_timeout(backend_id, &slot.backend);
                 let append_semantics =
@@ -279,10 +294,38 @@ fn dispatch_assignment_tasks(
                         backend_id,
                         backend,
                         reason: format!(
-                            "assignment timed out after {}ms (strike {}/{})",
+                            "assignment timed out after {}ms (execution strike {}/{})",
                             timeout.as_millis(),
                             timeout_decision.strikes,
                             timeout_decision.threshold,
+                        ),
+                        quarantined: false,
+                    });
+                    survivors.push((idx, slot));
+                }
+            }
+            Some(BackendTaskDispatchResult::TimedOut(BackendTaskTimeoutKind::Enqueue)) => {
+                let append_semantics =
+                    backend_capabilities(&slot).assignment_semantics == AssignmentSemantics::Append;
+                if append_semantics {
+                    backend_executor.quarantine_backend(backend_id, Arc::clone(&slot.backend));
+                    backend_executor.remove_backend_worker(backend_id, &slot.backend);
+                    failures.push(DispatchFailure {
+                        backend_id,
+                        backend,
+                        reason: format!(
+                            "assignment dispatch queue remained saturated for {}ms before enqueue; append-assignment backend quarantined to prevent queue carry-over",
+                            timeout.as_millis(),
+                        ),
+                        quarantined: true,
+                    });
+                } else {
+                    failures.push(DispatchFailure {
+                        backend_id,
+                        backend,
+                        reason: format!(
+                            "assignment dispatch queue remained saturated for {}ms before enqueue (no execution strike)",
+                            timeout.as_millis(),
                         ),
                         quarantined: false,
                     });
@@ -299,9 +342,9 @@ fn dispatch_assignment_tasks(
             .map(|(_, slot)| slot)
             .collect::<Vec<_>>(),
         failures,
+        consumed_span,
     )
 }
-
 pub(super) fn compute_backend_nonce_counts(
     backends: &[BackendSlot],
     max_iters_per_lane: u64,

@@ -53,6 +53,7 @@ const DEFERRED_SOLUTIONS_CAPACITY: usize = 8192;
 const SUBMIT_REQUEST_CAPACITY: usize = 128;
 const SUBMIT_RESULT_CAPACITY: usize = 128;
 const SUBMIT_BACKLOG_CAPACITY: usize = 512;
+const SUBMIT_BACKLOG_HARD_CAPACITY: usize = 4096;
 const SUBMIT_BACKLOG_FLUSH_WAIT: Duration = Duration::from_millis(10);
 const SUBMIT_RETRY_MAX_ATTEMPTS: u32 = 4;
 const SUBMIT_RETRY_BASE_DELAY: Duration = Duration::from_millis(200);
@@ -522,12 +523,29 @@ impl<'a> MiningControlPlane<'a> {
             warn(
                 "SUBMIT",
                 format!(
-                    "submit backlog exceeded soft limit ({}); retaining all requests until worker catches up",
+                    "submit backlog exceeded soft limit ({}); retaining queued requests while worker catches up",
                     SUBMIT_BACKLOG_CAPACITY
                 ),
             );
             self.submit_backlog_high_watermark_logged = true;
         }
+
+        if self.submit_backlog.len() >= SUBMIT_BACKLOG_HARD_CAPACITY {
+            let drop_count = self
+                .submit_backlog
+                .len()
+                .saturating_sub(SUBMIT_BACKLOG_HARD_CAPACITY)
+                .saturating_add(1);
+            self.submit_backlog.drain(0..drop_count);
+            warn(
+                "SUBMIT",
+                format!(
+                    "submit backlog reached hard cap ({}); dropped {} oldest queued request(s)",
+                    SUBMIT_BACKLOG_HARD_CAPACITY, drop_count
+                ),
+            );
+        }
+
         self.submit_backlog.push_back(request);
     }
 
@@ -1521,23 +1539,7 @@ fn handle_mining_backend_event(
         backend_executor,
     )?;
     if let Some(solution) = maybe_solution {
-        if solution.epoch == epoch {
-            if solved.is_none() {
-                *solved = Some(solution);
-            } else {
-                push_deferred_solution(deferred_solutions, solution);
-            }
-        } else if solution.epoch < epoch {
-            push_deferred_solution(deferred_solutions, solution);
-        } else {
-            warn(
-                "BACKEND",
-                format!(
-                    "ignoring future solution from {}#{} epoch={} current_epoch={}",
-                    solution.backend, solution.backend_id, solution.epoch, epoch
-                ),
-            );
-        }
+        route_mining_solution(solution, epoch, solved, deferred_solutions);
     }
     Ok(action)
 }
@@ -1558,25 +1560,34 @@ fn drain_mining_backend_events(
         backend_executor,
     )?;
     for solution in solutions {
-        if solution.epoch == epoch {
-            if solved.is_none() {
-                *solved = Some(solution);
-            } else {
-                push_deferred_solution(deferred_solutions, solution);
-            }
-        } else if solution.epoch < epoch {
-            push_deferred_solution(deferred_solutions, solution);
-        } else {
-            warn(
-                "BACKEND",
-                format!(
-                    "ignoring future solution from {}#{} epoch={} current_epoch={}",
-                    solution.backend, solution.backend_id, solution.epoch, epoch
-                ),
-            );
-        }
+        route_mining_solution(solution, epoch, solved, deferred_solutions);
     }
     Ok(action)
+}
+
+fn route_mining_solution(
+    solution: MiningSolution,
+    epoch: u64,
+    solved: &mut Option<MiningSolution>,
+    deferred_solutions: &mut Vec<MiningSolution>,
+) {
+    if solution.epoch == epoch {
+        if solved.is_none() {
+            *solved = Some(solution);
+        } else {
+            push_deferred_solution(deferred_solutions, solution);
+        }
+    } else if solution.epoch < epoch {
+        push_deferred_solution(deferred_solutions, solution);
+    } else {
+        warn(
+            "BACKEND",
+            format!(
+                "ignoring future solution from {}#{} epoch={} current_epoch={}",
+                solution.backend, solution.backend_id, solution.epoch, epoch
+            ),
+        );
+    }
 }
 
 fn push_deferred_solution(deferred_solutions: &mut Vec<MiningSolution>, solution: MiningSolution) {

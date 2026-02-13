@@ -7,7 +7,9 @@ use crossbeam_channel::Receiver;
 
 use crate::backend::{BackendEvent, BackendInstanceId};
 
-use super::backend_executor::{self, BackendTask, BackendTaskKind};
+use super::backend_executor::{
+    self, BackendTask, BackendTaskDispatchResult, BackendTaskKind, BackendTaskTimeoutKind,
+};
 use super::ui::{error, info, warn};
 use super::{
     backend_names, remove_backend_by_id, BackendSlot, RuntimeBackendEventAction, RuntimeMode,
@@ -332,19 +334,29 @@ fn run_backend_control_phase(
         let backend_id = slot.id;
         let backend = slot.backend.name();
         match outcome_slot.take() {
-            Some(outcome) => match outcome.result {
-                Ok(()) => survivors.push((idx, slot)),
-                Err(err) => {
-                    backend_executor.quarantine_backend(backend_id, Arc::clone(&slot.backend));
-                    backend_executor.remove_backend_worker(backend_id, &slot.backend);
-                    failures
-                        .entry(backend_id)
-                        .or_insert_with(|| (backend, Vec::new()))
-                        .1
-                        .push(format!("{action_label} failed: {err:#}"));
-                }
-            },
-            None => {
+            Some(BackendTaskDispatchResult::Completed(Ok(()))) => survivors.push((idx, slot)),
+            Some(BackendTaskDispatchResult::Completed(Err(err))) => {
+                backend_executor.quarantine_backend(backend_id, Arc::clone(&slot.backend));
+                backend_executor.remove_backend_worker(backend_id, &slot.backend);
+                failures
+                    .entry(backend_id)
+                    .or_insert_with(|| (backend, Vec::new()))
+                    .1
+                    .push(format!("{action_label} failed: {err:#}"));
+            }
+            Some(BackendTaskDispatchResult::TimedOut(BackendTaskTimeoutKind::Enqueue)) => {
+                backend_executor.quarantine_backend(backend_id, Arc::clone(&slot.backend));
+                backend_executor.remove_backend_worker(backend_id, &slot.backend);
+                failures
+                    .entry(backend_id)
+                    .or_insert_with(|| (backend, Vec::new()))
+                    .1
+                    .push(format!(
+                        "{action_label} dispatch queue remained saturated for {}ms before enqueue; backend quarantined",
+                        timeout.as_millis()
+                    ));
+            }
+            Some(BackendTaskDispatchResult::TimedOut(BackendTaskTimeoutKind::Execution)) | None => {
                 backend_executor.quarantine_backend(backend_id, Arc::clone(&slot.backend));
                 backend_executor.remove_backend_worker(backend_id, &slot.backend);
                 failures

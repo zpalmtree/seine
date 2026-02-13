@@ -23,6 +23,10 @@ const CRITICAL_EVENT_RETRY_MAX_WAIT: Duration = Duration::from_millis(100);
 const ERROR_EVENT_MAX_BLOCK: Duration = Duration::from_millis(500);
 const EVENT_DISPATCH_CAPACITY: usize = 1024;
 const SOLVED_MASK: u64 = 1u64 << 63;
+const STARTUP_READY_WAIT_SLICE: Duration = Duration::from_millis(50);
+const STARTUP_READY_TIMEOUT_BASE: Duration = Duration::from_secs(15);
+const STARTUP_READY_TIMEOUT_PER_WORKER: Duration = Duration::from_secs(1);
+const STARTUP_READY_TIMEOUT_MAX: Duration = Duration::from_secs(180);
 
 #[repr(align(64))]
 struct PaddedAtomicU64(AtomicU64);
@@ -58,10 +62,14 @@ struct Shared {
     error_emitted: AtomicBool,
     work_generation: AtomicU64,
     active_workers: AtomicUsize,
+    ready_workers: AtomicUsize,
+    startup_failed: AtomicBool,
     work_control: Mutex<ControlState>,
     work_cv: Condvar,
     idle_lock: Mutex<()>,
     idle_cv: Condvar,
+    ready_lock: Mutex<()>,
+    ready_cv: Condvar,
     hash_slots: Vec<PaddedAtomicU64>,
     assignment_hashes: AtomicU64,
     assignment_generation: AtomicU64,
@@ -96,6 +104,8 @@ impl CpuBackend {
                 error_emitted: AtomicBool::new(false),
                 work_generation: AtomicU64::new(0),
                 active_workers: AtomicUsize::new(0),
+                ready_workers: AtomicUsize::new(0),
+                startup_failed: AtomicBool::new(false),
                 work_control: Mutex::new(ControlState {
                     shutdown: false,
                     generation: 0,
@@ -104,6 +114,8 @@ impl CpuBackend {
                 work_cv: Condvar::new(),
                 idle_lock: Mutex::new(()),
                 idle_cv: Condvar::new(),
+                ready_lock: Mutex::new(()),
+                ready_cv: Condvar::new(),
                 hash_slots: (0..lanes).map(|_| PaddedAtomicU64::new(0)).collect(),
                 assignment_hashes: AtomicU64::new(0),
                 assignment_generation: AtomicU64::new(0),
@@ -126,6 +138,8 @@ impl CpuBackend {
         self.shared.error_emitted.store(false, Ordering::SeqCst);
         self.shared.work_generation.store(0, Ordering::SeqCst);
         self.shared.active_workers.store(0, Ordering::SeqCst);
+        self.shared.ready_workers.store(0, Ordering::SeqCst);
+        self.shared.startup_failed.store(false, Ordering::SeqCst);
         self.shared.assignment_hashes.store(0, Ordering::SeqCst);
         self.shared.assignment_generation.store(0, Ordering::SeqCst);
         self.shared
@@ -280,6 +294,27 @@ impl PowBackend for CpuBackend {
             }
         };
         *handles = spawned_handles;
+        drop(handles);
+
+        if let Err(err) = wait_for_workers_ready(
+            &self.shared,
+            self.threads.max(1),
+            startup_ready_timeout(self.threads.max(1)),
+        ) {
+            request_shutdown(&self.shared);
+            let handles = match self.worker_handles.lock() {
+                Ok(mut guard) => std::mem::take(&mut *guard),
+                Err(_) => Vec::new(),
+            };
+            for handle in handles {
+                let _ = handle.join();
+            }
+            self.shared.started.store(false, Ordering::SeqCst);
+            self.stop_event_forwarder();
+            self.reset_runtime_state();
+            return Err(err);
+        }
+
         Ok(())
     }
 
@@ -519,6 +554,7 @@ fn cpu_worker_loop(shared: Arc<Shared>, thread_idx: usize, core_id: Option<core_
     let params = match pow_params() {
         Ok(p) => p,
         Err(_) => {
+            mark_startup_failed(&shared);
             emit_error(
                 &shared,
                 format!("cpu thread {thread_idx}: invalid Argon2 params"),
@@ -531,6 +567,7 @@ fn cpu_worker_loop(shared: Arc<Shared>, thread_idx: usize, core_id: Option<core_
     let mut memory_blocks = vec![Block::default(); params.block_count()];
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let mut output = [0u8; POW_OUTPUT_LEN];
+    mark_worker_ready(&shared);
     let mut local_generation = 0u64;
     let mut local_work: Option<Arc<WorkAssignment>> = None;
     let mut worker_active = false;
@@ -712,6 +749,7 @@ fn request_work_pause(shared: &Shared) -> Result<()> {
 
     shared.work_generation.store(generation, Ordering::Release);
     shared.work_cv.notify_all();
+    shared.ready_cv.notify_all();
     if shared.active_workers.load(Ordering::Acquire) == 0 {
         maybe_finalize_assignment(shared);
     }
@@ -782,8 +820,75 @@ fn request_shutdown(shared: &Shared) {
             .store(control.generation, Ordering::Release);
     }
     shared.work_cv.notify_all();
+    shared.ready_cv.notify_all();
     if shared.active_workers.load(Ordering::Acquire) == 0 {
         maybe_finalize_assignment(shared);
+    }
+}
+
+fn startup_ready_timeout(workers: usize) -> Duration {
+    STARTUP_READY_TIMEOUT_BASE
+        .saturating_add(STARTUP_READY_TIMEOUT_PER_WORKER.saturating_mul(workers as u32))
+        .min(STARTUP_READY_TIMEOUT_MAX)
+}
+
+fn mark_worker_ready(shared: &Shared) {
+    shared.ready_workers.fetch_add(1, Ordering::AcqRel);
+    shared.ready_cv.notify_all();
+}
+
+fn mark_startup_failed(shared: &Shared) {
+    shared.startup_failed.store(true, Ordering::Release);
+    shared.ready_cv.notify_all();
+}
+
+fn wait_for_workers_ready(
+    shared: &Shared,
+    expected_workers: usize,
+    timeout: Duration,
+) -> Result<()> {
+    if expected_workers == 0 {
+        return Ok(());
+    }
+
+    if shared.ready_workers.load(Ordering::Acquire) >= expected_workers {
+        return Ok(());
+    }
+
+    let deadline = Instant::now() + timeout.max(Duration::from_millis(1));
+    let mut ready_guard = shared
+        .ready_lock
+        .lock()
+        .map_err(|_| anyhow!("CPU ready lock poisoned"))?;
+
+    loop {
+        let ready = shared.ready_workers.load(Ordering::Acquire);
+        if ready >= expected_workers {
+            return Ok(());
+        }
+        if shared.startup_failed.load(Ordering::Acquire) {
+            return Err(anyhow!(
+                "CPU worker startup failed before readiness barrier ({ready}/{expected_workers} ready)"
+            ));
+        }
+
+        let now = Instant::now();
+        if now >= deadline {
+            let timed_out_by = now.saturating_duration_since(deadline);
+            return Err(anyhow!(
+                "CPU worker startup timed out by {}ms ({ready}/{expected_workers} ready)",
+                timed_out_by.as_millis()
+            ));
+        }
+
+        let wait_for = deadline
+            .saturating_duration_since(now)
+            .min(STARTUP_READY_WAIT_SLICE);
+        let (next_guard, _) = shared
+            .ready_cv
+            .wait_timeout(ready_guard, wait_for)
+            .map_err(|_| anyhow!("CPU ready lock poisoned"))?;
+        ready_guard = next_guard;
     }
 }
 
@@ -794,7 +899,6 @@ fn has_pending_work(shared: &Shared) -> bool {
         .map(|control| control.work.is_some() && !control.shutdown)
         .unwrap_or(false)
 }
-
 fn start_assignment(shared: &Shared, generation: u64) {
     let idle = shared.active_workers.load(Ordering::Acquire) == 0;
     if idle {

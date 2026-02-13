@@ -138,7 +138,7 @@ struct Cli {
     backend_assign_timeout_ms: u64,
 
     /// Consecutive assignment timeouts before backend quarantine.
-    #[arg(long, default_value_t = 1)]
+    #[arg(long, default_value_t = 3)]
     backend_assign_timeout_strikes: u32,
 
     /// Maximum time to wait for backend cancel/fence control calls, in milliseconds.
@@ -620,7 +620,7 @@ mod tests {
             backend_event_capacity: 1024,
             hash_poll_ms: 200,
             backend_assign_timeout_ms: 1000,
-            backend_assign_timeout_strikes: 1,
+            backend_assign_timeout_strikes: 3,
             backend_control_timeout_ms: 60_000,
             allow_best_effort_deadlines: false,
             prefetch_wait_ms: 250,

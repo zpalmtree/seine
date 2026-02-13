@@ -97,7 +97,7 @@ Run headless/plain logs (no fullscreen TUI):
 - Runtime tuning knobs for performance iteration:
   - `--backend-event-capacity` (default `1024`) controls bounded backend event queue size.
   - `--backend-assign-timeout-ms` (default `1000`) bounds per-backend assignment dispatch calls.
-  - `--backend-assign-timeout-strikes` (default `1`) sets consecutive assignment timeout strikes before backend quarantine.
+  - `--backend-assign-timeout-strikes` (default `3`) sets consecutive assignment timeout strikes before backend quarantine.
   - `--backend-control-timeout-ms` (default `60000`) bounds `cancel/fence` control calls; timed-out backends are quarantined.
   - By default, backends reporting best-effort deadlines are quarantined; pass `--allow-best-effort-deadlines` to keep them active.
   - Active backends run a startup deadline probe (`cancel`/`fence`) with a bounded watchdog timeout before mining/benchmark rounds begin; probe failures are quarantined.

@@ -43,6 +43,17 @@ pub(super) struct BackendTaskOutcome {
     pub result: Result<()>,
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(super) enum BackendTaskTimeoutKind {
+    Enqueue,
+    Execution,
+}
+
+pub(super) enum BackendTaskDispatchResult {
+    Completed(Result<()>),
+    TimedOut(BackendTaskTimeoutKind),
+}
+
 enum BackendWorkerCommand {
     Run {
         task: BackendTask,
@@ -78,6 +89,8 @@ const DEFAULT_ASSIGNMENT_TIMEOUT_STRIKES_BEFORE_QUARANTINE: u32 = 3;
 const BACKEND_STOP_ACK_TIMEOUT: Duration = Duration::from_secs(1);
 const BACKEND_STOP_ACK_GRACE_TIMEOUT: Duration = Duration::from_secs(2);
 const BACKEND_STOP_ENQUEUE_TIMEOUT: Duration = Duration::from_millis(100);
+const BACKEND_TASK_ENQUEUE_RETRY_MIN: Duration = Duration::from_micros(50);
+const BACKEND_TASK_ENQUEUE_RETRY_MAX: Duration = Duration::from_millis(1);
 
 #[derive(Clone)]
 pub(super) struct BackendExecutor {
@@ -327,7 +340,7 @@ impl BackendExecutor {
         &self,
         tasks: Vec<BackendTask>,
         timeout: Duration,
-    ) -> Vec<Option<BackendTaskOutcome>> {
+    ) -> Vec<Option<BackendTaskDispatchResult>> {
         if tasks.is_empty() {
             return Vec::new();
         }
@@ -350,10 +363,11 @@ impl BackendExecutor {
             .copied()
             .unwrap_or(0)
             .saturating_add(1);
-        let mut outcomes: Vec<Option<BackendTaskOutcome>> =
+        let mut outcomes: Vec<Option<BackendTaskDispatchResult>> =
             std::iter::repeat_with(|| None).take(outcomes_len).collect();
         let mut task_contexts = BTreeMap::<usize, TimeoutTaskContext>::new();
         let (outcome_tx, outcome_rx) = bounded::<BackendTaskOutcome>(expected.max(1));
+        let mut pending = BTreeSet::new();
 
         for task in tasks {
             let backend_id = task.backend_id;
@@ -377,12 +391,9 @@ impl BackendExecutor {
             let Some(worker_tx) =
                 self.worker_sender_for_backend(backend_id, backend, &backend_handle)
             else {
-                let _ = outcome_tx.send(BackendTaskOutcome {
-                    idx,
-                    result: Err(anyhow!(
-                        "{action} dispatch failed: could not spawn worker for {backend}#{backend_id}"
-                    )),
-                });
+                outcomes[idx] = Some(BackendTaskDispatchResult::Completed(Err(anyhow!(
+                    "{action} dispatch failed: could not spawn worker for {backend}#{backend_id}"
+                ))));
                 continue;
             };
 
@@ -391,48 +402,26 @@ impl BackendExecutor {
                 deadline: task_deadline,
                 outcome_tx: outcome_tx.clone(),
             };
-            match worker_tx.try_send(command) {
-                Ok(()) => {}
-                Err(TrySendError::Disconnected(_)) => {
+            match enqueue_backend_command_until_deadline(&worker_tx, command, task_deadline) {
+                EnqueueCommandStatus::Enqueued => {
+                    pending.insert(idx);
+                }
+                EnqueueCommandStatus::Disconnected => {
                     self.remove_backend_worker(backend_id, &backend_handle);
-                    let _ = outcome_tx.send(BackendTaskOutcome {
-                        idx,
-                        result: Err(anyhow!(
-                            "{action} dispatch failed: worker channel closed for {backend}#{backend_id}"
-                        )),
-                    });
+                    outcomes[idx] = Some(BackendTaskDispatchResult::Completed(Err(anyhow!(
+                        "{action} dispatch failed: worker channel closed for {backend}#{backend_id}"
+                    ))));
                     self.quarantine_backend(backend_id, backend_handle);
                 }
-                Err(TrySendError::Full(command)) => {
-                    let assignment_dispatch = matches!(
-                        &command,
-                        BackendWorkerCommand::Run {
-                            task: BackendTask {
-                                kind: BackendTaskKind::Assign(_) | BackendTaskKind::AssignBatch(_),
-                                ..
-                            },
-                            ..
-                        }
-                    );
-                    if assignment_dispatch {
-                        // Leave outcome unresolved so assignment timeout handling applies.
-                        continue;
-                    }
-
-                    self.remove_backend_worker(backend_id, &backend_handle);
-                    let _ = outcome_tx.send(BackendTaskOutcome {
-                        idx,
-                        result: Err(anyhow!(
-                            "{action} dispatch failed: queue saturated for {backend}#{backend_id}"
-                        )),
-                    });
-                    self.quarantine_backend(backend_id, backend_handle);
+                EnqueueCommandStatus::DeadlineElapsed => {
+                    outcomes[idx] = Some(BackendTaskDispatchResult::TimedOut(
+                        BackendTaskTimeoutKind::Enqueue,
+                    ));
                 }
             }
         }
         drop(outcome_tx);
 
-        let mut pending = expected_indices.clone();
         while !pending.is_empty() {
             let now = Instant::now();
 
@@ -454,6 +443,11 @@ impl BackendExecutor {
             }
             for idx in expired {
                 pending.remove(&idx);
+                if outcomes[idx].is_none() {
+                    outcomes[idx] = Some(BackendTaskDispatchResult::TimedOut(
+                        BackendTaskTimeoutKind::Execution,
+                    ));
+                }
             }
             let Some(next_deadline) = next_deadline else {
                 break;
@@ -467,7 +461,8 @@ impl BackendExecutor {
                     let outcome_idx = outcome.idx;
                     if pending.contains(&outcome_idx) && outcomes[outcome_idx].is_none() {
                         pending.remove(&outcome_idx);
-                        outcomes[outcome_idx] = Some(outcome);
+                        outcomes[outcome_idx] =
+                            Some(BackendTaskDispatchResult::Completed(outcome.result));
                     }
                 }
                 Err(RecvTimeoutError::Timeout) => continue,
@@ -478,25 +473,33 @@ impl BackendExecutor {
                 let outcome_idx = outcome.idx;
                 if pending.contains(&outcome_idx) && outcomes[outcome_idx].is_none() {
                     pending.remove(&outcome_idx);
-                    outcomes[outcome_idx] = Some(outcome);
+                    outcomes[outcome_idx] =
+                        Some(BackendTaskDispatchResult::Completed(outcome.result));
                 }
             }
         }
+
         while let Ok(outcome) = outcome_rx.try_recv() {
             let outcome_idx = outcome.idx;
             if pending.contains(&outcome_idx) && outcomes[outcome_idx].is_none() {
                 pending.remove(&outcome_idx);
-                outcomes[outcome_idx] = Some(outcome);
+                outcomes[outcome_idx] = Some(BackendTaskDispatchResult::Completed(outcome.result));
             }
         }
 
         for idx in &expected_indices {
-            if outcomes[*idx].is_some() {
-                continue;
-            }
             let Some(context) = task_contexts.get(idx) else {
                 continue;
             };
+            let timed_out_execution = matches!(
+                outcomes[*idx],
+                Some(BackendTaskDispatchResult::TimedOut(
+                    BackendTaskTimeoutKind::Execution
+                ))
+            );
+            if !timed_out_execution {
+                continue;
+            }
             if let Err(err) = context.backend_handle.request_timeout_interrupt() {
                 warn(
                     "BACKEND",
@@ -509,6 +512,53 @@ impl BackendExecutor {
         }
 
         outcomes
+    }
+}
+
+enum EnqueueCommandStatus {
+    Enqueued,
+    DeadlineElapsed,
+    Disconnected,
+}
+
+fn enqueue_backend_command_until_deadline(
+    worker_tx: &Sender<BackendWorkerCommand>,
+    mut command: BackendWorkerCommand,
+    deadline: Instant,
+) -> EnqueueCommandStatus {
+    let mut retry_wait = BACKEND_TASK_ENQUEUE_RETRY_MIN;
+    loop {
+        if Instant::now() >= deadline {
+            return EnqueueCommandStatus::DeadlineElapsed;
+        }
+
+        match worker_tx.try_send(command) {
+            Ok(()) => return EnqueueCommandStatus::Enqueued,
+            Err(TrySendError::Disconnected(_)) => return EnqueueCommandStatus::Disconnected,
+            Err(TrySendError::Full(returned)) => {
+                command = returned;
+            }
+        }
+
+        let now = Instant::now();
+        if now >= deadline {
+            return EnqueueCommandStatus::DeadlineElapsed;
+        }
+
+        let wait_for = deadline
+            .saturating_duration_since(now)
+            .min(retry_wait)
+            .max(Duration::from_micros(10));
+        match worker_tx.send_timeout(command, wait_for) {
+            Ok(()) => return EnqueueCommandStatus::Enqueued,
+            Err(SendTimeoutError::Disconnected(_)) => return EnqueueCommandStatus::Disconnected,
+            Err(SendTimeoutError::Timeout(returned)) => {
+                command = returned;
+                retry_wait = retry_wait
+                    .saturating_mul(2)
+                    .min(BACKEND_TASK_ENQUEUE_RETRY_MAX);
+            }
+        }
     }
 }
 
@@ -870,12 +920,14 @@ mod tests {
             "sparse indices should not block waiting for missing outcomes"
         );
         assert_eq!(outcomes.len(), 6);
-        assert!(outcomes[0]
-            .as_ref()
-            .is_some_and(|outcome| outcome.result.is_ok()));
-        assert!(outcomes[5]
-            .as_ref()
-            .is_some_and(|outcome| outcome.result.is_ok()));
+        assert!(outcomes[0].as_ref().is_some_and(|outcome| matches!(
+            outcome,
+            BackendTaskDispatchResult::Completed(Ok(()))
+        )));
+        assert!(outcomes[5].as_ref().is_some_and(|outcome| matches!(
+            outcome,
+            BackendTaskDispatchResult::Completed(Ok(()))
+        )));
         assert!(outcomes[1].is_none());
         assert!(outcomes[2].is_none());
         assert!(outcomes[3].is_none());
@@ -1170,12 +1222,61 @@ mod tests {
         );
 
         assert!(
-            outcomes[0].is_none(),
-            "timed-out task should remain unresolved"
+            matches!(
+                outcomes[0],
+                Some(BackendTaskDispatchResult::TimedOut(
+                    BackendTaskTimeoutKind::Execution
+                ))
+            ),
+            "timed-out task should be classified as execution timeout"
         );
         assert!(
             interrupts.load(Ordering::Relaxed) > 0,
             "timeout path should request backend interrupt"
+        );
+    }
+
+    #[test]
+    fn dispatch_classifies_enqueue_timeout_separately_from_execution_timeout() {
+        let executor = BackendExecutor::new();
+        let interrupts = Arc::new(AtomicUsize::new(0));
+        let backend = Arc::new(SlowAssignBackend::new(
+            Arc::clone(&interrupts),
+            Duration::from_millis(80),
+        )) as Arc<dyn PowBackend>;
+
+        let make_task = || BackendTask {
+            idx: 0,
+            backend_id: 78,
+            backend: "slow-assign",
+            backend_handle: Arc::clone(&backend),
+            kind: BackendTaskKind::Assign(WorkAssignment {
+                template: Arc::new(WorkTemplate {
+                    work_id: 1,
+                    epoch: 1,
+                    header_base: Arc::from(vec![0u8; blocknet_pow_spec::POW_HEADER_BASE_LEN]),
+                    target: [0xFF; 32],
+                    stop_at: Instant::now() + Duration::from_secs(1),
+                }),
+                nonce_chunk: NonceChunk {
+                    start_nonce: 0,
+                    nonce_count: 1,
+                },
+            }),
+        };
+
+        let _ = executor.dispatch_backend_tasks(vec![make_task()], Duration::from_millis(5));
+        let _ = executor.dispatch_backend_tasks(vec![make_task()], Duration::from_millis(5));
+
+        let outcomes = executor.dispatch_backend_tasks(vec![make_task()], Duration::from_millis(1));
+        assert!(
+            matches!(
+                outcomes[0],
+                Some(BackendTaskDispatchResult::TimedOut(
+                    BackendTaskTimeoutKind::Enqueue
+                ))
+            ),
+            "queue-saturation timeout should be classified as enqueue timeout"
         );
     }
 
@@ -1274,9 +1375,10 @@ mod tests {
             Duration::from_millis(25),
         );
 
-        assert!(outcomes[0]
-            .as_ref()
-            .is_some_and(|outcome| outcome.result.is_ok()));
+        assert!(outcomes[0].as_ref().is_some_and(|outcome| matches!(
+            outcome,
+            BackendTaskDispatchResult::Completed(Ok(()))
+        )));
         assert!(
             backend.wait_calls.load(Ordering::Relaxed) > 0,
             "pending path should use backend wait hook"
