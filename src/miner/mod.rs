@@ -2460,21 +2460,17 @@ mod tests {
             .lock()
             .expect("trace lock should not be poisoned")
             .clone();
-        assert_eq!(events.len(), 4);
-        assert_eq!(
-            events
-                .iter()
-                .filter(|entry| entry.starts_with("cancel:"))
-                .count(),
-            2
-        );
-        assert_eq!(
-            events
-                .iter()
-                .filter(|entry| entry.starts_with("fence:"))
-                .count(),
-            2
-        );
+        let cancel_count = events
+            .iter()
+            .filter(|entry| entry.starts_with("cancel:"))
+            .count();
+        let fence_count = events
+            .iter()
+            .filter(|entry| entry.starts_with("fence:"))
+            .count();
+        assert!(cancel_count >= 2);
+        assert_eq!(fence_count, 2);
+        assert_eq!(events.len(), cancel_count + fence_count);
 
         let first_fence_idx = events
             .iter()

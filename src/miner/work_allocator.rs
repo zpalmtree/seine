@@ -291,16 +291,27 @@ fn dispatch_assignment_tasks(
                 survivors.push((idx, slot));
             }
             Some(BackendTaskDispatchResult::Completed(Err(err))) => {
-                consumed_span = consumed_span.max(span_end_offset);
-                backend_executor.quarantine_backend(backend_id, Arc::clone(&slot.backend));
-                backend_executor.remove_backend_worker(backend_id, &slot.backend);
-                failures.push(DispatchFailure {
-                    backend_id,
-                    backend,
-                    reason: format!("{err:#}"),
-                    quarantined: true,
-                    remaining_strikes_before_quarantine: None,
-                });
+                if backend_executor::is_assignment_preempted_error(&err) {
+                    failures.push(DispatchFailure {
+                        backend_id,
+                        backend,
+                        reason: "assignment preempted by pending control request".to_string(),
+                        quarantined: false,
+                        remaining_strikes_before_quarantine: Some(timeout_strikes),
+                    });
+                    survivors.push((idx, slot));
+                } else {
+                    consumed_span = consumed_span.max(span_end_offset);
+                    backend_executor.quarantine_backend(backend_id, Arc::clone(&slot.backend));
+                    backend_executor.remove_backend_worker(backend_id, &slot.backend);
+                    failures.push(DispatchFailure {
+                        backend_id,
+                        backend,
+                        reason: format!("{err:#}"),
+                        quarantined: true,
+                        remaining_strikes_before_quarantine: None,
+                    });
+                }
             }
             Some(BackendTaskDispatchResult::TimedOut(BackendTaskTimeoutKind::Execution)) | None => {
                 consumed_span = consumed_span.max(span_end_offset);

@@ -58,7 +58,7 @@ pub(super) fn push_deferred_solution(
 }
 
 pub(super) fn push_deferred_solution_indexed(
-    deferred_solutions: &mut Vec<MiningSolution>,
+    deferred_solutions: &mut VecDeque<MiningSolution>,
     deferred_solution_keys: &mut HashSet<(u64, u64)>,
     solution: MiningSolution,
 ) -> DeferredQueuePushOutcome {
@@ -68,25 +68,27 @@ pub(super) fn push_deferred_solution_indexed(
     }
 
     let mut dropped = 0u64;
-    if deferred_solutions.len() >= DEFERRED_SOLUTIONS_CAPACITY {
-        let drop_count = deferred_solutions
-            .len()
-            .saturating_sub(DEFERRED_SOLUTIONS_CAPACITY)
-            .saturating_add(1);
-        for dropped in deferred_solutions.drain(0..drop_count) {
-            deferred_solution_keys.remove(&(dropped.epoch, dropped.nonce));
+    while deferred_solution_keys.len() > DEFERRED_SOLUTIONS_CAPACITY {
+        let Some(evicted) = deferred_solutions.pop_front() else {
+            deferred_solution_keys.clear();
+            break;
+        };
+        let evicted_key = (evicted.epoch, evicted.nonce);
+        if deferred_solution_keys.remove(&evicted_key) {
+            dropped = dropped.saturating_add(1);
         }
+    }
+    if dropped > 0 {
         warn(
             "BACKEND",
             format!(
                 "deferred solution queue reached capacity ({}); dropped {} oldest queued solution(s)",
-                DEFERRED_SOLUTIONS_CAPACITY, drop_count
+                DEFERRED_SOLUTIONS_CAPACITY, dropped
             ),
         );
-        dropped = drop_count as u64;
     }
 
-    deferred_solutions.push(solution);
+    deferred_solutions.push_back(solution);
     DeferredQueuePushOutcome {
         inserted: true,
         dropped,
@@ -120,7 +122,7 @@ pub(super) fn drop_solution_from_deferred(
 }
 
 pub(super) fn drop_solution_from_deferred_indexed(
-    deferred_solutions: &mut Vec<MiningSolution>,
+    _deferred_solutions: &mut VecDeque<MiningSolution>,
     deferred_solution_keys: &mut HashSet<(u64, u64)>,
     primary_submitted: Option<&MiningSolution>,
 ) {
@@ -128,22 +130,26 @@ pub(super) fn drop_solution_from_deferred_indexed(
         return;
     };
     let key = (solution.epoch, solution.nonce);
-    if !deferred_solution_keys.remove(&key) {
-        return;
-    }
-    deferred_solutions.retain(|candidate| (candidate.epoch, candidate.nonce) != key);
+    deferred_solution_keys.remove(&key);
 }
 
 pub(super) fn take_deferred_solutions_indexed(
-    deferred_solutions: &mut Vec<MiningSolution>,
+    deferred_solutions: &mut VecDeque<MiningSolution>,
     deferred_solution_keys: &mut HashSet<(u64, u64)>,
 ) -> Vec<MiningSolution> {
     if deferred_solutions.is_empty() {
         deferred_solution_keys.clear();
         return Vec::new();
     }
+    let mut drained = Vec::with_capacity(deferred_solution_keys.len());
+    while let Some(solution) = deferred_solutions.pop_front() {
+        let key = (solution.epoch, solution.nonce);
+        if deferred_solution_keys.remove(&key) {
+            drained.push(solution);
+        }
+    }
     deferred_solution_keys.clear();
-    std::mem::take(deferred_solutions)
+    drained
 }
 
 pub(super) fn submit_template_for_solution_epoch(
@@ -327,7 +333,7 @@ mod tests {
 
     #[test]
     fn indexed_push_is_deduped_in_constant_time() {
-        let mut queue = Vec::new();
+        let mut queue = VecDeque::new();
         let mut keys = HashSet::new();
         let first = push_deferred_solution_indexed(&mut queue, &mut keys, solution(7, 11));
         let duplicate = push_deferred_solution_indexed(&mut queue, &mut keys, solution(7, 11));
@@ -341,7 +347,7 @@ mod tests {
 
     #[test]
     fn indexed_push_reports_evictions_when_bounded_queue_wraps() {
-        let mut queue = Vec::new();
+        let mut queue = VecDeque::new();
         let mut keys = HashSet::new();
 
         for idx in 0..DEFERRED_SOLUTIONS_CAPACITY {
@@ -363,24 +369,26 @@ mod tests {
         assert_eq!(outcome.dropped, 1);
         assert_eq!(queue.len(), DEFERRED_SOLUTIONS_CAPACITY);
         assert_eq!(keys.len(), DEFERRED_SOLUTIONS_CAPACITY);
-        assert_eq!(queue.first().map(|entry| entry.epoch), Some(1));
+        assert_eq!(queue.front().map(|entry| entry.epoch), Some(1));
     }
 
     #[test]
-    fn indexed_drop_keeps_set_and_queue_in_sync() {
-        let mut queue = Vec::new();
+    fn indexed_drop_clears_key_without_queue_scan() {
+        let mut queue = VecDeque::new();
         let mut keys = HashSet::new();
         push_deferred_solution_indexed(&mut queue, &mut keys, solution(7, 11));
         let submitted = solution(7, 11);
         drop_solution_from_deferred_indexed(&mut queue, &mut keys, Some(&submitted));
 
-        assert!(queue.is_empty());
         assert!(keys.is_empty());
+        let drained = take_deferred_solutions_indexed(&mut queue, &mut keys);
+        assert!(drained.is_empty());
+        assert!(queue.is_empty());
     }
 
     #[test]
     fn indexed_take_clears_key_index() {
-        let mut queue = Vec::new();
+        let mut queue = VecDeque::new();
         let mut keys = HashSet::new();
         push_deferred_solution_indexed(&mut queue, &mut keys, solution(1, 1));
         let drained = take_deferred_solutions_indexed(&mut queue, &mut keys);

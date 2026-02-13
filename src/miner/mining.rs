@@ -567,7 +567,7 @@ struct ExecuteRoundPhase<'a, 'cp> {
     nonce_scheduler: &'a mut NonceScheduler,
     backend_weights: &'a mut BTreeMap<u64, f64>,
     recent_templates: &'a VecDeque<RecentTemplateEntry>,
-    deferred_solutions: &'a mut Vec<MiningSolution>,
+    deferred_solutions: &'a mut VecDeque<MiningSolution>,
     deferred_solution_keys: &'a mut HashSet<(u64, u64)>,
     submitted_solution_order: &'a mut VecDeque<(u64, u64)>,
     submitted_solution_keys: &'a mut HashSet<(u64, u64)>,
@@ -870,7 +870,7 @@ pub(super) fn run_mining_loop(
     let recent_template_cache_max_bytes = recent_template_cache_max_bytes();
     let mut recent_templates = VecDeque::<RecentTemplateEntry>::new();
     let mut recent_templates_bytes = 0usize;
-    let mut deferred_solutions = Vec::<MiningSolution>::new();
+    let mut deferred_solutions = VecDeque::<MiningSolution>::new();
     let mut deferred_solution_keys = HashSet::<(u64, u64)>::new();
     let mut submitted_solution_keys = HashSet::<(u64, u64)>::new();
     let mut submitted_solution_order = VecDeque::<(u64, u64)>::new();
@@ -1183,125 +1183,108 @@ struct RoundRuntime<'a> {
     last_stats_print: &'a mut Instant,
     nonce_scheduler: &'a mut NonceScheduler,
     backend_weights: &'a mut BTreeMap<u64, f64>,
-    deferred_solutions: &'a mut Vec<MiningSolution>,
+    deferred_solutions: &'a mut VecDeque<MiningSolution>,
     deferred_solution_keys: &'a mut HashSet<(u64, u64)>,
+}
+
+struct RoundProgressState {
+    solved: Option<MiningSolution>,
+    stale_tip_event: bool,
+    round_hashes: u64,
+    round_backend_hashes: BTreeMap<u64, u64>,
+    round_backend_telemetry: BTreeMap<u64, BackendRoundTelemetry>,
+}
+
+impl RoundProgressState {
+    fn new() -> Self {
+        Self {
+            solved: None,
+            stale_tip_event: false,
+            round_hashes: 0,
+            round_backend_hashes: BTreeMap::new(),
+            round_backend_telemetry: BTreeMap::new(),
+        }
+    }
+
+    fn into_round_loop_state(self) -> RoundLoopState {
+        RoundLoopState {
+            solved: self.solved,
+            stale_tip_event: self.stale_tip_event,
+            round_hashes: self.round_hashes,
+            round_backend_hashes: self.round_backend_hashes,
+            round_backend_telemetry: self.round_backend_telemetry,
+        }
+    }
+}
+
+struct RoundRebalanceState {
+    topology_changed: bool,
+    backend_poll_state: super::hash_poll::BackendPollState,
+    rebalance_interval: Option<Duration>,
+    next_sub_round_rebalance_at: Option<Instant>,
+    last_sub_round_rebalance_hashes: u64,
+    last_sub_round_rebalance_at: Instant,
+    last_sub_round_backend_hashes: BTreeMap<u64, u64>,
+}
+
+impl RoundRebalanceState {
+    fn new(backends: &[BackendSlot], hash_poll_interval: Duration, round_start: Instant) -> Self {
+        Self {
+            topology_changed: false,
+            backend_poll_state: build_backend_poll_state(backends, hash_poll_interval),
+            rebalance_interval: None,
+            next_sub_round_rebalance_at: None,
+            last_sub_round_rebalance_hashes: 0,
+            last_sub_round_rebalance_at: round_start,
+            last_sub_round_backend_hashes: BTreeMap::new(),
+        }
+    }
+
+    fn configure_rebalance_interval(&mut self, interval: Option<Duration>, round_start: Instant) {
+        self.rebalance_interval = interval;
+        self.next_sub_round_rebalance_at = self
+            .rebalance_interval
+            .and_then(|rebalance| round_start.checked_add(rebalance));
+    }
+
+    fn reset_poll_state(&mut self, backends: &[BackendSlot], hash_poll_interval: Duration) {
+        self.backend_poll_state = build_backend_poll_state(backends, hash_poll_interval);
+    }
+
+    fn note_rebalanced(&mut self, at: Instant, progress: &RoundProgressState) {
+        self.topology_changed = false;
+        self.last_sub_round_rebalance_hashes = progress.round_hashes;
+        self.last_sub_round_rebalance_at = at;
+        self.last_sub_round_backend_hashes = progress.round_backend_hashes.clone();
+        self.next_sub_round_rebalance_at = self
+            .rebalance_interval
+            .and_then(|interval| at.checked_add(interval));
+    }
 }
 
 impl<'a> RoundRuntime<'a> {
     fn run(&mut self, input: RoundInput<'_>) -> Result<RoundLoopState> {
-        let mut solved: Option<MiningSolution> = None;
-        let mut stale_tip_event = false;
-        let mut round_hashes = 0u64;
-        let mut round_backend_hashes = BTreeMap::new();
-        let mut round_backend_telemetry = BTreeMap::new();
-        let mut topology_changed = false;
-        let mut backend_poll_state =
-            build_backend_poll_state(self.backends, self.cfg.hash_poll_interval);
-        let rebalance_interval = self
-            .cfg
-            .sub_round_rebalance_interval
-            .map(|interval| interval.max(Duration::from_millis(1)));
-        let mut next_sub_round_rebalance_at =
-            rebalance_interval.and_then(|interval| input.round_start.checked_add(interval));
-        let mut last_sub_round_rebalance_hashes = 0u64;
-        let mut last_sub_round_rebalance_at = input.round_start;
-        let mut last_sub_round_backend_hashes = BTreeMap::new();
-        update_tui(
-            self.tui,
-            self.stats,
-            RoundUiView {
-                backends: self.backends,
-                round_backend_hashes: &round_backend_hashes,
-                round_hashes,
-                round_start: input.round_start,
-                height: input.height,
-                difficulty: input.difficulty,
-                epoch: input.epoch,
-                state_label: "working",
-            },
+        let mut progress = RoundProgressState::new();
+        let mut rebalance =
+            RoundRebalanceState::new(self.backends, self.cfg.hash_poll_interval, input.round_start);
+        rebalance.configure_rebalance_interval(
+            self.cfg
+                .sub_round_rebalance_interval
+                .map(|interval| interval.max(Duration::from_millis(1))),
+            input.round_start,
         );
 
-        while !self.shutdown.load(Ordering::Relaxed)
-            && Instant::now() < input.stop_at
-            && solved.is_none()
-            && !stale_tip_event
-        {
-            if self.tip_signal.is_some_and(TipSignal::take_stale) {
-                stale_tip_event = true;
-                update_tui(
-                    self.tui,
-                    self.stats,
-                    RoundUiView {
-                        backends: self.backends,
-                        round_backend_hashes: &round_backend_hashes,
-                        round_hashes,
-                        round_start: input.round_start,
-                        height: input.height,
-                        difficulty: input.difficulty,
-                        epoch: input.epoch,
-                        state_label: "stale-tip",
-                    },
-                );
+        self.update_round_tui(&input, &progress, "working");
+
+        while self.should_continue_round_loop(&input, &progress) {
+            if self.mark_round_stale_if_needed(&input, &mut progress) {
                 continue;
             }
 
-            let stats_deadline = if self.tui.is_none() {
-                Some(*self.last_stats_print + self.cfg.stats_interval)
-            } else {
-                None
-            };
-            let step =
-                super::round_driver::drive_round_step(super::round_driver::RoundDriverInput {
-                    backends: self.backends,
-                    backend_events: self.backend_events,
-                    backend_executor: self.backend_executor,
-                    configured_hash_poll_interval: self.cfg.hash_poll_interval,
-                    poll_state: &mut backend_poll_state,
-                    round_backend_hashes: &mut round_backend_hashes,
-                    round_backend_telemetry: &mut round_backend_telemetry,
-                    stop_at: input.stop_at,
-                    extra_deadline: stats_deadline,
-                })?;
+            let step = self.drive_round_step(&input, &mut progress, &mut rebalance)?;
+            self.apply_collected_hashes(&input, &mut progress, step.collected_hashes);
 
-            let hashes_before = round_hashes;
-            let collected = step.collected_hashes;
-            if collected > 0 {
-                self.stats.add_hashes(collected);
-                round_hashes = round_hashes.saturating_add(collected);
-            }
-            if round_hashes != hashes_before {
-                update_tui(
-                    self.tui,
-                    self.stats,
-                    RoundUiView {
-                        backends: self.backends,
-                        round_backend_hashes: &round_backend_hashes,
-                        round_hashes,
-                        round_start: input.round_start,
-                        height: input.height,
-                        difficulty: input.difficulty,
-                        epoch: input.epoch,
-                        state_label: "working",
-                    },
-                );
-            }
-
-            if self.tip_signal.is_some_and(TipSignal::take_stale) {
-                stale_tip_event = true;
-                update_tui(
-                    self.tui,
-                    self.stats,
-                    RoundUiView {
-                        backends: self.backends,
-                        round_backend_hashes: &round_backend_hashes,
-                        round_hashes,
-                        round_start: input.round_start,
-                        height: input.height,
-                        difficulty: input.difficulty,
-                        epoch: input.epoch,
-                        state_label: "stale-tip",
-                    },
-                );
+            if self.mark_round_stale_if_needed(&input, &mut progress) {
                 continue;
             }
 
@@ -1312,160 +1295,236 @@ impl<'a> RoundRuntime<'a> {
                 self.tui.is_none(),
             );
 
-            if let Some(event) = step.event {
-                let mut deferred_state = DeferredQueueState {
-                    deferred_solutions: self.deferred_solutions,
-                    deferred_solution_keys: self.deferred_solution_keys,
-                    stats: self.stats,
-                };
-                if handle_mining_backend_event(
-                    event,
-                    input.epoch,
-                    &mut solved,
-                    &mut deferred_state,
-                    self.backends,
-                    self.backend_executor,
-                )? == BackendEventAction::TopologyChanged
-                {
-                    topology_changed = true;
-                }
-            }
-
-            if topology_changed
-                && !self.shutdown.load(Ordering::Relaxed)
-                && solved.is_none()
-                && !stale_tip_event
-                && Instant::now() < input.stop_at
-                && !self.backends.is_empty()
-            {
-                redistribute_for_topology_change(
-                    self.backends,
-                    TopologyRedistributionOptions {
-                        epoch: input.epoch,
-                        work_id: input.work_id,
-                        header_base: Arc::clone(input.header_base),
-                        target: input.target,
-                        stop_at: input.stop_at,
-                        mode: RuntimeMode::Mining,
-                        work_allocation: self.cfg.work_allocation,
-                        reason: "topology change",
-                        backend_weights: Some(self.backend_weights),
-                        nonce_scheduler: self.nonce_scheduler,
-                        backend_executor: self.backend_executor,
-                        log_tag: "BACKEND",
-                    },
-                )?;
-                if self.backends.is_empty() {
-                    break;
-                }
-                backend_poll_state =
-                    build_backend_poll_state(self.backends, self.cfg.hash_poll_interval);
-                topology_changed = false;
-                let rebalance_now = Instant::now();
-                last_sub_round_rebalance_hashes = round_hashes;
-                last_sub_round_rebalance_at = rebalance_now;
-                last_sub_round_backend_hashes = round_backend_hashes.clone();
-                next_sub_round_rebalance_at =
-                    rebalance_interval.and_then(|interval| rebalance_now.checked_add(interval));
-                update_tui(
-                    self.tui,
-                    self.stats,
-                    RoundUiView {
-                        backends: self.backends,
-                        round_backend_hashes: &round_backend_hashes,
-                        round_hashes,
-                        round_start: input.round_start,
-                        height: input.height,
-                        difficulty: input.difficulty,
-                        epoch: input.epoch,
-                        state_label: "rebalanced",
-                    },
-                );
-            }
-
-            let now = Instant::now();
-            if should_trigger_sub_round_rebalance(
-                self.cfg,
-                self.backends,
-                round_hashes,
-                last_sub_round_rebalance_hashes,
-                next_sub_round_rebalance_at,
-                now,
-                input.stop_at,
-            ) {
-                let rebalance_hash_deltas = backend_hash_deltas_since(
-                    self.backends,
-                    &round_backend_hashes,
-                    &last_sub_round_backend_hashes,
-                );
-                let rebalance_elapsed_secs = now
-                    .saturating_duration_since(last_sub_round_rebalance_at)
-                    .as_secs_f64();
-                update_backend_weights(
-                    self.backend_weights,
-                    WeightUpdateInputs {
-                        backends: self.backends,
-                        round_backend_hashes: &rebalance_hash_deltas,
-                        round_backend_telemetry: None,
-                        round_elapsed_secs: rebalance_elapsed_secs,
-                        mode: self.cfg.work_allocation,
-                        round_end_reason: RoundEndReason::Refresh,
-                        refresh_interval: self.cfg.refresh_interval,
-                    },
-                );
-
-                redistribute_for_topology_change(
-                    self.backends,
-                    TopologyRedistributionOptions {
-                        epoch: input.epoch,
-                        work_id: input.work_id,
-                        header_base: Arc::clone(input.header_base),
-                        target: input.target,
-                        stop_at: input.stop_at,
-                        mode: RuntimeMode::Mining,
-                        work_allocation: self.cfg.work_allocation,
-                        reason: "in-round performance rebalance",
-                        backend_weights: Some(self.backend_weights),
-                        nonce_scheduler: self.nonce_scheduler,
-                        backend_executor: self.backend_executor,
-                        log_tag: "BACKEND",
-                    },
-                )?;
-                if self.backends.is_empty() {
-                    break;
-                }
-
-                backend_poll_state =
-                    build_backend_poll_state(self.backends, self.cfg.hash_poll_interval);
-                last_sub_round_rebalance_hashes = round_hashes;
-                last_sub_round_rebalance_at = now;
-                last_sub_round_backend_hashes = round_backend_hashes.clone();
-                next_sub_round_rebalance_at =
-                    rebalance_interval.and_then(|interval| now.checked_add(interval));
-                update_tui(
-                    self.tui,
-                    self.stats,
-                    RoundUiView {
-                        backends: self.backends,
-                        round_backend_hashes: &round_backend_hashes,
-                        round_hashes,
-                        round_start: input.round_start,
-                        height: input.height,
-                        difficulty: input.difficulty,
-                        epoch: input.epoch,
-                        state_label: "rebalanced",
-                    },
-                );
-            }
+            self.handle_round_event(&input, &mut progress, &mut rebalance, step.event)?;
+            self.maybe_rebalance_for_topology_change(&input, &mut progress, &mut rebalance)?;
+            self.maybe_rebalance_in_round(&input, &mut progress, &mut rebalance)?;
         }
 
-        Ok(RoundLoopState {
-            solved,
-            stale_tip_event,
-            round_hashes,
-            round_backend_hashes,
-            round_backend_telemetry,
+        Ok(progress.into_round_loop_state())
+    }
+
+    fn should_continue_round_loop(
+        &self,
+        input: &RoundInput<'_>,
+        progress: &RoundProgressState,
+    ) -> bool {
+        !self.shutdown.load(Ordering::Relaxed)
+            && Instant::now() < input.stop_at
+            && progress.solved.is_none()
+            && !progress.stale_tip_event
+    }
+
+    fn update_round_tui(
+        &mut self,
+        input: &RoundInput<'_>,
+        progress: &RoundProgressState,
+        state_label: &'static str,
+    ) {
+        update_tui(
+            self.tui,
+            self.stats,
+            RoundUiView {
+                backends: self.backends,
+                round_backend_hashes: &progress.round_backend_hashes,
+                round_hashes: progress.round_hashes,
+                round_start: input.round_start,
+                height: input.height,
+                difficulty: input.difficulty,
+                epoch: input.epoch,
+                state_label,
+            },
+        );
+    }
+
+    fn mark_round_stale_if_needed(
+        &mut self,
+        input: &RoundInput<'_>,
+        progress: &mut RoundProgressState,
+    ) -> bool {
+        if !self.tip_signal.is_some_and(TipSignal::take_stale) {
+            return false;
+        }
+        progress.stale_tip_event = true;
+        self.update_round_tui(input, progress, "stale-tip");
+        true
+    }
+
+    fn drive_round_step(
+        &mut self,
+        input: &RoundInput<'_>,
+        progress: &mut RoundProgressState,
+        rebalance: &mut RoundRebalanceState,
+    ) -> Result<super::round_driver::RoundDriverStep> {
+        let stats_deadline = if self.tui.is_none() {
+            Some(*self.last_stats_print + self.cfg.stats_interval)
+        } else {
+            None
+        };
+        super::round_driver::drive_round_step(super::round_driver::RoundDriverInput {
+            backends: self.backends,
+            backend_events: self.backend_events,
+            backend_executor: self.backend_executor,
+            configured_hash_poll_interval: self.cfg.hash_poll_interval,
+            poll_state: &mut rebalance.backend_poll_state,
+            round_backend_hashes: &mut progress.round_backend_hashes,
+            round_backend_telemetry: &mut progress.round_backend_telemetry,
+            stop_at: input.stop_at,
+            extra_deadline: stats_deadline,
         })
+    }
+
+    fn apply_collected_hashes(
+        &mut self,
+        input: &RoundInput<'_>,
+        progress: &mut RoundProgressState,
+        collected: u64,
+    ) {
+        if collected == 0 {
+            return;
+        }
+        self.stats.add_hashes(collected);
+        progress.round_hashes = progress.round_hashes.saturating_add(collected);
+        self.update_round_tui(input, progress, "working");
+    }
+
+    fn handle_round_event(
+        &mut self,
+        input: &RoundInput<'_>,
+        progress: &mut RoundProgressState,
+        rebalance: &mut RoundRebalanceState,
+        event: Option<BackendEvent>,
+    ) -> Result<()> {
+        let Some(event) = event else {
+            return Ok(());
+        };
+        let mut deferred_state = DeferredQueueState {
+            deferred_solutions: self.deferred_solutions,
+            deferred_solution_keys: self.deferred_solution_keys,
+            stats: self.stats,
+        };
+        if handle_mining_backend_event(
+            event,
+            input.epoch,
+            &mut progress.solved,
+            &mut deferred_state,
+            self.backends,
+            self.backend_executor,
+        )? == BackendEventAction::TopologyChanged
+        {
+            rebalance.topology_changed = true;
+        }
+        Ok(())
+    }
+
+    fn maybe_rebalance_for_topology_change(
+        &mut self,
+        input: &RoundInput<'_>,
+        progress: &mut RoundProgressState,
+        rebalance: &mut RoundRebalanceState,
+    ) -> Result<()> {
+        if !rebalance.topology_changed
+            || self.shutdown.load(Ordering::Relaxed)
+            || progress.solved.is_some()
+            || progress.stale_tip_event
+            || Instant::now() >= input.stop_at
+            || self.backends.is_empty()
+        {
+            return Ok(());
+        }
+
+        redistribute_for_topology_change(
+            self.backends,
+            TopologyRedistributionOptions {
+                epoch: input.epoch,
+                work_id: input.work_id,
+                header_base: Arc::clone(input.header_base),
+                target: input.target,
+                stop_at: input.stop_at,
+                mode: RuntimeMode::Mining,
+                work_allocation: self.cfg.work_allocation,
+                reason: "topology change",
+                backend_weights: Some(self.backend_weights),
+                nonce_scheduler: self.nonce_scheduler,
+                backend_executor: self.backend_executor,
+                log_tag: "BACKEND",
+            },
+        )?;
+        if self.backends.is_empty() {
+            return Ok(());
+        }
+
+        let rebalance_now = Instant::now();
+        rebalance.reset_poll_state(self.backends, self.cfg.hash_poll_interval);
+        rebalance.note_rebalanced(rebalance_now, progress);
+        self.update_round_tui(input, progress, "rebalanced");
+        Ok(())
+    }
+
+    fn maybe_rebalance_in_round(
+        &mut self,
+        input: &RoundInput<'_>,
+        progress: &mut RoundProgressState,
+        rebalance: &mut RoundRebalanceState,
+    ) -> Result<()> {
+        let now = Instant::now();
+        if !should_trigger_sub_round_rebalance(
+            self.cfg,
+            self.backends,
+            progress.round_hashes,
+            rebalance.last_sub_round_rebalance_hashes,
+            rebalance.next_sub_round_rebalance_at,
+            now,
+            input.stop_at,
+        ) {
+            return Ok(());
+        }
+
+        let rebalance_hash_deltas = backend_hash_deltas_since(
+            self.backends,
+            &progress.round_backend_hashes,
+            &rebalance.last_sub_round_backend_hashes,
+        );
+        let rebalance_elapsed_secs = now
+            .saturating_duration_since(rebalance.last_sub_round_rebalance_at)
+            .as_secs_f64();
+        update_backend_weights(
+            self.backend_weights,
+            WeightUpdateInputs {
+                backends: self.backends,
+                round_backend_hashes: &rebalance_hash_deltas,
+                round_backend_telemetry: None,
+                round_elapsed_secs: rebalance_elapsed_secs,
+                mode: self.cfg.work_allocation,
+                round_end_reason: RoundEndReason::Refresh,
+                refresh_interval: self.cfg.refresh_interval,
+            },
+        );
+
+        redistribute_for_topology_change(
+            self.backends,
+            TopologyRedistributionOptions {
+                epoch: input.epoch,
+                work_id: input.work_id,
+                header_base: Arc::clone(input.header_base),
+                target: input.target,
+                stop_at: input.stop_at,
+                mode: RuntimeMode::Mining,
+                work_allocation: self.cfg.work_allocation,
+                reason: "in-round performance rebalance",
+                backend_weights: Some(self.backend_weights),
+                nonce_scheduler: self.nonce_scheduler,
+                backend_executor: self.backend_executor,
+                log_tag: "BACKEND",
+            },
+        )?;
+        if self.backends.is_empty() {
+            return Ok(());
+        }
+
+        rebalance.reset_poll_state(self.backends, self.cfg.hash_poll_interval);
+        rebalance.note_rebalanced(now, progress);
+        self.update_round_tui(input, progress, "rebalanced");
+        Ok(())
     }
 }
 
@@ -1609,7 +1668,7 @@ fn resolve_next_template(
     None
 }
 struct DeferredQueueState<'a> {
-    deferred_solutions: &'a mut Vec<MiningSolution>,
+    deferred_solutions: &'a mut VecDeque<MiningSolution>,
     deferred_solution_keys: &'a mut HashSet<(u64, u64)>,
     stats: &'a Stats,
 }
@@ -1694,7 +1753,7 @@ fn route_mining_solution(
 
 fn process_submit_results(
     results: Vec<SubmitResult>,
-    deferred_solutions: &mut Vec<MiningSolution>,
+    deferred_solutions: &mut VecDeque<MiningSolution>,
     deferred_solution_keys: &mut HashSet<(u64, u64)>,
     submitted_solution_order: &mut VecDeque<(u64, u64)>,
     submitted_solution_keys: &mut HashSet<(u64, u64)>,
@@ -1734,7 +1793,7 @@ fn process_submit_results(
 }
 
 fn defer_solution_indexed(
-    deferred_solutions: &mut Vec<MiningSolution>,
+    deferred_solutions: &mut VecDeque<MiningSolution>,
     deferred_solution_keys: &mut HashSet<(u64, u64)>,
     solution: MiningSolution,
     stats: &Stats,
@@ -1749,7 +1808,7 @@ fn defer_solution_indexed(
 
 struct DeferredSubmitState<'a> {
     recent_templates: &'a VecDeque<RecentTemplateEntry>,
-    deferred_solutions: &'a mut Vec<MiningSolution>,
+    deferred_solutions: &'a mut VecDeque<MiningSolution>,
     deferred_solution_keys: &'a mut HashSet<(u64, u64)>,
     submitted_solution_keys: &'a mut HashSet<(u64, u64)>,
     inflight_solution_keys: &'a mut HashSet<(u64, u64)>,
@@ -1988,7 +2047,7 @@ mod tests {
         let backend_executor = super::super::backend_executor::BackendExecutor::new();
         let stats = Stats::new();
         let mut solved = None;
-        let mut deferred = Vec::new();
+        let mut deferred = VecDeque::new();
         let mut deferred_keys = HashSet::new();
         let mut backends = Vec::new();
 
@@ -2028,7 +2087,7 @@ mod tests {
         let backend_executor = super::super::backend_executor::BackendExecutor::new();
         let stats = Stats::new();
         let mut solved = None;
-        let mut deferred = Vec::new();
+        let mut deferred = VecDeque::new();
         let mut deferred_keys = HashSet::new();
         let mut backends = vec![BackendSlot {
             id: 1,
@@ -2074,7 +2133,7 @@ mod tests {
         let backend_executor = super::super::backend_executor::BackendExecutor::new();
         let stats = Stats::new();
         let mut solved = None;
-        let mut deferred = Vec::new();
+        let mut deferred = VecDeque::new();
         let mut deferred_keys = HashSet::new();
         let mut backends = Vec::new();
 
@@ -2118,7 +2177,7 @@ mod tests {
             backend_id: 1,
             backend: "cpu",
         });
-        let mut deferred = Vec::new();
+        let mut deferred = VecDeque::new();
         let mut deferred_keys = HashSet::new();
         let mut backends = vec![BackendSlot {
             id: 1,
@@ -2163,7 +2222,7 @@ mod tests {
         let stats = Stats::new();
         let (event_tx, event_rx) = crossbeam_channel::bounded(8);
         let mut solved = None;
-        let mut deferred = Vec::new();
+        let mut deferred = VecDeque::new();
         let mut deferred_keys = HashSet::new();
         let mut backends = vec![BackendSlot {
             id: 1,
@@ -2531,7 +2590,7 @@ mod tests {
         let backend_executor = super::super::backend_executor::BackendExecutor::new();
         let stats = Stats::new();
         let mut solved = None;
-        let mut deferred = Vec::new();
+        let mut deferred = VecDeque::new();
         let mut deferred_keys = HashSet::new();
         let mut backends = vec![
             BackendSlot {
