@@ -369,10 +369,14 @@ impl<'a> MiningControlPlane<'a> {
 
     fn finish(mut self, stats: &Stats, tui: &mut Option<TuiDisplay>) -> Vec<SubmitResult> {
         if self.shutdown.load(Ordering::Relaxed) {
+            let dropped = self.submit_backlog.len() as u64;
+            stats.add_dropped(dropped);
             self.submit_backlog.clear();
         } else {
             self.flush_submit_backlog_for(self.cfg.submit_join_wait, stats, tui);
             if !self.submit_backlog.is_empty() {
+                let dropped = self.submit_backlog.len() as u64;
+                stats.add_dropped(dropped);
                 warn(
                     "SUBMIT",
                     format!(
@@ -638,6 +642,7 @@ fn execute_round_phase(phase: ExecuteRoundPhase<'_, '_>) -> Result<()> {
         deferred_solution_keys,
         backends,
         backend_executor,
+        stats,
     )?;
     let solved_found = pending_solution.is_some();
     let append_semantics_active = super::backends_have_append_assignment_semantics(backends);
@@ -659,6 +664,7 @@ fn execute_round_phase(phase: ExecuteRoundPhase<'_, '_>) -> Result<()> {
         deferred_solution_keys,
         backends,
         backend_executor,
+        stats,
     )?;
     let mut enqueued_solution = None;
     if let Some(solution) = pending_solution.take() {
@@ -688,10 +694,11 @@ fn execute_round_phase(phase: ExecuteRoundPhase<'_, '_>) -> Result<()> {
                         solution.epoch, solution.nonce
                     ),
                 );
-                push_deferred_solution_indexed(
+                defer_solution_indexed(
                     deferred_solutions,
                     deferred_solution_keys,
                     solution.clone(),
+                    stats,
                 );
             }
         }
@@ -727,6 +734,7 @@ fn execute_round_phase(phase: ExecuteRoundPhase<'_, '_>) -> Result<()> {
         submitted_solution_order,
         submitted_solution_keys,
         inflight_solution_keys,
+        stats,
     );
     collect_backend_hashes(
         backends,
@@ -889,6 +897,7 @@ pub(super) fn run_mining_loop(
             &mut submitted_solution_order,
             &mut submitted_solution_keys,
             &mut inflight_solution_keys,
+            &stats,
         );
 
         let Some(prepared_template) = prepare_round_template(
@@ -996,6 +1005,7 @@ pub(super) fn run_mining_loop(
             &mut deferred_solution_keys,
             backends,
             backend_executor,
+            &stats,
         ) {
             Ok(_) => {}
             Err(err) => warn(
@@ -1032,10 +1042,11 @@ pub(super) fn run_mining_loop(
                         solution.epoch, solution.nonce
                     ),
                 );
-                push_deferred_solution_indexed(
+                defer_solution_indexed(
                     &mut deferred_solutions,
                     &mut deferred_solution_keys,
                     solution.clone(),
+                    &stats,
                 );
             }
         }
@@ -1067,6 +1078,7 @@ pub(super) fn run_mining_loop(
         &mut submitted_solution_order,
         &mut submitted_solution_keys,
         &mut inflight_solution_keys,
+        &stats,
     );
     process_submit_results(
         control_plane.finish(&stats, &mut tui),
@@ -1075,6 +1087,7 @@ pub(super) fn run_mining_loop(
         &mut submitted_solution_order,
         &mut submitted_solution_keys,
         &mut inflight_solution_keys,
+        &stats,
     );
 
     stats.print();
@@ -1293,6 +1306,7 @@ impl<'a> RoundRuntime<'a> {
                     self.deferred_solution_keys,
                     self.backends,
                     self.backend_executor,
+                    self.stats,
                 )? == BackendEventAction::TopologyChanged
                 {
                     topology_changed = true;
@@ -1584,6 +1598,7 @@ fn handle_mining_backend_event(
     deferred_solution_keys: &mut HashSet<(u64, u64)>,
     backends: &mut Vec<BackendSlot>,
     backend_executor: &super::backend_executor::BackendExecutor,
+    stats: &Stats,
 ) -> Result<BackendEventAction> {
     let (action, maybe_solution) = super::handle_runtime_backend_event(
         event,
@@ -1599,6 +1614,7 @@ fn handle_mining_backend_event(
             solved,
             deferred_solutions,
             deferred_solution_keys,
+            stats,
         );
     }
     Ok(action)
@@ -1612,6 +1628,7 @@ fn drain_mining_backend_events(
     deferred_solution_keys: &mut HashSet<(u64, u64)>,
     backends: &mut Vec<BackendSlot>,
     backend_executor: &super::backend_executor::BackendExecutor,
+    stats: &Stats,
 ) -> Result<BackendEventAction> {
     let (action, solutions) = super::drain_runtime_backend_events(
         backend_events,
@@ -1627,6 +1644,7 @@ fn drain_mining_backend_events(
             solved,
             deferred_solutions,
             deferred_solution_keys,
+            stats,
         );
     }
     Ok(action)
@@ -1638,16 +1656,18 @@ fn route_mining_solution(
     solved: &mut Option<MiningSolution>,
     deferred_solutions: &mut Vec<MiningSolution>,
     deferred_solution_keys: &mut HashSet<(u64, u64)>,
+    stats: &Stats,
 ) {
     if solution.epoch == epoch {
         if solved.is_none() {
             *solved = Some(solution);
         } else {
-            push_deferred_solution_indexed(deferred_solutions, deferred_solution_keys, solution);
+            defer_solution_indexed(deferred_solutions, deferred_solution_keys, solution, stats);
         }
     } else if solution.epoch < epoch {
-        push_deferred_solution_indexed(deferred_solutions, deferred_solution_keys, solution);
+        defer_solution_indexed(deferred_solutions, deferred_solution_keys, solution, stats);
     } else {
+        stats.add_dropped(1);
         warn(
             "BACKEND",
             format!(
@@ -1665,6 +1685,7 @@ fn process_submit_results(
     submitted_solution_order: &mut VecDeque<(u64, u64)>,
     submitted_solution_keys: &mut HashSet<(u64, u64)>,
     inflight_solution_keys: &mut HashSet<(u64, u64)>,
+    stats: &Stats,
 ) {
     for result in results {
         let key = (result.solution.epoch, result.solution.nonce);
@@ -1686,15 +1707,30 @@ fn process_submit_results(
                 if !already_submitted_solution(submitted_solution_keys, &result.solution)
                     && !inflight_solution_keys.contains(&key)
                 {
-                    push_deferred_solution_indexed(
+                    defer_solution_indexed(
                         deferred_solutions,
                         deferred_solution_keys,
                         result.solution,
+                        stats,
                     );
                 }
             }
         }
     }
+}
+
+fn defer_solution_indexed(
+    deferred_solutions: &mut Vec<MiningSolution>,
+    deferred_solution_keys: &mut HashSet<(u64, u64)>,
+    solution: MiningSolution,
+    stats: &Stats,
+) {
+    let outcome =
+        push_deferred_solution_indexed(deferred_solutions, deferred_solution_keys, solution);
+    if outcome.inserted {
+        stats.add_deferred(1);
+    }
+    stats.add_dropped(outcome.dropped);
 }
 
 struct DeferredSubmitState<'a> {
@@ -1739,16 +1775,18 @@ fn submit_deferred_solutions(
                     solution.backend, solution.backend_id, solution.epoch, current_epoch
                 ),
             );
+            state.stats.add_dropped(1);
             continue;
         };
         if control_plane.submit_template(submit_template, solution.clone(), state.stats, state.tui)
         {
             state.inflight_solution_keys.insert(key);
         } else {
-            push_deferred_solution_indexed(
+            defer_solution_indexed(
                 state.deferred_solutions,
                 state.deferred_solution_keys,
                 solution,
+                state.stats,
             );
         }
     }
@@ -1934,6 +1972,7 @@ mod tests {
     #[test]
     fn stale_solution_from_unavailable_backend_is_deferred() {
         let backend_executor = super::super::backend_executor::BackendExecutor::new();
+        let stats = Stats::new();
         let mut solved = None;
         let mut deferred = Vec::new();
         let mut deferred_keys = HashSet::new();
@@ -1952,6 +1991,7 @@ mod tests {
             &mut deferred_keys,
             &mut backends,
             &backend_executor,
+            &stats,
         )
         .expect("stale solution handling should succeed");
 
@@ -1959,11 +1999,15 @@ mod tests {
         assert!(solved.is_none());
         assert_eq!(deferred.len(), 1);
         assert_eq!(deferred[0].epoch, 41);
+        let snapshot = stats.snapshot();
+        assert_eq!(snapshot.deferred, 1);
+        assert_eq!(snapshot.dropped, 0);
     }
 
     #[test]
     fn stale_solution_from_active_backend_is_deferred() {
         let backend_executor = super::super::backend_executor::BackendExecutor::new();
+        let stats = Stats::new();
         let mut solved = None;
         let mut deferred = Vec::new();
         let mut deferred_keys = HashSet::new();
@@ -1988,6 +2032,7 @@ mod tests {
             &mut deferred_keys,
             &mut backends,
             &backend_executor,
+            &stats,
         )
         .expect("stale solution should be deferred");
 
@@ -1995,11 +2040,49 @@ mod tests {
         assert!(solved.is_none());
         assert_eq!(deferred.len(), 1);
         assert_eq!(deferred[0].epoch, 41);
+        let snapshot = stats.snapshot();
+        assert_eq!(snapshot.deferred, 1);
+        assert_eq!(snapshot.dropped, 0);
+    }
+
+    #[test]
+    fn future_solution_is_dropped_and_accounted() {
+        let backend_executor = super::super::backend_executor::BackendExecutor::new();
+        let stats = Stats::new();
+        let mut solved = None;
+        let mut deferred = Vec::new();
+        let mut deferred_keys = HashSet::new();
+        let mut backends = Vec::new();
+
+        let action = handle_mining_backend_event(
+            BackendEvent::Solution(MiningSolution {
+                epoch: 43,
+                nonce: 9,
+                backend_id: 1,
+                backend: "cpu",
+            }),
+            42,
+            &mut solved,
+            &mut deferred,
+            &mut deferred_keys,
+            &mut backends,
+            &backend_executor,
+            &stats,
+        )
+        .expect("future solution should be dropped");
+
+        assert_eq!(action, BackendEventAction::None);
+        assert!(solved.is_none());
+        assert!(deferred.is_empty());
+        let snapshot = stats.snapshot();
+        assert_eq!(snapshot.deferred, 0);
+        assert_eq!(snapshot.dropped, 1);
     }
 
     #[test]
     fn same_epoch_solution_is_deferred_when_one_is_already_selected() {
         let backend_executor = super::super::backend_executor::BackendExecutor::new();
+        let stats = Stats::new();
         let mut solved = Some(MiningSolution {
             epoch: 42,
             nonce: 7,
@@ -2029,6 +2112,7 @@ mod tests {
             &mut deferred_keys,
             &mut backends,
             &backend_executor,
+            &stats,
         )
         .expect("extra same-epoch solution should be deferred");
 
@@ -2042,6 +2126,7 @@ mod tests {
     #[test]
     fn drain_mining_backend_events_keeps_all_solutions() {
         let backend_executor = super::super::backend_executor::BackendExecutor::new();
+        let stats = Stats::new();
         let (event_tx, event_rx) = crossbeam_channel::bounded(8);
         let mut solved = None;
         let mut deferred = Vec::new();
@@ -2087,6 +2172,7 @@ mod tests {
             &mut deferred_keys,
             &mut backends,
             &backend_executor,
+            &stats,
         )
         .expect("drain should succeed");
 
@@ -2404,6 +2490,7 @@ mod tests {
     #[test]
     fn backend_error_reports_topology_change_when_backend_is_removed() {
         let backend_executor = super::super::backend_executor::BackendExecutor::new();
+        let stats = Stats::new();
         let mut solved = None;
         let mut deferred = Vec::new();
         let mut deferred_keys = HashSet::new();
@@ -2436,6 +2523,7 @@ mod tests {
             &mut deferred_keys,
             &mut backends,
             &backend_executor,
+            &stats,
         )
         .expect("backend removal should be handled");
 

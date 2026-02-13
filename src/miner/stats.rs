@@ -10,6 +10,8 @@ pub struct StatsSnapshot {
     pub templates: u64,
     pub submitted: u64,
     pub accepted: u64,
+    pub deferred: u64,
+    pub dropped: u64,
     pub hps: f64,
 }
 
@@ -19,6 +21,8 @@ pub struct Stats {
     templates: AtomicU64,
     submitted: AtomicU64,
     accepted: AtomicU64,
+    deferred: AtomicU64,
+    dropped: AtomicU64,
 }
 
 impl Stats {
@@ -29,6 +33,8 @@ impl Stats {
             templates: AtomicU64::new(0),
             submitted: AtomicU64::new(0),
             accepted: AtomicU64::new(0),
+            deferred: AtomicU64::new(0),
+            dropped: AtomicU64::new(0),
         }
     }
 
@@ -50,12 +56,26 @@ impl Stats {
         self.accepted.fetch_add(1, Ordering::Relaxed);
     }
 
+    pub fn add_deferred(&self, count: u64) {
+        if count > 0 {
+            self.deferred.fetch_add(count, Ordering::Relaxed);
+        }
+    }
+
+    pub fn add_dropped(&self, count: u64) {
+        if count > 0 {
+            self.dropped.fetch_add(count, Ordering::Relaxed);
+        }
+    }
+
     pub fn snapshot(&self) -> StatsSnapshot {
         let elapsed_secs = self.started_at.elapsed().as_secs_f64().max(0.001);
         let hashes = self.hashes.load(Ordering::Relaxed);
         let templates = self.templates.load(Ordering::Relaxed);
         let submitted = self.submitted.load(Ordering::Relaxed);
         let accepted = self.accepted.load(Ordering::Relaxed);
+        let deferred = self.deferred.load(Ordering::Relaxed);
+        let dropped = self.dropped.load(Ordering::Relaxed);
         let hps = hashes as f64 / elapsed_secs;
 
         StatsSnapshot {
@@ -64,6 +84,8 @@ impl Stats {
             templates,
             submitted,
             accepted,
+            deferred,
+            dropped,
             hps,
         }
     }
@@ -74,13 +96,15 @@ impl Stats {
         info(
             "STATS",
             format!(
-                "elapsed={:.1}s hashes={} rate={} templates={} submitted={} accepted={}",
+                "elapsed={:.1}s hashes={} rate={} templates={} submitted={} accepted={} deferred={} dropped={}",
                 snapshot.elapsed_secs,
                 snapshot.hashes,
                 format_hashrate(snapshot.hps),
                 snapshot.templates,
                 snapshot.submitted,
                 snapshot.accepted,
+                snapshot.deferred,
+                snapshot.dropped,
             ),
         );
     }

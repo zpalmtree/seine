@@ -14,6 +14,12 @@ pub(super) const RECENT_TEMPLATE_CACHE_MAX_BYTES: usize = 64 * 1024 * 1024;
 pub(super) const RECENT_SUBMITTED_SOLUTIONS_CAPACITY: usize = 4096;
 pub(super) const DEFERRED_SOLUTIONS_CAPACITY: usize = 8192;
 
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct DeferredQueuePushOutcome {
+    pub inserted: bool,
+    pub dropped: u64,
+}
+
 pub(super) struct RecentTemplateEntry {
     pub(super) epoch: u64,
     pub(super) recorded_at: Instant,
@@ -55,12 +61,13 @@ pub(super) fn push_deferred_solution_indexed(
     deferred_solutions: &mut Vec<MiningSolution>,
     deferred_solution_keys: &mut HashSet<(u64, u64)>,
     solution: MiningSolution,
-) {
+) -> DeferredQueuePushOutcome {
     let key = (solution.epoch, solution.nonce);
     if !deferred_solution_keys.insert(key) {
-        return;
+        return DeferredQueuePushOutcome::default();
     }
 
+    let mut dropped = 0u64;
     if deferred_solutions.len() >= DEFERRED_SOLUTIONS_CAPACITY {
         let drop_count = deferred_solutions
             .len()
@@ -76,9 +83,14 @@ pub(super) fn push_deferred_solution_indexed(
                 DEFERRED_SOLUTIONS_CAPACITY, drop_count
             ),
         );
+        dropped = drop_count as u64;
     }
 
     deferred_solutions.push(solution);
+    DeferredQueuePushOutcome {
+        inserted: true,
+        dropped,
+    }
 }
 
 #[cfg(test)]
@@ -317,11 +329,41 @@ mod tests {
     fn indexed_push_is_deduped_in_constant_time() {
         let mut queue = Vec::new();
         let mut keys = HashSet::new();
-        push_deferred_solution_indexed(&mut queue, &mut keys, solution(7, 11));
-        push_deferred_solution_indexed(&mut queue, &mut keys, solution(7, 11));
+        let first = push_deferred_solution_indexed(&mut queue, &mut keys, solution(7, 11));
+        let duplicate = push_deferred_solution_indexed(&mut queue, &mut keys, solution(7, 11));
 
         assert_eq!(queue.len(), 1);
         assert_eq!(keys.len(), 1);
+        assert!(first.inserted);
+        assert!(!duplicate.inserted);
+        assert_eq!(duplicate.dropped, 0);
+    }
+
+    #[test]
+    fn indexed_push_reports_evictions_when_bounded_queue_wraps() {
+        let mut queue = Vec::new();
+        let mut keys = HashSet::new();
+
+        for idx in 0..DEFERRED_SOLUTIONS_CAPACITY {
+            let outcome = push_deferred_solution_indexed(
+                &mut queue,
+                &mut keys,
+                solution(idx as u64, idx as u64),
+            );
+            assert!(outcome.inserted);
+            assert_eq!(outcome.dropped, 0);
+        }
+
+        let outcome = push_deferred_solution_indexed(
+            &mut queue,
+            &mut keys,
+            solution(DEFERRED_SOLUTIONS_CAPACITY as u64 + 1, 99),
+        );
+        assert!(outcome.inserted);
+        assert_eq!(outcome.dropped, 1);
+        assert_eq!(queue.len(), DEFERRED_SOLUTIONS_CAPACITY);
+        assert_eq!(keys.len(), DEFERRED_SOLUTIONS_CAPACITY);
+        assert_eq!(queue.first().map(|entry| entry.epoch), Some(1));
     }
 
     #[test]

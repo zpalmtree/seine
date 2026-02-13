@@ -591,16 +591,6 @@ impl BackendExecutor {
             .map(|(assignment_sender, _)| assignment_sender)
     }
 
-    fn worker_control_sender_for_backend(
-        &self,
-        backend_id: BackendInstanceId,
-        backend: &'static str,
-        backend_handle: &Arc<dyn PowBackend>,
-    ) -> Option<Sender<BackendWorkerCommand>> {
-        self.worker_senders_for_backend(backend_id, backend, backend_handle)
-            .map(|(_, control_sender)| control_sender)
-    }
-
     pub(super) fn clear(&self) {
         if let Ok(mut registry) = self.workers.lock() {
             registry.clear();
@@ -850,11 +840,38 @@ impl BackendExecutor {
                 enqueued_at: None,
                 deadline: task_deadline,
             });
-            let worker_tx = if uses_control_lane {
-                self.worker_control_sender_for_backend(backend_id, backend, &backend_handle)
-            } else {
-                self.worker_sender_for_backend(backend_id, backend, &backend_handle)
-            };
+            if uses_control_lane {
+                // Dispatch control calls on their own short-lived thread so cancel/fence can
+                // preempt long-running assignment execution for the same backend.
+                let now = Instant::now();
+                if let Some(context) = task_contexts.get_mut(idx).and_then(Option::as_mut) {
+                    context.enqueued_at = Some(now);
+                    self.record_task_latency(
+                        context.worker_key,
+                        context.enqueue_timeout_bucket,
+                        now.saturating_duration_since(context.dispatch_started_at),
+                    );
+                }
+                if !pending[idx] {
+                    pending[idx] = true;
+                    pending_count = pending_count.saturating_add(1);
+                }
+                let outcome_tx = outcome_tx.clone();
+                let thread_name = format!("seine-backend-control-{backend}-{backend_id}-{idx}");
+                if let Err(err) = thread::Builder::new()
+                    .name(thread_name)
+                    .spawn(move || run_backend_task(task, task_deadline, outcome_tx))
+                {
+                    pending[idx] = false;
+                    pending_count = pending_count.saturating_sub(1);
+                    outcomes[idx] = Some(BackendTaskDispatchResult::Completed(Err(anyhow!(
+                        "{action} dispatch failed: could not spawn control runner for {backend}#{backend_id}: {err}"
+                    ))));
+                }
+                continue;
+            }
+
+            let worker_tx = self.worker_sender_for_backend(backend_id, backend, &backend_handle);
             let Some(worker_tx) = worker_tx else {
                 outcomes[idx] = Some(BackendTaskDispatchResult::Completed(Err(anyhow!(
                     "{action} dispatch failed: could not spawn worker for {backend}#{backend_id}"
@@ -2212,7 +2229,7 @@ mod tests {
     }
 
     #[test]
-    fn control_dispatch_uses_priority_lane_when_assignment_queue_is_saturated() {
+    fn control_dispatch_preempts_assignment_queue_saturation() {
         let executor = BackendExecutor::new();
         let interrupts = Arc::new(AtomicUsize::new(0));
         let backend = Arc::new(SlowAssignBackend::new(
@@ -2281,15 +2298,13 @@ mod tests {
         assert!(
             matches!(
                 outcomes[0],
-                Some(BackendTaskDispatchResult::TimedOut(
-                    BackendTaskTimeoutKind::Execution
-                ))
+                Some(BackendTaskDispatchResult::Completed(Ok(())))
             ),
-            "control dispatch should enqueue immediately and only time out at execution"
+            "control dispatch should complete even while assignment queue is saturated"
         );
 
         let telemetry = executor.take_backend_telemetry(80, &backend);
-        assert_eq!(telemetry.control_execution_timeouts, 1);
+        assert_eq!(telemetry.control_execution_timeouts, 0);
         assert_eq!(telemetry.control_enqueue_timeouts, 0);
     }
 

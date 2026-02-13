@@ -27,7 +27,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Result};
 use blocknet_pow_spec::CPU_LANE_MEMORY_BYTES;
-use crossbeam_channel::{bounded, Receiver};
+use crossbeam_channel::{bounded, Receiver, Sender, TryRecvError};
 
 use crate::api::ApiClient;
 use crate::backend::cpu::CpuBackend;
@@ -45,6 +45,8 @@ use ui::{info, warn};
 
 const TEMPLATE_RETRY_DELAY: Duration = Duration::from_secs(2);
 const MIN_EVENT_WAIT: Duration = Duration::from_millis(1);
+const BACKEND_EVENT_FAN_IN_IDLE_WAIT: Duration = Duration::from_millis(1);
+const BACKEND_EVENT_SOURCE_CAPACITY_MAX: usize = 256;
 
 #[derive(Debug, Clone, Copy)]
 struct BackendRuntimePolicy {
@@ -391,15 +393,22 @@ fn activate_backends(
     cfg: &Config,
 ) -> Result<(Vec<BackendSlot>, Receiver<BackendEvent>)> {
     let mut active = Vec::new();
+    let mut backend_event_sources = Vec::new();
     let (event_tx, event_rx) = bounded::<BackendEvent>(event_capacity.max(1));
     let mut next_backend_id: BackendInstanceId = 1;
+    let per_backend_event_capacity = event_capacity
+        .max(1)
+        .min(BACKEND_EVENT_SOURCE_CAPACITY_MAX)
+        .max(8);
 
     for (backend_spec, backend) in backends.drain(..) {
         let backend_id = next_backend_id;
         next_backend_id = next_backend_id.saturating_add(1);
         let backend_name = backend.name();
         backend.set_instance_id(backend_id);
-        backend.set_event_sink(event_tx.clone());
+        let (backend_event_tx, backend_event_rx) =
+            bounded::<BackendEvent>(per_backend_event_capacity);
+        backend.set_event_sink(backend_event_tx);
         match backend.start() {
             Ok(()) => {
                 let capabilities = match backend_capabilities_for_start(
@@ -452,6 +461,7 @@ fn activate_backends(
                     runtime_policy,
                     capabilities,
                 });
+                backend_event_sources.push(backend_event_rx);
             }
             Err(err) => {
                 warn(
@@ -467,7 +477,59 @@ fn activate_backends(
         bail!("no mining backend could be started");
     }
 
+    spawn_backend_event_fan_in(backend_event_sources, event_tx)?;
+
     Ok((active, event_rx))
+}
+
+fn spawn_backend_event_fan_in(
+    sources: Vec<Receiver<BackendEvent>>,
+    sink: Sender<BackendEvent>,
+) -> Result<()> {
+    if sources.is_empty() {
+        return Ok(());
+    }
+    let thread_name = "seine-backend-events-fanin".to_string();
+    std::thread::Builder::new()
+        .name(thread_name)
+        .spawn(move || {
+            let mut receivers = sources.into_iter().map(Some).collect::<Vec<_>>();
+            let mut cursor = 0usize;
+            loop {
+                if receivers.iter().all(Option::is_none) {
+                    break;
+                }
+
+                let mut forwarded = false;
+                let total = receivers.len();
+                for _ in 0..total {
+                    let idx = cursor % total;
+                    cursor = cursor.wrapping_add(1);
+                    let Some(receiver) = receivers[idx].as_ref() else {
+                        continue;
+                    };
+                    match receiver.try_recv() {
+                        Ok(event) => {
+                            if sink.send(event).is_err() {
+                                return;
+                            }
+                            forwarded = true;
+                            break;
+                        }
+                        Err(TryRecvError::Empty) => {}
+                        Err(TryRecvError::Disconnected) => {
+                            receivers[idx] = None;
+                        }
+                    }
+                }
+
+                if !forwarded {
+                    std::thread::sleep(BACKEND_EVENT_FAN_IN_IDLE_WAIT);
+                }
+            }
+        })
+        .map_err(|err| anyhow!("failed to spawn backend event fan-in thread: {err}"))?;
+    Ok(())
 }
 
 fn start_backend_slots(
