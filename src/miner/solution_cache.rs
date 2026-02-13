@@ -142,13 +142,15 @@ pub(super) fn take_deferred_solutions_indexed(
         return Vec::new();
     }
     let mut drained = Vec::with_capacity(deferred_solution_keys.len());
-    while let Some(solution) = deferred_solutions.pop_front() {
+    // Drain from the tail so re-queued keys prefer the newest solution payload.
+    while let Some(solution) = deferred_solutions.pop_back() {
         let key = (solution.epoch, solution.nonce);
         if deferred_solution_keys.remove(&key) {
             drained.push(solution);
         }
     }
     deferred_solution_keys.clear();
+    drained.reverse();
     drained
 }
 
@@ -396,5 +398,24 @@ mod tests {
         assert_eq!(drained.len(), 1);
         assert!(queue.is_empty());
         assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn indexed_take_prefers_newest_payload_when_key_is_requeued() {
+        let mut queue = VecDeque::new();
+        let mut keys = HashSet::new();
+
+        let mut first = solution(7, 11);
+        first.backend_id = 1;
+        let mut newer = solution(7, 11);
+        newer.backend_id = 9;
+
+        assert!(push_deferred_solution_indexed(&mut queue, &mut keys, first).inserted);
+        drop_solution_from_deferred_indexed(&mut queue, &mut keys, Some(&solution(7, 11)));
+        assert!(push_deferred_solution_indexed(&mut queue, &mut keys, newer).inserted);
+
+        let drained = take_deferred_solutions_indexed(&mut queue, &mut keys);
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].backend_id, 9);
     }
 }

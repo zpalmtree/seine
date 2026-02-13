@@ -1309,6 +1309,7 @@ impl<'a> RoundRuntime<'a> {
         progress: &RoundProgressState,
     ) -> bool {
         !self.shutdown.load(Ordering::Relaxed)
+            && !self.backends.is_empty()
             && Instant::now() < input.stop_at
             && progress.solved.is_none()
             && !progress.stale_tip_event
