@@ -62,6 +62,30 @@ struct BenchBackendRun {
     control_execution_timeouts: u64,
     #[serde(default)]
     peak_assignment_timeout_strikes: u32,
+    #[serde(default)]
+    assignment_enqueue_latency_samples: u64,
+    #[serde(default)]
+    assignment_enqueue_latency_p95_micros: u64,
+    #[serde(default)]
+    assignment_enqueue_latency_max_micros: u64,
+    #[serde(default)]
+    assignment_execution_latency_samples: u64,
+    #[serde(default)]
+    assignment_execution_latency_p95_micros: u64,
+    #[serde(default)]
+    assignment_execution_latency_max_micros: u64,
+    #[serde(default)]
+    control_enqueue_latency_samples: u64,
+    #[serde(default)]
+    control_enqueue_latency_p95_micros: u64,
+    #[serde(default)]
+    control_enqueue_latency_max_micros: u64,
+    #[serde(default)]
+    control_execution_latency_samples: u64,
+    #[serde(default)]
+    control_execution_latency_p95_micros: u64,
+    #[serde(default)]
+    control_execution_latency_max_micros: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -169,7 +193,7 @@ struct WorkerBenchmarkIdentity {
 }
 
 type BackendEventAction = RuntimeBackendEventAction;
-const BENCH_REPORT_SCHEMA_VERSION: u32 = 3;
+const BENCH_REPORT_SCHEMA_VERSION: u32 = 4;
 const BENCH_REPORT_COMPAT_MIN_SCHEMA_VERSION: u32 = 2;
 
 pub(super) fn run_benchmark(cfg: &Config, shutdown: &AtomicBool) -> Result<()> {
@@ -1259,6 +1283,42 @@ fn merge_round_telemetry(
     entry.peak_assignment_timeout_strikes = entry
         .peak_assignment_timeout_strikes
         .max(telemetry.peak_assignment_timeout_strikes);
+    entry.assignment_enqueue_latency_samples = entry
+        .assignment_enqueue_latency_samples
+        .saturating_add(telemetry.assignment_enqueue_latency_samples);
+    entry.assignment_enqueue_latency_p95_micros = entry
+        .assignment_enqueue_latency_p95_micros
+        .max(telemetry.assignment_enqueue_latency_p95_micros);
+    entry.assignment_enqueue_latency_max_micros = entry
+        .assignment_enqueue_latency_max_micros
+        .max(telemetry.assignment_enqueue_latency_max_micros);
+    entry.assignment_execution_latency_samples = entry
+        .assignment_execution_latency_samples
+        .saturating_add(telemetry.assignment_execution_latency_samples);
+    entry.assignment_execution_latency_p95_micros = entry
+        .assignment_execution_latency_p95_micros
+        .max(telemetry.assignment_execution_latency_p95_micros);
+    entry.assignment_execution_latency_max_micros = entry
+        .assignment_execution_latency_max_micros
+        .max(telemetry.assignment_execution_latency_max_micros);
+    entry.control_enqueue_latency_samples = entry
+        .control_enqueue_latency_samples
+        .saturating_add(telemetry.control_enqueue_latency_samples);
+    entry.control_enqueue_latency_p95_micros = entry
+        .control_enqueue_latency_p95_micros
+        .max(telemetry.control_enqueue_latency_p95_micros);
+    entry.control_enqueue_latency_max_micros = entry
+        .control_enqueue_latency_max_micros
+        .max(telemetry.control_enqueue_latency_max_micros);
+    entry.control_execution_latency_samples = entry
+        .control_execution_latency_samples
+        .saturating_add(telemetry.control_execution_latency_samples);
+    entry.control_execution_latency_p95_micros = entry
+        .control_execution_latency_p95_micros
+        .max(telemetry.control_execution_latency_p95_micros);
+    entry.control_execution_latency_max_micros = entry
+        .control_execution_latency_max_micros
+        .max(telemetry.control_execution_latency_max_micros);
 }
 
 fn build_backend_round_stats(
@@ -1298,6 +1358,20 @@ fn build_backend_round_stats(
             control_enqueue_timeouts: telemetry.control_enqueue_timeouts,
             control_execution_timeouts: telemetry.control_execution_timeouts,
             peak_assignment_timeout_strikes: telemetry.peak_assignment_timeout_strikes,
+            assignment_enqueue_latency_samples: telemetry.assignment_enqueue_latency_samples,
+            assignment_enqueue_latency_p95_micros: telemetry.assignment_enqueue_latency_p95_micros,
+            assignment_enqueue_latency_max_micros: telemetry.assignment_enqueue_latency_max_micros,
+            assignment_execution_latency_samples: telemetry.assignment_execution_latency_samples,
+            assignment_execution_latency_p95_micros: telemetry
+                .assignment_execution_latency_p95_micros,
+            assignment_execution_latency_max_micros: telemetry
+                .assignment_execution_latency_max_micros,
+            control_enqueue_latency_samples: telemetry.control_enqueue_latency_samples,
+            control_enqueue_latency_p95_micros: telemetry.control_enqueue_latency_p95_micros,
+            control_enqueue_latency_max_micros: telemetry.control_enqueue_latency_max_micros,
+            control_execution_latency_samples: telemetry.control_execution_latency_samples,
+            control_execution_latency_p95_micros: telemetry.control_execution_latency_p95_micros,
+            control_execution_latency_max_micros: telemetry.control_execution_latency_max_micros,
         });
     }
 
@@ -1329,6 +1403,20 @@ fn build_backend_round_stats(
             control_enqueue_timeouts: telemetry.control_enqueue_timeouts,
             control_execution_timeouts: telemetry.control_execution_timeouts,
             peak_assignment_timeout_strikes: telemetry.peak_assignment_timeout_strikes,
+            assignment_enqueue_latency_samples: telemetry.assignment_enqueue_latency_samples,
+            assignment_enqueue_latency_p95_micros: telemetry.assignment_enqueue_latency_p95_micros,
+            assignment_enqueue_latency_max_micros: telemetry.assignment_enqueue_latency_max_micros,
+            assignment_execution_latency_samples: telemetry.assignment_execution_latency_samples,
+            assignment_execution_latency_p95_micros: telemetry
+                .assignment_execution_latency_p95_micros,
+            assignment_execution_latency_max_micros: telemetry
+                .assignment_execution_latency_max_micros,
+            control_enqueue_latency_samples: telemetry.control_enqueue_latency_samples,
+            control_enqueue_latency_p95_micros: telemetry.control_enqueue_latency_p95_micros,
+            control_enqueue_latency_max_micros: telemetry.control_enqueue_latency_max_micros,
+            control_execution_latency_samples: telemetry.control_execution_latency_samples,
+            control_execution_latency_p95_micros: telemetry.control_execution_latency_p95_micros,
+            control_execution_latency_max_micros: telemetry.control_execution_latency_max_micros,
         });
     }
     runs

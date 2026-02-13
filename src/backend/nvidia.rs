@@ -4,8 +4,9 @@ use anyhow::{bail, Result};
 use crossbeam_channel::Sender;
 
 use crate::backend::{
-    AssignmentSemantics, BackendCapabilities, BackendEvent, BackendInstanceId, BenchBackend,
-    DeadlineSupport, PowBackend, PreemptionGranularity, WorkAssignment,
+    AssignmentSemantics, BackendCapabilities, BackendEvent, BackendExecutionModel,
+    BackendInstanceId, BenchBackend, DeadlineSupport, PowBackend, PreemptionGranularity,
+    WorkAssignment,
 };
 
 pub struct NvidiaBackend {
@@ -75,6 +76,7 @@ impl PowBackend for NvidiaBackend {
             max_inflight_assignments: 1,
             deadline_support: DeadlineSupport::BestEffort,
             assignment_semantics: AssignmentSemantics::Replace,
+            execution_model: BackendExecutionModel::Blocking,
             nonblocking_poll_min: Some(std::time::Duration::from_micros(100)),
             nonblocking_poll_max: Some(std::time::Duration::from_millis(5)),
         }

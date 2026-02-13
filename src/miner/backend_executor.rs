@@ -12,7 +12,7 @@ use crossbeam_channel::{
 
 use crate::backend::{
     normalize_backend_capabilities, AssignmentSemantics, BackendCallStatus, BackendCapabilities,
-    BackendInstanceId, BackendTelemetry, PowBackend, WorkAssignment,
+    BackendExecutionModel, BackendInstanceId, BackendTelemetry, PowBackend, WorkAssignment,
 };
 
 use super::ui::warn;
@@ -148,6 +148,109 @@ impl BackendTimeoutCounters {
     }
 }
 
+const TASK_LATENCY_BUCKET_UPPER_BOUNDS_MICROS: [u64; 15] = [
+    10,
+    25,
+    50,
+    100,
+    250,
+    500,
+    1_000,
+    2_000,
+    5_000,
+    10_000,
+    20_000,
+    50_000,
+    100_000,
+    250_000,
+    u64::MAX,
+];
+
+#[derive(Debug, Clone, Copy)]
+struct TaskLatencyHistogram {
+    sample_count: u64,
+    max_micros: u64,
+    buckets: [u64; TASK_LATENCY_BUCKET_UPPER_BOUNDS_MICROS.len()],
+}
+
+impl Default for TaskLatencyHistogram {
+    fn default() -> Self {
+        Self {
+            sample_count: 0,
+            max_micros: 0,
+            buckets: [0; TASK_LATENCY_BUCKET_UPPER_BOUNDS_MICROS.len()],
+        }
+    }
+}
+
+impl TaskLatencyHistogram {
+    fn observe(&mut self, micros: u64) {
+        self.sample_count = self.sample_count.saturating_add(1);
+        self.max_micros = self.max_micros.max(micros);
+        let mut bucket_idx = TASK_LATENCY_BUCKET_UPPER_BOUNDS_MICROS
+            .len()
+            .saturating_sub(1);
+        for (idx, upper_bound) in TASK_LATENCY_BUCKET_UPPER_BOUNDS_MICROS.iter().enumerate() {
+            if micros <= *upper_bound {
+                bucket_idx = idx;
+                break;
+            }
+        }
+        self.buckets[bucket_idx] = self.buckets[bucket_idx].saturating_add(1);
+    }
+
+    fn is_zero(&self) -> bool {
+        self.sample_count == 0
+    }
+
+    fn p95_micros(&self) -> u64 {
+        if self.sample_count == 0 {
+            return 0;
+        }
+        let target = ((self.sample_count as f64) * 0.95).ceil() as u64;
+        let mut cumulative = 0u64;
+        for (idx, bucket_count) in self.buckets.iter().enumerate() {
+            cumulative = cumulative.saturating_add(*bucket_count);
+            if cumulative >= target {
+                let upper = TASK_LATENCY_BUCKET_UPPER_BOUNDS_MICROS[idx];
+                if upper == u64::MAX {
+                    return self.max_micros;
+                }
+                return upper;
+            }
+        }
+        self.max_micros
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct BackendTaskLatencyCounters {
+    assignment_enqueue: TaskLatencyHistogram,
+    assignment_execution: TaskLatencyHistogram,
+    control_enqueue: TaskLatencyHistogram,
+    control_execution: TaskLatencyHistogram,
+}
+
+impl BackendTaskLatencyCounters {
+    fn observe(&mut self, bucket: TaskTimeoutCounterBucket, micros: u64) {
+        match bucket {
+            TaskTimeoutCounterBucket::AssignmentEnqueue => self.assignment_enqueue.observe(micros),
+            TaskTimeoutCounterBucket::AssignmentExecution => {
+                self.assignment_execution.observe(micros)
+            }
+            TaskTimeoutCounterBucket::ControlEnqueue => self.control_enqueue.observe(micros),
+            TaskTimeoutCounterBucket::ControlExecution => self.control_execution.observe(micros),
+        }
+    }
+
+    fn is_zero(&self) -> bool {
+        self.assignment_enqueue.is_zero()
+            && self.assignment_execution.is_zero()
+            && self.control_enqueue.is_zero()
+            && self.control_execution.is_zero()
+    }
+}
+
 const DEFAULT_ASSIGNMENT_TIMEOUT_STRIKES_BEFORE_QUARANTINE: u32 = 3;
 const BACKEND_WORKER_QUEUE_CAPACITY_MAX: usize = 64;
 const BACKEND_WORKER_CONTROL_QUEUE_CAPACITY: usize = 16;
@@ -164,6 +267,7 @@ pub(super) struct BackendExecutor {
     quarantined: Arc<Mutex<BTreeSet<BackendWorkerKey>>>,
     assignment_timeout_strikes: Arc<Mutex<BTreeMap<BackendWorkerKey, u32>>>,
     task_timeout_counters: Arc<Mutex<BTreeMap<BackendWorkerKey, BackendTimeoutCounters>>>,
+    task_latency_counters: Arc<Mutex<BTreeMap<BackendWorkerKey, BackendTaskLatencyCounters>>>,
     assignment_timeout_threshold: Arc<AtomicU32>,
 }
 
@@ -174,6 +278,7 @@ impl BackendExecutor {
             quarantined: Arc::new(Mutex::new(BTreeSet::new())),
             assignment_timeout_strikes: Arc::new(Mutex::new(BTreeMap::new())),
             task_timeout_counters: Arc::new(Mutex::new(BTreeMap::new())),
+            task_latency_counters: Arc::new(Mutex::new(BTreeMap::new())),
             assignment_timeout_threshold: Arc::new(AtomicU32::new(
                 DEFAULT_ASSIGNMENT_TIMEOUT_STRIKES_BEFORE_QUARANTINE,
             )),
@@ -197,6 +302,18 @@ impl BackendExecutor {
         }
     }
 
+    fn record_task_latency(
+        &self,
+        key: BackendWorkerKey,
+        bucket: TaskTimeoutCounterBucket,
+        duration: Duration,
+    ) {
+        let micros = duration.as_micros().min(u64::MAX as u128) as u64;
+        if let Ok(mut counters) = self.task_latency_counters.lock() {
+            counters.entry(key).or_default().observe(bucket, micros);
+        }
+    }
+
     pub(super) fn take_backend_telemetry(
         &self,
         backend_id: BackendInstanceId,
@@ -209,6 +326,12 @@ impl BackendExecutor {
             .ok()
             .and_then(|mut map| map.remove(&key))
             .unwrap_or_default();
+        let latencies = self
+            .task_latency_counters
+            .lock()
+            .ok()
+            .and_then(|mut map| map.remove(&key))
+            .unwrap_or_default();
         let assignment_timeout_strikes = self
             .assignment_timeout_strikes
             .lock()
@@ -216,7 +339,7 @@ impl BackendExecutor {
             .and_then(|map| map.get(&key).copied())
             .unwrap_or(0);
 
-        if counters.is_zero() && assignment_timeout_strikes == 0 {
+        if counters.is_zero() && latencies.is_zero() && assignment_timeout_strikes == 0 {
             return BackendTelemetry::default();
         }
 
@@ -226,6 +349,18 @@ impl BackendExecutor {
             control_enqueue_timeouts: counters.control_enqueue,
             control_execution_timeouts: counters.control_execution,
             assignment_timeout_strikes,
+            assignment_enqueue_latency_samples: latencies.assignment_enqueue.sample_count,
+            assignment_enqueue_latency_p95_micros: latencies.assignment_enqueue.p95_micros(),
+            assignment_enqueue_latency_max_micros: latencies.assignment_enqueue.max_micros,
+            assignment_execution_latency_samples: latencies.assignment_execution.sample_count,
+            assignment_execution_latency_p95_micros: latencies.assignment_execution.p95_micros(),
+            assignment_execution_latency_max_micros: latencies.assignment_execution.max_micros,
+            control_enqueue_latency_samples: latencies.control_enqueue.sample_count,
+            control_enqueue_latency_p95_micros: latencies.control_enqueue.p95_micros(),
+            control_enqueue_latency_max_micros: latencies.control_enqueue.max_micros,
+            control_execution_latency_samples: latencies.control_execution.sample_count,
+            control_execution_latency_p95_micros: latencies.control_execution.p95_micros(),
+            control_execution_latency_max_micros: latencies.control_execution.max_micros,
             ..BackendTelemetry::default()
         }
     }
@@ -432,6 +567,9 @@ impl BackendExecutor {
         if let Ok(mut counters) = self.task_timeout_counters.lock() {
             counters.clear();
         }
+        if let Ok(mut counters) = self.task_latency_counters.lock() {
+            counters.clear();
+        }
     }
 
     pub(super) fn wait_for_quarantine_drain(&self, timeout: Duration) -> bool {
@@ -472,6 +610,9 @@ impl BackendExecutor {
         if let Ok(mut counters) = self.task_timeout_counters.lock() {
             counters.retain(|backend_key, _| active_keys.contains(backend_key));
         }
+        if let Ok(mut counters) = self.task_latency_counters.lock() {
+            counters.retain(|backend_key, _| active_keys.contains(backend_key));
+        }
     }
 
     pub(super) fn remove_backend_worker(
@@ -487,6 +628,9 @@ impl BackendExecutor {
             strikes.remove(&key);
         }
         if let Ok(mut counters) = self.task_timeout_counters.lock() {
+            counters.remove(&key);
+        }
+        if let Ok(mut counters) = self.task_latency_counters.lock() {
             counters.remove(&key);
         }
     }
@@ -521,6 +665,9 @@ impl BackendExecutor {
             strikes.remove(&key);
         }
         if let Ok(mut counters) = self.task_timeout_counters.lock() {
+            counters.remove(&key);
+        }
+        if let Ok(mut counters) = self.task_latency_counters.lock() {
             counters.remove(&key);
         }
 
@@ -620,6 +767,8 @@ impl BackendExecutor {
             worker_key: BackendWorkerKey,
             enqueue_timeout_bucket: TaskTimeoutCounterBucket,
             execution_timeout_bucket: TaskTimeoutCounterBucket,
+            dispatch_started_at: Instant,
+            enqueued_at: Option<Instant>,
             deadline: Instant,
         }
 
@@ -652,6 +801,7 @@ impl BackendExecutor {
             let uses_control_lane = task.kind.is_control();
             let backend_handle = Arc::clone(&task.backend_handle);
             let idx = task.idx;
+            let dispatch_started_at = Instant::now();
             let task_deadline = Instant::now()
                 .checked_add(timeout)
                 .unwrap_or_else(Instant::now);
@@ -665,6 +815,8 @@ impl BackendExecutor {
                     worker_key,
                     enqueue_timeout_bucket,
                     execution_timeout_bucket,
+                    dispatch_started_at,
+                    enqueued_at: None,
                     deadline: task_deadline,
                 },
             );
@@ -687,9 +839,25 @@ impl BackendExecutor {
             };
             match enqueue_backend_command_until_deadline(&worker_tx, command, task_deadline) {
                 EnqueueCommandStatus::Enqueued => {
+                    let now = Instant::now();
+                    if let Some(context) = task_contexts.get_mut(&idx) {
+                        context.enqueued_at = Some(now);
+                        self.record_task_latency(
+                            context.worker_key,
+                            context.enqueue_timeout_bucket,
+                            now.saturating_duration_since(context.dispatch_started_at),
+                        );
+                    }
                     pending.insert(idx);
                 }
                 EnqueueCommandStatus::Disconnected => {
+                    if let Some(context) = task_contexts.get(&idx) {
+                        self.record_task_latency(
+                            context.worker_key,
+                            context.enqueue_timeout_bucket,
+                            Instant::now().saturating_duration_since(context.dispatch_started_at),
+                        );
+                    }
                     self.remove_backend_worker(backend_id, &backend_handle);
                     outcomes[idx] = Some(BackendTaskDispatchResult::Completed(Err(anyhow!(
                         "{action} dispatch failed: worker channel closed for {backend}#{backend_id}"
@@ -697,6 +865,15 @@ impl BackendExecutor {
                     self.quarantine_backend(backend_id, backend_handle);
                 }
                 EnqueueCommandStatus::DeadlineElapsed => {
+                    if let Some(context) = task_contexts.get(&idx) {
+                        self.record_task_latency(
+                            context.worker_key,
+                            context.enqueue_timeout_bucket,
+                            context
+                                .deadline
+                                .saturating_duration_since(context.dispatch_started_at),
+                        );
+                    }
                     outcomes[idx] = Some(BackendTaskDispatchResult::TimedOut(
                         BackendTaskTimeoutKind::Enqueue,
                     ));
@@ -743,6 +920,15 @@ impl BackendExecutor {
                 Ok(outcome) => {
                     let outcome_idx = outcome.idx;
                     if pending.contains(&outcome_idx) && outcomes[outcome_idx].is_none() {
+                        if let Some(context) = task_contexts.get(&outcome_idx) {
+                            let started =
+                                context.enqueued_at.unwrap_or(context.dispatch_started_at);
+                            self.record_task_latency(
+                                context.worker_key,
+                                context.execution_timeout_bucket,
+                                Instant::now().saturating_duration_since(started),
+                            );
+                        }
                         pending.remove(&outcome_idx);
                         outcomes[outcome_idx] =
                             Some(BackendTaskDispatchResult::Completed(outcome.result));
@@ -755,6 +941,14 @@ impl BackendExecutor {
             while let Ok(outcome) = outcome_rx.try_recv() {
                 let outcome_idx = outcome.idx;
                 if pending.contains(&outcome_idx) && outcomes[outcome_idx].is_none() {
+                    if let Some(context) = task_contexts.get(&outcome_idx) {
+                        let started = context.enqueued_at.unwrap_or(context.dispatch_started_at);
+                        self.record_task_latency(
+                            context.worker_key,
+                            context.execution_timeout_bucket,
+                            Instant::now().saturating_duration_since(started),
+                        );
+                    }
                     pending.remove(&outcome_idx);
                     outcomes[outcome_idx] =
                         Some(BackendTaskDispatchResult::Completed(outcome.result));
@@ -765,6 +959,14 @@ impl BackendExecutor {
         while let Ok(outcome) = outcome_rx.try_recv() {
             let outcome_idx = outcome.idx;
             if pending.contains(&outcome_idx) && outcomes[outcome_idx].is_none() {
+                if let Some(context) = task_contexts.get(&outcome_idx) {
+                    let started = context.enqueued_at.unwrap_or(context.dispatch_started_at);
+                    self.record_task_latency(
+                        context.worker_key,
+                        context.execution_timeout_bucket,
+                        Instant::now().saturating_duration_since(started),
+                    );
+                }
                 pending.remove(&outcome_idx);
                 outcomes[outcome_idx] = Some(BackendTaskDispatchResult::Completed(outcome.result));
             }
@@ -786,6 +988,15 @@ impl BackendExecutor {
                     ("execution", context.execution_timeout_bucket)
                 }
             };
+            let timeout_elapsed = match timeout_kind {
+                BackendTaskTimeoutKind::Enqueue => context
+                    .deadline
+                    .saturating_duration_since(context.dispatch_started_at),
+                BackendTaskTimeoutKind::Execution => context.deadline.saturating_duration_since(
+                    context.enqueued_at.unwrap_or(context.dispatch_started_at),
+                ),
+            };
+            self.record_task_latency(context.worker_key, timeout_bucket, timeout_elapsed);
             self.record_task_timeout(context.worker_key, timeout_bucket);
             if let Err(err) = context.backend_handle.request_timeout_interrupt() {
                 warn(
@@ -1113,43 +1324,69 @@ fn run_backend_call(
     if Instant::now() >= deadline {
         return Err(anyhow!("task deadline elapsed before backend call"));
     }
-    let (min_backoff, max_backoff) = backend_nonblocking_backoff_bounds(&backend_handle);
-    match panic::catch_unwind(AssertUnwindSafe(|| match kind {
-        BackendTaskKind::Assign(work) => run_nonblocking_until_deadline(
-            deadline,
-            || backend_handle.assign_work_batch_nonblocking(std::slice::from_ref(&work)),
-            |wait| backend_handle.wait_for_nonblocking_progress(wait),
-            min_backoff,
-            max_backoff,
-            "assignment deadline elapsed before backend accepted work",
-        ),
-        BackendTaskKind::AssignBatch(batch) => run_nonblocking_until_deadline(
-            deadline,
-            || backend_handle.assign_work_batch_nonblocking(&batch),
-            |wait| backend_handle.wait_for_nonblocking_progress(wait),
-            min_backoff,
-            max_backoff,
-            "assignment deadline elapsed before backend accepted work",
-        ),
-        BackendTaskKind::Cancel => run_nonblocking_until_deadline(
-            deadline,
-            || backend_handle.cancel_work_nonblocking(),
-            |wait| backend_handle.wait_for_nonblocking_progress(wait),
-            min_backoff,
-            max_backoff,
-            "cancel deadline elapsed before backend acknowledged cancel",
-        ),
-        BackendTaskKind::Fence => run_nonblocking_until_deadline(
-            deadline,
-            || backend_handle.fence_nonblocking(),
-            |wait| backend_handle.wait_for_nonblocking_progress(wait),
-            min_backoff,
-            max_backoff,
-            "fence deadline elapsed before backend acknowledged fence",
-        ),
+    let capabilities = normalized_backend_capabilities(&backend_handle);
+    let execution_model = capabilities.execution_model;
+    match panic::catch_unwind(AssertUnwindSafe(|| match execution_model {
+        BackendExecutionModel::Blocking => {
+            run_blocking_call_with_deadline(Arc::clone(&backend_handle), kind, deadline)
+        }
+        BackendExecutionModel::Nonblocking => {
+            let (min_backoff, max_backoff) = backend_nonblocking_backoff_bounds(&backend_handle);
+            match kind {
+                BackendTaskKind::Assign(work) => run_nonblocking_until_deadline(
+                    deadline,
+                    || backend_handle.assign_work_batch_nonblocking(std::slice::from_ref(&work)),
+                    |wait| backend_handle.wait_for_nonblocking_progress(wait),
+                    min_backoff,
+                    max_backoff,
+                    "assignment deadline elapsed before backend accepted work",
+                ),
+                BackendTaskKind::AssignBatch(batch) => run_nonblocking_until_deadline(
+                    deadline,
+                    || backend_handle.assign_work_batch_nonblocking(&batch),
+                    |wait| backend_handle.wait_for_nonblocking_progress(wait),
+                    min_backoff,
+                    max_backoff,
+                    "assignment deadline elapsed before backend accepted work",
+                ),
+                BackendTaskKind::Cancel => run_nonblocking_until_deadline(
+                    deadline,
+                    || backend_handle.cancel_work_nonblocking(),
+                    |wait| backend_handle.wait_for_nonblocking_progress(wait),
+                    min_backoff,
+                    max_backoff,
+                    "cancel deadline elapsed before backend acknowledged cancel",
+                ),
+                BackendTaskKind::Fence => run_nonblocking_until_deadline(
+                    deadline,
+                    || backend_handle.fence_nonblocking(),
+                    |wait| backend_handle.wait_for_nonblocking_progress(wait),
+                    min_backoff,
+                    max_backoff,
+                    "fence deadline elapsed before backend acknowledged fence",
+                ),
+            }
+        }
     })) {
         Ok(result) => result,
         Err(_) => Err(anyhow!("backend task panicked")),
+    }
+}
+
+fn run_blocking_call_with_deadline(
+    backend_handle: Arc<dyn PowBackend>,
+    kind: BackendTaskKind,
+    deadline: Instant,
+) -> Result<()> {
+    match kind {
+        BackendTaskKind::Assign(work) => {
+            backend_handle.assign_work_batch_with_deadline(std::slice::from_ref(&work), deadline)
+        }
+        BackendTaskKind::AssignBatch(batch) => {
+            backend_handle.assign_work_batch_with_deadline(&batch, deadline)
+        }
+        BackendTaskKind::Cancel => backend_handle.cancel_work_with_deadline(deadline),
+        BackendTaskKind::Fence => backend_handle.fence_with_deadline(deadline),
     }
 }
 
@@ -2113,6 +2350,19 @@ mod tests {
         fn wait_for_nonblocking_progress(&self, _wait_for: Duration) -> Result<()> {
             self.wait_calls.fetch_add(1, Ordering::Relaxed);
             Ok(())
+        }
+
+        fn supports_true_nonblocking(&self) -> bool {
+            true
+        }
+
+        fn capabilities(&self) -> crate::backend::BackendCapabilities {
+            crate::backend::BackendCapabilities {
+                execution_model: crate::backend::BackendExecutionModel::Nonblocking,
+                nonblocking_poll_min: Some(Duration::from_micros(50)),
+                nonblocking_poll_max: Some(Duration::from_millis(1)),
+                ..crate::backend::BackendCapabilities::default()
+            }
         }
     }
 

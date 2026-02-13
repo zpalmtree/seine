@@ -9,9 +9,9 @@ use blocknet_pow_spec::{pow_params, POW_OUTPUT_LEN};
 use crossbeam_channel::{bounded, SendTimeoutError, Sender};
 
 use crate::backend::{
-    AssignmentSemantics, BackendCapabilities, BackendEvent, BackendInstanceId, BackendTelemetry,
-    BenchBackend, DeadlineSupport, MiningSolution, PowBackend, PreemptionGranularity,
-    WorkAssignment, WORK_ID_MAX,
+    AssignmentSemantics, BackendCapabilities, BackendEvent, BackendExecutionModel,
+    BackendInstanceId, BackendTelemetry, BenchBackend, DeadlineSupport, MiningSolution, PowBackend,
+    PreemptionGranularity, WorkAssignment, WORK_ID_MAX,
 };
 use crate::config::CpuAffinityMode;
 use crate::types::hash_meets_target;
@@ -489,6 +489,7 @@ impl PowBackend for CpuBackend {
             max_inflight_assignments: 1,
             deadline_support: DeadlineSupport::Cooperative,
             assignment_semantics: AssignmentSemantics::Replace,
+            execution_model: BackendExecutionModel::Blocking,
             nonblocking_poll_min: Some(NONBLOCKING_POLL_MIN),
             nonblocking_poll_max: Some(NONBLOCKING_POLL_MAX),
         }
@@ -1168,7 +1169,11 @@ mod tests {
     #[test]
     fn hash_flush_triggers_on_time_or_batch_threshold() {
         let now = Instant::now();
-        assert!(should_flush_hashes(HASH_BATCH_SIZE, now, now + Duration::from_secs(1)));
+        assert!(should_flush_hashes(
+            HASH_BATCH_SIZE,
+            now,
+            now + Duration::from_secs(1)
+        ));
         assert!(should_flush_hashes(1, now, now));
         assert!(!should_flush_hashes(1, now, now + Duration::from_secs(1)));
     }

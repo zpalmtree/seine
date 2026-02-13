@@ -9,6 +9,7 @@ mod round_control;
 mod runtime;
 mod scheduler;
 mod stats;
+mod submit;
 mod template_prefetch;
 mod tip;
 mod tui;
@@ -30,8 +31,9 @@ use crate::api::ApiClient;
 use crate::backend::cpu::CpuBackend;
 use crate::backend::nvidia::NvidiaBackend;
 use crate::backend::{
-    normalize_backend_capabilities, BackendCapabilities, BackendEvent, BackendInstanceId,
-    BackendTelemetry, DeadlineSupport, PowBackend, PreemptionGranularity, WORK_ID_MAX,
+    normalize_backend_capabilities, BackendCapabilities, BackendEvent, BackendExecutionModel,
+    BackendInstanceId, BackendTelemetry, DeadlineSupport, PowBackend, PreemptionGranularity,
+    WORK_ID_MAX,
 };
 use crate::config::{BackendKind, Config, UiMode, WorkAllocation};
 use scheduler::NonceReservation;
@@ -74,6 +76,18 @@ pub(super) struct BackendRoundTelemetry {
     control_enqueue_timeouts: u64,
     control_execution_timeouts: u64,
     peak_assignment_timeout_strikes: u32,
+    assignment_enqueue_latency_samples: u64,
+    assignment_enqueue_latency_p95_micros: u64,
+    assignment_enqueue_latency_max_micros: u64,
+    assignment_execution_latency_samples: u64,
+    assignment_execution_latency_p95_micros: u64,
+    assignment_execution_latency_max_micros: u64,
+    control_enqueue_latency_samples: u64,
+    control_enqueue_latency_p95_micros: u64,
+    control_enqueue_latency_max_micros: u64,
+    control_execution_latency_samples: u64,
+    control_execution_latency_p95_micros: u64,
+    control_execution_latency_max_micros: u64,
 }
 
 pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
@@ -360,8 +374,23 @@ fn activate_backends(
         backend.set_event_sink(event_tx.clone());
         match backend.start() {
             Ok(()) => {
-                let capabilities =
-                    backend_capabilities_for_start(backend.as_ref(), backend_name, backend_id);
+                let capabilities = match backend_capabilities_for_start(
+                    backend.as_ref(),
+                    backend_name,
+                    backend_id,
+                ) {
+                    Ok(capabilities) => capabilities,
+                    Err(err) => {
+                        warn(
+                                "BACKEND",
+                                format!(
+                                    "{backend_name}#{backend_id} capability contract violation: {err:#}"
+                                ),
+                            );
+                        backend.stop();
+                        continue;
+                    }
+                };
                 if capabilities.max_inflight_assignments > 1
                     && !backend.supports_assignment_batching()
                 {
@@ -558,19 +587,14 @@ fn collect_round_backend_samples(
         configured_hash_poll_interval,
         poll_state,
         |sample| {
-            merge_backend_telemetry(round_backend_telemetry, sample.backend_id, sample.telemetry);
-            if let Some(slot) = backends.iter().find(|slot| slot.id == sample.backend_id) {
-                let runtime_telemetry =
-                    backend_executor.take_backend_telemetry(sample.backend_id, &slot.backend);
-                merge_backend_telemetry(
-                    round_backend_telemetry,
-                    sample.backend_id,
-                    runtime_telemetry,
-                );
-            }
+            let backend_id = sample.slot.id;
+            merge_backend_telemetry(round_backend_telemetry, backend_id, sample.telemetry);
+            let runtime_telemetry =
+                backend_executor.take_backend_telemetry(backend_id, &sample.slot.backend);
+            merge_backend_telemetry(round_backend_telemetry, backend_id, runtime_telemetry);
             if sample.hashes > 0 {
                 collected = collected.saturating_add(sample.hashes);
-                let entry = round_backend_hashes.entry(sample.backend_id).or_insert(0);
+                let entry = round_backend_hashes.entry(backend_id).or_insert(0);
                 *entry = entry.saturating_add(sample.hashes);
             }
         },
@@ -597,6 +621,18 @@ fn merge_backend_telemetry(
         && telemetry.control_enqueue_timeouts == 0
         && telemetry.control_execution_timeouts == 0
         && telemetry.peak_assignment_timeout_strikes == 0
+        && telemetry.assignment_enqueue_latency_samples == 0
+        && telemetry.assignment_enqueue_latency_p95_micros == 0
+        && telemetry.assignment_enqueue_latency_max_micros == 0
+        && telemetry.assignment_execution_latency_samples == 0
+        && telemetry.assignment_execution_latency_p95_micros == 0
+        && telemetry.assignment_execution_latency_max_micros == 0
+        && telemetry.control_enqueue_latency_samples == 0
+        && telemetry.control_enqueue_latency_p95_micros == 0
+        && telemetry.control_enqueue_latency_max_micros == 0
+        && telemetry.control_execution_latency_samples == 0
+        && telemetry.control_execution_latency_p95_micros == 0
+        && telemetry.control_execution_latency_max_micros == 0
     {
         return;
     }
@@ -637,6 +673,42 @@ fn merge_backend_telemetry(
     entry.peak_assignment_timeout_strikes = entry
         .peak_assignment_timeout_strikes
         .max(telemetry.peak_assignment_timeout_strikes);
+    entry.assignment_enqueue_latency_samples = entry
+        .assignment_enqueue_latency_samples
+        .saturating_add(telemetry.assignment_enqueue_latency_samples);
+    entry.assignment_enqueue_latency_p95_micros = entry
+        .assignment_enqueue_latency_p95_micros
+        .max(telemetry.assignment_enqueue_latency_p95_micros);
+    entry.assignment_enqueue_latency_max_micros = entry
+        .assignment_enqueue_latency_max_micros
+        .max(telemetry.assignment_enqueue_latency_max_micros);
+    entry.assignment_execution_latency_samples = entry
+        .assignment_execution_latency_samples
+        .saturating_add(telemetry.assignment_execution_latency_samples);
+    entry.assignment_execution_latency_p95_micros = entry
+        .assignment_execution_latency_p95_micros
+        .max(telemetry.assignment_execution_latency_p95_micros);
+    entry.assignment_execution_latency_max_micros = entry
+        .assignment_execution_latency_max_micros
+        .max(telemetry.assignment_execution_latency_max_micros);
+    entry.control_enqueue_latency_samples = entry
+        .control_enqueue_latency_samples
+        .saturating_add(telemetry.control_enqueue_latency_samples);
+    entry.control_enqueue_latency_p95_micros = entry
+        .control_enqueue_latency_p95_micros
+        .max(telemetry.control_enqueue_latency_p95_micros);
+    entry.control_enqueue_latency_max_micros = entry
+        .control_enqueue_latency_max_micros
+        .max(telemetry.control_enqueue_latency_max_micros);
+    entry.control_execution_latency_samples = entry
+        .control_execution_latency_samples
+        .saturating_add(telemetry.control_execution_latency_samples);
+    entry.control_execution_latency_p95_micros = entry
+        .control_execution_latency_p95_micros
+        .max(telemetry.control_execution_latency_p95_micros);
+    entry.control_execution_latency_max_micros = entry
+        .control_execution_latency_max_micros
+        .max(telemetry.control_execution_latency_max_micros);
 }
 
 pub(super) fn backend_round_telemetry_delta(telemetry: BackendTelemetry) -> BackendRoundTelemetry {
@@ -654,6 +726,18 @@ pub(super) fn backend_round_telemetry_delta(telemetry: BackendTelemetry) -> Back
         control_enqueue_timeouts: telemetry.control_enqueue_timeouts,
         control_execution_timeouts: telemetry.control_execution_timeouts,
         peak_assignment_timeout_strikes: telemetry.assignment_timeout_strikes,
+        assignment_enqueue_latency_samples: telemetry.assignment_enqueue_latency_samples,
+        assignment_enqueue_latency_p95_micros: telemetry.assignment_enqueue_latency_p95_micros,
+        assignment_enqueue_latency_max_micros: telemetry.assignment_enqueue_latency_max_micros,
+        assignment_execution_latency_samples: telemetry.assignment_execution_latency_samples,
+        assignment_execution_latency_p95_micros: telemetry.assignment_execution_latency_p95_micros,
+        assignment_execution_latency_max_micros: telemetry.assignment_execution_latency_max_micros,
+        control_enqueue_latency_samples: telemetry.control_enqueue_latency_samples,
+        control_enqueue_latency_p95_micros: telemetry.control_enqueue_latency_p95_micros,
+        control_enqueue_latency_max_micros: telemetry.control_enqueue_latency_max_micros,
+        control_execution_latency_samples: telemetry.control_execution_latency_samples,
+        control_execution_latency_p95_micros: telemetry.control_execution_latency_p95_micros,
+        control_execution_latency_max_micros: telemetry.control_execution_latency_max_micros,
     }
 }
 
@@ -834,6 +918,7 @@ fn backend_chunk_profiles(backends: &[BackendSlot], default_iters_per_lane: u64)
                 .unwrap_or_else(|| "none".to_string());
             let deadline_support = capabilities.deadline_support.describe();
             let assignment_semantics = capabilities.assignment_semantics.describe();
+            let execution_model = capabilities.execution_model.describe();
             let worker_queue_depth = if capabilities.assignment_semantics
                 == crate::backend::AssignmentSemantics::Append
             {
@@ -851,7 +936,7 @@ fn backend_chunk_profiles(backends: &[BackendSlot], default_iters_per_lane: u64)
                 _ => "default".to_string(),
             };
             format!(
-                "{}#{}=alloc:{} dispatch:{} iters/lane inflight={} worker_q={} poll_hint={} nb_poll={} deadline={} assign={}",
+                "{}#{}=alloc:{} dispatch:{} iters/lane inflight={} worker_q={} poll_hint={} nb_poll={} deadline={} assign={} exec={}",
                 slot.backend.name(),
                 slot.id,
                 allocation_hint,
@@ -862,6 +947,7 @@ fn backend_chunk_profiles(backends: &[BackendSlot], default_iters_per_lane: u64)
                 nonblocking_poll,
                 deadline_support,
                 assignment_semantics,
+                execution_model,
             )
         })
         .collect::<Vec<_>>()
@@ -882,20 +968,34 @@ fn effective_hash_poll_interval(backends: &[BackendSlot], configured: Duration) 
 
 fn backend_capabilities_for_start(
     backend: &dyn PowBackend,
-    _backend_name: &'static str,
-    _backend_id: BackendInstanceId,
-) -> BackendCapabilities {
-    normalize_backend_capabilities(
+    backend_name: &'static str,
+    backend_id: BackendInstanceId,
+) -> Result<BackendCapabilities> {
+    let capabilities = normalize_backend_capabilities(
         backend.capabilities(),
         backend.supports_assignment_batching(),
-    )
+    );
+    if capabilities.execution_model == BackendExecutionModel::Nonblocking
+        && !backend.supports_true_nonblocking()
+    {
+        bail!(
+            "{backend_name}#{backend_id} reports nonblocking execution model without true nonblocking hook support"
+        );
+    }
+    Ok(capabilities)
 }
 
 fn backend_capabilities(slot: &BackendSlot) -> BackendCapabilities {
-    normalize_backend_capabilities(
+    let mut capabilities = normalize_backend_capabilities(
         slot.backend.capabilities(),
         slot.backend.supports_assignment_batching(),
-    )
+    );
+    if capabilities.execution_model == BackendExecutionModel::Nonblocking
+        && !slot.backend.supports_true_nonblocking()
+    {
+        capabilities.execution_model = BackendExecutionModel::Blocking;
+    }
+    capabilities
 }
 
 fn cpu_lane_count(backends: &[BackendSlot]) -> u64 {
@@ -913,22 +1013,26 @@ fn backends_have_append_assignment_semantics(backends: &[BackendSlot]) -> bool {
     })
 }
 
+fn backend_names_by_id(backends: &[BackendSlot]) -> BTreeMap<BackendInstanceId, &'static str> {
+    backends
+        .iter()
+        .map(|slot| (slot.id, slot.backend.name()))
+        .collect()
+}
+
 fn format_round_backend_hashrate(
     backends: &[BackendSlot],
     round_backend_hashes: &BTreeMap<BackendInstanceId, u64>,
     elapsed_secs: f64,
 ) -> String {
     let elapsed_secs = elapsed_secs.max(0.001);
+    let backend_names = backend_names_by_id(backends);
     let mut parts = Vec::new();
     for (backend_id, hashes) in round_backend_hashes {
         if *hashes == 0 {
             continue;
         }
-        let backend_name = backends
-            .iter()
-            .find(|slot| slot.id == *backend_id)
-            .map(|slot| slot.backend.name())
-            .unwrap_or("unknown");
+        let backend_name = backend_names.get(backend_id).copied().unwrap_or("unknown");
         let hps = (*hashes as f64) / elapsed_secs;
         parts.push(format!(
             "{backend_name}#{backend_id}={}",
@@ -947,6 +1051,7 @@ fn format_round_backend_telemetry(
     backends: &[BackendSlot],
     round_backend_telemetry: &BTreeMap<BackendInstanceId, BackendRoundTelemetry>,
 ) -> String {
+    let backend_names = backend_names_by_id(backends);
     let mut parts = Vec::new();
     for (backend_id, telemetry) in round_backend_telemetry {
         if telemetry.dropped_events == 0
@@ -960,16 +1065,24 @@ fn format_round_backend_telemetry(
             && telemetry.control_enqueue_timeouts == 0
             && telemetry.control_execution_timeouts == 0
             && telemetry.peak_assignment_timeout_strikes == 0
+            && telemetry.assignment_enqueue_latency_samples == 0
+            && telemetry.assignment_enqueue_latency_p95_micros == 0
+            && telemetry.assignment_enqueue_latency_max_micros == 0
+            && telemetry.assignment_execution_latency_samples == 0
+            && telemetry.assignment_execution_latency_p95_micros == 0
+            && telemetry.assignment_execution_latency_max_micros == 0
+            && telemetry.control_enqueue_latency_samples == 0
+            && telemetry.control_enqueue_latency_p95_micros == 0
+            && telemetry.control_enqueue_latency_max_micros == 0
+            && telemetry.control_execution_latency_samples == 0
+            && telemetry.control_execution_latency_p95_micros == 0
+            && telemetry.control_execution_latency_max_micros == 0
         {
             continue;
         }
-        let backend_name = backends
-            .iter()
-            .find(|slot| slot.id == *backend_id)
-            .map(|slot| slot.backend.name())
-            .unwrap_or("unknown");
+        let backend_name = backend_names.get(backend_id).copied().unwrap_or("unknown");
         parts.push(format!(
-            "{backend_name}#{backend_id}:active_peak={} pending_peak={} inflight_hashes_peak={} inflight_secs_peak={:.3} drops={} assignments={} assignment_hashes={} assignment_secs={:.3} assign_timeout_enq={} assign_timeout_exec={} control_timeout_enq={} control_timeout_exec={} assign_timeout_strike_peak={}",
+            "{backend_name}#{backend_id}:active_peak={} pending_peak={} inflight_hashes_peak={} inflight_secs_peak={:.3} drops={} assignments={} assignment_hashes={} assignment_secs={:.3} assign_timeout_enq={} assign_timeout_exec={} control_timeout_enq={} control_timeout_exec={} assign_timeout_strike_peak={} assign_enq_lat_samples={} assign_enq_lat_p95_us={} assign_enq_lat_max_us={} assign_exec_lat_samples={} assign_exec_lat_p95_us={} assign_exec_lat_max_us={} control_enq_lat_samples={} control_enq_lat_p95_us={} control_enq_lat_max_us={} control_exec_lat_samples={} control_exec_lat_p95_us={} control_exec_lat_max_us={}",
             telemetry.peak_active_lanes,
             telemetry.peak_pending_work,
             telemetry.peak_inflight_assignment_hashes,
@@ -983,6 +1096,18 @@ fn format_round_backend_telemetry(
             telemetry.control_enqueue_timeouts,
             telemetry.control_execution_timeouts,
             telemetry.peak_assignment_timeout_strikes,
+            telemetry.assignment_enqueue_latency_samples,
+            telemetry.assignment_enqueue_latency_p95_micros,
+            telemetry.assignment_enqueue_latency_max_micros,
+            telemetry.assignment_execution_latency_samples,
+            telemetry.assignment_execution_latency_p95_micros,
+            telemetry.assignment_execution_latency_max_micros,
+            telemetry.control_enqueue_latency_samples,
+            telemetry.control_enqueue_latency_p95_micros,
+            telemetry.control_enqueue_latency_max_micros,
+            telemetry.control_execution_latency_samples,
+            telemetry.control_execution_latency_p95_micros,
+            telemetry.control_execution_latency_max_micros,
         ));
     }
 
@@ -1063,6 +1188,8 @@ mod tests {
         assign_delay: Option<Duration>,
         deadline_support: crate::backend::DeadlineSupport,
         assignment_semantics: crate::backend::AssignmentSemantics,
+        execution_model: crate::backend::BackendExecutionModel,
+        supports_true_nonblocking: bool,
     }
 
     impl MockBackend {
@@ -1079,6 +1206,8 @@ mod tests {
                 assign_delay: None,
                 deadline_support: crate::backend::DeadlineSupport::Cooperative,
                 assignment_semantics: crate::backend::AssignmentSemantics::Replace,
+                execution_model: crate::backend::BackendExecutionModel::Blocking,
+                supports_true_nonblocking: false,
             }
         }
 
@@ -1131,6 +1260,19 @@ mod tests {
             assignment_semantics: crate::backend::AssignmentSemantics,
         ) -> Self {
             self.assignment_semantics = assignment_semantics;
+            self
+        }
+
+        fn with_execution_model(
+            mut self,
+            execution_model: crate::backend::BackendExecutionModel,
+        ) -> Self {
+            self.execution_model = execution_model;
+            self
+        }
+
+        fn with_true_nonblocking_support(mut self, enabled: bool) -> Self {
+            self.supports_true_nonblocking = enabled;
             self
         }
     }
@@ -1200,6 +1342,10 @@ mod tests {
             self.supports_assignment_batching
         }
 
+        fn supports_true_nonblocking(&self) -> bool {
+            self.supports_true_nonblocking
+        }
+
         fn capabilities(&self) -> crate::backend::BackendCapabilities {
             crate::backend::BackendCapabilities {
                 preferred_iters_per_lane: self.preferred_iters_per_lane,
@@ -1208,6 +1354,7 @@ mod tests {
                 max_inflight_assignments: self.max_inflight_assignments.max(1),
                 deadline_support: self.deadline_support,
                 assignment_semantics: self.assignment_semantics,
+                execution_model: self.execution_model,
                 nonblocking_poll_min: None,
                 nonblocking_poll_max: None,
             }
@@ -1259,6 +1406,50 @@ mod tests {
     #[test]
     fn header_base_len_matches_pow_spec() {
         assert_eq!(POW_HEADER_BASE_LEN, 92);
+    }
+
+    #[test]
+    fn backend_capabilities_for_start_rejects_inconsistent_nonblocking_contract() {
+        let backend: Arc<dyn PowBackend> = Arc::new(
+            MockBackend::new("mock", 1, Arc::new(MockState::default()))
+                .with_execution_model(crate::backend::BackendExecutionModel::Nonblocking)
+                .with_true_nonblocking_support(false),
+        );
+
+        let result = backend_capabilities_for_start(backend.as_ref(), "mock", 77);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn backend_capabilities_downgrades_nonblocking_without_runtime_support() {
+        let backend: Arc<dyn PowBackend> = Arc::new(
+            MockBackend::new("mock", 1, Arc::new(MockState::default()))
+                .with_execution_model(crate::backend::BackendExecutionModel::Nonblocking)
+                .with_true_nonblocking_support(false),
+        );
+        let slot = slot(88, 1, backend);
+
+        let capabilities = backend_capabilities(&slot);
+        assert_eq!(
+            capabilities.execution_model,
+            crate::backend::BackendExecutionModel::Blocking
+        );
+    }
+
+    #[test]
+    fn backend_capabilities_preserves_nonblocking_when_runtime_supports_it() {
+        let backend: Arc<dyn PowBackend> = Arc::new(
+            MockBackend::new("mock", 1, Arc::new(MockState::default()))
+                .with_execution_model(crate::backend::BackendExecutionModel::Nonblocking)
+                .with_true_nonblocking_support(true),
+        );
+        let slot = slot(89, 1, backend);
+
+        let capabilities = backend_capabilities(&slot);
+        assert_eq!(
+            capabilities.execution_model,
+            crate::backend::BackendExecutionModel::Nonblocking
+        );
     }
 
     #[test]

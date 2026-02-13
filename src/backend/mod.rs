@@ -18,8 +18,9 @@ pub mod nvidia {
     use crossbeam_channel::Sender;
 
     use super::{
-        AssignmentSemantics, BackendCapabilities, BackendEvent, BackendInstanceId, BenchBackend,
-        DeadlineSupport, PowBackend, PreemptionGranularity, WorkAssignment,
+        AssignmentSemantics, BackendCapabilities, BackendEvent, BackendExecutionModel,
+        BackendInstanceId, BenchBackend, DeadlineSupport, PowBackend, PreemptionGranularity,
+        WorkAssignment,
     };
 
     pub struct NvidiaBackend {
@@ -88,6 +89,7 @@ pub mod nvidia {
                 max_inflight_assignments: 1,
                 deadline_support: DeadlineSupport::BestEffort,
                 assignment_semantics: AssignmentSemantics::Replace,
+                execution_model: BackendExecutionModel::Blocking,
                 nonblocking_poll_min: Some(Duration::from_micros(100)),
                 nonblocking_poll_max: Some(Duration::from_millis(5)),
             }
@@ -167,6 +169,30 @@ pub struct BackendTelemetry {
     pub control_execution_timeouts: u64,
     /// Current consecutive assignment-timeout strikes tracked by runtime.
     pub assignment_timeout_strikes: u32,
+    /// Number of assignment enqueue latency samples observed by runtime workers.
+    pub assignment_enqueue_latency_samples: u64,
+    /// Approximate assignment enqueue p95 latency, in microseconds.
+    pub assignment_enqueue_latency_p95_micros: u64,
+    /// Maximum assignment enqueue latency, in microseconds.
+    pub assignment_enqueue_latency_max_micros: u64,
+    /// Number of assignment execution latency samples observed by runtime workers.
+    pub assignment_execution_latency_samples: u64,
+    /// Approximate assignment execution p95 latency, in microseconds.
+    pub assignment_execution_latency_p95_micros: u64,
+    /// Maximum assignment execution latency, in microseconds.
+    pub assignment_execution_latency_max_micros: u64,
+    /// Number of control enqueue latency samples observed by runtime workers.
+    pub control_enqueue_latency_samples: u64,
+    /// Approximate control enqueue p95 latency, in microseconds.
+    pub control_enqueue_latency_p95_micros: u64,
+    /// Maximum control enqueue latency, in microseconds.
+    pub control_enqueue_latency_max_micros: u64,
+    /// Number of control execution latency samples observed by runtime workers.
+    pub control_execution_latency_samples: u64,
+    /// Approximate control execution p95 latency, in microseconds.
+    pub control_execution_latency_p95_micros: u64,
+    /// Maximum control execution latency, in microseconds.
+    pub control_execution_latency_max_micros: u64,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -203,6 +229,23 @@ impl AssignmentSemantics {
     }
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum BackendExecutionModel {
+    /// Backend dispatch/control calls may block until completion.
+    Blocking,
+    /// Backend dispatch/control calls use true non-blocking progress hooks.
+    Nonblocking,
+}
+
+impl BackendExecutionModel {
+    pub fn describe(self) -> &'static str {
+        match self {
+            Self::Blocking => "blocking",
+            Self::Nonblocking => "nonblocking",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct BackendCapabilities {
     /// Preferred iterations per lane for one dispatched assignment chunk.
@@ -221,6 +264,8 @@ pub struct BackendCapabilities {
     pub deadline_support: DeadlineSupport,
     /// Assignment queueing contract for repeated assign calls.
     pub assignment_semantics: AssignmentSemantics,
+    /// Dispatch/control execution model consumed by the runtime executor.
+    pub execution_model: BackendExecutionModel,
     /// Preferred non-blocking poll backoff floor used by the backend executor.
     pub nonblocking_poll_min: Option<Duration>,
     /// Preferred non-blocking poll backoff ceiling used by the backend executor.
@@ -236,6 +281,7 @@ impl Default for BackendCapabilities {
             max_inflight_assignments: 1,
             deadline_support: DeadlineSupport::BestEffort,
             assignment_semantics: AssignmentSemantics::Replace,
+            execution_model: BackendExecutionModel::Blocking,
             nonblocking_poll_min: None,
             nonblocking_poll_max: None,
         }
@@ -415,6 +461,11 @@ pub trait PowBackend: Send + Sync {
     /// If false, runtime clamps `max_inflight_assignments` to `1` and the default
     /// `assign_work_batch` implementation rejects batches longer than one chunk.
     fn supports_assignment_batching(&self) -> bool {
+        false
+    }
+
+    /// Whether `*_nonblocking` hooks implement true non-blocking progress.
+    fn supports_true_nonblocking(&self) -> bool {
         false
     }
 

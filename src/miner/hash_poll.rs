@@ -7,8 +7,8 @@ use super::{backend_capabilities, BackendSlot};
 
 pub(super) type BackendPollState = BTreeMap<BackendInstanceId, (Duration, Instant)>;
 
-pub(super) struct BackendPollSample {
-    pub backend_id: BackendInstanceId,
+pub(super) struct BackendPollSample<'a> {
+    pub slot: &'a BackendSlot,
     pub hashes: u64,
     pub telemetry: BackendTelemetry,
 }
@@ -43,13 +43,13 @@ pub(super) fn next_backend_poll_deadline(poll_state: &BackendPollState) -> Insta
         .unwrap_or_else(Instant::now)
 }
 
-pub(super) fn collect_due_backend_samples<F>(
-    backends: &[BackendSlot],
+pub(super) fn collect_due_backend_samples<'a, F>(
+    backends: &'a [BackendSlot],
     configured: Duration,
     poll_state: &mut BackendPollState,
     mut on_sample: F,
 ) where
-    F: FnMut(BackendPollSample),
+    F: FnMut(BackendPollSample<'a>),
 {
     let now = Instant::now();
     for slot in backends {
@@ -62,7 +62,7 @@ pub(super) fn collect_due_backend_samples<F>(
         }
 
         on_sample(BackendPollSample {
-            backend_id: slot.id,
+            slot,
             hashes: slot.backend.take_hashes(),
             telemetry: slot.backend.take_telemetry(),
         });
@@ -180,7 +180,7 @@ mod tests {
             Duration::from_millis(200),
             &mut poll_state,
             |sample| {
-                sampled_backend_ids.push(sample.backend_id);
+                sampled_backend_ids.push(sample.slot.id);
                 sampled_hashes = sampled_hashes.saturating_add(sample.hashes);
             },
         );
