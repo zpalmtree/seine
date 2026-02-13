@@ -1,4 +1,5 @@
 use std::convert::TryFrom;
+use std::ffi::{c_char, CStr, CString};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
@@ -15,7 +16,7 @@ use cudarc::{
     driver::{
         CudaContext, CudaFunction, CudaSlice, CudaStream, DriverError, LaunchConfig, PushKernelArg,
     },
-    nvrtc::{compile_ptx_with_opts, CompileOptions},
+    nvrtc::{result as nvrtc_result, sys as nvrtc_sys, Ptx},
 };
 
 use crate::backend::{
@@ -39,6 +40,7 @@ struct NvidiaDeviceInfo {
     index: u32,
     name: String,
     memory_total_mib: u64,
+    memory_free_mib: Option<u64>,
 }
 
 struct NvidiaShared {
@@ -122,7 +124,7 @@ struct CudaArgon2Engine {
 }
 
 impl CudaArgon2Engine {
-    fn new(device_index: u32, memory_total_mib: u64) -> Result<Self> {
+    fn new(device_index: u32, memory_total_mib: u64, memory_free_mib: Option<u64>) -> Result<Self> {
         let ctx = CudaContext::new(device_index as usize).map_err(|err| {
             anyhow!("failed to open CUDA context on device {device_index}: {err:?}")
         })?;
@@ -132,25 +134,21 @@ impl CudaArgon2Engine {
             .compute_capability()
             .map_err(|err| anyhow!("failed to query compute capability: {err:?}"))?;
 
-        let compile_opts = CompileOptions {
-            ftz: Some(true),
-            fmad: Some(true),
-            use_fast_math: Some(true),
-            maxrregcount: Some(128),
-            options: vec![
-                "--std=c++14".to_string(),
-                "--extra-device-vectorization".to_string(),
-                "--restrict".to_string(),
-                format!("--gpu-architecture=compute_{}{}", cc_major, cc_minor),
-            ],
-            name: Some("seine_argon2id_fill.cu".to_string()),
-            ..CompileOptions::default()
-        };
-
-        let ptx = compile_ptx_with_opts(CUDA_KERNEL_SRC, compile_opts)
-            .map_err(|err| anyhow!("failed to compile CUDA kernel with NVRTC: {err:?}"))?;
+        let nvrtc_options = vec![
+            "--std=c++14".to_string(),
+            "--extra-device-vectorization".to_string(),
+            "--restrict".to_string(),
+            "--use_fast_math".to_string(),
+            "--ftz=true".to_string(),
+            "--fmad=true".to_string(),
+            "--maxrregcount=128".to_string(),
+            format!("--gpu-architecture=sm_{}{}", cc_major, cc_minor),
+        ];
+        let cubin =
+            compile_cubin_with_nvrtc(CUDA_KERNEL_SRC, "seine_argon2id_fill.cu", &nvrtc_options)
+                .map_err(|err| anyhow!("failed to compile CUDA CUBIN with NVRTC: {err:#}"))?;
         let module = ctx
-            .load_module(ptx)
+            .load_module(Ptx::from_binary(cubin))
             .map_err(|err| anyhow!("failed to load CUDA module: {err:?}"))?;
         let kernel = module
             .load_function("argon2id_fill_kernel")
@@ -163,29 +161,34 @@ impl CudaArgon2Engine {
         let t_cost = params.t_cost();
 
         let lane_bytes = CPU_LANE_MEMORY_BYTES.max(u64::from(m_blocks) * 1024);
-        let memory_total_bytes = memory_total_mib.saturating_mul(1024 * 1024);
-        let usable_bytes = memory_total_bytes.saturating_mul(80) / 100;
+        let memory_budget_mib = memory_free_mib.unwrap_or(memory_total_mib).max(1);
+        let memory_budget_bytes = memory_budget_mib.saturating_mul(1024 * 1024);
+        let usable_bytes = memory_budget_bytes.saturating_mul(85) / 100;
         let by_memory = usize::try_from((usable_bytes / lane_bytes).max(1)).unwrap_or(1);
         let max_lanes = by_memory.max(1).min(MAX_RECOMMENDED_LANES);
 
-        let lane_words_u64 = u64::from(m_blocks)
-            .checked_mul(128)
-            .ok_or_else(|| anyhow!("lane memory word count overflow"))?;
-        let total_lane_words_u64 = lane_words_u64
-            .checked_mul(max_lanes as u64)
-            .ok_or_else(|| anyhow!("total lane memory word count overflow"))?;
-        let total_lane_words = usize::try_from(total_lane_words_u64)
-            .map_err(|_| anyhow!("total lane memory does not fit in usize"))?;
+        let mut selected = None;
+        for lanes in (1..=max_lanes).rev() {
+            match try_allocate_cuda_buffers(&stream, m_blocks, lanes) {
+                Ok(buffers) => {
+                    selected = Some((lanes, buffers));
+                    break;
+                }
+                Err(err)
+                    if lanes > 1 && format!("{err:?}").contains("CUDA_ERROR_OUT_OF_MEMORY") =>
+                {
+                    continue;
+                }
+                Err(err) => {
+                    return Err(anyhow!(
+                        "failed to allocate CUDA buffers for {lanes} lanes on device {device_index}: {err:?}"
+                    ));
+                }
+            }
+        }
 
-        let lane_memory = unsafe { stream.alloc::<u64>(total_lane_words) }
-            .map_err(|err| anyhow!("failed to allocate CUDA lane memory: {err:?}"))?;
-        let seed_blocks = unsafe { stream.alloc::<u64>(max_lanes * 256) }
-            .map_err(|err| anyhow!("failed to allocate CUDA seed buffer: {err:?}"))?;
-        let last_blocks = unsafe { stream.alloc::<u64>(max_lanes * 128) }
-            .map_err(|err| anyhow!("failed to allocate CUDA output buffer: {err:?}"))?;
-        let hashes_done = stream
-            .alloc_zeros::<u64>(1)
-            .map_err(|err| anyhow!("failed to allocate CUDA hash counter buffer: {err:?}"))?;
+        let (max_lanes, (lane_memory, seed_blocks, last_blocks, hashes_done)) = selected
+            .ok_or_else(|| anyhow!("failed to allocate CUDA buffers for any lane count"))?;
 
         Ok(Self {
             stream,
@@ -442,13 +445,17 @@ impl PowBackend for NvidiaBackend {
         }
 
         let selected = self.validate_or_select_device()?;
-        let mut engine = CudaArgon2Engine::new(selected.index, selected.memory_total_mib)
-            .with_context(|| {
-                format!(
-                    "failed to initialize CUDA engine on NVIDIA device {} ({})",
-                    selected.index, selected.name
-                )
-            })?;
+        let mut engine = CudaArgon2Engine::new(
+            selected.index,
+            selected.memory_total_mib,
+            selected.memory_free_mib,
+        )
+        .with_context(|| {
+            format!(
+                "failed to initialize CUDA engine on NVIDIA device {} ({})",
+                selected.index, selected.name
+            )
+        })?;
 
         self.max_lanes
             .store(engine.max_lanes().max(1), Ordering::Release);
@@ -629,13 +636,17 @@ impl PowBackend for NvidiaBackend {
 impl BenchBackend for NvidiaBackend {
     fn kernel_bench(&self, seconds: u64, shutdown: &AtomicBool) -> Result<u64> {
         let selected = self.validate_or_select_device()?;
-        let mut engine = CudaArgon2Engine::new(selected.index, selected.memory_total_mib)
-            .with_context(|| {
-                format!(
-                    "failed to initialize CUDA engine for benchmark on device {} ({})",
-                    selected.index, selected.name
-                )
-            })?;
+        let mut engine = CudaArgon2Engine::new(
+            selected.index,
+            selected.memory_total_mib,
+            selected.memory_free_mib,
+        )
+        .with_context(|| {
+            format!(
+                "failed to initialize CUDA engine for benchmark on device {} ({})",
+                selected.index, selected.name
+            )
+        })?;
 
         let header = [0u8; POW_HEADER_BASE_LEN];
         let deadline = Instant::now() + Duration::from_secs(seconds.max(1));
@@ -912,6 +923,63 @@ fn cuda_driver_err(err: DriverError) -> anyhow::Error {
     anyhow!("CUDA driver error: {err:?}")
 }
 
+fn compile_cubin_with_nvrtc(
+    source: &str,
+    program_name: &str,
+    options: &[String],
+) -> Result<Vec<u8>> {
+    let source_c = CString::new(source)
+        .map_err(|_| anyhow!("CUDA kernel source contains interior NUL byte"))?;
+    let program_name_c = CString::new(program_name)
+        .map_err(|_| anyhow!("CUDA program name contains interior NUL byte"))?;
+
+    let program = nvrtc_result::create_program(&source_c, Some(&program_name_c))
+        .map_err(|err| anyhow!("nvrtcCreateProgram failed: {err:?}"))?;
+
+    let compile_result = unsafe { nvrtc_result::compile_program(program, options) };
+    if let Err(err) = compile_result {
+        let compile_log = unsafe { nvrtc_result::get_program_log(program).ok() }
+            .map(|raw| nvrtc_log_to_string(&raw))
+            .unwrap_or_default();
+        let _ = unsafe { nvrtc_result::destroy_program(program) };
+        if compile_log.is_empty() {
+            bail!("nvrtcCompileProgram failed: {err:?}");
+        }
+        bail!("nvrtcCompileProgram failed: {err:?}; log: {compile_log}");
+    }
+
+    let cubin = unsafe {
+        let mut cubin_size: usize = 0;
+        nvrtc_sys::nvrtcGetCUBINSize(program, &mut cubin_size as *mut usize)
+            .result()
+            .map_err(|err| anyhow!("nvrtcGetCUBINSize failed: {err:?}"))?;
+        if cubin_size == 0 {
+            bail!("nvrtcGetCUBINSize returned zero bytes");
+        }
+
+        let mut cubin = vec![0u8; cubin_size];
+        nvrtc_sys::nvrtcGetCUBIN(program, cubin.as_mut_ptr().cast::<c_char>())
+            .result()
+            .map_err(|err| anyhow!("nvrtcGetCUBIN failed: {err:?}"))?;
+        cubin
+    };
+
+    unsafe { nvrtc_result::destroy_program(program) }
+        .map_err(|err| anyhow!("nvrtcDestroyProgram failed: {err:?}"))?;
+
+    Ok(cubin)
+}
+
+fn nvrtc_log_to_string(raw: &[c_char]) -> String {
+    if raw.is_empty() {
+        return String::new();
+    }
+    unsafe { CStr::from_ptr(raw.as_ptr()) }
+        .to_string_lossy()
+        .trim()
+        .to_string()
+}
+
 fn build_seed_blocks_for_nonce(
     header_base: &[u8],
     nonce: u64,
@@ -1100,7 +1168,7 @@ fn ensure_compatible_template(first: &Arc<WorkTemplate>, second: &Arc<WorkTempla
 fn query_nvidia_devices() -> Result<Vec<NvidiaDeviceInfo>> {
     let output = std::process::Command::new("nvidia-smi")
         .args([
-            "--query-gpu=index,name,memory.total",
+            "--query-gpu=index,name,memory.total,memory.free",
             "--format=csv,noheader,nounits",
         ])
         .output()
@@ -1149,14 +1217,35 @@ fn parse_nvidia_smi_query_output(raw: &str) -> Result<Vec<NvidiaDeviceInfo>> {
                 line_idx + 1
             )
         })?;
-        let memory_total_mib = columns[columns.len() - 1].parse::<u64>().with_context(|| {
-            format!(
-                "invalid GPU memory value '{}' at line {}",
-                columns[columns.len() - 1],
-                line_idx + 1
-            )
-        })?;
-        let name = columns[1..columns.len() - 1].join(",");
+        let (name_columns_end, memory_total_mib, memory_free_mib) = if columns.len() >= 4 {
+            let total_idx = columns.len() - 2;
+            let free_idx = columns.len() - 1;
+            let total = columns[total_idx].parse::<u64>().with_context(|| {
+                format!(
+                    "invalid GPU memory.total value '{}' at line {}",
+                    columns[total_idx],
+                    line_idx + 1
+                )
+            })?;
+            let free = columns[free_idx].parse::<u64>().with_context(|| {
+                format!(
+                    "invalid GPU memory.free value '{}' at line {}",
+                    columns[free_idx],
+                    line_idx + 1
+                )
+            })?;
+            (total_idx, total, Some(free))
+        } else {
+            let total = columns[columns.len() - 1].parse::<u64>().with_context(|| {
+                format!(
+                    "invalid GPU memory.total value '{}' at line {}",
+                    columns[columns.len() - 1],
+                    line_idx + 1
+                )
+            })?;
+            (columns.len() - 1, total, None)
+        };
+        let name = columns[1..name_columns_end].join(",");
         let name = name.trim().to_string();
         if name.is_empty() {
             bail!("missing GPU name at line {}", line_idx + 1);
@@ -1166,10 +1255,35 @@ fn parse_nvidia_smi_query_output(raw: &str) -> Result<Vec<NvidiaDeviceInfo>> {
             index,
             name,
             memory_total_mib,
+            memory_free_mib,
         });
     }
 
     Ok(devices)
+}
+
+fn try_allocate_cuda_buffers(
+    stream: &Arc<CudaStream>,
+    m_blocks: u32,
+    lanes: usize,
+) -> std::result::Result<
+    (
+        CudaSlice<u64>,
+        CudaSlice<u64>,
+        CudaSlice<u64>,
+        CudaSlice<u64>,
+    ),
+    DriverError,
+> {
+    let lane_words_u64 = u64::from(m_blocks).saturating_mul(128);
+    let total_lane_words_u64 = lane_words_u64.saturating_mul(lanes as u64);
+    let total_lane_words = usize::try_from(total_lane_words_u64).unwrap_or(usize::MAX);
+
+    let lane_memory = unsafe { stream.alloc::<u64>(total_lane_words) }?;
+    let seed_blocks = unsafe { stream.alloc::<u64>(lanes.saturating_mul(256)) }?;
+    let last_blocks = unsafe { stream.alloc::<u64>(lanes.saturating_mul(128)) }?;
+    let hashes_done = stream.alloc_zeros::<u64>(1)?;
+    Ok((lane_memory, seed_blocks, last_blocks, hashes_done))
 }
 
 #[cfg(test)]
