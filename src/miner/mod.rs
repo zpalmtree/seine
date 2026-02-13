@@ -69,6 +69,11 @@ pub(super) struct BackendRoundTelemetry {
     peak_pending_work: u64,
     peak_inflight_assignment_hashes: u64,
     peak_inflight_assignment_micros: u64,
+    assignment_enqueue_timeouts: u64,
+    assignment_execution_timeouts: u64,
+    control_enqueue_timeouts: u64,
+    control_execution_timeouts: u64,
+    peak_assignment_timeout_strikes: u32,
 }
 
 pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
@@ -170,16 +175,21 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
             effective_hash_poll_interval(&backends, cfg.hash_poll_interval).as_millis(),
         ),
     );
+    let sub_round_rebalance = cfg
+        .sub_round_rebalance_interval
+        .map(|interval| format!("{}ms", interval.as_millis()))
+        .unwrap_or_else(|| "off".to_string());
     info(
         "MINER",
         format!(
-            "timeouts | assign={}ms assign_strikes={} control={}ms prefetch_wait={}ms tip_join_wait={}ms submit_join_wait={}ms",
+            "timeouts | assign={}ms assign_strikes={} control={}ms prefetch_wait={}ms tip_join_wait={}ms submit_join_wait={}ms sub_round_rebalance={}",
             cfg.backend_assign_timeout.as_millis(),
             cfg.backend_assign_timeout_strikes,
             cfg.backend_control_timeout.as_millis(),
             cfg.prefetch_wait.as_millis(),
             cfg.tip_listener_join_wait.as_millis(),
             cfg.submit_join_wait.as_millis(),
+            sub_round_rebalance,
         ),
     );
     if cfg.strict_round_accounting {
@@ -491,6 +501,7 @@ fn backend_dispatch_iters_per_lane(slot: &BackendSlot, default_iters_per_lane: u
 
 fn collect_backend_hashes(
     backends: &[BackendSlot],
+    backend_executor: &backend_executor::BackendExecutor,
     stats: Option<&Stats>,
     round_hashes: &mut u64,
     mut round_backend_hashes: Option<&mut BTreeMap<BackendInstanceId, u64>>,
@@ -502,6 +513,8 @@ fn collect_backend_hashes(
         let telemetry = slot.backend.take_telemetry();
         if let Some(per_backend_telemetry) = round_backend_telemetry.as_deref_mut() {
             merge_backend_telemetry(per_backend_telemetry, slot.id, telemetry);
+            let runtime_telemetry = backend_executor.take_backend_telemetry(slot.id, &slot.backend);
+            merge_backend_telemetry(per_backend_telemetry, slot.id, runtime_telemetry);
         }
 
         if slot_hashes == 0 {
@@ -527,6 +540,7 @@ fn collect_backend_hashes(
 
 fn collect_round_backend_samples(
     backends: &[BackendSlot],
+    backend_executor: &backend_executor::BackendExecutor,
     configured_hash_poll_interval: Duration,
     poll_state: &mut hash_poll::BackendPollState,
     round_backend_hashes: &mut BTreeMap<BackendInstanceId, u64>,
@@ -539,6 +553,15 @@ fn collect_round_backend_samples(
         poll_state,
         |sample| {
             merge_backend_telemetry(round_backend_telemetry, sample.backend_id, sample.telemetry);
+            if let Some(slot) = backends.iter().find(|slot| slot.id == sample.backend_id) {
+                let runtime_telemetry =
+                    backend_executor.take_backend_telemetry(sample.backend_id, &slot.backend);
+                merge_backend_telemetry(
+                    round_backend_telemetry,
+                    sample.backend_id,
+                    runtime_telemetry,
+                );
+            }
             if sample.hashes > 0 {
                 collected = collected.saturating_add(sample.hashes);
                 let entry = round_backend_hashes.entry(sample.backend_id).or_insert(0);
@@ -563,6 +586,11 @@ fn merge_backend_telemetry(
         && telemetry.completed_assignment_micros == 0
         && telemetry.peak_inflight_assignment_hashes == 0
         && telemetry.peak_inflight_assignment_micros == 0
+        && telemetry.assignment_enqueue_timeouts == 0
+        && telemetry.assignment_execution_timeouts == 0
+        && telemetry.control_enqueue_timeouts == 0
+        && telemetry.control_execution_timeouts == 0
+        && telemetry.peak_assignment_timeout_strikes == 0
     {
         return;
     }
@@ -588,6 +616,21 @@ fn merge_backend_telemetry(
     entry.peak_inflight_assignment_micros = entry
         .peak_inflight_assignment_micros
         .max(telemetry.peak_inflight_assignment_micros);
+    entry.assignment_enqueue_timeouts = entry
+        .assignment_enqueue_timeouts
+        .saturating_add(telemetry.assignment_enqueue_timeouts);
+    entry.assignment_execution_timeouts = entry
+        .assignment_execution_timeouts
+        .saturating_add(telemetry.assignment_execution_timeouts);
+    entry.control_enqueue_timeouts = entry
+        .control_enqueue_timeouts
+        .saturating_add(telemetry.control_enqueue_timeouts);
+    entry.control_execution_timeouts = entry
+        .control_execution_timeouts
+        .saturating_add(telemetry.control_execution_timeouts);
+    entry.peak_assignment_timeout_strikes = entry
+        .peak_assignment_timeout_strikes
+        .max(telemetry.peak_assignment_timeout_strikes);
 }
 
 pub(super) fn backend_round_telemetry_delta(telemetry: BackendTelemetry) -> BackendRoundTelemetry {
@@ -600,6 +643,11 @@ pub(super) fn backend_round_telemetry_delta(telemetry: BackendTelemetry) -> Back
         peak_pending_work: telemetry.pending_work,
         peak_inflight_assignment_hashes: telemetry.inflight_assignment_hashes,
         peak_inflight_assignment_micros: telemetry.inflight_assignment_micros,
+        assignment_enqueue_timeouts: telemetry.assignment_enqueue_timeouts,
+        assignment_execution_timeouts: telemetry.assignment_execution_timeouts,
+        control_enqueue_timeouts: telemetry.control_enqueue_timeouts,
+        control_execution_timeouts: telemetry.control_execution_timeouts,
+        peak_assignment_timeout_strikes: telemetry.assignment_timeout_strikes,
     }
 }
 
@@ -901,6 +949,11 @@ fn format_round_backend_telemetry(
             && telemetry.peak_pending_work == 0
             && telemetry.peak_inflight_assignment_hashes == 0
             && telemetry.peak_inflight_assignment_micros == 0
+            && telemetry.assignment_enqueue_timeouts == 0
+            && telemetry.assignment_execution_timeouts == 0
+            && telemetry.control_enqueue_timeouts == 0
+            && telemetry.control_execution_timeouts == 0
+            && telemetry.peak_assignment_timeout_strikes == 0
         {
             continue;
         }
@@ -910,7 +963,7 @@ fn format_round_backend_telemetry(
             .map(|slot| slot.backend.name())
             .unwrap_or("unknown");
         parts.push(format!(
-            "{backend_name}#{backend_id}:active_peak={} pending_peak={} inflight_hashes_peak={} inflight_secs_peak={:.3} drops={} assignments={} assignment_hashes={} assignment_secs={:.3}",
+            "{backend_name}#{backend_id}:active_peak={} pending_peak={} inflight_hashes_peak={} inflight_secs_peak={:.3} drops={} assignments={} assignment_hashes={} assignment_secs={:.3} assign_timeout_enq={} assign_timeout_exec={} control_timeout_enq={} control_timeout_exec={} assign_timeout_strike_peak={}",
             telemetry.peak_active_lanes,
             telemetry.peak_pending_work,
             telemetry.peak_inflight_assignment_hashes,
@@ -919,6 +972,11 @@ fn format_round_backend_telemetry(
             telemetry.completed_assignments,
             telemetry.completed_assignment_hashes,
             telemetry.completed_assignment_micros as f64 / 1_000_000.0,
+            telemetry.assignment_enqueue_timeouts,
+            telemetry.assignment_execution_timeouts,
+            telemetry.control_enqueue_timeouts,
+            telemetry.control_execution_timeouts,
+            telemetry.peak_assignment_timeout_strikes,
         ));
     }
 

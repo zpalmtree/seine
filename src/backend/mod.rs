@@ -157,6 +157,16 @@ pub struct BackendTelemetry {
     pub completed_assignment_micros: u64,
     pub inflight_assignment_hashes: u64,
     pub inflight_assignment_micros: u64,
+    /// Assignment dispatches that timed out before enqueueing in backend workers.
+    pub assignment_enqueue_timeouts: u64,
+    /// Assignment dispatches that timed out while executing in backend workers.
+    pub assignment_execution_timeouts: u64,
+    /// Control dispatches (cancel/fence) that timed out before enqueueing.
+    pub control_enqueue_timeouts: u64,
+    /// Control dispatches (cancel/fence) that timed out while executing.
+    pub control_execution_timeouts: u64,
+    /// Current consecutive assignment-timeout strikes tracked by runtime.
+    pub assignment_timeout_strikes: u32,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]

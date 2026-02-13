@@ -52,6 +52,16 @@ struct BenchBackendRun {
     completed_assignment_hashes: u64,
     #[serde(default)]
     completed_assignment_secs: f64,
+    #[serde(default)]
+    assignment_enqueue_timeouts: u64,
+    #[serde(default)]
+    assignment_execution_timeouts: u64,
+    #[serde(default)]
+    control_enqueue_timeouts: u64,
+    #[serde(default)]
+    control_execution_timeouts: u64,
+    #[serde(default)]
+    peak_assignment_timeout_strikes: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -553,6 +563,7 @@ fn run_worker_benchmark_inner(
         while Instant::now() < stop_at && !shutdown.load(Ordering::Relaxed) {
             let collected = collect_round_backend_samples(
                 backends,
+                backend_executor,
                 cfg.hash_poll_interval,
                 &mut backend_poll_state,
                 &mut round_backend_hashes,
@@ -585,6 +596,7 @@ fn run_worker_benchmark_inner(
 
         collect_backend_hashes(
             backends,
+            backend_executor,
             None,
             &mut round_hashes,
             Some(&mut round_backend_hashes),
@@ -613,6 +625,7 @@ fn run_worker_benchmark_inner(
         let mut late_backend_telemetry = BTreeMap::new();
         collect_backend_hashes(
             backends,
+            backend_executor,
             None,
             &mut late_hashes,
             Some(&mut late_backend_hashes),
@@ -1231,6 +1244,21 @@ fn merge_round_telemetry(
     entry.peak_inflight_assignment_micros = entry
         .peak_inflight_assignment_micros
         .max(telemetry.peak_inflight_assignment_micros);
+    entry.assignment_enqueue_timeouts = entry
+        .assignment_enqueue_timeouts
+        .saturating_add(telemetry.assignment_enqueue_timeouts);
+    entry.assignment_execution_timeouts = entry
+        .assignment_execution_timeouts
+        .saturating_add(telemetry.assignment_execution_timeouts);
+    entry.control_enqueue_timeouts = entry
+        .control_enqueue_timeouts
+        .saturating_add(telemetry.control_enqueue_timeouts);
+    entry.control_execution_timeouts = entry
+        .control_execution_timeouts
+        .saturating_add(telemetry.control_execution_timeouts);
+    entry.peak_assignment_timeout_strikes = entry
+        .peak_assignment_timeout_strikes
+        .max(telemetry.peak_assignment_timeout_strikes);
 }
 
 fn build_backend_round_stats(
@@ -1265,6 +1293,11 @@ fn build_backend_round_stats(
             completed_assignments: telemetry.completed_assignments,
             completed_assignment_hashes: telemetry.completed_assignment_hashes,
             completed_assignment_secs: telemetry.completed_assignment_micros as f64 / 1_000_000.0,
+            assignment_enqueue_timeouts: telemetry.assignment_enqueue_timeouts,
+            assignment_execution_timeouts: telemetry.assignment_execution_timeouts,
+            control_enqueue_timeouts: telemetry.control_enqueue_timeouts,
+            control_execution_timeouts: telemetry.control_execution_timeouts,
+            peak_assignment_timeout_strikes: telemetry.peak_assignment_timeout_strikes,
         });
     }
 
@@ -1291,6 +1324,11 @@ fn build_backend_round_stats(
             completed_assignments: telemetry.completed_assignments,
             completed_assignment_hashes: telemetry.completed_assignment_hashes,
             completed_assignment_secs: telemetry.completed_assignment_micros as f64 / 1_000_000.0,
+            assignment_enqueue_timeouts: telemetry.assignment_enqueue_timeouts,
+            assignment_execution_timeouts: telemetry.assignment_execution_timeouts,
+            control_enqueue_timeouts: telemetry.control_enqueue_timeouts,
+            control_execution_timeouts: telemetry.control_execution_timeouts,
+            peak_assignment_timeout_strikes: telemetry.peak_assignment_timeout_strikes,
         });
     }
     runs

@@ -181,6 +181,10 @@ struct Cli {
     #[arg(long, value_enum, default_value_t = WorkAllocation::Adaptive)]
     work_allocation: WorkAllocation,
 
+    /// Optional periodic in-round redistribution interval in milliseconds (0 disables).
+    #[arg(long, default_value_t = 0)]
+    sub_round_rebalance_ms: u64,
+
     /// Disable SSE tip notifications (/api/events) and rely only on refresh timer.
     #[arg(long, action = ArgAction::SetTrue)]
     disable_sse: bool,
@@ -259,6 +263,7 @@ pub struct Config {
     pub start_nonce: u64,
     pub nonce_iters_per_lane: u64,
     pub work_allocation: WorkAllocation,
+    pub sub_round_rebalance_interval: Option<Duration>,
     pub sse_enabled: bool,
     pub refresh_on_same_height: bool,
     pub ui_mode: UiMode,
@@ -370,6 +375,7 @@ impl Config {
             }),
             nonce_iters_per_lane: cli.nonce_iters_per_lane,
             work_allocation: cli.work_allocation,
+            sub_round_rebalance_interval: optional_duration_from_millis(cli.sub_round_rebalance_ms),
             sse_enabled: !cli.disable_sse,
             refresh_on_same_height: cli.refresh_on_same_height,
             ui_mode: cli.ui,
@@ -414,6 +420,14 @@ pub fn read_token_from_cookie_file(cookie_path: &Path) -> Result<String> {
     }
 
     Ok(trimmed.to_string())
+}
+
+fn optional_duration_from_millis(value: u64) -> Option<Duration> {
+    if value == 0 {
+        None
+    } else {
+        Some(Duration::from_millis(value))
+    }
 }
 
 fn normalize_api_url(input: &str) -> String {
@@ -631,6 +645,7 @@ mod tests {
             start_nonce: None,
             nonce_iters_per_lane: 1u64 << 36,
             work_allocation: WorkAllocation::Adaptive,
+            sub_round_rebalance_ms: 0,
             disable_sse: false,
             refresh_on_same_height: false,
             ui: UiMode::Auto,

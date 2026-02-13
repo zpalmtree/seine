@@ -24,6 +24,7 @@ pub(super) struct TopologyRedistributionOptions<'a> {
     pub control_timeout: Duration,
     pub mode: RuntimeMode,
     pub work_allocation: WorkAllocation,
+    pub reason: &'static str,
     pub backend_weights: Option<&'a BTreeMap<BackendInstanceId, f64>>,
     pub nonce_scheduler: &'a mut NonceScheduler,
     pub backend_executor: &'a super::backend_executor::BackendExecutor,
@@ -54,7 +55,8 @@ pub(super) fn redistribute_for_topology_change(
     warn(
         options.log_tag,
         format!(
-            "topology change; redistributing e={} id={} backends={}",
+            "{}; redistributing e={} id={} backends={}",
+            options.reason,
             options.epoch,
             options.work_id,
             super::backend_names(backends),

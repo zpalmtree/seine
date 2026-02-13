@@ -473,6 +473,7 @@ impl PowBackend for CpuBackend {
                 .swap(0, Ordering::AcqRel),
             inflight_assignment_hashes,
             inflight_assignment_micros,
+            ..BackendTelemetry::default()
         }
     }
 

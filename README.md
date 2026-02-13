@@ -7,8 +7,10 @@ Current status:
 - NVIDIA backend: scaffolded interface only (not implemented yet).
 - Runtime architecture: supports multiple backends in one process with persistent workers, configurable bounded backend event queues with lossless `Solution` delivery and deduplicated backend `Error` events (prevents multi-thread error storms from stalling worker teardown), coalesced tip notifications (deduped across SSE reconnects), template prefetch overlap to reduce round-boundary idle, and optional strict quiesce barriers for round-accurate hash accounting.
   - Backend assignment/control dispatch now runs through one shared per-backend task executor with panic capture and timeout quarantine to avoid duplicated control paths and extra thread churn.
+  - Per-backend executors prioritize control commands (cancel/fence/stop) on a dedicated control lane, so queued assignment bursts do not delay control enqueue.
   - Backend dispatch deadlines are now scoped per task dispatch (not one shared batch deadline) to avoid false timeout quarantine as backend counts grow.
   - Mining control flow no longer performs direct template/submit HTTP calls; dedicated template-prefetch and submit workers own network I/O so scheduler/control loops stay responsive under network jitter.
+  - Submit backlog handling is now non-blocking for the mining control loop; backlog hard-cap pressure drops oldest queued submit requests instead of stalling dispatch/control paths.
   - `PowBackend` now exposes optional non-blocking assign/cancel/fence hooks (`*_nonblocking`) for future persistent-kernel GPU backends that need queue-pressure signaling.
   - Runtime assigns disjoint nonce chunks per backend per round (backend-local scheduling inside each chunk) so CPU and future GPU implementations can iterate independently without nonce overlap.
   - Runtime supports batched per-backend work assignment via backend queue-depth hints (`max_inflight_assignments`) so future GPU backends can overlap control and kernel scheduling.
@@ -106,6 +108,7 @@ Run headless/plain logs (no fullscreen TUI):
   - `--stats-secs` (default `10`) controls periodic stats log emission cadence.
   - `--work-allocation` (`adaptive` or `static`) controls backend nonce-chunk splitting policy in mining mode.
     - Adaptive mode now also incorporates solved/stale rounds with reduced gain so weights stay fresh under frequent tip churn.
+  - `--sub-round-rebalance-ms` (default `0`, disabled) enables optional in-round redistribution cadence for adaptive mode when you want faster response to live throughput shifts.
   - `--request-timeout-secs` (default `10`) controls JSON API request timeout for template/submit/wallet calls.
   - `--events-stream-timeout-secs` (default `10`) controls SSE connect timeout per attempt (stream itself is long-lived).
   - `--events-idle-timeout-secs` (default `90`) bounds one SSE stream request lifetime before reconnect to avoid liveness stalls.

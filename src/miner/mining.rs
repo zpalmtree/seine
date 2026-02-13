@@ -11,7 +11,7 @@ use crossbeam_channel::{bounded, Receiver, RecvTimeoutError, Sender, TrySendErro
 
 use crate::api::{is_retryable_api_error, is_unauthorized_error, ApiClient};
 use crate::backend::{BackendEvent, MiningSolution};
-use crate::config::Config;
+use crate::config::{Config, WorkAllocation};
 use crate::types::{
     decode_hex, parse_target, set_block_nonce, template_difficulty, template_height,
     BlockTemplateResponse, SubmitBlockResponse, TemplateBlock,
@@ -451,6 +451,7 @@ struct MiningControlPlane<'a> {
     submit_worker: Option<SubmitWorker>,
     submit_backlog: VecDeque<SubmitRequest>,
     submit_backlog_high_watermark_logged: bool,
+    submit_backlog_last_saturation_log: Option<Instant>,
 }
 
 struct RoundLoopState {
@@ -501,6 +502,7 @@ impl<'a> MiningControlPlane<'a> {
             )),
             submit_backlog: VecDeque::with_capacity(SUBMIT_BACKLOG_CAPACITY),
             submit_backlog_high_watermark_logged: false,
+            submit_backlog_last_saturation_log: None,
             shutdown,
             tip_signal,
         }
@@ -523,6 +525,12 @@ impl<'a> MiningControlPlane<'a> {
         stats: &Stats,
         tui: &mut Option<TuiDisplay>,
     ) {
+        // Keep the mining control loop non-blocking: attempt one flush pass, then bound memory.
+        self.flush_submit_backlog();
+        if let Some(worker) = self.submit_worker.as_ref() {
+            worker.drain_results(stats, tui);
+        }
+
         if self.submit_backlog.len() >= SUBMIT_BACKLOG_CAPACITY
             && !self.submit_backlog_high_watermark_logged
         {
@@ -536,37 +544,28 @@ impl<'a> MiningControlPlane<'a> {
             self.submit_backlog_high_watermark_logged = true;
         }
 
-        let mut last_backpressure_log = None;
-        while self.submit_backlog.len() >= SUBMIT_BACKLOG_HARD_CAPACITY {
-            if self.shutdown.load(Ordering::Relaxed) {
-                warn(
-                    "SUBMIT",
-                    "shutdown requested while submit backlog is saturated; preserving in-memory queue for best-effort drain",
-                );
-                return;
+        if self.submit_backlog.len() >= SUBMIT_BACKLOG_HARD_CAPACITY {
+            let drop_count = self
+                .submit_backlog
+                .len()
+                .saturating_sub(SUBMIT_BACKLOG_HARD_CAPACITY.saturating_sub(1));
+            for _ in 0..drop_count {
+                let _ = self.submit_backlog.pop_front();
             }
 
             let now = Instant::now();
-            if last_backpressure_log.is_none_or(|last| {
+            if self.submit_backlog_last_saturation_log.is_none_or(|last| {
                 now.saturating_duration_since(last) >= SUBMIT_BACKLOG_BACKPRESSURE_LOG_INTERVAL
             }) {
                 warn(
                     "SUBMIT",
                     format!(
-                        "submit backlog reached hard cap ({}); applying backpressure until worker drains queued requests",
-                        SUBMIT_BACKLOG_HARD_CAPACITY
+                        "submit backlog hit hard cap ({}); dropped {} oldest queued request(s) to keep control loop responsive",
+                        SUBMIT_BACKLOG_HARD_CAPACITY,
+                        drop_count,
                     ),
                 );
-                last_backpressure_log = Some(now);
-            }
-
-            self.flush_submit_backlog();
-            if let Some(worker) = self.submit_worker.as_ref() {
-                worker.drain_results(stats, tui);
-            }
-
-            if self.submit_backlog.len() >= SUBMIT_BACKLOG_HARD_CAPACITY {
-                thread::sleep(SUBMIT_BACKLOG_FLUSH_WAIT);
+                self.submit_backlog_last_saturation_log = Some(now);
             }
         }
 
@@ -603,6 +602,9 @@ impl<'a> MiningControlPlane<'a> {
 
         if self.submit_backlog.len() < SUBMIT_BACKLOG_CAPACITY {
             self.submit_backlog_high_watermark_logged = false;
+        }
+        if self.submit_backlog.len() < SUBMIT_BACKLOG_HARD_CAPACITY {
+            self.submit_backlog_last_saturation_log = None;
         }
     }
 
@@ -1014,6 +1016,7 @@ fn execute_round_phase(phase: ExecuteRoundPhase<'_, '_>) -> Result<()> {
     control_plane.drain_submit_results(stats, tui);
     collect_backend_hashes(
         backends,
+        backend_executor,
         Some(stats),
         &mut round_state.round_hashes,
         Some(&mut round_state.round_backend_hashes),
@@ -1335,6 +1338,34 @@ fn should_cancel_relaxed_round(
     stale_tip_event || solved_found || append_semantics_active
 }
 
+fn should_trigger_sub_round_rebalance(
+    cfg: &Config,
+    backends: &[BackendSlot],
+    round_hashes: u64,
+    last_sub_round_rebalance_hashes: u64,
+    next_sub_round_rebalance_at: Option<Instant>,
+    now: Instant,
+    stop_at: Instant,
+) -> bool {
+    if cfg.work_allocation != WorkAllocation::Adaptive {
+        return false;
+    }
+    if cfg.sub_round_rebalance_interval.is_none() {
+        return false;
+    }
+    if backends.len() <= 1 {
+        return false;
+    }
+    if round_hashes <= last_sub_round_rebalance_hashes {
+        return false;
+    }
+    if now >= stop_at {
+        return false;
+    }
+
+    next_sub_round_rebalance_at.is_some_and(|deadline| now >= deadline)
+}
+
 struct RoundInput<'a> {
     epoch: u64,
     work_id: u64,
@@ -1357,7 +1388,7 @@ struct RoundRuntime<'a> {
     tui: &'a mut Option<TuiDisplay>,
     last_stats_print: &'a mut Instant,
     nonce_scheduler: &'a mut NonceScheduler,
-    backend_weights: &'a BTreeMap<u64, f64>,
+    backend_weights: &'a mut BTreeMap<u64, f64>,
     deferred_solutions: &'a mut Vec<MiningSolution>,
 }
 
@@ -1371,6 +1402,13 @@ impl<'a> RoundRuntime<'a> {
         let mut topology_changed = false;
         let mut backend_poll_state =
             build_backend_poll_state(self.backends, self.cfg.hash_poll_interval);
+        let rebalance_interval = self
+            .cfg
+            .sub_round_rebalance_interval
+            .map(|interval| interval.max(Duration::from_millis(1)));
+        let mut next_sub_round_rebalance_at =
+            rebalance_interval.and_then(|interval| input.round_start.checked_add(interval));
+        let mut last_sub_round_rebalance_hashes = 0u64;
         update_tui(
             self.tui,
             self.stats,
@@ -1394,6 +1432,7 @@ impl<'a> RoundRuntime<'a> {
             let hashes_before = round_hashes;
             let collected = collect_round_backend_samples(
                 self.backends,
+                self.backend_executor,
                 self.cfg.hash_poll_interval,
                 &mut backend_poll_state,
                 &mut round_backend_hashes,
@@ -1492,6 +1531,7 @@ impl<'a> RoundRuntime<'a> {
                         control_timeout: self.cfg.backend_control_timeout,
                         mode: RuntimeMode::Mining,
                         work_allocation: self.cfg.work_allocation,
+                        reason: "topology change",
                         backend_weights: Some(self.backend_weights),
                         nonce_scheduler: self.nonce_scheduler,
                         backend_executor: self.backend_executor,
@@ -1504,6 +1544,76 @@ impl<'a> RoundRuntime<'a> {
                 backend_poll_state =
                     build_backend_poll_state(self.backends, self.cfg.hash_poll_interval);
                 topology_changed = false;
+                last_sub_round_rebalance_hashes = round_hashes;
+                next_sub_round_rebalance_at =
+                    rebalance_interval.and_then(|interval| Instant::now().checked_add(interval));
+                update_tui(
+                    self.tui,
+                    self.stats,
+                    RoundUiView {
+                        backends: self.backends,
+                        round_backend_hashes: &round_backend_hashes,
+                        round_hashes,
+                        round_start: input.round_start,
+                        height: input.height,
+                        difficulty: input.difficulty,
+                        epoch: input.epoch,
+                        state_label: "rebalanced",
+                    },
+                );
+            }
+
+            let now = Instant::now();
+            if should_trigger_sub_round_rebalance(
+                self.cfg,
+                self.backends,
+                round_hashes,
+                last_sub_round_rebalance_hashes,
+                next_sub_round_rebalance_at,
+                now,
+                input.stop_at,
+            ) {
+                update_backend_weights(
+                    self.backend_weights,
+                    WeightUpdateInputs {
+                        backends: self.backends,
+                        round_backend_hashes: &round_backend_hashes,
+                        round_backend_telemetry: Some(&round_backend_telemetry),
+                        round_elapsed_secs: input.round_start.elapsed().as_secs_f64(),
+                        mode: self.cfg.work_allocation,
+                        round_end_reason: RoundEndReason::Refresh,
+                        refresh_interval: self.cfg.refresh_interval,
+                    },
+                );
+
+                redistribute_for_topology_change(
+                    self.backends,
+                    TopologyRedistributionOptions {
+                        epoch: input.epoch,
+                        work_id: input.work_id,
+                        header_base: Arc::clone(input.header_base),
+                        target: input.target,
+                        stop_at: input.stop_at,
+                        assignment_timeout: self.cfg.backend_assign_timeout,
+                        control_timeout: self.cfg.backend_control_timeout,
+                        mode: RuntimeMode::Mining,
+                        work_allocation: self.cfg.work_allocation,
+                        reason: "in-round performance rebalance",
+                        backend_weights: Some(self.backend_weights),
+                        nonce_scheduler: self.nonce_scheduler,
+                        backend_executor: self.backend_executor,
+                        log_tag: "BACKEND",
+                    },
+                )?;
+                if self.backends.is_empty() {
+                    break;
+                }
+
+                backend_poll_state =
+                    build_backend_poll_state(self.backends, self.cfg.hash_poll_interval);
+                last_sub_round_rebalance_hashes = round_hashes;
+                next_sub_round_rebalance_at =
+                    rebalance_interval.and_then(|interval| now.checked_add(interval));
                 update_tui(
                     self.tui,
                     self.stats,

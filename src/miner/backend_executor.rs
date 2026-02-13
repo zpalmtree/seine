@@ -6,11 +6,13 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
-use crossbeam_channel::{bounded, RecvTimeoutError, SendTimeoutError, Sender, TrySendError};
+use crossbeam_channel::{
+    bounded, RecvTimeoutError, SendTimeoutError, Sender, TryRecvError, TrySendError,
+};
 
 use crate::backend::{
     normalize_backend_capabilities, AssignmentSemantics, BackendCallStatus, BackendCapabilities,
-    BackendInstanceId, PowBackend, WorkAssignment,
+    BackendInstanceId, BackendTelemetry, PowBackend, WorkAssignment,
 };
 
 use super::ui::warn;
@@ -29,6 +31,21 @@ impl BackendTaskKind {
             Self::Assign(_) | Self::AssignBatch(_) => "assignment",
             Self::Cancel => "cancel",
             Self::Fence => "fence",
+        }
+    }
+
+    fn is_control(&self) -> bool {
+        matches!(self, Self::Cancel | Self::Fence)
+    }
+
+    fn timeout_counter_bucket(&self, kind: BackendTaskTimeoutKind) -> TaskTimeoutCounterBucket {
+        match (self.is_control(), kind) {
+            (false, BackendTaskTimeoutKind::Enqueue) => TaskTimeoutCounterBucket::AssignmentEnqueue,
+            (false, BackendTaskTimeoutKind::Execution) => {
+                TaskTimeoutCounterBucket::AssignmentExecution
+            }
+            (true, BackendTaskTimeoutKind::Enqueue) => TaskTimeoutCounterBucket::ControlEnqueue,
+            (true, BackendTaskTimeoutKind::Execution) => TaskTimeoutCounterBucket::ControlExecution,
         }
     }
 }
@@ -73,7 +90,8 @@ enum BackendWorkerCommand {
 
 #[derive(Clone)]
 struct BackendWorker {
-    tx: Sender<BackendWorkerCommand>,
+    assignment_tx: Sender<BackendWorkerCommand>,
+    control_tx: Sender<BackendWorkerCommand>,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
@@ -88,8 +106,51 @@ pub(super) struct AssignmentTimeoutDecision {
     pub should_quarantine: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum TaskTimeoutCounterBucket {
+    AssignmentEnqueue,
+    AssignmentExecution,
+    ControlEnqueue,
+    ControlExecution,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct BackendTimeoutCounters {
+    assignment_enqueue: u64,
+    assignment_execution: u64,
+    control_enqueue: u64,
+    control_execution: u64,
+}
+
+impl BackendTimeoutCounters {
+    fn increment(&mut self, bucket: TaskTimeoutCounterBucket) {
+        match bucket {
+            TaskTimeoutCounterBucket::AssignmentEnqueue => {
+                self.assignment_enqueue = self.assignment_enqueue.saturating_add(1)
+            }
+            TaskTimeoutCounterBucket::AssignmentExecution => {
+                self.assignment_execution = self.assignment_execution.saturating_add(1)
+            }
+            TaskTimeoutCounterBucket::ControlEnqueue => {
+                self.control_enqueue = self.control_enqueue.saturating_add(1)
+            }
+            TaskTimeoutCounterBucket::ControlExecution => {
+                self.control_execution = self.control_execution.saturating_add(1)
+            }
+        }
+    }
+
+    fn is_zero(&self) -> bool {
+        self.assignment_enqueue == 0
+            && self.assignment_execution == 0
+            && self.control_enqueue == 0
+            && self.control_execution == 0
+    }
+}
+
 const DEFAULT_ASSIGNMENT_TIMEOUT_STRIKES_BEFORE_QUARANTINE: u32 = 3;
 const BACKEND_WORKER_QUEUE_CAPACITY_MAX: usize = 64;
+const BACKEND_WORKER_CONTROL_QUEUE_CAPACITY: usize = 16;
 const BACKEND_STOP_ACK_TIMEOUT: Duration = Duration::from_secs(1);
 const BACKEND_STOP_ACK_GRACE_TIMEOUT: Duration = Duration::from_secs(2);
 const BACKEND_STOP_ENQUEUE_TIMEOUT: Duration = Duration::from_millis(100);
@@ -102,6 +163,7 @@ pub(super) struct BackendExecutor {
     workers: Arc<Mutex<BTreeMap<BackendWorkerKey, BackendWorker>>>,
     quarantined: Arc<Mutex<BTreeSet<BackendWorkerKey>>>,
     assignment_timeout_strikes: Arc<Mutex<BTreeMap<BackendWorkerKey, u32>>>,
+    task_timeout_counters: Arc<Mutex<BTreeMap<BackendWorkerKey, BackendTimeoutCounters>>>,
     assignment_timeout_threshold: Arc<AtomicU32>,
 }
 
@@ -111,6 +173,7 @@ impl BackendExecutor {
             workers: Arc::new(Mutex::new(BTreeMap::new())),
             quarantined: Arc::new(Mutex::new(BTreeSet::new())),
             assignment_timeout_strikes: Arc::new(Mutex::new(BTreeMap::new())),
+            task_timeout_counters: Arc::new(Mutex::new(BTreeMap::new())),
             assignment_timeout_threshold: Arc::new(AtomicU32::new(
                 DEFAULT_ASSIGNMENT_TIMEOUT_STRIKES_BEFORE_QUARANTINE,
             )),
@@ -126,6 +189,45 @@ impl BackendExecutor {
         self.assignment_timeout_threshold
             .load(Ordering::Acquire)
             .max(1)
+    }
+
+    fn record_task_timeout(&self, key: BackendWorkerKey, bucket: TaskTimeoutCounterBucket) {
+        if let Ok(mut counters) = self.task_timeout_counters.lock() {
+            counters.entry(key).or_default().increment(bucket);
+        }
+    }
+
+    pub(super) fn take_backend_telemetry(
+        &self,
+        backend_id: BackendInstanceId,
+        backend_handle: &Arc<dyn PowBackend>,
+    ) -> BackendTelemetry {
+        let key = backend_worker_key(backend_id, backend_handle);
+        let counters = self
+            .task_timeout_counters
+            .lock()
+            .ok()
+            .and_then(|mut map| map.remove(&key))
+            .unwrap_or_default();
+        let assignment_timeout_strikes = self
+            .assignment_timeout_strikes
+            .lock()
+            .ok()
+            .and_then(|map| map.get(&key).copied())
+            .unwrap_or(0);
+
+        if counters.is_zero() && assignment_timeout_strikes == 0 {
+            return BackendTelemetry::default();
+        }
+
+        BackendTelemetry {
+            assignment_enqueue_timeouts: counters.assignment_enqueue,
+            assignment_execution_timeouts: counters.assignment_execution,
+            control_enqueue_timeouts: counters.control_enqueue,
+            control_execution_timeouts: counters.control_execution,
+            assignment_timeout_strikes,
+            ..BackendTelemetry::default()
+        }
     }
 }
 
@@ -157,37 +259,113 @@ fn backend_worker_queue_capacity(backend_handle: &Arc<dyn PowBackend>) -> usize 
     queue_depth.clamp(1, BACKEND_WORKER_QUEUE_CAPACITY_MAX)
 }
 
+fn run_backend_worker_command(command: BackendWorkerCommand) -> bool {
+    match command {
+        BackendWorkerCommand::Run {
+            task,
+            deadline,
+            outcome_tx,
+        } => {
+            run_backend_task(task, deadline, outcome_tx);
+            false
+        }
+        BackendWorkerCommand::Stop {
+            backend_id,
+            backend,
+            backend_handle,
+            done_tx,
+        } => {
+            if panic::catch_unwind(AssertUnwindSafe(|| backend_handle.stop())).is_err() {
+                warn(
+                    "BACKEND",
+                    format!("backend stop panicked for {backend}#{backend_id}"),
+                );
+            }
+            let _ = done_tx.send(());
+            true
+        }
+    }
+}
+
 fn spawn_backend_worker(
     backend_id: BackendInstanceId,
     backend: &'static str,
     backend_ptr: usize,
     queue_capacity: usize,
 ) -> Option<BackendWorker> {
-    let (cmd_tx, cmd_rx) = bounded::<BackendWorkerCommand>(queue_capacity.max(1));
+    let (assignment_tx, assignment_rx) = bounded::<BackendWorkerCommand>(queue_capacity.max(1));
+    let (control_tx, control_rx) =
+        bounded::<BackendWorkerCommand>(BACKEND_WORKER_CONTROL_QUEUE_CAPACITY.max(1));
     let thread_name = format!("seine-backend-{backend}-{backend_id}-{backend_ptr:x}");
     let spawn_result = thread::Builder::new().name(thread_name).spawn(move || {
-        while let Ok(command) = cmd_rx.recv() {
-            match command {
-                BackendWorkerCommand::Run {
-                    task,
-                    deadline,
-                    outcome_tx,
-                } => run_backend_task(task, deadline, outcome_tx),
-                BackendWorkerCommand::Stop {
-                    backend_id,
-                    backend,
-                    backend_handle,
-                    done_tx,
-                } => {
-                    if panic::catch_unwind(AssertUnwindSafe(|| backend_handle.stop())).is_err() {
-                        warn(
-                            "BACKEND",
-                            format!("backend stop panicked for {backend}#{backend_id}"),
-                        );
+        let mut assignment_open = true;
+        let mut control_open = true;
+
+        loop {
+            if control_open {
+                match control_rx.try_recv() {
+                    Ok(command) => {
+                        if run_backend_worker_command(command) {
+                            break;
+                        }
+                        continue;
                     }
-                    let _ = done_tx.send(());
-                    break;
+                    Err(TryRecvError::Empty) => {}
+                    Err(TryRecvError::Disconnected) => {
+                        control_open = false;
+                    }
                 }
+            }
+
+            if !assignment_open && !control_open {
+                break;
+            }
+
+            if control_open && !assignment_open {
+                match control_rx.recv() {
+                    Ok(command) => {
+                        if run_backend_worker_command(command) {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+                continue;
+            }
+
+            if assignment_open && !control_open {
+                match assignment_rx.recv() {
+                    Ok(command) => {
+                        if run_backend_worker_command(command) {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+                continue;
+            }
+
+            crossbeam_channel::select! {
+                recv(control_rx) -> command => match command {
+                    Ok(command) => {
+                        if run_backend_worker_command(command) {
+                            break;
+                        }
+                    }
+                    Err(_) => {
+                        control_open = false;
+                    }
+                },
+                recv(assignment_rx) -> command => match command {
+                    Ok(command) => {
+                        if run_backend_worker_command(command) {
+                            break;
+                        }
+                    }
+                    Err(_) => {
+                        assignment_open = false;
+                    }
+                },
             }
         }
     });
@@ -195,26 +373,50 @@ fn spawn_backend_worker(
     if spawn_result.is_err() {
         return None;
     }
-    Some(BackendWorker { tx: cmd_tx })
+    Some(BackendWorker {
+        assignment_tx,
+        control_tx,
+    })
 }
 
 impl BackendExecutor {
+    fn worker_senders_for_backend(
+        &self,
+        backend_id: BackendInstanceId,
+        backend: &'static str,
+        backend_handle: &Arc<dyn PowBackend>,
+    ) -> Option<(Sender<BackendWorkerCommand>, Sender<BackendWorkerCommand>)> {
+        let key = backend_worker_key(backend_id, backend_handle);
+        let mut registry = self.workers.lock().ok()?;
+        if let Some(worker) = registry.get(&key) {
+            return Some((worker.assignment_tx.clone(), worker.control_tx.clone()));
+        }
+        let queue_capacity = backend_worker_queue_capacity(backend_handle);
+        let worker = spawn_backend_worker(backend_id, backend, key.backend_ptr, queue_capacity)?;
+        let assignment_sender = worker.assignment_tx.clone();
+        let control_sender = worker.control_tx.clone();
+        registry.insert(key, worker);
+        Some((assignment_sender, control_sender))
+    }
+
     fn worker_sender_for_backend(
         &self,
         backend_id: BackendInstanceId,
         backend: &'static str,
         backend_handle: &Arc<dyn PowBackend>,
     ) -> Option<Sender<BackendWorkerCommand>> {
-        let key = backend_worker_key(backend_id, backend_handle);
-        let mut registry = self.workers.lock().ok()?;
-        if let Some(worker) = registry.get(&key) {
-            return Some(worker.tx.clone());
-        }
-        let queue_capacity = backend_worker_queue_capacity(backend_handle);
-        let worker = spawn_backend_worker(backend_id, backend, key.backend_ptr, queue_capacity)?;
-        let sender = worker.tx.clone();
-        registry.insert(key, worker);
-        Some(sender)
+        self.worker_senders_for_backend(backend_id, backend, backend_handle)
+            .map(|(assignment_sender, _)| assignment_sender)
+    }
+
+    fn worker_control_sender_for_backend(
+        &self,
+        backend_id: BackendInstanceId,
+        backend: &'static str,
+        backend_handle: &Arc<dyn PowBackend>,
+    ) -> Option<Sender<BackendWorkerCommand>> {
+        self.worker_senders_for_backend(backend_id, backend, backend_handle)
+            .map(|(_, control_sender)| control_sender)
     }
 
     pub(super) fn clear(&self) {
@@ -226,6 +428,9 @@ impl BackendExecutor {
         }
         if let Ok(mut strikes) = self.assignment_timeout_strikes.lock() {
             strikes.clear();
+        }
+        if let Ok(mut counters) = self.task_timeout_counters.lock() {
+            counters.clear();
         }
     }
 
@@ -264,6 +469,9 @@ impl BackendExecutor {
         if let Ok(mut strikes) = self.assignment_timeout_strikes.lock() {
             strikes.retain(|backend_key, _| active_keys.contains(backend_key));
         }
+        if let Ok(mut counters) = self.task_timeout_counters.lock() {
+            counters.retain(|backend_key, _| active_keys.contains(backend_key));
+        }
     }
 
     pub(super) fn remove_backend_worker(
@@ -277,6 +485,9 @@ impl BackendExecutor {
         }
         if let Ok(mut strikes) = self.assignment_timeout_strikes.lock() {
             strikes.remove(&key);
+        }
+        if let Ok(mut counters) = self.task_timeout_counters.lock() {
+            counters.remove(&key);
         }
     }
 
@@ -309,13 +520,16 @@ impl BackendExecutor {
         if let Ok(mut strikes) = self.assignment_timeout_strikes.lock() {
             strikes.remove(&key);
         }
+        if let Ok(mut counters) = self.task_timeout_counters.lock() {
+            counters.remove(&key);
+        }
 
         let worker_tx = self
             .workers
             .lock()
             .ok()
             .and_then(|mut registry| registry.remove(&key))
-            .map(|worker| worker.tx);
+            .map(|worker| worker.control_tx);
         let quarantined = Arc::clone(&self.quarantined);
         let detached = Arc::clone(&backend);
         let backend_name = backend.name();
@@ -403,6 +617,9 @@ impl BackendExecutor {
             backend: &'static str,
             action: &'static str,
             backend_handle: Arc<dyn PowBackend>,
+            worker_key: BackendWorkerKey,
+            enqueue_timeout_bucket: TaskTimeoutCounterBucket,
+            execution_timeout_bucket: TaskTimeoutCounterBucket,
             deadline: Instant,
         }
 
@@ -425,6 +642,14 @@ impl BackendExecutor {
             let backend_id = task.backend_id;
             let backend = task.backend;
             let action = task.kind.action_label();
+            let worker_key = backend_worker_key(backend_id, &task.backend_handle);
+            let enqueue_timeout_bucket = task
+                .kind
+                .timeout_counter_bucket(BackendTaskTimeoutKind::Enqueue);
+            let execution_timeout_bucket = task
+                .kind
+                .timeout_counter_bucket(BackendTaskTimeoutKind::Execution);
+            let uses_control_lane = task.kind.is_control();
             let backend_handle = Arc::clone(&task.backend_handle);
             let idx = task.idx;
             let task_deadline = Instant::now()
@@ -437,12 +662,18 @@ impl BackendExecutor {
                     backend,
                     action,
                     backend_handle: Arc::clone(&backend_handle),
+                    worker_key,
+                    enqueue_timeout_bucket,
+                    execution_timeout_bucket,
                     deadline: task_deadline,
                 },
             );
-            let Some(worker_tx) =
+            let worker_tx = if uses_control_lane {
+                self.worker_control_sender_for_backend(backend_id, backend, &backend_handle)
+            } else {
                 self.worker_sender_for_backend(backend_id, backend, &backend_handle)
-            else {
+            };
+            let Some(worker_tx) = worker_tx else {
                 outcomes[idx] = Some(BackendTaskDispatchResult::Completed(Err(anyhow!(
                     "{action} dispatch failed: could not spawn worker for {backend}#{backend_id}"
                 ))));
@@ -549,10 +780,13 @@ impl BackendExecutor {
             }) else {
                 continue;
             };
-            let timeout_label = match timeout_kind {
-                BackendTaskTimeoutKind::Enqueue => "enqueue",
-                BackendTaskTimeoutKind::Execution => "execution",
+            let (timeout_label, timeout_bucket) = match timeout_kind {
+                BackendTaskTimeoutKind::Enqueue => ("enqueue", context.enqueue_timeout_bucket),
+                BackendTaskTimeoutKind::Execution => {
+                    ("execution", context.execution_timeout_bucket)
+                }
             };
+            self.record_task_timeout(context.worker_key, timeout_bucket);
             if let Err(err) = context.backend_handle.request_timeout_interrupt() {
                 warn(
                     "BACKEND",
@@ -1679,6 +1913,143 @@ mod tests {
             interrupts.load(Ordering::Relaxed) > 0,
             "enqueue timeout should request backend interrupt"
         );
+    }
+
+    #[test]
+    fn control_dispatch_uses_priority_lane_when_assignment_queue_is_saturated() {
+        let executor = BackendExecutor::new();
+        let interrupts = Arc::new(AtomicUsize::new(0));
+        let backend = Arc::new(SlowAssignBackend::new(
+            Arc::clone(&interrupts),
+            Duration::from_millis(40),
+        )) as Arc<dyn PowBackend>;
+
+        let make_work = || WorkAssignment {
+            template: Arc::new(WorkTemplate {
+                work_id: 1,
+                epoch: 1,
+                header_base: Arc::from(vec![0u8; blocknet_pow_spec::POW_HEADER_BASE_LEN]),
+                target: [0xFF; 32],
+                stop_at: Instant::now() + Duration::from_secs(1),
+            }),
+            nonce_chunk: NonceChunk {
+                start_nonce: 0,
+                nonce_count: 1,
+            },
+        };
+
+        let worker_tx = executor
+            .worker_sender_for_backend(80, "slow-assign", &backend)
+            .expect("backend worker should spawn");
+        let (prefill_outcome_tx, _prefill_outcome_rx) =
+            crossbeam_channel::unbounded::<BackendTaskOutcome>();
+
+        worker_tx
+            .send(BackendWorkerCommand::Run {
+                task: BackendTask {
+                    idx: 10,
+                    backend_id: 80,
+                    backend: "slow-assign",
+                    backend_handle: Arc::clone(&backend),
+                    kind: BackendTaskKind::Assign(make_work()),
+                },
+                deadline: Instant::now() + Duration::from_secs(1),
+                outcome_tx: prefill_outcome_tx.clone(),
+            })
+            .expect("first prefill command should enqueue");
+        worker_tx
+            .send(BackendWorkerCommand::Run {
+                task: BackendTask {
+                    idx: 11,
+                    backend_id: 80,
+                    backend: "slow-assign",
+                    backend_handle: Arc::clone(&backend),
+                    kind: BackendTaskKind::Assign(make_work()),
+                },
+                deadline: Instant::now() + Duration::from_secs(1),
+                outcome_tx: prefill_outcome_tx,
+            })
+            .expect("second prefill command should enqueue while first is running");
+
+        let outcomes = executor.dispatch_backend_tasks(
+            vec![BackendTask {
+                idx: 0,
+                backend_id: 80,
+                backend: "slow-assign",
+                backend_handle: Arc::clone(&backend),
+                kind: BackendTaskKind::Cancel,
+            }],
+            Duration::from_millis(20),
+        );
+
+        assert!(
+            matches!(
+                outcomes[0],
+                Some(BackendTaskDispatchResult::TimedOut(
+                    BackendTaskTimeoutKind::Execution
+                ))
+            ),
+            "control dispatch should enqueue immediately and only time out at execution"
+        );
+
+        let telemetry = executor.take_backend_telemetry(80, &backend);
+        assert_eq!(telemetry.control_execution_timeouts, 1);
+        assert_eq!(telemetry.control_enqueue_timeouts, 0);
+    }
+
+    #[test]
+    fn take_backend_telemetry_reports_and_resets_timeout_counters() {
+        let executor = BackendExecutor::new();
+        let interrupts = Arc::new(AtomicUsize::new(0));
+        let backend = Arc::new(SlowAssignBackend::new(
+            Arc::clone(&interrupts),
+            Duration::from_millis(40),
+        )) as Arc<dyn PowBackend>;
+
+        let work = WorkAssignment {
+            template: Arc::new(WorkTemplate {
+                work_id: 1,
+                epoch: 1,
+                header_base: Arc::from(vec![0u8; blocknet_pow_spec::POW_HEADER_BASE_LEN]),
+                target: [0xFF; 32],
+                stop_at: Instant::now() + Duration::from_secs(1),
+            }),
+            nonce_chunk: NonceChunk {
+                start_nonce: 0,
+                nonce_count: 1,
+            },
+        };
+
+        let outcomes = executor.dispatch_backend_tasks(
+            vec![BackendTask {
+                idx: 0,
+                backend_id: 81,
+                backend: "slow-assign",
+                backend_handle: Arc::clone(&backend),
+                kind: BackendTaskKind::Assign(work),
+            }],
+            Duration::from_millis(5),
+        );
+
+        assert!(matches!(
+            outcomes[0],
+            Some(BackendTaskDispatchResult::TimedOut(
+                BackendTaskTimeoutKind::Execution
+            ))
+        ));
+
+        let telemetry = executor.take_backend_telemetry(81, &backend);
+        assert_eq!(telemetry.assignment_execution_timeouts, 1);
+        assert_eq!(telemetry.assignment_enqueue_timeouts, 0);
+        assert_eq!(telemetry.control_enqueue_timeouts, 0);
+        assert_eq!(telemetry.control_execution_timeouts, 0);
+
+        let reset = executor.take_backend_telemetry(81, &backend);
+        assert_eq!(reset.assignment_execution_timeouts, 0);
+        assert_eq!(reset.assignment_enqueue_timeouts, 0);
+        assert_eq!(reset.control_enqueue_timeouts, 0);
+        assert_eq!(reset.control_execution_timeouts, 0);
+        assert_eq!(reset.assignment_timeout_strikes, 0);
     }
 
     struct PendingThenCompleteBackend {
