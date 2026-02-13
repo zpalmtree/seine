@@ -947,14 +947,8 @@ fn backend_chunk_profiles(backends: &[BackendSlot], default_iters_per_lane: u64)
             let deadline_support = capabilities.deadline_support.describe();
             let assignment_semantics = capabilities.assignment_semantics.describe();
             let execution_model = capabilities.execution_model.describe();
-            let worker_queue_depth = capabilities.preferred_worker_queue_depth.unwrap_or_else(|| {
-                if capabilities.assignment_semantics == crate::backend::AssignmentSemantics::Append
-                {
-                    inflight
-                } else {
-                    1
-                }
-            });
+            let worker_queue_depth =
+                backend_executor::effective_backend_worker_queue_capacity(capabilities);
             let nonblocking_poll = match (
                 capabilities.nonblocking_poll_min,
                 capabilities.nonblocking_poll_max,
@@ -1238,6 +1232,7 @@ mod tests {
         preferred_allocation_iters_per_lane: Option<u64>,
         preferred_hash_poll_interval: Option<Duration>,
         max_inflight_assignments: u32,
+        preferred_worker_queue_depth: Option<u32>,
         supports_assignment_batching: bool,
         assign_delay: Option<Duration>,
         deadline_support: crate::backend::DeadlineSupport,
@@ -1256,6 +1251,7 @@ mod tests {
                 preferred_allocation_iters_per_lane: None,
                 preferred_hash_poll_interval: None,
                 max_inflight_assignments: 1,
+                preferred_worker_queue_depth: None,
                 supports_assignment_batching: false,
                 assign_delay: None,
                 deadline_support: crate::backend::DeadlineSupport::Cooperative,
@@ -1293,6 +1289,11 @@ mod tests {
         fn with_max_inflight_assignments(mut self, max_inflight_assignments: u32) -> Self {
             self.max_inflight_assignments = max_inflight_assignments.max(1);
             self.supports_assignment_batching = self.max_inflight_assignments > 1;
+            self
+        }
+
+        fn with_preferred_worker_queue_depth(mut self, preferred_worker_queue_depth: u32) -> Self {
+            self.preferred_worker_queue_depth = Some(preferred_worker_queue_depth.max(1));
             self
         }
 
@@ -1416,7 +1417,7 @@ mod tests {
                 preferred_assignment_timeout: None,
                 preferred_control_timeout: None,
                 preferred_assignment_timeout_strikes: None,
-                preferred_worker_queue_depth: None,
+                preferred_worker_queue_depth: self.preferred_worker_queue_depth,
                 max_inflight_assignments: self.max_inflight_assignments.max(1),
                 deadline_support: self.deadline_support,
                 assignment_semantics: self.assignment_semantics,
@@ -1726,6 +1727,25 @@ mod tests {
         assert_eq!(chunks[2].nonce_count, 3);
         assert_eq!(chunks[3].start_nonce, 209);
         assert_eq!(chunks[3].nonce_count, 3);
+    }
+
+    #[test]
+    fn backend_chunk_profiles_uses_effective_worker_queue_depth() {
+        let backends = vec![slot(
+            77,
+            1,
+            Arc::new(
+                MockBackend::new("nvidia", 1, Arc::new(MockState::default()))
+                    .with_preferred_worker_queue_depth(10_000)
+                    .with_assignment_semantics(crate::backend::AssignmentSemantics::Replace),
+            ),
+        )];
+
+        let profiles = backend_chunk_profiles(&backends, 1 << 20);
+        assert!(
+            profiles.contains("worker_q=64"),
+            "expected clamped queue depth in profile output, got: {profiles}"
+        );
     }
 
     #[test]

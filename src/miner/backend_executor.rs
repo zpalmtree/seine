@@ -331,10 +331,12 @@ impl BackendExecutor {
     where
         I: IntoIterator<Item = &'a BackendSlot>,
     {
+        let backends = backends.into_iter();
+        let (lower_bound, _) = backends.size_hint();
         let mut timeout_counters = self.task_timeout_counters.lock().ok();
         let mut latency_counters = self.task_latency_counters.lock().ok();
         let assignment_timeout_strikes = self.assignment_timeout_strikes.lock().ok();
-        let mut telemetry = Vec::new();
+        let mut telemetry = Vec::with_capacity(lower_bound);
 
         for slot in backends {
             let key = backend_worker_key(slot.id, &slot.backend);
@@ -406,8 +408,9 @@ fn normalized_backend_capabilities(backend_handle: &Arc<dyn PowBackend>) -> Back
     )
 }
 
-fn backend_worker_queue_capacity(backend_handle: &Arc<dyn PowBackend>) -> usize {
-    let capabilities = normalized_backend_capabilities(backend_handle);
+pub(super) fn effective_backend_worker_queue_capacity(
+    capabilities: BackendCapabilities,
+) -> usize {
     let default_depth = if capabilities.assignment_semantics == AssignmentSemantics::Append {
         capabilities.max_inflight_assignments.max(1)
     } else {
@@ -418,6 +421,11 @@ fn backend_worker_queue_capacity(backend_handle: &Arc<dyn PowBackend>) -> usize 
         .unwrap_or(default_depth)
         .max(1) as usize;
     requested_depth.clamp(1, BACKEND_WORKER_QUEUE_CAPACITY_MAX)
+}
+
+fn backend_worker_queue_capacity(backend_handle: &Arc<dyn PowBackend>) -> usize {
+    let capabilities = normalized_backend_capabilities(backend_handle);
+    effective_backend_worker_queue_capacity(capabilities)
 }
 
 fn run_backend_worker_command(command: BackendWorkerCommand) -> bool {
