@@ -11,6 +11,7 @@ pub mod cpu;
 pub mod nvidia;
 #[cfg(not(feature = "nvidia"))]
 pub mod nvidia {
+    use std::path::PathBuf;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::time::Duration;
 
@@ -29,7 +30,11 @@ pub mod nvidia {
     }
 
     impl NvidiaBackend {
-        pub fn new(device_index: Option<u32>) -> Self {
+        pub fn new(
+            device_index: Option<u32>,
+            _autotune_config_path: PathBuf,
+            _autotune_secs: u64,
+        ) -> Self {
             Self {
                 _instance_id: AtomicU64::new(0),
                 _device_index: device_index,

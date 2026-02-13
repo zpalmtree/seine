@@ -62,6 +62,8 @@ const DEFAULT_CPU_HASH_FLUSH_MS: u64 = 50;
 const DEFAULT_CPU_EVENT_DISPATCH_CAPACITY: usize = 256;
 const DEFAULT_CPU_AUTOTUNE_SECS: u64 = 6;
 const DEFAULT_CPU_AUTOTUNE_CONFIG_FILE: &str = "seine.cpu-autotune.json";
+const DEFAULT_NVIDIA_AUTOTUNE_SECS: u64 = 5;
+const DEFAULT_NVIDIA_AUTOTUNE_CONFIG_FILE: &str = "seine.nvidia-autotune.json";
 
 #[derive(Debug, Clone, Copy)]
 struct CpuProfileDefaults {
@@ -260,6 +262,14 @@ struct Cli {
     #[arg(long)]
     cpu_autotune_config: Option<PathBuf>,
 
+    /// Base benchmark window (seconds) per NVIDIA autotune sample.
+    #[arg(long, default_value_t = DEFAULT_NVIDIA_AUTOTUNE_SECS)]
+    nvidia_autotune_secs: u64,
+
+    /// Path for persisted NVIDIA autotune result (default: <data-dir>/seine.nvidia-autotune.json).
+    #[arg(long)]
+    nvidia_autotune_config: Option<PathBuf>,
+
     /// Maximum time to wait for one backend assignment dispatch call, in milliseconds.
     #[arg(long, default_value_t = 1000)]
     backend_assign_timeout_ms: u64,
@@ -417,6 +427,8 @@ pub struct Config {
     pub cpu_autotune_max_threads: Option<usize>,
     pub cpu_autotune_secs: u64,
     pub cpu_autotune_config_path: PathBuf,
+    pub nvidia_autotune_secs: u64,
+    pub nvidia_autotune_config_path: PathBuf,
     pub backend_assign_timeout: Duration,
     pub backend_assign_timeout_strikes: u32,
     pub backend_control_timeout: Duration,
@@ -502,6 +514,9 @@ impl Config {
         if cli.cpu_autotune_secs == 0 {
             bail!("cpu-autotune-secs must be >= 1");
         }
+        if cli.nvidia_autotune_secs == 0 {
+            bail!("nvidia-autotune-secs must be >= 1");
+        }
         if cli.backend_assign_timeout_ms == 0 {
             bail!("backend-assign-timeout-ms must be >= 1");
         }
@@ -569,6 +584,10 @@ impl Config {
             .cpu_autotune_config
             .clone()
             .unwrap_or_else(|| cli.data_dir.join(DEFAULT_CPU_AUTOTUNE_CONFIG_FILE));
+        let nvidia_autotune_config_path = cli
+            .nvidia_autotune_config
+            .clone()
+            .unwrap_or_else(|| cli.data_dir.join(DEFAULT_NVIDIA_AUTOTUNE_CONFIG_FILE));
         let effective_hash_poll_ms = cli.hash_poll_ms.unwrap_or(profile_defaults.hash_poll_ms);
         let effective_cpu_hash_batch_size = cli
             .cpu_hash_batch_size
@@ -635,6 +654,8 @@ impl Config {
             cpu_autotune_max_threads: cli.cpu_autotune_max_threads,
             cpu_autotune_secs: cli.cpu_autotune_secs.max(1),
             cpu_autotune_config_path,
+            nvidia_autotune_secs: cli.nvidia_autotune_secs.max(1),
+            nvidia_autotune_config_path,
             backend_assign_timeout: Duration::from_millis(cli.backend_assign_timeout_ms),
             backend_assign_timeout_strikes: cli.backend_assign_timeout_strikes.max(1),
             backend_control_timeout: Duration::from_millis(cli.backend_control_timeout_ms),
@@ -1089,6 +1110,8 @@ mod tests {
             cpu_autotune_max_threads: None,
             cpu_autotune_secs: DEFAULT_CPU_AUTOTUNE_SECS,
             cpu_autotune_config: None,
+            nvidia_autotune_secs: DEFAULT_NVIDIA_AUTOTUNE_SECS,
+            nvidia_autotune_config: None,
             backend_assign_timeout_ms: 1000,
             backend_assign_timeout_ms_per_instance: Vec::new(),
             backend_assign_timeout_strikes: 3,

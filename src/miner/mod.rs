@@ -1018,7 +1018,11 @@ fn build_backend_instances(cfg: &Config) -> Vec<(BackendSpec, Arc<dyn PowBackend
                     },
                 )) as Arc<dyn PowBackend>,
                 BackendKind::Nvidia => {
-                    Arc::new(NvidiaBackend::new(backend_spec.device_index)) as Arc<dyn PowBackend>
+                    Arc::new(NvidiaBackend::new(
+                        backend_spec.device_index,
+                        cfg.nvidia_autotune_config_path.clone(),
+                        cfg.nvidia_autotune_secs,
+                    )) as Arc<dyn PowBackend>
                 }
             };
             (backend_spec, backend)
@@ -2205,6 +2209,10 @@ mod tests {
             cpu_autotune_max_threads: None,
             cpu_autotune_secs: 2,
             cpu_autotune_config_path: std::path::PathBuf::from("./data/seine.cpu-autotune.json"),
+            nvidia_autotune_secs: 2,
+            nvidia_autotune_config_path: std::path::PathBuf::from(
+                "./data/seine.nvidia-autotune.json",
+            ),
             backend_assign_timeout: Duration::from_millis(1_000),
             backend_assign_timeout_strikes: 3,
             backend_control_timeout: Duration::from_millis(60_000),

@@ -1,9 +1,11 @@
 use std::convert::TryFrom;
 use std::ffi::{c_char, CStr, CString};
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Context, Result};
 use blake2::{
@@ -18,6 +20,7 @@ use cudarc::{
     },
     nvrtc::{result as nvrtc_result, sys as nvrtc_sys, Ptx},
 };
+use serde::{Deserialize, Serialize};
 
 use crate::backend::{
     AssignmentSemantics, BackendCapabilities, BackendEvent, BackendExecutionModel,
@@ -32,6 +35,9 @@ const MAX_RECOMMENDED_LANES: usize = 16;
 const CMD_CHANNEL_CAPACITY: usize = 256;
 const EVENT_SEND_WAIT: Duration = Duration::from_millis(5);
 const KERNEL_THREADS: u32 = 32;
+const DEFAULT_NVIDIA_MAX_RREGCOUNT: u32 = 224;
+const NVIDIA_AUTOTUNE_SCHEMA_VERSION: u32 = 1;
+const NVIDIA_AUTOTUNE_REGCAP_CANDIDATES: &[u32] = &[224, 192, 160];
 const ARGON2_VERSION_V13: u32 = 0x13;
 const ARGON2_ALGORITHM_ID: u32 = 2; // Argon2id
 
@@ -41,6 +47,43 @@ struct NvidiaDeviceInfo {
     name: String,
     memory_total_mib: u64,
     memory_free_mib: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+struct NvidiaKernelTuning {
+    max_rregcount: u32,
+}
+
+impl Default for NvidiaKernelTuning {
+    fn default() -> Self {
+        Self {
+            max_rregcount: DEFAULT_NVIDIA_MAX_RREGCOUNT,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct NvidiaAutotuneKey {
+    device_name: String,
+    memory_total_mib: u64,
+    m_cost_kib: u32,
+    t_cost: u32,
+    kernel_threads: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct NvidiaAutotuneRecord {
+    key: NvidiaAutotuneKey,
+    max_rregcount: u32,
+    measured_hps: f64,
+    autotune_secs: u64,
+    timestamp_unix_secs: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct NvidiaAutotuneCache {
+    schema_version: u32,
+    records: Vec<NvidiaAutotuneRecord>,
 }
 
 struct NvidiaShared {
@@ -124,7 +167,12 @@ struct CudaArgon2Engine {
 }
 
 impl CudaArgon2Engine {
-    fn new(device_index: u32, memory_total_mib: u64, memory_free_mib: Option<u64>) -> Result<Self> {
+    fn new(
+        device_index: u32,
+        memory_total_mib: u64,
+        memory_free_mib: Option<u64>,
+        tuning: NvidiaKernelTuning,
+    ) -> Result<Self> {
         let ctx = CudaContext::new(device_index as usize).map_err(|err| {
             anyhow!("failed to open CUDA context on device {device_index}: {err:?}")
         })?;
@@ -141,7 +189,7 @@ impl CudaArgon2Engine {
             "--use_fast_math".to_string(),
             "--ftz=true".to_string(),
             "--fmad=true".to_string(),
-            "--maxrregcount=224".to_string(),
+            format!("--maxrregcount={}", tuning.max_rregcount.max(1)),
             format!("--gpu-architecture=sm_{}{}", cc_major, cc_minor),
         ];
         let cubin =
@@ -358,18 +406,24 @@ impl CudaArgon2Engine {
 pub struct NvidiaBackend {
     instance_id: Arc<AtomicU64>,
     requested_device_index: Option<u32>,
+    autotune_config_path: PathBuf,
+    autotune_secs: u64,
     resolved_device: RwLock<Option<NvidiaDeviceInfo>>,
+    kernel_tuning: RwLock<Option<NvidiaKernelTuning>>,
     shared: Arc<NvidiaShared>,
     worker: Mutex<Option<NvidiaWorker>>,
     max_lanes: AtomicUsize,
 }
 
 impl NvidiaBackend {
-    pub fn new(device_index: Option<u32>) -> Self {
+    pub fn new(device_index: Option<u32>, autotune_config_path: PathBuf, autotune_secs: u64) -> Self {
         Self {
             instance_id: Arc::new(AtomicU64::new(0)),
             requested_device_index: device_index,
+            autotune_config_path,
+            autotune_secs: autotune_secs.max(1),
             resolved_device: RwLock::new(None),
+            kernel_tuning: RwLock::new(None),
             shared: Arc::new(NvidiaShared::new()),
             worker: Mutex::new(None),
             max_lanes: AtomicUsize::new(1),
@@ -427,6 +481,29 @@ impl NvidiaBackend {
         };
         Ok(worker.tx.clone())
     }
+
+    fn resolve_kernel_tuning(&self, selected: &NvidiaDeviceInfo) -> NvidiaKernelTuning {
+        if let Ok(slot) = self.kernel_tuning.read() {
+            if let Some(tuning) = *slot {
+                return tuning;
+            }
+        }
+
+        let key = build_nvidia_autotune_key(selected);
+        if let Some(cached) = load_nvidia_cached_tuning(&self.autotune_config_path, &key) {
+            if let Ok(mut slot) = self.kernel_tuning.write() {
+                *slot = Some(cached);
+            }
+            return cached;
+        }
+
+        let tuned = autotune_nvidia_kernel_tuning(selected, &self.autotune_config_path, self.autotune_secs)
+            .unwrap_or_else(|_| NvidiaKernelTuning::default());
+        if let Ok(mut slot) = self.kernel_tuning.write() {
+            *slot = Some(tuned);
+        }
+        tuned
+    }
 }
 
 impl Drop for NvidiaBackend {
@@ -473,10 +550,12 @@ impl PowBackend for NvidiaBackend {
         }
 
         let selected = self.validate_or_select_device()?;
+        let tuning = self.resolve_kernel_tuning(&selected);
         let mut engine = CudaArgon2Engine::new(
             selected.index,
             selected.memory_total_mib,
             selected.memory_free_mib,
+            tuning,
         )
         .with_context(|| {
             format!(
@@ -664,10 +743,12 @@ impl PowBackend for NvidiaBackend {
 impl BenchBackend for NvidiaBackend {
     fn kernel_bench(&self, seconds: u64, shutdown: &AtomicBool) -> Result<u64> {
         let selected = self.validate_or_select_device()?;
+        let tuning = self.resolve_kernel_tuning(&selected);
         let mut engine = CudaArgon2Engine::new(
             selected.index,
             selected.memory_total_mib,
             selected.memory_free_mib,
+            tuning,
         )
         .with_context(|| {
             format!(
@@ -1341,9 +1422,194 @@ fn probe_cuda_lane_memory(
     Ok(())
 }
 
+fn build_nvidia_autotune_key(selected: &NvidiaDeviceInfo) -> NvidiaAutotuneKey {
+    let (m_cost_kib, t_cost) = pow_params()
+        .map(|params| (params.m_cost(), params.t_cost()))
+        .unwrap_or((0, 0));
+    NvidiaAutotuneKey {
+        device_name: selected.name.clone(),
+        memory_total_mib: selected.memory_total_mib,
+        m_cost_kib,
+        t_cost,
+        kernel_threads: KERNEL_THREADS,
+    }
+}
+
+fn empty_nvidia_autotune_cache() -> NvidiaAutotuneCache {
+    NvidiaAutotuneCache {
+        schema_version: NVIDIA_AUTOTUNE_SCHEMA_VERSION,
+        records: Vec::new(),
+    }
+}
+
+fn load_nvidia_autotune_cache(path: &Path) -> Option<NvidiaAutotuneCache> {
+    let raw = fs::read_to_string(path).ok()?;
+    let parsed = serde_json::from_str::<NvidiaAutotuneCache>(&raw).ok()?;
+    if parsed.schema_version != NVIDIA_AUTOTUNE_SCHEMA_VERSION {
+        return None;
+    }
+    Some(parsed)
+}
+
+fn load_nvidia_cached_tuning(path: &Path, key: &NvidiaAutotuneKey) -> Option<NvidiaKernelTuning> {
+    let cache = load_nvidia_autotune_cache(path)?;
+    let record = cache
+        .records
+        .iter()
+        .filter(|record| &record.key == key && record.max_rregcount > 0)
+        .max_by_key(|record| record.timestamp_unix_secs)?;
+    Some(NvidiaKernelTuning {
+        max_rregcount: record.max_rregcount,
+    })
+}
+
+fn persist_nvidia_autotune_record(
+    path: &Path,
+    key: NvidiaAutotuneKey,
+    tuning: NvidiaKernelTuning,
+    measured_hps: f64,
+    autotune_secs: u64,
+) -> Result<()> {
+    let mut cache = load_nvidia_autotune_cache(path).unwrap_or_else(empty_nvidia_autotune_cache);
+    if cache.schema_version != NVIDIA_AUTOTUNE_SCHEMA_VERSION {
+        cache = empty_nvidia_autotune_cache();
+    }
+
+    let timestamp_unix_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    let updated = NvidiaAutotuneRecord {
+        key: key.clone(),
+        max_rregcount: tuning.max_rregcount.max(1),
+        measured_hps: if measured_hps.is_finite() {
+            measured_hps.max(0.0)
+        } else {
+            0.0
+        },
+        autotune_secs: autotune_secs.max(1),
+        timestamp_unix_secs,
+    };
+    if let Some(existing) = cache.records.iter_mut().find(|record| record.key == key) {
+        *existing = updated;
+    } else {
+        cache.records.push(updated);
+    }
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "failed to create NVIDIA autotune cache directory '{}'",
+                parent.display()
+            )
+        })?;
+    }
+    let payload = serde_json::to_string_pretty(&cache)?;
+    fs::write(path, payload).with_context(|| {
+        format!(
+            "failed to write NVIDIA autotune cache '{}'",
+            path.display()
+        )
+    })?;
+    Ok(())
+}
+
+fn measure_nvidia_kernel_tuning_hps(
+    selected: &NvidiaDeviceInfo,
+    tuning: NvidiaKernelTuning,
+    secs: u64,
+) -> Result<f64> {
+    let mut engine = CudaArgon2Engine::new(
+        selected.index,
+        selected.memory_total_mib,
+        selected.memory_free_mib,
+        tuning,
+    )?;
+    let header = [0u8; POW_HEADER_BASE_LEN];
+    let start = Instant::now();
+    let deadline = start + Duration::from_secs(secs.max(1));
+    let mut nonce_cursor = 0u64;
+    let mut total = 0u64;
+    let mut nonces = vec![0u64; engine.max_lanes().max(1)];
+
+    while Instant::now() < deadline {
+        let lanes = engine.max_lanes().max(1);
+        if nonces.len() < lanes {
+            nonces.resize(lanes, 0);
+        }
+        for nonce in nonces.iter_mut().take(lanes) {
+            *nonce = nonce_cursor;
+            nonce_cursor = nonce_cursor.wrapping_add(1);
+        }
+        let done = engine.run_fill_batch(&header, &nonces[..lanes])?;
+        total = total.saturating_add(done as u64);
+    }
+
+    let elapsed = start.elapsed().as_secs_f64().max(1e-6);
+    Ok(total as f64 / elapsed)
+}
+
+fn autotune_nvidia_kernel_tuning(
+    selected: &NvidiaDeviceInfo,
+    cache_path: &Path,
+    autotune_secs: u64,
+) -> Result<NvidiaKernelTuning> {
+    let mut best: Option<(NvidiaKernelTuning, f64)> = None;
+
+    for &max_rregcount in NVIDIA_AUTOTUNE_REGCAP_CANDIDATES {
+        let candidate = NvidiaKernelTuning { max_rregcount };
+        let measured = match measure_nvidia_kernel_tuning_hps(selected, candidate, autotune_secs) {
+            Ok(hps) => hps,
+            Err(_) => continue,
+        };
+        if !measured.is_finite() {
+            continue;
+        }
+        match best {
+            Some((_, best_hps)) if measured <= best_hps => {}
+            _ => best = Some((candidate, measured)),
+        }
+    }
+
+    let (selected_tuning, measured_hps) = best.ok_or_else(|| {
+        anyhow!(
+            "NVIDIA autotune failed for device {} (index {})",
+            selected.name,
+            selected.index
+        )
+    })?;
+
+    let key = build_nvidia_autotune_key(selected);
+    let _ = persist_nvidia_autotune_record(
+        cache_path,
+        key,
+        selected_tuning,
+        measured_hps,
+        autotune_secs,
+    );
+    Ok(selected_tuning)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_temp_file(name: &str) -> PathBuf {
+        let mut path = std::env::temp_dir();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be >= unix epoch")
+            .as_nanos();
+        path.push(format!(
+            "seine-nvidia-autotune-{}-{}-{name}.json",
+            std::process::id(),
+            now
+        ));
+        path
+    }
 
     fn test_template(work_id: u64) -> Arc<WorkTemplate> {
         Arc::new(WorkTemplate {
@@ -1375,6 +1641,39 @@ mod tests {
         let err =
             parse_nvidia_smi_query_output("abc, RTX, 8192").expect_err("invalid index should fail");
         assert!(format!("{err:#}").contains("invalid GPU index"));
+    }
+
+    #[test]
+    fn nvidia_autotune_cache_round_trip_loads_latest_record() {
+        let path = unique_temp_file("roundtrip");
+        let key = NvidiaAutotuneKey {
+            device_name: "NVIDIA GeForce RTX 3080".to_string(),
+            memory_total_mib: 10_240,
+            m_cost_kib: 2_097_152,
+            t_cost: 1,
+            kernel_threads: KERNEL_THREADS,
+        };
+        persist_nvidia_autotune_record(
+            &path,
+            key.clone(),
+            NvidiaKernelTuning { max_rregcount: 160 },
+            0.8,
+            2,
+        )
+        .expect("first record should persist");
+        persist_nvidia_autotune_record(
+            &path,
+            key.clone(),
+            NvidiaKernelTuning { max_rregcount: 224 },
+            1.0,
+            2,
+        )
+        .expect("second record should persist");
+
+        let loaded =
+            load_nvidia_cached_tuning(&path, &key).expect("cached tuning should be available");
+        assert_eq!(loaded.max_rregcount, 224);
+        let _ = fs::remove_file(path);
     }
 
     #[test]
