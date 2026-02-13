@@ -23,6 +23,8 @@ mod kernel;
 const DEFAULT_HASH_BATCH_SIZE: u64 = 64;
 const DEFAULT_CONTROL_CHECK_INTERVAL_HASHES: u64 = 1;
 const DEFAULT_HASH_FLUSH_INTERVAL: Duration = Duration::from_millis(50);
+// Keep stop/deadline checks bounded even when hash-interval control checks are coarse.
+const MAX_DEADLINE_CHECK_INTERVAL: Duration = Duration::from_millis(5);
 const NONBLOCKING_POLL_MIN: Duration = Duration::from_micros(50);
 const NONBLOCKING_POLL_MAX: Duration = Duration::from_millis(1);
 const CRITICAL_EVENT_RETRY_WAIT: Duration = Duration::from_millis(5);
@@ -538,7 +540,7 @@ impl PowBackend for CpuBackend {
         BackendCapabilities {
             preferred_iters_per_lane: None,
             preferred_allocation_iters_per_lane: None,
-            preferred_hash_poll_interval: Some(self.shared.hash_flush_interval),
+            preferred_hash_poll_interval: None,
             preferred_assignment_timeout: None,
             preferred_control_timeout: None,
             preferred_assignment_timeout_strikes: None,
@@ -978,6 +980,15 @@ mod tests {
             now + Duration::from_secs(1),
             DEFAULT_HASH_BATCH_SIZE,
         ));
+    }
+
+    #[test]
+    fn capabilities_do_not_force_hash_poll_hint() {
+        let backend = CpuBackend::new(1, CpuAffinityMode::Off);
+        assert!(backend
+            .capabilities()
+            .preferred_hash_poll_interval
+            .is_none());
     }
 
     #[test]

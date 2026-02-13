@@ -95,6 +95,8 @@ struct BenchRun {
     counted_hashes: u64,
     #[serde(default)]
     late_hashes: u64,
+    #[serde(default)]
+    late_hash_pct: f64,
     elapsed_secs: f64,
     #[serde(default)]
     fence_secs: f64,
@@ -127,6 +129,14 @@ struct BenchReport {
     median_hps: f64,
     min_hps: f64,
     max_hps: f64,
+    #[serde(default)]
+    total_hashes: u64,
+    #[serde(default)]
+    total_counted_hashes: u64,
+    #[serde(default)]
+    total_late_hashes: u64,
+    #[serde(default)]
+    late_hash_pct: f64,
     runs: Vec<BenchRun>,
 }
 
@@ -327,6 +337,7 @@ fn run_kernel_benchmark(
             hashes,
             counted_hashes: hashes,
             late_hashes: 0,
+            late_hash_pct: 0.0,
             elapsed_secs: elapsed,
             fence_secs: 0.0,
             hps,
@@ -357,6 +368,10 @@ fn run_kernel_benchmark(
             median_hps: 0.0,
             min_hps: 0.0,
             max_hps: 0.0,
+            total_hashes: 0,
+            total_counted_hashes: 0,
+            total_late_hashes: 0,
+            late_hash_pct: 0.0,
             runs,
         },
     )
@@ -684,6 +699,7 @@ fn run_worker_benchmark_inner(
         }
 
         let round_hashes = counted_hashes.saturating_add(late_hashes);
+        let late_hash_pct = late_hash_share_pct(late_hashes, round_hashes);
         let measured_elapsed = (counted_elapsed + fence_elapsed).max(0.001);
         let hps = round_hashes as f64 / measured_elapsed;
         let backend_runs = build_backend_round_stats(
@@ -701,12 +717,13 @@ fn run_worker_benchmark_inner(
             info(
                 "BENCH",
                 format!(
-                    "warmup {}/{} hashes={} counted={} late={} window={:.2}s fence={:.3}s rate={} backends={}",
+                    "warmup {}/{} hashes={} counted={} late={} late_pct={:.2}% window={:.2}s fence={:.3}s rate={} backends={}",
                     round + 1,
                     cfg.bench_warmup_rounds,
                     round_hashes,
                     counted_hashes,
                     late_hashes,
+                    late_hash_pct,
                     counted_elapsed,
                     fence_elapsed,
                     format_hashrate(hps),
@@ -721,12 +738,13 @@ fn run_worker_benchmark_inner(
             info(
                 "BENCH",
                 format!(
-                    "round {}/{} hashes={} counted={} late={} window={:.2}s fence={:.3}s rate={} backends={}",
+                    "round {}/{} hashes={} counted={} late={} late_pct={:.2}% window={:.2}s fence={:.3}s rate={} backends={}",
                     measured_round,
                     cfg.bench_rounds,
                     round_hashes,
                     counted_hashes,
                     late_hashes,
+                    late_hash_pct,
                     counted_elapsed,
                     fence_elapsed,
                     format_hashrate(hps),
@@ -742,6 +760,7 @@ fn run_worker_benchmark_inner(
                 hashes: round_hashes,
                 counted_hashes,
                 late_hashes,
+                late_hash_pct,
                 elapsed_secs: measured_elapsed,
                 fence_secs: fence_elapsed,
                 hps,
@@ -800,6 +819,10 @@ fn run_worker_benchmark_inner(
             median_hps: 0.0,
             min_hps: 0.0,
             max_hps: 0.0,
+            total_hashes: 0,
+            total_counted_hashes: 0,
+            total_late_hashes: 0,
+            late_hash_pct: 0.0,
             runs,
         },
     )
@@ -818,6 +841,20 @@ fn summarize_benchmark(cfg: &Config, mut report: BenchReport) -> Result<()> {
     report.median_hps = median(&sorted_hps);
     report.min_hps = *sorted_hps.first().unwrap_or(&0.0);
     report.max_hps = *sorted_hps.last().unwrap_or(&0.0);
+    report.total_counted_hashes = report
+        .runs
+        .iter()
+        .map(|run| run.counted_hashes)
+        .fold(0u64, u64::saturating_add);
+    report.total_late_hashes = report
+        .runs
+        .iter()
+        .map(|run| run.late_hashes)
+        .fold(0u64, u64::saturating_add);
+    report.total_hashes = report
+        .total_counted_hashes
+        .saturating_add(report.total_late_hashes);
+    report.late_hash_pct = late_hash_share_pct(report.total_late_hashes, report.total_hashes);
 
     success(
         "BENCH",
@@ -827,6 +864,16 @@ fn summarize_benchmark(cfg: &Config, mut report: BenchReport) -> Result<()> {
             format_hashrate(report.median_hps),
             format_hashrate(report.min_hps),
             format_hashrate(report.max_hps),
+        ),
+    );
+    info(
+        "BENCH",
+        format!(
+            "accounting | hashes={} counted={} late={} late_pct={:.2}%",
+            report.total_hashes,
+            report.total_counted_hashes,
+            report.total_late_hashes,
+            report.late_hash_pct,
         ),
     );
 
@@ -1224,6 +1271,14 @@ fn format_backend_runtime_fingerprint(runtime: &[BenchBackendRuntimeFingerprint]
         })
         .collect::<Vec<_>>()
         .join(",")
+}
+
+fn late_hash_share_pct(late_hashes: u64, total_hashes: u64) -> f64 {
+    if total_hashes == 0 {
+        0.0
+    } else {
+        (late_hashes as f64 * 100.0) / total_hashes as f64
+    }
 }
 
 fn benchmark_header_base(round: u32) -> std::sync::Arc<[u8]> {
@@ -1687,11 +1742,16 @@ mod tests {
             median_hps: 10.0,
             min_hps: 10.0,
             max_hps: 10.0,
+            total_hashes: 10,
+            total_counted_hashes: 10,
+            total_late_hashes: 0,
+            late_hash_pct: 0.0,
             runs: vec![BenchRun {
                 round: 1,
                 hashes: 10,
                 counted_hashes: 10,
                 late_hashes: 0,
+                late_hash_pct: 0.0,
                 elapsed_secs: 1.0,
                 fence_secs: 0.0,
                 hps: 10.0,

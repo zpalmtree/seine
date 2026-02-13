@@ -11,7 +11,8 @@ use crate::types::hash_meets_target;
 use super::{
     emit_error, emit_event, flush_hashes, lane_quota_for_chunk, mark_startup_failed,
     mark_worker_active, mark_worker_inactive, mark_worker_ready, pow_params, request_shutdown,
-    request_work_pause, should_flush_hashes, wait_for_work_update, Shared, SOLVED_MASK,
+    request_work_pause, should_flush_hashes, wait_for_work_update, Shared,
+    MAX_DEADLINE_CHECK_INTERVAL, SOLVED_MASK,
 };
 
 pub(super) fn cpu_worker_loop(
@@ -50,6 +51,7 @@ pub(super) fn cpu_worker_loop(
     let mut pending_hashes = 0u64;
     let mut next_flush_at = Instant::now() + shared.hash_flush_interval;
     let mut control_hashes_remaining = 0u64;
+    let mut next_deadline_check_at = Instant::now();
 
     loop {
         let global_generation = shared.work_generation.load(Ordering::Acquire);
@@ -69,6 +71,7 @@ pub(super) fn cpu_worker_loop(
                     );
                     next_flush_at = Instant::now() + shared.hash_flush_interval;
                     control_hashes_remaining = 0;
+                    next_deadline_check_at = Instant::now();
                     local_generation = generation;
                     local_work = Some(work);
                     if lane_quota > 0 {
@@ -109,17 +112,24 @@ pub(super) fn cpu_worker_loop(
             continue;
         }
 
-        if control_hashes_remaining == 0 {
-            if Instant::now() >= template.stop_at {
+        let now = Instant::now();
+        let deadline_check_due = now >= next_deadline_check_at;
+        if control_hashes_remaining == 0 || deadline_check_due {
+            if now >= template.stop_at {
                 flush_hashes(&shared, thread_idx, &mut pending_hashes);
                 mark_worker_inactive(&shared, &mut worker_active);
                 local_work = None;
                 continue;
             }
 
-            control_hashes_remaining = lane_quota
-                .saturating_sub(lane_iters)
-                .clamp(1, shared.control_check_interval_hashes.max(1));
+            if control_hashes_remaining == 0 {
+                control_hashes_remaining = lane_quota
+                    .saturating_sub(lane_iters)
+                    .clamp(1, shared.control_check_interval_hashes.max(1));
+            }
+            if deadline_check_due {
+                next_deadline_check_at = now + MAX_DEADLINE_CHECK_INTERVAL;
+            }
         }
 
         let nonce_bytes = nonce.to_le_bytes();

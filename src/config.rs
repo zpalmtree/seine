@@ -157,7 +157,7 @@ struct Cli {
     #[arg(long, default_value_t = 64)]
     cpu_hash_batch_size: u64,
 
-    /// CPU worker control check cadence in hashes.
+    /// CPU worker control polling cadence in hashes (deadline checks are also time-bounded).
     #[arg(long, default_value_t = 1)]
     cpu_control_check_interval_hashes: u64,
 

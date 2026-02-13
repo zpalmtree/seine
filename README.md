@@ -104,10 +104,12 @@ Run headless/plain logs (no fullscreen TUI):
   - By default, backends reporting best-effort deadlines are quarantined; pass `--allow-best-effort-deadlines` to keep them active.
   - Active backends run a startup deadline probe (`cancel`/`fence`) with a bounded watchdog timeout before mining/benchmark rounds begin; probe failures are quarantined.
   - `--hash-poll-ms` (default `200`) controls backend hash counter polling cadence.
-    - Runtime may tighten this cadence based on backend capability hints (for example future GPU backends) while preserving the configured upper bound.
+    - Runtime may tighten this cadence based on backend capability hints (for example non-CPU accelerators) while preserving the configured upper bound.
+    - CPU backend does not force a lower poll hint, so CPU-only runs keep `--hash-poll-ms` as the effective poll cadence.
   - CPU backend hot-path tuning knobs for faster perf iteration:
     - `--cpu-hash-batch-size` (default `64`) controls per-worker hash counter flush batch size.
-    - `--cpu-control-check-interval-hashes` (default `1`) controls per-worker control/deadline check cadence.
+    - `--cpu-control-check-interval-hashes` (default `1`) controls per-worker control polling cadence.
+      - CPU stop/deadline checks are additionally time-bounded to keep round-end late-hash skew stable under coarse hash-interval settings.
     - `--cpu-hash-flush-ms` (default `50`) controls time-based hash counter flush cadence.
     - `--cpu-event-dispatch-capacity` (default `256`) controls internal CPU backend event dispatch buffering.
   - `--stats-secs` (default `10`) controls periodic stats log emission cadence.
@@ -144,7 +146,7 @@ Run deterministic local benchmarking (no API connection needed):
 - `--bench-kind end-to-end`: includes backend start/stop per round.
 - Worker benchmarks always apply a round-end measurement fence so round H/s is comparable across strict/relaxed accounting modes.
   - Worker benchmarks now honor `--work-allocation` (`adaptive`/`static`) so scheduler tuning can be measured without mining mode.
-  - Benchmark reports now expose `counted_hashes` and `late_hashes` per round; throughput uses measured elapsed + fence time to avoid inflation when backend preemption is coarse.
+  - Benchmark reports now expose `counted_hashes`, `late_hashes`, and `late_hash_pct` per round plus aggregate late-hash accounting in the summary; throughput uses measured elapsed + fence time to avoid inflation when backend preemption is coarse.
   - `--bench-warmup-rounds` runs unreported warmup rounds before measured rounds to reduce startup/cache jitter in short benchmark runs.
   - Baseline compatibility now gates on measurement-critical runtime settings; context-only timeout knobs remain in the report but do not block comparisons.
   - Baseline comparison validates benchmark/config/environment compatibility (including report schema, runtime fingerprint, and PoW fingerprint) before computing deltas.

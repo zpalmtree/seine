@@ -27,3 +27,7 @@ nvidia = []
 
 [dev-dependencies]
 httpmock = "0.7"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
