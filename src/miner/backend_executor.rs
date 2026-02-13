@@ -221,6 +221,9 @@ impl BackendExecutor {
         if let Ok(mut registry) = self.workers.lock() {
             registry.clear();
         }
+        if let Ok(mut inflight) = self.quarantined.lock() {
+            inflight.clear();
+        }
         if let Ok(mut strikes) = self.assignment_timeout_strikes.lock() {
             strikes.clear();
         }
@@ -254,6 +257,9 @@ impl BackendExecutor {
             .collect::<BTreeSet<_>>();
         if let Ok(mut registry) = self.workers.lock() {
             registry.retain(|backend_key, _| active_keys.contains(backend_key));
+        }
+        if let Ok(mut inflight) = self.quarantined.lock() {
+            inflight.retain(|backend_key| active_keys.contains(backend_key));
         }
         if let Ok(mut strikes) = self.assignment_timeout_strikes.lock() {
             strikes.retain(|backend_key, _| active_keys.contains(backend_key));
@@ -809,7 +815,14 @@ fn run_synchronous_stop_fallback(
     match stop_thread {
         Ok(handle) => match done_rx.recv_timeout(BACKEND_STOP_FALLBACK_TIMEOUT) {
             Ok(()) | Err(RecvTimeoutError::Disconnected) => {
-                let _ = handle.join();
+                if handle.join().is_err() {
+                    warn(
+                        "BACKEND",
+                        format!(
+                            "backend stop fallback helper thread panicked for {backend}#{backend_id}"
+                        ),
+                    );
+                }
             }
             Err(RecvTimeoutError::Timeout) => {
                 warn(
@@ -1203,6 +1216,56 @@ mod tests {
 
         thread::sleep(Duration::from_millis(140));
         assert_eq!(stops.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn prune_drops_quarantine_entries_for_removed_backends() {
+        let executor = BackendExecutor::new();
+        let active_backend = Arc::new(NoopBackend) as Arc<dyn PowBackend>;
+        let removed_backend = Arc::new(NoopBackend) as Arc<dyn PowBackend>;
+        let active_key = backend_worker_key(1, &active_backend);
+        let removed_key = backend_worker_key(2, &removed_backend);
+
+        executor
+            .quarantined
+            .lock()
+            .expect("quarantine lock should be available")
+            .extend([active_key, removed_key]);
+
+        let backends = vec![BackendSlot {
+            id: 1,
+            backend: Arc::clone(&active_backend),
+            lanes: 1,
+        }];
+        executor.prune(&backends);
+
+        let quarantined = executor
+            .quarantined
+            .lock()
+            .expect("quarantine lock should be available");
+        assert!(quarantined.contains(&active_key));
+        assert!(!quarantined.contains(&removed_key));
+    }
+
+    #[test]
+    fn clear_resets_quarantine_registry() {
+        let executor = BackendExecutor::new();
+        let backend = Arc::new(NoopBackend) as Arc<dyn PowBackend>;
+        let key = backend_worker_key(7, &backend);
+
+        executor
+            .quarantined
+            .lock()
+            .expect("quarantine lock should be available")
+            .insert(key);
+
+        executor.clear();
+
+        assert!(executor
+            .quarantined
+            .lock()
+            .expect("quarantine lock should be available")
+            .is_empty());
     }
 
     struct StopInterruptBackend {

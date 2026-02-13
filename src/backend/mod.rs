@@ -259,6 +259,81 @@ pub fn normalize_backend_capabilities(
     capabilities
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_capabilities_clamps_non_batching_inflight_depth() {
+        let normalized = normalize_backend_capabilities(
+            BackendCapabilities {
+                max_inflight_assignments: 8,
+                ..BackendCapabilities::default()
+            },
+            false,
+        );
+
+        assert_eq!(normalized.max_inflight_assignments, 1);
+    }
+
+    #[test]
+    fn normalize_capabilities_preserves_batching_inflight_depth() {
+        let normalized = normalize_backend_capabilities(
+            BackendCapabilities {
+                max_inflight_assignments: 8,
+                ..BackendCapabilities::default()
+            },
+            true,
+        );
+
+        assert_eq!(normalized.max_inflight_assignments, 8);
+    }
+
+    #[test]
+    fn normalize_capabilities_clamps_nonblocking_poll_bounds() {
+        let normalized = normalize_backend_capabilities(
+            BackendCapabilities {
+                max_inflight_assignments: 1,
+                nonblocking_poll_min: Some(Duration::from_micros(1)),
+                nonblocking_poll_max: Some(Duration::from_micros(5)),
+                ..BackendCapabilities::default()
+            },
+            true,
+        );
+
+        assert_eq!(
+            normalized.nonblocking_poll_min,
+            Some(Duration::from_micros(10))
+        );
+        assert_eq!(
+            normalized.nonblocking_poll_max,
+            Some(Duration::from_micros(10))
+        );
+    }
+
+    #[test]
+    fn normalize_capabilities_reorders_inverted_nonblocking_poll_bounds() {
+        let normalized = normalize_backend_capabilities(
+            BackendCapabilities {
+                max_inflight_assignments: 1,
+                nonblocking_poll_min: Some(Duration::from_millis(3)),
+                nonblocking_poll_max: Some(Duration::from_millis(1)),
+                ..BackendCapabilities::default()
+            },
+            true,
+        );
+
+        assert_eq!(
+            normalized.nonblocking_poll_min,
+            Some(Duration::from_millis(3))
+        );
+        assert_eq!(
+            normalized.nonblocking_poll_max,
+            Some(Duration::from_millis(3))
+        );
+    }
+}
+
 pub trait BenchBackend: Send {
     fn kernel_bench(&self, seconds: u64, shutdown: &AtomicBool) -> Result<u64>;
 }
