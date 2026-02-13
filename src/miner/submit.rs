@@ -72,7 +72,8 @@ impl SubmitAttemptPayload {
 
 pub(super) enum SubmitOutcome {
     Response(SubmitBlockResponse),
-    Error(String),
+    RetryableError(String),
+    TerminalError(String),
 }
 
 pub(super) struct SubmitResult {
@@ -164,10 +165,17 @@ impl SubmitWorker {
         }
     }
 
-    pub(super) fn drain_results(&self, stats: &Stats, tui: &mut Option<TuiDisplay>) {
+    pub(super) fn drain_results(
+        &self,
+        stats: &Stats,
+        tui: &mut Option<TuiDisplay>,
+    ) -> Vec<SubmitResult> {
+        let mut drained = Vec::new();
         while let Ok(result) = self.result_rx.try_recv() {
-            handle_submit_result(result, stats, tui);
+            handle_submit_result(&result, stats, tui);
+            drained.push(result);
         }
+        drained
     }
 
     pub(super) fn detach(mut self) {
@@ -225,7 +233,9 @@ pub(super) fn process_submit_request(
                 if shutdown.load(Ordering::Relaxed) {
                     return SubmitResult {
                         solution,
-                        outcome: SubmitOutcome::Error("submit aborted by shutdown".to_string()),
+                        outcome: SubmitOutcome::TerminalError(
+                            "submit aborted by shutdown".to_string(),
+                        ),
                         attempts,
                     };
                 }
@@ -268,7 +278,9 @@ pub(super) fn process_submit_request(
                     if !sleep_with_shutdown(shutdown, submit_retry_delay(attempts)) {
                         return SubmitResult {
                             solution,
-                            outcome: SubmitOutcome::Error("submit aborted by shutdown".to_string()),
+                            outcome: SubmitOutcome::TerminalError(
+                                "submit aborted by shutdown".to_string(),
+                            ),
                             attempts,
                         };
                     }
@@ -277,9 +289,15 @@ pub(super) fn process_submit_request(
 
                 return SubmitResult {
                     solution,
-                    outcome: SubmitOutcome::Error(format!(
-                        "submit failed after {attempts} attempt(s): {error_context}"
-                    )),
+                    outcome: if retryable {
+                        SubmitOutcome::RetryableError(format!(
+                            "submit failed after {attempts} attempt(s): {error_context}"
+                        ))
+                    } else {
+                        SubmitOutcome::TerminalError(format!(
+                            "submit failed after {attempts} attempt(s): {error_context}"
+                        ))
+                    },
                     attempts,
                 };
             }
@@ -311,8 +329,8 @@ fn submit_retry_delay(attempt: u32) -> Duration {
         .min(SUBMIT_RETRY_MAX_DELAY)
 }
 
-fn handle_submit_result(result: SubmitResult, stats: &Stats, tui: &mut Option<TuiDisplay>) {
-    match result.outcome {
+fn handle_submit_result(result: &SubmitResult, stats: &Stats, tui: &mut Option<TuiDisplay>) {
+    match &result.outcome {
         SubmitOutcome::Response(resp) => {
             if resp.accepted {
                 stats.bump_accepted();
@@ -323,7 +341,7 @@ fn handle_submit_result(result: SubmitResult, stats: &Stats, tui: &mut Option<Tu
                     .height
                     .map(|h| h.to_string())
                     .unwrap_or_else(|| "unknown".to_string());
-                let hash = resp.hash.unwrap_or_else(|| "unknown".to_string());
+                let hash = resp.hash.as_deref().unwrap_or("unknown").to_string();
                 mined("SUBMIT", format!("block accepted at height {height}"));
                 mined("SUBMIT", format!("hash {}", compact_hash(&hash)));
                 if result.attempts > 1 {
@@ -349,7 +367,21 @@ fn handle_submit_result(result: SubmitResult, stats: &Stats, tui: &mut Option<Tu
                 );
             }
         }
-        SubmitOutcome::Error(message) => {
+        SubmitOutcome::RetryableError(message) => {
+            warn(
+                "SUBMIT",
+                format!(
+                    "submit failed (retryable) epoch={} nonce={} backend={}#{} attempts={}: {}",
+                    result.solution.epoch,
+                    result.solution.nonce,
+                    result.solution.backend,
+                    result.solution.backend_id,
+                    result.attempts,
+                    message
+                ),
+            );
+        }
+        SubmitOutcome::TerminalError(message) => {
             error(
                 "SUBMIT",
                 format!(

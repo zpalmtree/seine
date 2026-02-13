@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, Result};
 use argon2::{Algorithm, Argon2, Block, Version};
 use blocknet_pow_spec::{pow_params, POW_OUTPUT_LEN};
-use crossbeam_channel::{unbounded, Sender};
+use crossbeam_channel::{bounded, Sender};
 
 use crate::backend::{
     AssignmentSemantics, BackendCapabilities, BackendEvent, BackendExecutionModel,
@@ -33,6 +33,7 @@ const STARTUP_READY_WAIT_SLICE: Duration = Duration::from_millis(50);
 const STARTUP_READY_TIMEOUT_BASE: Duration = Duration::from_secs(15);
 const STARTUP_READY_TIMEOUT_PER_WORKER: Duration = Duration::from_secs(1);
 const STARTUP_READY_TIMEOUT_MAX: Duration = Duration::from_secs(180);
+const EVENT_DISPATCH_CAPACITY: usize = 256;
 
 #[repr(align(64))]
 struct PaddedAtomicU64(AtomicU64);
@@ -172,7 +173,8 @@ impl CpuBackend {
 
     fn start_event_forwarder(&self) -> Result<()> {
         let instance_id = self.shared.instance_id.load(Ordering::Acquire);
-        let (dispatch_tx, dispatch_rx) = unbounded::<BackendEvent>();
+        // Bound internal event buffering so sink stalls cannot grow memory without limit.
+        let (dispatch_tx, dispatch_rx) = bounded::<BackendEvent>(EVENT_DISPATCH_CAPACITY);
         if let Ok(mut slot) = self.shared.event_dispatch_tx.write() {
             *slot = Some(dispatch_tx);
         } else {
@@ -481,7 +483,7 @@ impl PowBackend for CpuBackend {
     }
 
     fn preemption_granularity(&self) -> PreemptionGranularity {
-        PreemptionGranularity::Hashes(CONTROL_CHECK_INTERVAL_HASHES)
+        PreemptionGranularity::Hashes(1)
     }
 
     fn capabilities(&self) -> BackendCapabilities {

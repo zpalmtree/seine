@@ -40,8 +40,10 @@ use super::solution_cache::{
 };
 use super::stats::Stats;
 #[cfg(test)]
-use super::submit::{process_submit_request, SubmitOutcome};
-use super::submit::{SubmitEnqueueOutcome, SubmitRequest, SubmitTemplate, SubmitWorker};
+use super::submit::process_submit_request;
+use super::submit::{
+    SubmitEnqueueOutcome, SubmitOutcome, SubmitRequest, SubmitResult, SubmitTemplate, SubmitWorker,
+};
 use super::template_prefetch::{PrefetchOutcome, TemplatePrefetch};
 pub(super) use super::tip::{spawn_tip_listener, TipListener, TipSignal};
 use super::tui::TuiState;
@@ -109,6 +111,7 @@ struct MiningControlPlane<'a> {
     prefetch: Option<TemplatePrefetch>,
     submit_worker: Option<SubmitWorker>,
     submit_backlog: VecDeque<SubmitRequest>,
+    pending_submit_results: Vec<SubmitResult>,
     submit_backlog_high_watermark_logged: bool,
     submit_backlog_last_saturation_log: Option<Instant>,
 }
@@ -153,6 +156,7 @@ impl<'a> MiningControlPlane<'a> {
                 cfg.token_cookie_path.clone(),
             )),
             submit_backlog: VecDeque::with_capacity(SUBMIT_BACKLOG_CAPACITY),
+            pending_submit_results: Vec::new(),
             submit_backlog_high_watermark_logged: false,
             submit_backlog_last_saturation_log: None,
             shutdown,
@@ -176,13 +180,11 @@ impl<'a> MiningControlPlane<'a> {
         request: SubmitRequest,
         stats: &Stats,
         tui: &mut Option<TuiDisplay>,
-    ) {
+    ) -> bool {
         // Keep the mining control loop responsive: attempt one flush pass and avoid blocking if
         // submit workers are saturated.
         self.flush_submit_backlog();
-        if let Some(worker) = self.submit_worker.as_ref() {
-            worker.drain_results(stats, tui);
-        }
+        self.collect_submit_worker_results(stats, tui);
 
         if self.submit_backlog.len() >= SUBMIT_BACKLOG_CAPACITY
             && !self.submit_backlog_high_watermark_logged
@@ -198,7 +200,7 @@ impl<'a> MiningControlPlane<'a> {
         }
 
         self.enforce_submit_backpressure(stats, tui);
-        self.push_submit_backlog_bounded(request);
+        self.try_push_submit_backlog(request)
     }
 
     fn maybe_log_submit_backpressure(&mut self, message: String) {
@@ -222,32 +224,33 @@ impl<'a> MiningControlPlane<'a> {
             self.submit_backlog.len()
         ));
         self.flush_submit_backlog();
-        if let Some(worker) = self.submit_worker.as_ref() {
-            worker.drain_results(stats, tui);
-        }
+        self.collect_submit_worker_results(stats, tui);
 
         if self.submit_backlog.len() >= SUBMIT_BACKLOG_HARD_CAPACITY {
             self.maybe_log_submit_backpressure(format!(
-                "submit backlog remains saturated; new submit requests will evict oldest queued entries (queued={})",
+                "submit backlog remains saturated; new submit requests will be deferred until queue drains (queued={})",
                 self.submit_backlog.len()
             ));
         }
     }
 
-    fn push_submit_backlog_bounded(&mut self, request: SubmitRequest) {
+    fn try_push_submit_backlog(&mut self, request: SubmitRequest) -> bool {
         if self.submit_backlog.len() >= SUBMIT_BACKLOG_HARD_CAPACITY {
-            let drop_count = self
-                .submit_backlog
-                .len()
-                .saturating_sub(SUBMIT_BACKLOG_HARD_CAPACITY)
-                .saturating_add(1);
-            self.submit_backlog.drain(0..drop_count);
             self.maybe_log_submit_backpressure(format!(
-                "submit backlog hard cap reached ({}); dropped {} oldest queued submit request(s)",
-                SUBMIT_BACKLOG_HARD_CAPACITY, drop_count
+                "submit backlog hard cap reached ({}); deferring new submit request",
+                SUBMIT_BACKLOG_HARD_CAPACITY
             ));
+            return false;
         }
         self.submit_backlog.push_back(request);
+        true
+    }
+
+    fn collect_submit_worker_results(&mut self, stats: &Stats, tui: &mut Option<TuiDisplay>) {
+        if let Some(worker) = self.submit_worker.as_ref() {
+            self.pending_submit_results
+                .extend(worker.drain_results(stats, tui));
+        }
     }
 
     fn flush_submit_backlog(&mut self) {
@@ -297,9 +300,7 @@ impl<'a> MiningControlPlane<'a> {
 
         while !self.submit_backlog.is_empty() && Instant::now() < deadline {
             self.flush_submit_backlog();
-            if let Some(worker) = self.submit_worker.as_ref() {
-                worker.drain_results(stats, tui);
-            }
+            self.collect_submit_worker_results(stats, tui);
             if self.submit_backlog.is_empty() {
                 break;
             }
@@ -344,22 +345,29 @@ impl<'a> MiningControlPlane<'a> {
         solution: MiningSolution,
         stats: &Stats,
         tui: &mut Option<TuiDisplay>,
-    ) {
-        stats.bump_submitted();
-        self.enqueue_submit_request(SubmitRequest { template, solution }, stats, tui);
-        self.flush_submit_backlog();
-        self.drain_submit_results(stats, tui);
-    }
-
-    fn drain_submit_results(&mut self, stats: &Stats, tui: &mut Option<TuiDisplay>) {
-        self.flush_submit_backlog();
-        if let Some(worker) = self.submit_worker.as_ref() {
-            worker.drain_results(stats, tui);
+    ) -> bool {
+        if !self.enqueue_submit_request(SubmitRequest { template, solution }, stats, tui) {
+            return false;
         }
+        stats.bump_submitted();
         self.flush_submit_backlog();
+        self.collect_submit_worker_results(stats, tui);
+        true
     }
 
-    fn finish(mut self, stats: &Stats, tui: &mut Option<TuiDisplay>) {
+    fn drain_submit_results(
+        &mut self,
+        stats: &Stats,
+        tui: &mut Option<TuiDisplay>,
+    ) -> Vec<SubmitResult> {
+        self.flush_submit_backlog();
+        self.collect_submit_worker_results(stats, tui);
+        self.flush_submit_backlog();
+        self.collect_submit_worker_results(stats, tui);
+        std::mem::take(&mut self.pending_submit_results)
+    }
+
+    fn finish(mut self, stats: &Stats, tui: &mut Option<TuiDisplay>) -> Vec<SubmitResult> {
         if self.shutdown.load(Ordering::Relaxed) {
             self.submit_backlog.clear();
         } else {
@@ -389,7 +397,8 @@ impl<'a> MiningControlPlane<'a> {
                         ),
                     );
                 }
-                submit_worker.drain_results(stats, tui);
+                self.pending_submit_results
+                    .extend(submit_worker.drain_results(stats, tui));
             }
         }
 
@@ -406,6 +415,7 @@ impl<'a> MiningControlPlane<'a> {
                 );
             }
         }
+        std::mem::take(&mut self.pending_submit_results)
     }
 }
 
@@ -557,6 +567,7 @@ struct ExecuteRoundPhase<'a, 'cp> {
     deferred_solution_keys: &'a mut HashSet<(u64, u64)>,
     submitted_solution_order: &'a mut VecDeque<(u64, u64)>,
     submitted_solution_keys: &'a mut HashSet<(u64, u64)>,
+    inflight_solution_keys: &'a mut HashSet<(u64, u64)>,
 }
 
 fn execute_round_phase(phase: ExecuteRoundPhase<'_, '_>) -> Result<()> {
@@ -587,6 +598,7 @@ fn execute_round_phase(phase: ExecuteRoundPhase<'_, '_>) -> Result<()> {
         deferred_solution_keys,
         submitted_solution_order,
         submitted_solution_keys,
+        inflight_solution_keys,
     } = phase;
 
     let mut round_runtime = RoundRuntime {
@@ -647,8 +659,12 @@ fn execute_round_phase(phase: ExecuteRoundPhase<'_, '_>) -> Result<()> {
         backends,
         backend_executor,
     )?;
+    let mut enqueued_solution = None;
     if let Some(solution) = pending_solution.take() {
-        if already_submitted_solution(submitted_solution_keys, &solution) {
+        let key = (solution.epoch, solution.nonce);
+        if already_submitted_solution(submitted_solution_keys, &solution)
+            || inflight_solution_keys.contains(&key)
+        {
             warn(
                 "SUBMIT",
                 format!(
@@ -657,24 +673,35 @@ fn execute_round_phase(phase: ExecuteRoundPhase<'_, '_>) -> Result<()> {
                 ),
             );
         } else {
-            control_plane.submit_template(
+            if control_plane.submit_template(
                 current_submit_template.clone(),
                 solution.clone(),
                 stats,
                 tui,
-            );
-            remember_submitted_solution(
-                submitted_solution_order,
-                submitted_solution_keys,
-                &solution,
-            );
+            ) {
+                inflight_solution_keys.insert(key);
+                enqueued_solution = Some(solution.clone());
+            } else {
+                warn(
+                    "SUBMIT",
+                    format!(
+                        "submit queue saturated; deferring solution epoch={} nonce={}",
+                        solution.epoch, solution.nonce
+                    ),
+                );
+                push_deferred_solution_indexed(
+                    deferred_solutions,
+                    deferred_solution_keys,
+                    solution.clone(),
+                );
+            }
         }
         submitted_solution = Some(solution);
     }
     drop_solution_from_deferred_indexed(
         deferred_solutions,
         deferred_solution_keys,
-        submitted_solution.as_ref(),
+        enqueued_solution.as_ref(),
     );
     submit_deferred_solutions(
         control_plane,
@@ -684,13 +711,20 @@ fn execute_round_phase(phase: ExecuteRoundPhase<'_, '_>) -> Result<()> {
             recent_templates,
             deferred_solutions,
             deferred_solution_keys,
-            submitted_solution_order,
             submitted_solution_keys,
+            inflight_solution_keys,
             stats,
             tui,
         },
     );
-    control_plane.drain_submit_results(stats, tui);
+    process_submit_results(
+        control_plane.drain_submit_results(stats, tui),
+        deferred_solutions,
+        deferred_solution_keys,
+        submitted_solution_order,
+        submitted_solution_keys,
+        inflight_solution_keys,
+    );
     collect_backend_hashes(
         backends,
         backend_executor,
@@ -819,6 +853,7 @@ pub(super) fn run_mining_loop(
     let mut deferred_solution_keys = HashSet::<(u64, u64)>::new();
     let mut submitted_solution_keys = HashSet::<(u64, u64)>::new();
     let mut submitted_solution_order = VecDeque::<(u64, u64)>::new();
+    let mut inflight_solution_keys = HashSet::<(u64, u64)>::new();
 
     let mut template = match control_plane.fetch_initial_template(&mut tui) {
         Some(t) => t,
@@ -844,7 +879,14 @@ pub(super) fn run_mining_loop(
             bail!("all mining backends are unavailable");
         }
 
-        control_plane.drain_submit_results(&stats, &mut tui);
+        process_submit_results(
+            control_plane.drain_submit_results(&stats, &mut tui),
+            &mut deferred_solutions,
+            &mut deferred_solution_keys,
+            &mut submitted_solution_order,
+            &mut submitted_solution_keys,
+            &mut inflight_solution_keys,
+        );
 
         let Some(prepared_template) = prepare_round_template(
             &mut template,
@@ -915,6 +957,7 @@ pub(super) fn run_mining_loop(
             deferred_solution_keys: &mut deferred_solution_keys,
             submitted_solution_order: &mut submitted_solution_order,
             submitted_solution_keys: &mut submitted_solution_keys,
+            inflight_solution_keys: &mut inflight_solution_keys,
         })?;
 
         if shutdown.load(Ordering::Relaxed) {
@@ -958,8 +1001,12 @@ pub(super) fn run_mining_loop(
                 format!("final backend event drain failed: {err:#}"),
             ),
         }
+        let mut final_enqueued_solution = None;
         if let Some(solution) = final_pending_solution.as_ref() {
-            if already_submitted_solution(&submitted_solution_keys, solution) {
+            let key = (solution.epoch, solution.nonce);
+            if already_submitted_solution(&submitted_solution_keys, solution)
+                || inflight_solution_keys.contains(&key)
+            {
                 warn(
                     "SUBMIT",
                     format!(
@@ -968,23 +1015,34 @@ pub(super) fn run_mining_loop(
                     ),
                 );
             } else {
-                control_plane.submit_template(
+                if control_plane.submit_template(
                     final_submit_template.clone(),
                     solution.clone(),
                     &stats,
                     &mut tui,
-                );
-                remember_submitted_solution(
-                    &mut submitted_solution_order,
-                    &mut submitted_solution_keys,
-                    solution,
-                );
+                ) {
+                    inflight_solution_keys.insert(key);
+                    final_enqueued_solution = final_pending_solution.clone();
+                } else {
+                    warn(
+                        "SUBMIT",
+                        format!(
+                            "submit queue saturated; deferring solution epoch={} nonce={}",
+                            solution.epoch, solution.nonce
+                        ),
+                    );
+                    push_deferred_solution_indexed(
+                        &mut deferred_solutions,
+                        &mut deferred_solution_keys,
+                        solution.clone(),
+                    );
+                }
             }
         }
         drop_solution_from_deferred_indexed(
             &mut deferred_solutions,
             &mut deferred_solution_keys,
-            final_pending_solution.as_ref(),
+            final_enqueued_solution.as_ref(),
         );
         submit_deferred_solutions(
             &mut control_plane,
@@ -994,7 +1052,7 @@ pub(super) fn run_mining_loop(
                 recent_templates: &recent_templates,
                 deferred_solutions: &mut deferred_solutions,
                 deferred_solution_keys: &mut deferred_solution_keys,
-                submitted_solution_order: &mut submitted_solution_order,
+                inflight_solution_keys: &mut inflight_solution_keys,
                 submitted_solution_keys: &mut submitted_solution_keys,
                 stats: &stats,
                 tui: &mut tui,
@@ -1002,8 +1060,22 @@ pub(super) fn run_mining_loop(
         );
     }
 
-    control_plane.drain_submit_results(&stats, &mut tui);
-    control_plane.finish(&stats, &mut tui);
+    process_submit_results(
+        control_plane.drain_submit_results(&stats, &mut tui),
+        &mut deferred_solutions,
+        &mut deferred_solution_keys,
+        &mut submitted_solution_order,
+        &mut submitted_solution_keys,
+        &mut inflight_solution_keys,
+    );
+    process_submit_results(
+        control_plane.finish(&stats, &mut tui),
+        &mut deferred_solutions,
+        &mut deferred_solution_keys,
+        &mut submitted_solution_order,
+        &mut submitted_solution_keys,
+        &mut inflight_solution_keys,
+    );
 
     stats.print();
     info("MINER", "stopped");
@@ -1585,12 +1657,51 @@ fn route_mining_solution(
     }
 }
 
+fn process_submit_results(
+    results: Vec<SubmitResult>,
+    deferred_solutions: &mut Vec<MiningSolution>,
+    deferred_solution_keys: &mut HashSet<(u64, u64)>,
+    submitted_solution_order: &mut VecDeque<(u64, u64)>,
+    submitted_solution_keys: &mut HashSet<(u64, u64)>,
+    inflight_solution_keys: &mut HashSet<(u64, u64)>,
+) {
+    for result in results {
+        let key = (result.solution.epoch, result.solution.nonce);
+        inflight_solution_keys.remove(&key);
+        match result.outcome {
+            SubmitOutcome::Response(_) | SubmitOutcome::TerminalError(_) => {
+                remember_submitted_solution(
+                    submitted_solution_order,
+                    submitted_solution_keys,
+                    &result.solution,
+                );
+                drop_solution_from_deferred_indexed(
+                    deferred_solutions,
+                    deferred_solution_keys,
+                    Some(&result.solution),
+                );
+            }
+            SubmitOutcome::RetryableError(_) => {
+                if !already_submitted_solution(submitted_solution_keys, &result.solution)
+                    && !inflight_solution_keys.contains(&key)
+                {
+                    push_deferred_solution_indexed(
+                        deferred_solutions,
+                        deferred_solution_keys,
+                        result.solution,
+                    );
+                }
+            }
+        }
+    }
+}
+
 struct DeferredSubmitState<'a> {
     recent_templates: &'a VecDeque<RecentTemplateEntry>,
     deferred_solutions: &'a mut Vec<MiningSolution>,
     deferred_solution_keys: &'a mut HashSet<(u64, u64)>,
-    submitted_solution_order: &'a mut VecDeque<(u64, u64)>,
     submitted_solution_keys: &'a mut HashSet<(u64, u64)>,
+    inflight_solution_keys: &'a mut HashSet<(u64, u64)>,
     stats: &'a Stats,
     tui: &'a mut Option<TuiDisplay>,
 }
@@ -1608,7 +1719,10 @@ fn submit_deferred_solutions(
     let queued =
         take_deferred_solutions_indexed(state.deferred_solutions, state.deferred_solution_keys);
     for solution in queued {
-        if already_submitted_solution(state.submitted_solution_keys, &solution) {
+        let key = (solution.epoch, solution.nonce);
+        if already_submitted_solution(state.submitted_solution_keys, &solution)
+            || state.inflight_solution_keys.contains(&key)
+        {
             continue;
         }
         let Some(submit_template) = submit_template_for_solution_epoch(
@@ -1626,12 +1740,16 @@ fn submit_deferred_solutions(
             );
             continue;
         };
-        control_plane.submit_template(submit_template, solution.clone(), state.stats, state.tui);
-        remember_submitted_solution(
-            state.submitted_solution_order,
-            state.submitted_solution_keys,
-            &solution,
-        );
+        if control_plane.submit_template(submit_template, solution.clone(), state.stats, state.tui)
+        {
+            state.inflight_solution_keys.insert(key);
+        } else {
+            push_deferred_solution_indexed(
+                state.deferred_solutions,
+                state.deferred_solution_keys,
+                solution,
+            );
+        }
     }
 }
 
@@ -1801,8 +1919,11 @@ mod tests {
 
         assert_eq!(result.attempts, 1);
         match result.outcome {
-            SubmitOutcome::Error(message) => {
+            SubmitOutcome::TerminalError(message) => {
                 assert!(message.contains("no cookie refresh source is available"));
+            }
+            SubmitOutcome::RetryableError(message) => {
+                panic!("expected terminal submit failure, got retryable error: {message}");
             }
             SubmitOutcome::Response(_) => panic!("unauthorized submit should fail"),
         }

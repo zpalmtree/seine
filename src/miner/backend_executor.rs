@@ -408,9 +408,7 @@ fn normalized_backend_capabilities(backend_handle: &Arc<dyn PowBackend>) -> Back
     )
 }
 
-pub(super) fn effective_backend_worker_queue_capacity(
-    capabilities: BackendCapabilities,
-) -> usize {
+pub(super) fn effective_backend_worker_queue_capacity(capabilities: BackendCapabilities) -> usize {
     let default_depth = if capabilities.assignment_semantics == AssignmentSemantics::Append {
         capabilities.max_inflight_assignments.max(1)
     } else {
