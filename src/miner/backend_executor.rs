@@ -63,6 +63,20 @@ pub(super) struct BackendTaskOutcome {
     pub result: Result<()>,
 }
 
+#[derive(Clone)]
+struct TimeoutTaskContext {
+    backend_id: BackendInstanceId,
+    backend: &'static str,
+    action: &'static str,
+    backend_handle: Arc<dyn PowBackend>,
+    worker_key: BackendWorkerKey,
+    enqueue_timeout_bucket: TaskTimeoutCounterBucket,
+    execution_timeout_bucket: TaskTimeoutCounterBucket,
+    dispatch_started_at: Instant,
+    enqueued_at: Option<Instant>,
+    deadline: Instant,
+}
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(super) enum BackendTaskTimeoutKind {
     Enqueue,
@@ -791,20 +805,6 @@ impl BackendExecutor {
             return Vec::new();
         }
 
-        #[derive(Clone)]
-        struct TimeoutTaskContext {
-            backend_id: BackendInstanceId,
-            backend: &'static str,
-            action: &'static str,
-            backend_handle: Arc<dyn PowBackend>,
-            worker_key: BackendWorkerKey,
-            enqueue_timeout_bucket: TaskTimeoutCounterBucket,
-            execution_timeout_bucket: TaskTimeoutCounterBucket,
-            dispatch_started_at: Instant,
-            enqueued_at: Option<Instant>,
-            deadline: Instant,
-        }
-
         let outcomes_len = tasks
             .iter()
             .map(|task| task.idx)
@@ -951,73 +951,39 @@ impl BackendExecutor {
                 .saturating_duration_since(now)
                 .max(Duration::from_millis(1));
             match outcome_rx.recv_timeout(wait_for) {
-                Ok(outcome) => {
-                    let outcome_idx = outcome.idx;
-                    if outcome_idx < pending.len()
-                        && pending[outcome_idx]
-                        && outcomes[outcome_idx].is_none()
-                    {
-                        if let Some(context) =
-                            task_contexts.get(outcome_idx).and_then(Option::as_ref)
-                        {
-                            let started =
-                                context.enqueued_at.unwrap_or(context.dispatch_started_at);
-                            self.record_task_latency(
-                                context.worker_key,
-                                context.execution_timeout_bucket,
-                                Instant::now().saturating_duration_since(started),
-                            );
-                        }
-                        pending[outcome_idx] = false;
-                        pending_count = pending_count.saturating_sub(1);
-                        outcomes[outcome_idx] =
-                            Some(BackendTaskDispatchResult::Completed(outcome.result));
-                    }
-                }
+                Ok(outcome) => resolve_dispatched_task_outcome(
+                    self,
+                    outcome,
+                    &mut pending,
+                    &mut pending_count,
+                    &mut outcomes,
+                    &task_contexts,
+                ),
                 Err(RecvTimeoutError::Timeout) => continue,
                 Err(RecvTimeoutError::Disconnected) => break,
             }
 
             while let Ok(outcome) = outcome_rx.try_recv() {
-                let outcome_idx = outcome.idx;
-                if outcome_idx < pending.len()
-                    && pending[outcome_idx]
-                    && outcomes[outcome_idx].is_none()
-                {
-                    if let Some(context) = task_contexts.get(outcome_idx).and_then(Option::as_ref) {
-                        let started = context.enqueued_at.unwrap_or(context.dispatch_started_at);
-                        self.record_task_latency(
-                            context.worker_key,
-                            context.execution_timeout_bucket,
-                            Instant::now().saturating_duration_since(started),
-                        );
-                    }
-                    pending[outcome_idx] = false;
-                    pending_count = pending_count.saturating_sub(1);
-                    outcomes[outcome_idx] =
-                        Some(BackendTaskDispatchResult::Completed(outcome.result));
-                }
+                resolve_dispatched_task_outcome(
+                    self,
+                    outcome,
+                    &mut pending,
+                    &mut pending_count,
+                    &mut outcomes,
+                    &task_contexts,
+                );
             }
         }
 
         while let Ok(outcome) = outcome_rx.try_recv() {
-            let outcome_idx = outcome.idx;
-            if outcome_idx < pending.len()
-                && pending[outcome_idx]
-                && outcomes[outcome_idx].is_none()
-            {
-                if let Some(context) = task_contexts.get(outcome_idx).and_then(Option::as_ref) {
-                    let started = context.enqueued_at.unwrap_or(context.dispatch_started_at);
-                    self.record_task_latency(
-                        context.worker_key,
-                        context.execution_timeout_bucket,
-                        Instant::now().saturating_duration_since(started),
-                    );
-                }
-                pending[outcome_idx] = false;
-                pending_count = pending_count.saturating_sub(1);
-                outcomes[outcome_idx] = Some(BackendTaskDispatchResult::Completed(outcome.result));
-            }
+            resolve_dispatched_task_outcome(
+                self,
+                outcome,
+                &mut pending,
+                &mut pending_count,
+                &mut outcomes,
+                &task_contexts,
+            );
         }
 
         for (idx, context) in task_contexts.iter().enumerate() {
@@ -1072,6 +1038,33 @@ fn effective_backend_task_timeout(kind: &BackendTaskKind, base_timeout: Duration
         }
         _ => base_timeout,
     }
+}
+
+fn resolve_dispatched_task_outcome(
+    executor: &BackendExecutor,
+    outcome: BackendTaskOutcome,
+    pending: &mut [bool],
+    pending_count: &mut usize,
+    outcomes: &mut [Option<BackendTaskDispatchResult>],
+    task_contexts: &[Option<TimeoutTaskContext>],
+) {
+    let outcome_idx = outcome.idx;
+    if outcome_idx >= pending.len() || !pending[outcome_idx] || outcomes[outcome_idx].is_some() {
+        return;
+    }
+
+    if let Some(context) = task_contexts.get(outcome_idx).and_then(Option::as_ref) {
+        let started = context.enqueued_at.unwrap_or(context.dispatch_started_at);
+        executor.record_task_latency(
+            context.worker_key,
+            context.execution_timeout_bucket,
+            Instant::now().saturating_duration_since(started),
+        );
+    }
+
+    pending[outcome_idx] = false;
+    *pending_count = (*pending_count).saturating_sub(1);
+    outcomes[outcome_idx] = Some(BackendTaskDispatchResult::Completed(outcome.result));
 }
 
 enum EnqueueCommandStatus {
