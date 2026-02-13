@@ -57,7 +57,7 @@ const DEFAULT_CPU_HASH_BATCH_SIZE: u64 = 64;
 const DEFAULT_CPU_CONTROL_CHECK_INTERVAL_HASHES: u64 = 1;
 const DEFAULT_CPU_HASH_FLUSH_MS: u64 = 50;
 const DEFAULT_CPU_EVENT_DISPATCH_CAPACITY: usize = 256;
-const DEFAULT_CPU_AUTOTUNE_SECS: u64 = 2;
+const DEFAULT_CPU_AUTOTUNE_SECS: u64 = 6;
 const DEFAULT_CPU_AUTOTUNE_CONFIG_FILE: &str = "seine.cpu-autotune.json";
 
 #[derive(Debug, Clone, Copy)]
@@ -248,7 +248,8 @@ struct Cli {
     #[arg(long)]
     cpu_autotune_max_threads: Option<usize>,
 
-    /// Benchmark duration (seconds) for each autotuner thread candidate.
+    /// Base benchmark window (seconds) per CPU autotune sample.
+    /// Candidate samples may run longer to collect a stable minimum hash count.
     #[arg(long, default_value_t = DEFAULT_CPU_AUTOTUNE_SECS)]
     cpu_autotune_secs: u64,
 

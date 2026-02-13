@@ -19,7 +19,7 @@ mod ui;
 mod wallet;
 mod work_allocator;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::IsTerminal;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -51,6 +51,10 @@ const TEMPLATE_RETRY_DELAY: Duration = Duration::from_secs(2);
 const MIN_EVENT_WAIT: Duration = Duration::from_millis(1);
 const BACKEND_EVENT_SOURCE_CAPACITY_MAX: usize = 256;
 const CPU_AUTOTUNE_RECORD_SCHEMA_VERSION: u32 = 1;
+const CPU_AUTOTUNE_LINEAR_SCAN_MAX_CANDIDATES: usize = 8;
+const CPU_AUTOTUNE_FINAL_SWEEP_RADIUS: usize = 2;
+const CPU_AUTOTUNE_TARGET_HASHES_PER_CANDIDATE: u64 = 30;
+const CPU_AUTOTUNE_MAX_SAMPLE_SECS_PER_CANDIDATE: u64 = 60;
 
 #[derive(Debug, Clone, Copy)]
 struct BackendRuntimePolicy {
@@ -128,6 +132,14 @@ struct CpuAutotuneRecord {
     measured_hps: f64,
     autotune_secs: u64,
     timestamp_unix_secs: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CpuAutotuneMeasurement {
+    hashes: u64,
+    sample_secs: f64,
+    wall_secs: f64,
+    hps: f64,
 }
 
 pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
@@ -496,56 +508,119 @@ fn maybe_autotune_cpu_threads(
     info(
         tag,
         format!(
-            "cpu-autotune | starting profile={} range={}..{} secs={} instances={}",
+            "cpu-autotune | starting profile={} range={}..{} window_secs={} target_hashes={} max_sample_secs={} instances={}",
             cpu_profile_label(cfg.cpu_profile),
             min_threads,
             max_threads,
             autotune_secs,
+            CPU_AUTOTUNE_TARGET_HASHES_PER_CANDIDATE,
+            CPU_AUTOTUNE_MAX_SAMPLE_SECS_PER_CANDIDATE,
             cpu_instance_count
         ),
     );
 
-    let mut best_threads = cfg.threads.max(1);
-    let mut best_hps = 0.0f64;
-    let mut measured_any = false;
-    for threads in min_threads..=max_threads {
-        if shutdown.load(Ordering::Relaxed) {
-            warn(tag, "cpu-autotune | interrupted by shutdown request");
-            break;
-        }
+    let candidate_count = max_threads.saturating_sub(min_threads).saturating_add(1);
+    let mut measurements = BTreeMap::<usize, CpuAutotuneMeasurement>::new();
+    let mut interrupted = false;
 
-        let backend = CpuBackend::with_tuning(
-            threads,
-            cfg.cpu_affinity,
-            CpuBackendTuning {
-                hash_batch_size: cfg.cpu_hash_batch_size,
-                control_check_interval_hashes: cfg.cpu_control_check_interval_hashes,
-                hash_flush_interval: cfg.cpu_hash_flush_interval,
-                event_dispatch_capacity: cfg.cpu_event_dispatch_capacity,
-            },
+    if candidate_count <= CPU_AUTOTUNE_LINEAR_SCAN_MAX_CANDIDATES {
+        info(
+            tag,
+            format!("cpu-autotune | search=linear candidates={candidate_count} (range is small)"),
         );
-        let started_at = Instant::now();
-        let hashes = BenchBackend::kernel_bench(&backend, autotune_secs, shutdown)?;
-        let elapsed_secs = started_at.elapsed().as_secs_f64().max(f64::EPSILON);
-        let hps = (hashes as f64) / elapsed_secs;
-        measured_any = true;
+        for threads in min_threads..=max_threads {
+            if shutdown.load(Ordering::Relaxed)
+                || !measure_cpu_autotune_candidate(
+                    cfg,
+                    tag,
+                    shutdown,
+                    threads,
+                    autotune_secs,
+                    &mut measurements,
+                )?
+            {
+                interrupted = true;
+                break;
+            }
+        }
+    } else {
         info(
             tag,
             format!(
-                "cpu-autotune | threads={} hashes={} elapsed={:.2}s hps={}",
-                threads,
-                hashes,
-                elapsed_secs,
-                format_hashrate(hps)
+                "cpu-autotune | search=binary-peak candidates={candidate_count} final-sweep=+/-{}",
+                CPU_AUTOTUNE_FINAL_SWEEP_RADIUS
             ),
         );
-        if hps > best_hps {
-            best_hps = hps;
-            best_threads = threads;
+        let mut lo = min_threads;
+        let mut hi = max_threads;
+        while lo < hi {
+            if shutdown.load(Ordering::Relaxed) {
+                interrupted = true;
+                break;
+            }
+            let mid = lo + (hi - lo) / 2;
+            let right = (mid + 1).min(max_threads);
+            if !measure_cpu_autotune_candidate(
+                cfg,
+                tag,
+                shutdown,
+                mid,
+                autotune_secs,
+                &mut measurements,
+            )? || !measure_cpu_autotune_candidate(
+                cfg,
+                tag,
+                shutdown,
+                right,
+                autotune_secs,
+                &mut measurements,
+            )? {
+                interrupted = true;
+                break;
+            }
+            let mid_hps = measurements.get(&mid).map(|m| m.hps).unwrap_or(0.0);
+            let right_hps = measurements.get(&right).map(|m| m.hps).unwrap_or(0.0);
+            if right_hps >= mid_hps {
+                lo = right;
+            } else {
+                hi = mid;
+            }
+        }
+
+        if !interrupted {
+            let mut final_candidates = BTreeSet::new();
+            final_candidates.insert(min_threads);
+            final_candidates.insert(max_threads);
+            final_candidates.insert(lo);
+            let sweep_min = lo
+                .saturating_sub(CPU_AUTOTUNE_FINAL_SWEEP_RADIUS)
+                .max(min_threads);
+            let sweep_max = lo
+                .saturating_add(CPU_AUTOTUNE_FINAL_SWEEP_RADIUS)
+                .min(max_threads);
+            for threads in sweep_min..=sweep_max {
+                final_candidates.insert(threads);
+            }
+
+            for threads in final_candidates {
+                if shutdown.load(Ordering::Relaxed)
+                    || !measure_cpu_autotune_candidate(
+                        cfg,
+                        tag,
+                        shutdown,
+                        threads,
+                        autotune_secs,
+                        &mut measurements,
+                    )?
+                {
+                    interrupted = true;
+                    break;
+                }
+            }
         }
     }
 
-    if !measured_any {
+    if measurements.is_empty() {
         warn(
             tag,
             "cpu-autotune | no measurements collected; keeping configured thread count",
@@ -553,6 +628,15 @@ fn maybe_autotune_cpu_threads(
         return Ok(());
     }
 
+    if interrupted {
+        warn(tag, "cpu-autotune | interrupted by shutdown request");
+    }
+
+    let (best_threads, best_hps) = measurements
+        .iter()
+        .max_by(|(_, left), (_, right)| left.hps.total_cmp(&right.hps))
+        .map(|(threads, measurement)| (*threads, measurement.hps))
+        .unwrap_or((cfg.threads.max(1), 0.0));
     apply_cpu_threads(cfg, best_threads);
     info(
         tag,
@@ -588,6 +672,93 @@ fn maybe_autotune_cpu_threads(
         );
     }
     Ok(())
+}
+
+fn measure_cpu_autotune_candidate(
+    cfg: &Config,
+    tag: &str,
+    shutdown: &AtomicBool,
+    threads: usize,
+    window_secs: u64,
+    measurements: &mut BTreeMap<usize, CpuAutotuneMeasurement>,
+) -> Result<bool> {
+    if measurements.contains_key(&threads) {
+        return Ok(true);
+    }
+
+    let Some(measurement) = bench_cpu_autotune_candidate(cfg, shutdown, threads, window_secs)?
+    else {
+        return Ok(false);
+    };
+    info(
+        tag,
+        format!(
+            "cpu-autotune | threads={} hashes={} sample={:.0}s wall={:.2}s hps={}",
+            threads,
+            measurement.hashes,
+            measurement.sample_secs,
+            measurement.wall_secs,
+            format_hashrate(measurement.hps)
+        ),
+    );
+    measurements.insert(threads, measurement);
+    Ok(true)
+}
+
+fn bench_cpu_autotune_candidate(
+    cfg: &Config,
+    shutdown: &AtomicBool,
+    threads: usize,
+    window_secs: u64,
+) -> Result<Option<CpuAutotuneMeasurement>> {
+    if shutdown.load(Ordering::Relaxed) {
+        return Ok(None);
+    }
+
+    let backend = CpuBackend::with_tuning(
+        threads,
+        cfg.cpu_affinity,
+        CpuBackendTuning {
+            hash_batch_size: cfg.cpu_hash_batch_size,
+            control_check_interval_hashes: cfg.cpu_control_check_interval_hashes,
+            hash_flush_interval: cfg.cpu_hash_flush_interval,
+            event_dispatch_capacity: cfg.cpu_event_dispatch_capacity,
+        },
+    );
+
+    let sample_window_secs = window_secs.max(1);
+    let mut sampled_secs = 0u64;
+    let mut sampled_hashes = 0u64;
+    let mut wall_secs = 0.0f64;
+
+    while sampled_secs < CPU_AUTOTUNE_MAX_SAMPLE_SECS_PER_CANDIDATE
+        && sampled_hashes < CPU_AUTOTUNE_TARGET_HASHES_PER_CANDIDATE
+    {
+        if shutdown.load(Ordering::Relaxed) {
+            break;
+        }
+
+        let remaining_secs = CPU_AUTOTUNE_MAX_SAMPLE_SECS_PER_CANDIDATE - sampled_secs;
+        let chunk_secs = sample_window_secs.min(remaining_secs).max(1);
+        let started_at = Instant::now();
+        let chunk_hashes = BenchBackend::kernel_bench(&backend, chunk_secs, shutdown)?;
+        wall_secs += started_at.elapsed().as_secs_f64();
+        sampled_secs = sampled_secs.saturating_add(chunk_secs);
+        sampled_hashes = sampled_hashes.saturating_add(chunk_hashes);
+    }
+
+    if sampled_secs == 0 {
+        return Ok(None);
+    }
+
+    let sample_secs = (sampled_secs as f64).max(f64::EPSILON);
+    let hps = (sampled_hashes as f64) / sample_secs;
+    Ok(Some(CpuAutotuneMeasurement {
+        hashes: sampled_hashes,
+        sample_secs,
+        wall_secs,
+        hps,
+    }))
 }
 
 fn apply_cpu_threads(cfg: &mut Config, threads: usize) {

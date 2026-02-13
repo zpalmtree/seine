@@ -1,11 +1,11 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex, RwLock};
+use std::sync::{Arc, Barrier, Condvar, Mutex, OnceLock, RwLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
 use argon2::{Algorithm, Argon2, Block, Version};
-use blocknet_pow_spec::{pow_params, POW_OUTPUT_LEN};
+use blocknet_pow_spec::{pow_params, CPU_LANE_MEMORY_BYTES, POW_OUTPUT_LEN};
 use crossbeam_channel::{bounded, Sender};
 
 use crate::backend::{
@@ -33,7 +33,9 @@ const SOLVED_MASK: u64 = 1u64 << 63;
 const STARTUP_READY_WAIT_SLICE: Duration = Duration::from_millis(50);
 const STARTUP_READY_TIMEOUT_BASE: Duration = Duration::from_secs(15);
 const STARTUP_READY_TIMEOUT_PER_WORKER: Duration = Duration::from_secs(1);
+const STARTUP_READY_TIMEOUT_PER_GIB: Duration = Duration::from_secs(1);
 const STARTUP_READY_TIMEOUT_MAX: Duration = Duration::from_secs(180);
+const BYTES_PER_GIB: u64 = 1024 * 1024 * 1024;
 const DEFAULT_EVENT_DISPATCH_CAPACITY: usize = 256;
 
 #[derive(Debug, Clone, Copy)]
@@ -562,19 +564,27 @@ impl PowBackend for CpuBackend {
 impl BenchBackend for CpuBackend {
     fn kernel_bench(&self, seconds: u64, shutdown: &AtomicBool) -> Result<u64> {
         let lanes = self.threads.max(1);
-        let stop_at = Instant::now() + Duration::from_secs(seconds.max(1));
+        let sample_duration = Duration::from_secs(seconds.max(1));
         let total_hashes = AtomicU64::new(0);
+        let setup_barrier = Arc::new(Barrier::new(lanes.saturating_add(1)));
+        let start_barrier = Arc::new(Barrier::new(lanes.saturating_add(1)));
+        let stop_at = Arc::new(OnceLock::<Instant>::new());
 
         thread::scope(|scope| {
             for lane in 0..lanes {
                 let total_hashes = &total_hashes;
+                let setup_barrier = Arc::clone(&setup_barrier);
+                let start_barrier = Arc::clone(&start_barrier);
+                let stop_at = Arc::clone(&stop_at);
                 scope.spawn(move || {
-                    let params = match pow_params() {
-                        Ok(p) => p,
-                        Err(_) => return,
+                    let mut worker_state = match pow_params() {
+                        Ok(params) => {
+                            let memory_blocks = vec![Block::default(); params.block_count()];
+                            let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
+                            Some((argon2, memory_blocks))
+                        }
+                        Err(_) => None,
                     };
-                    let mut memory_blocks = vec![Block::default(); params.block_count()];
-                    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
 
                     let mut header_base = [0u8; blocknet_pow_spec::POW_HEADER_BASE_LEN];
                     for (i, byte) in header_base.iter_mut().enumerate() {
@@ -585,6 +595,15 @@ impl BenchBackend for CpuBackend {
                     let mut nonce = lane as u64;
                     let mut local_hashes = 0u64;
                     let stride = lanes as u64;
+                    setup_barrier.wait();
+                    start_barrier.wait();
+
+                    let Some(stop_at) = stop_at.get().copied() else {
+                        return;
+                    };
+                    let Some((argon2, mut memory_blocks)) = worker_state.take() else {
+                        return;
+                    };
 
                     while Instant::now() < stop_at && !shutdown.load(Ordering::Relaxed) {
                         let nonce_bytes = nonce.to_le_bytes();
@@ -606,6 +625,10 @@ impl BenchBackend for CpuBackend {
                     total_hashes.fetch_add(local_hashes, Ordering::Relaxed);
                 });
             }
+
+            setup_barrier.wait();
+            let _ = stop_at.set(Instant::now() + sample_duration);
+            start_barrier.wait();
         });
 
         Ok(total_hashes.load(Ordering::Relaxed))
@@ -745,8 +768,14 @@ fn request_shutdown(shared: &Shared) {
 }
 
 fn startup_ready_timeout(workers: usize) -> Duration {
+    let per_lane_gib =
+        CPU_LANE_MEMORY_BYTES.saturating_add(BYTES_PER_GIB.saturating_sub(1)) / BYTES_PER_GIB;
+    let per_lane_gib = per_lane_gib.clamp(1, u32::MAX as u64) as u32;
+    let per_worker_timeout = STARTUP_READY_TIMEOUT_PER_WORKER
+        .saturating_add(STARTUP_READY_TIMEOUT_PER_GIB.saturating_mul(per_lane_gib));
+    let worker_count = workers.min(u32::MAX as usize) as u32;
     STARTUP_READY_TIMEOUT_BASE
-        .saturating_add(STARTUP_READY_TIMEOUT_PER_WORKER.saturating_mul(workers as u32))
+        .saturating_add(per_worker_timeout.saturating_mul(worker_count))
         .min(STARTUP_READY_TIMEOUT_MAX)
 }
 
