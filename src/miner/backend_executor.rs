@@ -491,21 +491,22 @@ impl BackendExecutor {
             let Some(context) = task_contexts.get(idx) else {
                 continue;
             };
-            let timed_out_execution = matches!(
-                outcomes[*idx],
-                Some(BackendTaskDispatchResult::TimedOut(
-                    BackendTaskTimeoutKind::Execution
-                ))
-            );
-            if !timed_out_execution {
+            let Some(timeout_kind) = (match outcomes[*idx] {
+                Some(BackendTaskDispatchResult::TimedOut(kind)) => Some(kind),
+                _ => None,
+            }) else {
                 continue;
-            }
+            };
+            let timeout_label = match timeout_kind {
+                BackendTaskTimeoutKind::Enqueue => "enqueue",
+                BackendTaskTimeoutKind::Execution => "execution",
+            };
             if let Err(err) = context.backend_handle.request_timeout_interrupt() {
                 warn(
                     "BACKEND",
                     format!(
-                        "{} timeout interrupt failed for {}#{}: {err:#}",
-                        context.action, context.backend, context.backend_id
+                        "{} {} timeout interrupt failed for {}#{}: {err:#}",
+                        context.action, timeout_label, context.backend, context.backend_id
                     ),
                 );
             }
@@ -1277,6 +1278,88 @@ mod tests {
                 ))
             ),
             "queue-saturation timeout should be classified as enqueue timeout"
+        );
+    }
+
+    #[test]
+    fn dispatch_requests_interrupt_for_enqueue_timeouts() {
+        let executor = BackendExecutor::new();
+        let interrupts = Arc::new(AtomicUsize::new(0));
+        let backend = Arc::new(SlowAssignBackend::new(
+            Arc::clone(&interrupts),
+            Duration::from_millis(80),
+        )) as Arc<dyn PowBackend>;
+
+        let make_work = || WorkAssignment {
+            template: Arc::new(WorkTemplate {
+                work_id: 1,
+                epoch: 1,
+                header_base: Arc::from(vec![0u8; blocknet_pow_spec::POW_HEADER_BASE_LEN]),
+                target: [0xFF; 32],
+                stop_at: Instant::now() + Duration::from_secs(1),
+            }),
+            nonce_chunk: NonceChunk {
+                start_nonce: 0,
+                nonce_count: 1,
+            },
+        };
+
+        let worker_tx = executor
+            .worker_sender_for_backend(79, "slow-assign", &backend)
+            .expect("backend worker should spawn");
+        let (prefill_outcome_tx, _prefill_outcome_rx) =
+            crossbeam_channel::unbounded::<BackendTaskOutcome>();
+
+        worker_tx
+            .send(BackendWorkerCommand::Run {
+                task: BackendTask {
+                    idx: 10,
+                    backend_id: 79,
+                    backend: "slow-assign",
+                    backend_handle: Arc::clone(&backend),
+                    kind: BackendTaskKind::Assign(make_work()),
+                },
+                deadline: Instant::now() + Duration::from_secs(1),
+                outcome_tx: prefill_outcome_tx.clone(),
+            })
+            .expect("first prefill command should enqueue");
+        worker_tx
+            .send(BackendWorkerCommand::Run {
+                task: BackendTask {
+                    idx: 11,
+                    backend_id: 79,
+                    backend: "slow-assign",
+                    backend_handle: Arc::clone(&backend),
+                    kind: BackendTaskKind::Assign(make_work()),
+                },
+                deadline: Instant::now() + Duration::from_secs(1),
+                outcome_tx: prefill_outcome_tx,
+            })
+            .expect("second prefill command should enqueue while first is running");
+
+        let outcomes = executor.dispatch_backend_tasks(
+            vec![BackendTask {
+                idx: 0,
+                backend_id: 79,
+                backend: "slow-assign",
+                backend_handle: Arc::clone(&backend),
+                kind: BackendTaskKind::Assign(make_work()),
+            }],
+            Duration::from_millis(1),
+        );
+
+        assert!(
+            matches!(
+                outcomes[0],
+                Some(BackendTaskDispatchResult::TimedOut(
+                    BackendTaskTimeoutKind::Enqueue
+                ))
+            ),
+            "dispatch should classify queue saturation as enqueue timeout"
+        );
+        assert!(
+            interrupts.load(Ordering::Relaxed) > 0,
+            "enqueue timeout should request backend interrupt"
         );
     }
 
