@@ -140,6 +140,12 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
             }
         ),
     );
+    if cfg.work_allocation == WorkAllocation::Static && cfg.sub_round_rebalance_interval.is_some() {
+        warn(
+            "MINER",
+            "--sub-round-rebalance-ms is set but --work-allocation=static; in-round rebalance is disabled",
+        );
+    }
     info(
         "MINER",
         format!(

@@ -1366,6 +1366,20 @@ fn should_trigger_sub_round_rebalance(
     next_sub_round_rebalance_at.is_some_and(|deadline| now >= deadline)
 }
 
+fn backend_hash_deltas_since(
+    backends: &[BackendSlot],
+    round_backend_hashes: &BTreeMap<u64, u64>,
+    baseline_hashes: &BTreeMap<u64, u64>,
+) -> BTreeMap<u64, u64> {
+    let mut deltas = BTreeMap::new();
+    for slot in backends {
+        let current = round_backend_hashes.get(&slot.id).copied().unwrap_or(0);
+        let baseline = baseline_hashes.get(&slot.id).copied().unwrap_or(0);
+        deltas.insert(slot.id, current.saturating_sub(baseline));
+    }
+    deltas
+}
+
 struct RoundInput<'a> {
     epoch: u64,
     work_id: u64,
@@ -1409,6 +1423,8 @@ impl<'a> RoundRuntime<'a> {
         let mut next_sub_round_rebalance_at =
             rebalance_interval.and_then(|interval| input.round_start.checked_add(interval));
         let mut last_sub_round_rebalance_hashes = 0u64;
+        let mut last_sub_round_rebalance_at = input.round_start;
+        let mut last_sub_round_backend_hashes = BTreeMap::new();
         update_tui(
             self.tui,
             self.stats,
@@ -1544,9 +1560,12 @@ impl<'a> RoundRuntime<'a> {
                 backend_poll_state =
                     build_backend_poll_state(self.backends, self.cfg.hash_poll_interval);
                 topology_changed = false;
+                let rebalance_now = Instant::now();
                 last_sub_round_rebalance_hashes = round_hashes;
+                last_sub_round_rebalance_at = rebalance_now;
+                last_sub_round_backend_hashes = round_backend_hashes.clone();
                 next_sub_round_rebalance_at =
-                    rebalance_interval.and_then(|interval| Instant::now().checked_add(interval));
+                    rebalance_interval.and_then(|interval| rebalance_now.checked_add(interval));
                 update_tui(
                     self.tui,
                     self.stats,
@@ -1573,13 +1592,21 @@ impl<'a> RoundRuntime<'a> {
                 now,
                 input.stop_at,
             ) {
+                let rebalance_hash_deltas = backend_hash_deltas_since(
+                    self.backends,
+                    &round_backend_hashes,
+                    &last_sub_round_backend_hashes,
+                );
+                let rebalance_elapsed_secs = now
+                    .saturating_duration_since(last_sub_round_rebalance_at)
+                    .as_secs_f64();
                 update_backend_weights(
                     self.backend_weights,
                     WeightUpdateInputs {
                         backends: self.backends,
-                        round_backend_hashes: &round_backend_hashes,
-                        round_backend_telemetry: Some(&round_backend_telemetry),
-                        round_elapsed_secs: input.round_start.elapsed().as_secs_f64(),
+                        round_backend_hashes: &rebalance_hash_deltas,
+                        round_backend_telemetry: None,
+                        round_elapsed_secs: rebalance_elapsed_secs,
                         mode: self.cfg.work_allocation,
                         round_end_reason: RoundEndReason::Refresh,
                         refresh_interval: self.cfg.refresh_interval,
@@ -1612,6 +1639,8 @@ impl<'a> RoundRuntime<'a> {
                 backend_poll_state =
                     build_backend_poll_state(self.backends, self.cfg.hash_poll_interval);
                 last_sub_round_rebalance_hashes = round_hashes;
+                last_sub_round_rebalance_at = now;
+                last_sub_round_backend_hashes = round_backend_hashes.clone();
                 next_sub_round_rebalance_at =
                     rebalance_interval.and_then(|interval| now.checked_add(interval));
                 update_tui(
