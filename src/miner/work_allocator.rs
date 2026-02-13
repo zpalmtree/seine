@@ -305,18 +305,32 @@ fn dispatch_assignment_tasks(
                 }
             }
             Some(BackendTaskDispatchResult::TimedOut(BackendTaskTimeoutKind::Enqueue)) => {
+                let timeout_decision =
+                    backend_executor.note_assignment_timeout(backend_id, &slot.backend);
                 let append_semantics =
                     backend_capabilities(&slot).assignment_semantics == AssignmentSemantics::Append;
-                if append_semantics {
+                if timeout_decision.should_quarantine || append_semantics {
                     backend_executor.quarantine_backend(backend_id, Arc::clone(&slot.backend));
                     backend_executor.remove_backend_worker(backend_id, &slot.backend);
+                    let reason = if append_semantics && !timeout_decision.should_quarantine {
+                        format!(
+                            "assignment dispatch queue remained saturated for {}ms before enqueue (strike {}/{}); append-assignment backend quarantined to prevent queue carry-over",
+                            timeout.as_millis(),
+                            timeout_decision.strikes,
+                            timeout_decision.threshold,
+                        )
+                    } else {
+                        format!(
+                            "assignment dispatch queue remained saturated for {}ms before enqueue (strike {}/{}); backend quarantined",
+                            timeout.as_millis(),
+                            timeout_decision.strikes,
+                            timeout_decision.threshold,
+                        )
+                    };
                     failures.push(DispatchFailure {
                         backend_id,
                         backend,
-                        reason: format!(
-                            "assignment dispatch queue remained saturated for {}ms before enqueue; append-assignment backend quarantined to prevent queue carry-over",
-                            timeout.as_millis(),
-                        ),
+                        reason,
                         quarantined: true,
                     });
                 } else {
@@ -324,8 +338,10 @@ fn dispatch_assignment_tasks(
                         backend_id,
                         backend,
                         reason: format!(
-                            "assignment dispatch queue remained saturated for {}ms before enqueue (no execution strike)",
+                            "assignment dispatch queue remained saturated for {}ms before enqueue (enqueue strike {}/{})",
                             timeout.as_millis(),
+                            timeout_decision.strikes,
+                            timeout_decision.threshold,
                         ),
                         quarantined: false,
                     });

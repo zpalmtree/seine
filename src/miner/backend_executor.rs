@@ -8,7 +8,9 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, Result};
 use crossbeam_channel::{bounded, RecvTimeoutError, SendTimeoutError, Sender, TrySendError};
 
-use crate::backend::{BackendCallStatus, BackendInstanceId, PowBackend, WorkAssignment};
+use crate::backend::{
+    AssignmentSemantics, BackendCallStatus, BackendInstanceId, PowBackend, WorkAssignment,
+};
 
 use super::ui::warn;
 use super::BackendSlot;
@@ -86,6 +88,7 @@ pub(super) struct AssignmentTimeoutDecision {
 }
 
 const DEFAULT_ASSIGNMENT_TIMEOUT_STRIKES_BEFORE_QUARANTINE: u32 = 3;
+const BACKEND_WORKER_QUEUE_CAPACITY_MAX: usize = 64;
 const BACKEND_STOP_ACK_TIMEOUT: Duration = Duration::from_secs(1);
 const BACKEND_STOP_ACK_GRACE_TIMEOUT: Duration = Duration::from_secs(2);
 const BACKEND_STOP_ENQUEUE_TIMEOUT: Duration = Duration::from_millis(100);
@@ -134,12 +137,24 @@ fn backend_worker_key(
     }
 }
 
+fn backend_worker_queue_capacity(backend_handle: &Arc<dyn PowBackend>) -> usize {
+    let capabilities = backend_handle.capabilities();
+    let requested = capabilities.max_inflight_assignments.max(1) as usize;
+    let queue_depth = if capabilities.assignment_semantics == AssignmentSemantics::Append {
+        requested
+    } else {
+        1
+    };
+    queue_depth.clamp(1, BACKEND_WORKER_QUEUE_CAPACITY_MAX)
+}
+
 fn spawn_backend_worker(
     backend_id: BackendInstanceId,
     backend: &'static str,
     backend_ptr: usize,
+    queue_capacity: usize,
 ) -> Option<BackendWorker> {
-    let (cmd_tx, cmd_rx) = bounded::<BackendWorkerCommand>(1);
+    let (cmd_tx, cmd_rx) = bounded::<BackendWorkerCommand>(queue_capacity.max(1));
     let thread_name = format!("seine-backend-{backend}-{backend_id}-{backend_ptr:x}");
     let spawn_result = thread::Builder::new().name(thread_name).spawn(move || {
         while let Ok(command) = cmd_rx.recv() {
@@ -186,7 +201,8 @@ impl BackendExecutor {
         if let Some(worker) = registry.get(&key) {
             return Some(worker.tx.clone());
         }
-        let worker = spawn_backend_worker(backend_id, backend, key.backend_ptr)?;
+        let queue_capacity = backend_worker_queue_capacity(backend_handle);
+        let worker = spawn_backend_worker(backend_id, backend, key.backend_ptr, queue_capacity)?;
         let sender = worker.tx.clone();
         registry.insert(key, worker);
         Some(sender)
@@ -737,8 +753,25 @@ fn run_synchronous_stop_fallback(
     }
 }
 
-const NONBLOCKING_BACKOFF_MIN: Duration = Duration::from_micros(50);
-const NONBLOCKING_BACKOFF_MAX: Duration = Duration::from_millis(1);
+const DEFAULT_NONBLOCKING_BACKOFF_MIN: Duration = Duration::from_micros(50);
+const DEFAULT_NONBLOCKING_BACKOFF_MAX: Duration = Duration::from_millis(1);
+const NONBLOCKING_BACKOFF_HARD_MAX: Duration = Duration::from_millis(50);
+
+fn backend_nonblocking_backoff_bounds(
+    backend_handle: &Arc<dyn PowBackend>,
+) -> (Duration, Duration) {
+    let capabilities = backend_handle.capabilities();
+    let min_backoff = capabilities
+        .nonblocking_poll_min
+        .unwrap_or(DEFAULT_NONBLOCKING_BACKOFF_MIN)
+        .max(Duration::from_micros(10));
+    let max_backoff = capabilities
+        .nonblocking_poll_max
+        .unwrap_or(DEFAULT_NONBLOCKING_BACKOFF_MAX)
+        .max(min_backoff)
+        .min(NONBLOCKING_BACKOFF_HARD_MAX);
+    (min_backoff, max_backoff)
+}
 
 fn run_backend_call(
     backend_handle: Arc<dyn PowBackend>,
@@ -748,29 +781,38 @@ fn run_backend_call(
     if Instant::now() >= deadline {
         return Err(anyhow!("task deadline elapsed before backend call"));
     }
+    let (min_backoff, max_backoff) = backend_nonblocking_backoff_bounds(&backend_handle);
     match panic::catch_unwind(AssertUnwindSafe(|| match kind {
         BackendTaskKind::Assign(work) => run_nonblocking_until_deadline(
             deadline,
             || backend_handle.assign_work_batch_nonblocking(std::slice::from_ref(&work)),
             |wait| backend_handle.wait_for_nonblocking_progress(wait),
+            min_backoff,
+            max_backoff,
             "assignment deadline elapsed before backend accepted work",
         ),
         BackendTaskKind::AssignBatch(batch) => run_nonblocking_until_deadline(
             deadline,
             || backend_handle.assign_work_batch_nonblocking(&batch),
             |wait| backend_handle.wait_for_nonblocking_progress(wait),
+            min_backoff,
+            max_backoff,
             "assignment deadline elapsed before backend accepted work",
         ),
         BackendTaskKind::Cancel => run_nonblocking_until_deadline(
             deadline,
             || backend_handle.cancel_work_nonblocking(),
             |wait| backend_handle.wait_for_nonblocking_progress(wait),
+            min_backoff,
+            max_backoff,
             "cancel deadline elapsed before backend acknowledged cancel",
         ),
         BackendTaskKind::Fence => run_nonblocking_until_deadline(
             deadline,
             || backend_handle.fence_nonblocking(),
             |wait| backend_handle.wait_for_nonblocking_progress(wait),
+            min_backoff,
+            max_backoff,
             "fence deadline elapsed before backend acknowledged fence",
         ),
     })) {
@@ -783,13 +825,15 @@ fn run_nonblocking_until_deadline<F, W>(
     deadline: Instant,
     mut op: F,
     mut wait_for_progress: W,
+    min_backoff: Duration,
+    max_backoff: Duration,
     timeout_message: &'static str,
 ) -> Result<()>
 where
     F: FnMut() -> Result<BackendCallStatus>,
     W: FnMut(Duration) -> Result<()>,
 {
-    let mut backoff = NONBLOCKING_BACKOFF_MIN;
+    let mut backoff = min_backoff.max(Duration::from_micros(10));
     loop {
         if Instant::now() >= deadline {
             return Err(anyhow!(timeout_message));
@@ -812,7 +856,7 @@ where
                     .min(backoff)
                     .max(Duration::from_micros(10));
                 wait_for_progress(wait)?;
-                backoff = backoff.saturating_mul(2).min(NONBLOCKING_BACKOFF_MAX);
+                backoff = backoff.saturating_mul(2).min(max_backoff);
             }
         }
     }

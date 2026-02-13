@@ -17,7 +17,10 @@ use crate::config::CpuAffinityMode;
 use crate::types::hash_meets_target;
 
 const HASH_BATCH_SIZE: u64 = 64;
+const CONTROL_CHECK_INTERVAL_HASHES: u64 = 256;
 const HASH_FLUSH_INTERVAL: Duration = Duration::from_millis(50);
+const NONBLOCKING_POLL_MIN: Duration = Duration::from_micros(50);
+const NONBLOCKING_POLL_MAX: Duration = Duration::from_millis(1);
 const CRITICAL_EVENT_RETRY_WAIT: Duration = Duration::from_millis(5);
 const CRITICAL_EVENT_RETRY_MAX_WAIT: Duration = Duration::from_millis(100);
 const ERROR_EVENT_MAX_BLOCK: Duration = Duration::from_millis(500);
@@ -474,7 +477,7 @@ impl PowBackend for CpuBackend {
     }
 
     fn preemption_granularity(&self) -> PreemptionGranularity {
-        PreemptionGranularity::Hashes(1)
+        PreemptionGranularity::Hashes(CONTROL_CHECK_INTERVAL_HASHES)
     }
 
     fn capabilities(&self) -> BackendCapabilities {
@@ -485,6 +488,8 @@ impl PowBackend for CpuBackend {
             max_inflight_assignments: 1,
             deadline_support: DeadlineSupport::Cooperative,
             assignment_semantics: AssignmentSemantics::Replace,
+            nonblocking_poll_min: Some(NONBLOCKING_POLL_MIN),
+            nonblocking_poll_max: Some(NONBLOCKING_POLL_MAX),
         }
     }
 
@@ -576,7 +581,8 @@ fn cpu_worker_loop(shared: Arc<Shared>, thread_idx: usize, core_id: Option<core_
     let lane_stride = shared.hash_slots.len().max(1) as u64;
     let mut lane_quota = 0u64;
     let mut pending_hashes = 0u64;
-    let mut last_flush = Instant::now();
+    let mut next_flush_at = Instant::now() + HASH_FLUSH_INTERVAL;
+    let mut control_hashes_remaining = 0u64;
 
     loop {
         let global_generation = shared.work_generation.load(Ordering::Acquire);
@@ -594,7 +600,8 @@ fn cpu_worker_loop(shared: Arc<Shared>, thread_idx: usize, core_id: Option<core_
                         thread_idx as u64,
                         lane_stride,
                     );
-                    last_flush = Instant::now();
+                    next_flush_at = Instant::now() + HASH_FLUSH_INTERVAL;
+                    control_hashes_remaining = 0;
                     local_generation = generation;
                     local_work = Some(work);
                     if lane_quota > 0 {
@@ -621,25 +628,31 @@ fn cpu_worker_loop(shared: Arc<Shared>, thread_idx: usize, core_id: Option<core_
         };
         let template = &work.template;
 
-        if lane_iters >= lane_quota {
-            flush_hashes(&shared, thread_idx, &mut pending_hashes);
-            mark_worker_inactive(&shared, &mut worker_active);
-            local_work = None;
-            continue;
-        }
+        if control_hashes_remaining == 0 {
+            if lane_iters >= lane_quota {
+                flush_hashes(&shared, thread_idx, &mut pending_hashes);
+                mark_worker_inactive(&shared, &mut worker_active);
+                local_work = None;
+                continue;
+            }
 
-        if Instant::now() >= template.stop_at {
-            flush_hashes(&shared, thread_idx, &mut pending_hashes);
-            mark_worker_inactive(&shared, &mut worker_active);
-            local_work = None;
-            continue;
-        }
+            if Instant::now() >= template.stop_at {
+                flush_hashes(&shared, thread_idx, &mut pending_hashes);
+                mark_worker_inactive(&shared, &mut worker_active);
+                local_work = None;
+                continue;
+            }
 
-        if shared.solution_state.load(Ordering::Acquire) != template.work_id {
-            flush_hashes(&shared, thread_idx, &mut pending_hashes);
-            mark_worker_inactive(&shared, &mut worker_active);
-            local_work = None;
-            continue;
+            if shared.solution_state.load(Ordering::Acquire) != template.work_id {
+                flush_hashes(&shared, thread_idx, &mut pending_hashes);
+                mark_worker_inactive(&shared, &mut worker_active);
+                local_work = None;
+                continue;
+            }
+
+            control_hashes_remaining = lane_quota
+                .saturating_sub(lane_iters)
+                .clamp(1, CONTROL_CHECK_INTERVAL_HASHES);
         }
 
         let nonce_bytes = nonce.to_le_bytes();
@@ -661,10 +674,14 @@ fn cpu_worker_loop(shared: Arc<Shared>, thread_idx: usize, core_id: Option<core_
         }
 
         lane_iters = lane_iters.saturating_add(1);
+        control_hashes_remaining = control_hashes_remaining.saturating_sub(1);
         pending_hashes = pending_hashes.saturating_add(1);
-        if pending_hashes >= HASH_BATCH_SIZE || last_flush.elapsed() >= HASH_FLUSH_INTERVAL {
+
+        let should_flush = pending_hashes >= HASH_BATCH_SIZE
+            || (control_hashes_remaining == 0 && Instant::now() >= next_flush_at);
+        if should_flush {
             flush_hashes(&shared, thread_idx, &mut pending_hashes);
-            last_flush = Instant::now();
+            next_flush_at = Instant::now() + HASH_FLUSH_INTERVAL;
         }
 
         if hash_meets_target(&output, &template.target) {

@@ -88,6 +88,8 @@ pub mod nvidia {
                 max_inflight_assignments: 1,
                 deadline_support: DeadlineSupport::BestEffort,
                 assignment_semantics: AssignmentSemantics::Replace,
+                nonblocking_poll_min: Some(Duration::from_micros(100)),
+                nonblocking_poll_max: Some(Duration::from_millis(5)),
             }
         }
 
@@ -209,6 +211,10 @@ pub struct BackendCapabilities {
     pub deadline_support: DeadlineSupport,
     /// Assignment queueing contract for repeated assign calls.
     pub assignment_semantics: AssignmentSemantics,
+    /// Preferred non-blocking poll backoff floor used by the backend executor.
+    pub nonblocking_poll_min: Option<Duration>,
+    /// Preferred non-blocking poll backoff ceiling used by the backend executor.
+    pub nonblocking_poll_max: Option<Duration>,
 }
 
 impl Default for BackendCapabilities {
@@ -220,6 +226,8 @@ impl Default for BackendCapabilities {
             max_inflight_assignments: 1,
             deadline_support: DeadlineSupport::BestEffort,
             assignment_semantics: AssignmentSemantics::Replace,
+            nonblocking_poll_min: None,
+            nonblocking_poll_max: None,
         }
     }
 }

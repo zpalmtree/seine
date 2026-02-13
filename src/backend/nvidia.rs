@@ -75,6 +75,8 @@ impl PowBackend for NvidiaBackend {
             max_inflight_assignments: 1,
             deadline_support: DeadlineSupport::BestEffort,
             assignment_semantics: AssignmentSemantics::Replace,
+            nonblocking_poll_min: Some(std::time::Duration::from_micros(100)),
+            nonblocking_poll_max: Some(std::time::Duration::from_millis(5)),
         }
     }
 

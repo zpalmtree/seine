@@ -748,14 +748,32 @@ fn backend_chunk_profiles(backends: &[BackendSlot], default_iters_per_lane: u64)
                 .unwrap_or_else(|| "none".to_string());
             let deadline_support = capabilities.deadline_support.describe();
             let assignment_semantics = capabilities.assignment_semantics.describe();
+            let worker_queue_depth = if capabilities.assignment_semantics
+                == crate::backend::AssignmentSemantics::Append
+            {
+                inflight
+            } else {
+                1
+            };
+            let nonblocking_poll = match (
+                capabilities.nonblocking_poll_min,
+                capabilities.nonblocking_poll_max,
+            ) {
+                (Some(min_poll), Some(max_poll)) => {
+                    format!("{}us..{}us", min_poll.as_micros(), max_poll.as_micros())
+                }
+                _ => "default".to_string(),
+            };
             format!(
-                "{}#{}=alloc:{} dispatch:{} iters/lane inflight={} poll_hint={} deadline={} assign={}",
+                "{}#{}=alloc:{} dispatch:{} iters/lane inflight={} worker_q={} poll_hint={} nb_poll={} deadline={} assign={}",
                 slot.backend.name(),
                 slot.id,
                 allocation_hint,
                 dispatch_hint,
                 inflight,
+                worker_queue_depth,
                 poll_hint,
+                nonblocking_poll,
                 deadline_support,
                 assignment_semantics,
             )
@@ -801,6 +819,21 @@ fn normalize_backend_capabilities(
     capabilities.max_inflight_assignments = capabilities.max_inflight_assignments.max(1);
     if capabilities.max_inflight_assignments > 1 && !supports_assignment_batching {
         capabilities.max_inflight_assignments = 1;
+    }
+
+    capabilities.nonblocking_poll_min = capabilities
+        .nonblocking_poll_min
+        .map(|min_poll| min_poll.max(Duration::from_micros(10)));
+    capabilities.nonblocking_poll_max = capabilities
+        .nonblocking_poll_max
+        .map(|max_poll| max_poll.max(Duration::from_micros(10)));
+    if let (Some(min_poll), Some(max_poll)) = (
+        capabilities.nonblocking_poll_min,
+        capabilities.nonblocking_poll_max,
+    ) {
+        if max_poll < min_poll {
+            capabilities.nonblocking_poll_max = Some(min_poll);
+        }
     }
     capabilities
 }
@@ -1105,6 +1138,8 @@ mod tests {
                 max_inflight_assignments: self.max_inflight_assignments.max(1),
                 deadline_support: self.deadline_support,
                 assignment_semantics: self.assignment_semantics,
+                nonblocking_poll_min: None,
+                nonblocking_poll_max: None,
             }
         }
     }

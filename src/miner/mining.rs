@@ -55,6 +55,7 @@ const SUBMIT_RESULT_CAPACITY: usize = 128;
 const SUBMIT_BACKLOG_CAPACITY: usize = 512;
 const SUBMIT_BACKLOG_HARD_CAPACITY: usize = 4096;
 const SUBMIT_BACKLOG_FLUSH_WAIT: Duration = Duration::from_millis(10);
+const SUBMIT_BACKLOG_BACKPRESSURE_LOG_INTERVAL: Duration = Duration::from_secs(5);
 const SUBMIT_RETRY_MAX_ATTEMPTS: u32 = 4;
 const SUBMIT_RETRY_BASE_DELAY: Duration = Duration::from_millis(200);
 const SUBMIT_RETRY_MAX_DELAY: Duration = Duration::from_secs(2);
@@ -516,7 +517,12 @@ impl<'a> MiningControlPlane<'a> {
         ));
     }
 
-    fn enqueue_submit_request(&mut self, request: SubmitRequest) {
+    fn enqueue_submit_request(
+        &mut self,
+        request: SubmitRequest,
+        stats: &Stats,
+        tui: &mut Option<TuiDisplay>,
+    ) {
         if self.submit_backlog.len() >= SUBMIT_BACKLOG_CAPACITY
             && !self.submit_backlog_high_watermark_logged
         {
@@ -530,20 +536,38 @@ impl<'a> MiningControlPlane<'a> {
             self.submit_backlog_high_watermark_logged = true;
         }
 
-        if self.submit_backlog.len() >= SUBMIT_BACKLOG_HARD_CAPACITY {
-            let drop_count = self
-                .submit_backlog
-                .len()
-                .saturating_sub(SUBMIT_BACKLOG_HARD_CAPACITY)
-                .saturating_add(1);
-            self.submit_backlog.drain(0..drop_count);
-            warn(
-                "SUBMIT",
-                format!(
-                    "submit backlog reached hard cap ({}); dropped {} oldest queued request(s)",
-                    SUBMIT_BACKLOG_HARD_CAPACITY, drop_count
-                ),
-            );
+        let mut last_backpressure_log = None;
+        while self.submit_backlog.len() >= SUBMIT_BACKLOG_HARD_CAPACITY {
+            if self.shutdown.load(Ordering::Relaxed) {
+                warn(
+                    "SUBMIT",
+                    "shutdown requested while submit backlog is saturated; preserving in-memory queue for best-effort drain",
+                );
+                return;
+            }
+
+            let now = Instant::now();
+            if last_backpressure_log.is_none_or(|last| {
+                now.saturating_duration_since(last) >= SUBMIT_BACKLOG_BACKPRESSURE_LOG_INTERVAL
+            }) {
+                warn(
+                    "SUBMIT",
+                    format!(
+                        "submit backlog reached hard cap ({}); applying backpressure until worker drains queued requests",
+                        SUBMIT_BACKLOG_HARD_CAPACITY
+                    ),
+                );
+                last_backpressure_log = Some(now);
+            }
+
+            self.flush_submit_backlog();
+            if let Some(worker) = self.submit_worker.as_ref() {
+                worker.drain_results(stats, tui);
+            }
+
+            if self.submit_backlog.len() >= SUBMIT_BACKLOG_HARD_CAPACITY {
+                thread::sleep(SUBMIT_BACKLOG_FLUSH_WAIT);
+            }
         }
 
         self.submit_backlog.push_back(request);
@@ -642,7 +666,7 @@ impl<'a> MiningControlPlane<'a> {
         tui: &mut Option<TuiDisplay>,
     ) {
         stats.bump_submitted();
-        self.enqueue_submit_request(SubmitRequest { template, solution });
+        self.enqueue_submit_request(SubmitRequest { template, solution }, stats, tui);
         self.flush_submit_backlog();
         self.drain_submit_results(stats, tui);
     }
