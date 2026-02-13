@@ -20,6 +20,7 @@ pub(super) struct RecentTemplateEntry {
     pub(super) estimated_bytes: usize,
 }
 
+#[cfg(test)]
 pub(super) fn push_deferred_solution(
     deferred_solutions: &mut Vec<MiningSolution>,
     solution: MiningSolution,
@@ -49,6 +50,37 @@ pub(super) fn push_deferred_solution(
     deferred_solutions.push(solution);
 }
 
+pub(super) fn push_deferred_solution_indexed(
+    deferred_solutions: &mut Vec<MiningSolution>,
+    deferred_solution_keys: &mut HashSet<(u64, u64)>,
+    solution: MiningSolution,
+) {
+    let key = (solution.epoch, solution.nonce);
+    if !deferred_solution_keys.insert(key) {
+        return;
+    }
+
+    if deferred_solutions.len() >= DEFERRED_SOLUTIONS_CAPACITY {
+        let drop_count = deferred_solutions
+            .len()
+            .saturating_sub(DEFERRED_SOLUTIONS_CAPACITY)
+            .saturating_add(1);
+        for dropped in deferred_solutions.drain(0..drop_count) {
+            deferred_solution_keys.remove(&(dropped.epoch, dropped.nonce));
+        }
+        warn(
+            "BACKEND",
+            format!(
+                "deferred solution queue reached capacity ({}); dropped {} oldest queued solution(s)",
+                DEFERRED_SOLUTIONS_CAPACITY, drop_count
+            ),
+        );
+    }
+
+    deferred_solutions.push(solution);
+}
+
+#[cfg(test)]
 pub(super) fn dedupe_queued_solutions(queued: Vec<MiningSolution>) -> Vec<MiningSolution> {
     let mut seen = HashSet::new();
     let mut deduped = Vec::with_capacity(queued.len());
@@ -60,6 +92,7 @@ pub(super) fn dedupe_queued_solutions(queued: Vec<MiningSolution>) -> Vec<Mining
     deduped
 }
 
+#[cfg(test)]
 pub(super) fn drop_solution_from_deferred(
     deferred_solutions: &mut Vec<MiningSolution>,
     primary_submitted: Option<&MiningSolution>,
@@ -71,6 +104,33 @@ pub(super) fn drop_solution_from_deferred(
     deferred_solutions.retain(|candidate| {
         !(candidate.epoch == solution.epoch && candidate.nonce == solution.nonce)
     });
+}
+
+pub(super) fn drop_solution_from_deferred_indexed(
+    deferred_solutions: &mut Vec<MiningSolution>,
+    deferred_solution_keys: &mut HashSet<(u64, u64)>,
+    primary_submitted: Option<&MiningSolution>,
+) {
+    let Some(solution) = primary_submitted else {
+        return;
+    };
+    let key = (solution.epoch, solution.nonce);
+    if !deferred_solution_keys.remove(&key) {
+        return;
+    }
+    deferred_solutions.retain(|candidate| (candidate.epoch, candidate.nonce) != key);
+}
+
+pub(super) fn take_deferred_solutions_indexed(
+    deferred_solutions: &mut Vec<MiningSolution>,
+    deferred_solution_keys: &mut HashSet<(u64, u64)>,
+) -> Vec<MiningSolution> {
+    if deferred_solutions.is_empty() {
+        deferred_solution_keys.clear();
+        return Vec::new();
+    }
+    deferred_solution_keys.clear();
+    std::mem::take(deferred_solutions)
 }
 
 pub(super) fn submit_template_for_solution_epoch(
@@ -194,4 +254,53 @@ pub(super) fn recent_template_cache_size_from_timeouts(
         RECENT_TEMPLATE_CACHE_MIN as u128,
         RECENT_TEMPLATE_CACHE_MAX as u128,
     ) as usize
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn solution(epoch: u64, nonce: u64) -> MiningSolution {
+        MiningSolution {
+            epoch,
+            nonce,
+            backend_id: 1,
+            backend: "cpu",
+        }
+    }
+
+    #[test]
+    fn indexed_push_is_deduped_in_constant_time() {
+        let mut queue = Vec::new();
+        let mut keys = HashSet::new();
+        push_deferred_solution_indexed(&mut queue, &mut keys, solution(7, 11));
+        push_deferred_solution_indexed(&mut queue, &mut keys, solution(7, 11));
+
+        assert_eq!(queue.len(), 1);
+        assert_eq!(keys.len(), 1);
+    }
+
+    #[test]
+    fn indexed_drop_keeps_set_and_queue_in_sync() {
+        let mut queue = Vec::new();
+        let mut keys = HashSet::new();
+        push_deferred_solution_indexed(&mut queue, &mut keys, solution(7, 11));
+        let submitted = solution(7, 11);
+        drop_solution_from_deferred_indexed(&mut queue, &mut keys, Some(&submitted));
+
+        assert!(queue.is_empty());
+        assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn indexed_take_clears_key_index() {
+        let mut queue = Vec::new();
+        let mut keys = HashSet::new();
+        push_deferred_solution_indexed(&mut queue, &mut keys, solution(1, 1));
+        let drained = take_deferred_solutions_indexed(&mut queue, &mut keys);
+
+        assert_eq!(drained.len(), 1);
+        assert!(queue.is_empty());
+        assert!(keys.is_empty());
+    }
 }

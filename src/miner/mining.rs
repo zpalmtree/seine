@@ -26,14 +26,15 @@ use super::runtime::{
 };
 use super::scheduler::NonceScheduler;
 use super::solution_cache::{
-    already_submitted_solution, dedupe_queued_solutions, drop_solution_from_deferred,
-    push_deferred_solution, recent_template_cache_size_from_timeouts,
-    recent_template_retention_from_timeouts, remember_recent_template,
-    remember_submitted_solution, submit_template_for_solution_epoch, RecentTemplateEntry,
+    already_submitted_solution, drop_solution_from_deferred_indexed,
+    push_deferred_solution_indexed, recent_template_cache_size_from_timeouts,
+    recent_template_retention_from_timeouts, remember_recent_template, remember_submitted_solution,
+    submit_template_for_solution_epoch, take_deferred_solutions_indexed, RecentTemplateEntry,
     RECENT_TEMPLATE_CACHE_MAX_BYTES,
 };
 #[cfg(test)]
 use super::solution_cache::{
+    dedupe_queued_solutions, drop_solution_from_deferred, push_deferred_solution,
     DEFERRED_SOLUTIONS_CAPACITY, RECENT_SUBMITTED_SOLUTIONS_CAPACITY, RECENT_TEMPLATE_CACHE_MAX,
     RECENT_TEMPLATE_CACHE_MIN,
 };
@@ -59,7 +60,6 @@ const SUBMIT_BACKLOG_CAPACITY: usize = 512;
 const SUBMIT_BACKLOG_HARD_CAPACITY: usize = 4096;
 const SUBMIT_BACKLOG_FLUSH_WAIT: Duration = Duration::from_millis(10);
 const SUBMIT_BACKLOG_BACKPRESSURE_LOG_INTERVAL: Duration = Duration::from_secs(5);
-const SUBMIT_BACKLOG_BACKPRESSURE_WAIT_BUDGET: Duration = Duration::from_millis(200);
 
 #[derive(Default)]
 struct RetryTracker {
@@ -177,8 +177,8 @@ impl<'a> MiningControlPlane<'a> {
         stats: &Stats,
         tui: &mut Option<TuiDisplay>,
     ) {
-        // Keep the mining control loop responsive: attempt one flush pass, then apply bounded
-        // backpressure if the submit worker cannot keep up.
+        // Keep the mining control loop responsive: attempt one flush pass and avoid blocking if
+        // submit workers are saturated.
         self.flush_submit_backlog();
         if let Some(worker) = self.submit_worker.as_ref() {
             worker.drain_results(stats, tui);
@@ -216,34 +216,19 @@ impl<'a> MiningControlPlane<'a> {
             return;
         }
 
-        let budget_deadline = Instant::now() + SUBMIT_BACKLOG_BACKPRESSURE_WAIT_BUDGET;
-        while self.submit_backlog.len() >= SUBMIT_BACKLOG_HARD_CAPACITY
-            && !self.shutdown.load(Ordering::Relaxed)
-        {
-            self.maybe_log_submit_backpressure(format!(
-                "submit backlog reached backpressure threshold ({}); pausing enqueue to let submit worker catch up (queued={})",
-                SUBMIT_BACKLOG_HARD_CAPACITY,
-                self.submit_backlog.len()
-            ));
-
-            self.flush_submit_backlog();
-            if let Some(worker) = self.submit_worker.as_ref() {
-                worker.drain_results(stats, tui);
-            }
-
-            if self.submit_backlog.len() < SUBMIT_BACKLOG_HARD_CAPACITY {
-                break;
-            }
-            if Instant::now() >= budget_deadline {
-                break;
-            }
-            thread::sleep(SUBMIT_BACKLOG_FLUSH_WAIT);
+        self.maybe_log_submit_backpressure(format!(
+            "submit backlog reached hard threshold ({}); skipping enqueue wait to keep mining loop responsive (queued={})",
+            SUBMIT_BACKLOG_HARD_CAPACITY,
+            self.submit_backlog.len()
+        ));
+        self.flush_submit_backlog();
+        if let Some(worker) = self.submit_worker.as_ref() {
+            worker.drain_results(stats, tui);
         }
 
         if self.submit_backlog.len() >= SUBMIT_BACKLOG_HARD_CAPACITY {
             self.maybe_log_submit_backpressure(format!(
-                "submit backlog remains saturated after {}ms backpressure budget; new submit requests will evict oldest queued entries (queued={})",
-                SUBMIT_BACKLOG_BACKPRESSURE_WAIT_BUDGET.as_millis(),
+                "submit backlog remains saturated; new submit requests will evict oldest queued entries (queued={})",
                 self.submit_backlog.len()
             ));
         }
@@ -259,8 +244,7 @@ impl<'a> MiningControlPlane<'a> {
             self.submit_backlog.drain(0..drop_count);
             self.maybe_log_submit_backpressure(format!(
                 "submit backlog hard cap reached ({}); dropped {} oldest queued submit request(s)",
-                SUBMIT_BACKLOG_HARD_CAPACITY,
-                drop_count
+                SUBMIT_BACKLOG_HARD_CAPACITY, drop_count
             ));
         }
         self.submit_backlog.push_back(request);
@@ -570,6 +554,7 @@ struct ExecuteRoundPhase<'a, 'cp> {
     backend_weights: &'a mut BTreeMap<u64, f64>,
     recent_templates: &'a VecDeque<RecentTemplateEntry>,
     deferred_solutions: &'a mut Vec<MiningSolution>,
+    deferred_solution_keys: &'a mut HashSet<(u64, u64)>,
     submitted_solution_order: &'a mut VecDeque<(u64, u64)>,
     submitted_solution_keys: &'a mut HashSet<(u64, u64)>,
 }
@@ -599,6 +584,7 @@ fn execute_round_phase(phase: ExecuteRoundPhase<'_, '_>) -> Result<()> {
         backend_weights,
         recent_templates,
         deferred_solutions,
+        deferred_solution_keys,
         submitted_solution_order,
         submitted_solution_keys,
     } = phase;
@@ -616,6 +602,7 @@ fn execute_round_phase(phase: ExecuteRoundPhase<'_, '_>) -> Result<()> {
         nonce_scheduler,
         backend_weights,
         deferred_solutions,
+        deferred_solution_keys,
     };
     let mut round_state = round_runtime.run(RoundInput {
         epoch,
@@ -635,6 +622,7 @@ fn execute_round_phase(phase: ExecuteRoundPhase<'_, '_>) -> Result<()> {
         epoch,
         &mut pending_solution,
         deferred_solutions,
+        deferred_solution_keys,
         backends,
         backend_executor,
     )?;
@@ -655,6 +643,7 @@ fn execute_round_phase(phase: ExecuteRoundPhase<'_, '_>) -> Result<()> {
         epoch,
         &mut pending_solution,
         deferred_solutions,
+        deferred_solution_keys,
         backends,
         backend_executor,
     )?;
@@ -682,7 +671,11 @@ fn execute_round_phase(phase: ExecuteRoundPhase<'_, '_>) -> Result<()> {
         }
         submitted_solution = Some(solution);
     }
-    drop_solution_from_deferred(deferred_solutions, submitted_solution.as_ref());
+    drop_solution_from_deferred_indexed(
+        deferred_solutions,
+        deferred_solution_keys,
+        submitted_solution.as_ref(),
+    );
     submit_deferred_solutions(
         control_plane,
         epoch,
@@ -690,6 +683,7 @@ fn execute_round_phase(phase: ExecuteRoundPhase<'_, '_>) -> Result<()> {
         DeferredSubmitState {
             recent_templates,
             deferred_solutions,
+            deferred_solution_keys,
             submitted_solution_order,
             submitted_solution_keys,
             stats,
@@ -816,12 +810,13 @@ pub(super) fn run_mining_loop(
     let mut tui = init_tui_display(tui_state, Arc::clone(&shutdown));
     let mut backend_weights = seed_backend_weights(backends);
     let mut control_plane = MiningControlPlane::new(client, cfg, Arc::clone(&shutdown), tip_signal);
-    let recent_template_retention = recent_template_retention(cfg);
-    let recent_template_cache_size = recent_template_cache_size(cfg);
+    let recent_template_retention = recent_template_retention_for_backends(cfg, backends);
+    let recent_template_cache_size = recent_template_cache_size_for_backends(cfg, backends);
     let recent_template_cache_max_bytes = recent_template_cache_max_bytes();
     let mut recent_templates = VecDeque::<RecentTemplateEntry>::new();
     let mut recent_templates_bytes = 0usize;
     let mut deferred_solutions = Vec::<MiningSolution>::new();
+    let mut deferred_solution_keys = HashSet::<(u64, u64)>::new();
     let mut submitted_solution_keys = HashSet::<(u64, u64)>::new();
     let mut submitted_solution_order = VecDeque::<(u64, u64)>::new();
 
@@ -917,6 +912,7 @@ pub(super) fn run_mining_loop(
             backend_weights: &mut backend_weights,
             recent_templates: &recent_templates,
             deferred_solutions: &mut deferred_solutions,
+            deferred_solution_keys: &mut deferred_solution_keys,
             submitted_solution_order: &mut submitted_solution_order,
             submitted_solution_keys: &mut submitted_solution_keys,
         })?;
@@ -952,6 +948,7 @@ pub(super) fn run_mining_loop(
             epoch,
             &mut final_pending_solution,
             &mut deferred_solutions,
+            &mut deferred_solution_keys,
             backends,
             backend_executor,
         ) {
@@ -984,7 +981,11 @@ pub(super) fn run_mining_loop(
                 );
             }
         }
-        drop_solution_from_deferred(&mut deferred_solutions, final_pending_solution.as_ref());
+        drop_solution_from_deferred_indexed(
+            &mut deferred_solutions,
+            &mut deferred_solution_keys,
+            final_pending_solution.as_ref(),
+        );
         submit_deferred_solutions(
             &mut control_plane,
             epoch,
@@ -992,6 +993,7 @@ pub(super) fn run_mining_loop(
             DeferredSubmitState {
                 recent_templates: &recent_templates,
                 deferred_solutions: &mut deferred_solutions,
+                deferred_solution_keys: &mut deferred_solution_keys,
                 submitted_solution_order: &mut submitted_solution_order,
                 submitted_solution_keys: &mut submitted_solution_keys,
                 stats: &stats,
@@ -1082,6 +1084,7 @@ struct RoundRuntime<'a> {
     nonce_scheduler: &'a mut NonceScheduler,
     backend_weights: &'a mut BTreeMap<u64, f64>,
     deferred_solutions: &'a mut Vec<MiningSolution>,
+    deferred_solution_keys: &'a mut HashSet<(u64, u64)>,
 }
 
 impl<'a> RoundRuntime<'a> {
@@ -1215,6 +1218,7 @@ impl<'a> RoundRuntime<'a> {
                     input.epoch,
                     &mut solved,
                     self.deferred_solutions,
+                    self.deferred_solution_keys,
                     self.backends,
                     self.backend_executor,
                 )? == BackendEventAction::TopologyChanged
@@ -1504,6 +1508,7 @@ fn handle_mining_backend_event(
     epoch: u64,
     solved: &mut Option<MiningSolution>,
     deferred_solutions: &mut Vec<MiningSolution>,
+    deferred_solution_keys: &mut HashSet<(u64, u64)>,
     backends: &mut Vec<BackendSlot>,
     backend_executor: &super::backend_executor::BackendExecutor,
 ) -> Result<BackendEventAction> {
@@ -1515,7 +1520,13 @@ fn handle_mining_backend_event(
         backend_executor,
     )?;
     if let Some(solution) = maybe_solution {
-        route_mining_solution(solution, epoch, solved, deferred_solutions);
+        route_mining_solution(
+            solution,
+            epoch,
+            solved,
+            deferred_solutions,
+            deferred_solution_keys,
+        );
     }
     Ok(action)
 }
@@ -1525,6 +1536,7 @@ fn drain_mining_backend_events(
     epoch: u64,
     solved: &mut Option<MiningSolution>,
     deferred_solutions: &mut Vec<MiningSolution>,
+    deferred_solution_keys: &mut HashSet<(u64, u64)>,
     backends: &mut Vec<BackendSlot>,
     backend_executor: &super::backend_executor::BackendExecutor,
 ) -> Result<BackendEventAction> {
@@ -1536,7 +1548,13 @@ fn drain_mining_backend_events(
         backend_executor,
     )?;
     for solution in solutions {
-        route_mining_solution(solution, epoch, solved, deferred_solutions);
+        route_mining_solution(
+            solution,
+            epoch,
+            solved,
+            deferred_solutions,
+            deferred_solution_keys,
+        );
     }
     Ok(action)
 }
@@ -1546,15 +1564,16 @@ fn route_mining_solution(
     epoch: u64,
     solved: &mut Option<MiningSolution>,
     deferred_solutions: &mut Vec<MiningSolution>,
+    deferred_solution_keys: &mut HashSet<(u64, u64)>,
 ) {
     if solution.epoch == epoch {
         if solved.is_none() {
             *solved = Some(solution);
         } else {
-            push_deferred_solution(deferred_solutions, solution);
+            push_deferred_solution_indexed(deferred_solutions, deferred_solution_keys, solution);
         }
     } else if solution.epoch < epoch {
-        push_deferred_solution(deferred_solutions, solution);
+        push_deferred_solution_indexed(deferred_solutions, deferred_solution_keys, solution);
     } else {
         warn(
             "BACKEND",
@@ -1569,6 +1588,7 @@ fn route_mining_solution(
 struct DeferredSubmitState<'a> {
     recent_templates: &'a VecDeque<RecentTemplateEntry>,
     deferred_solutions: &'a mut Vec<MiningSolution>,
+    deferred_solution_keys: &'a mut HashSet<(u64, u64)>,
     submitted_solution_order: &'a mut VecDeque<(u64, u64)>,
     submitted_solution_keys: &'a mut HashSet<(u64, u64)>,
     stats: &'a Stats,
@@ -1585,9 +1605,9 @@ fn submit_deferred_solutions(
         return;
     }
 
-    let mut queued = Vec::new();
-    std::mem::swap(&mut queued, state.deferred_solutions);
-    for solution in dedupe_queued_solutions(queued) {
+    let queued =
+        take_deferred_solutions_indexed(state.deferred_solutions, state.deferred_solution_keys);
+    for solution in queued {
         if already_submitted_solution(state.submitted_solution_keys, &solution) {
             continue;
         }
@@ -1615,20 +1635,37 @@ fn submit_deferred_solutions(
     }
 }
 
-fn recent_template_cache_size(cfg: &Config) -> usize {
+fn effective_backend_timeouts_for_template_cache(
+    cfg: &Config,
+    backends: &[BackendSlot],
+) -> (Duration, Duration) {
+    let mut control_timeout = cfg.backend_control_timeout;
+    let mut assign_timeout = cfg.backend_assign_timeout;
+    for slot in backends {
+        control_timeout = control_timeout.max(slot.runtime_policy.control_timeout);
+        assign_timeout = assign_timeout.max(slot.runtime_policy.assignment_timeout);
+    }
+    (control_timeout, assign_timeout)
+}
+
+fn recent_template_cache_size_for_backends(cfg: &Config, backends: &[BackendSlot]) -> usize {
+    let (backend_control_timeout, backend_assign_timeout) =
+        effective_backend_timeouts_for_template_cache(cfg, backends);
     recent_template_cache_size_from_timeouts(
         cfg.refresh_interval,
-        cfg.backend_control_timeout,
-        cfg.backend_assign_timeout,
+        backend_control_timeout,
+        backend_assign_timeout,
         cfg.prefetch_wait,
     )
 }
 
-fn recent_template_retention(cfg: &Config) -> Duration {
+fn recent_template_retention_for_backends(cfg: &Config, backends: &[BackendSlot]) -> Duration {
+    let (backend_control_timeout, backend_assign_timeout) =
+        effective_backend_timeouts_for_template_cache(cfg, backends);
     recent_template_retention_from_timeouts(
         cfg.refresh_interval,
-        cfg.backend_control_timeout,
-        cfg.backend_assign_timeout,
+        backend_control_timeout,
+        backend_assign_timeout,
         cfg.prefetch_wait,
     )
 }
@@ -1777,6 +1814,7 @@ mod tests {
         let backend_executor = super::super::backend_executor::BackendExecutor::new();
         let mut solved = None;
         let mut deferred = Vec::new();
+        let mut deferred_keys = HashSet::new();
         let mut backends = Vec::new();
 
         let action = handle_mining_backend_event(
@@ -1789,6 +1827,7 @@ mod tests {
             42,
             &mut solved,
             &mut deferred,
+            &mut deferred_keys,
             &mut backends,
             &backend_executor,
         )
@@ -1805,6 +1844,7 @@ mod tests {
         let backend_executor = super::super::backend_executor::BackendExecutor::new();
         let mut solved = None;
         let mut deferred = Vec::new();
+        let mut deferred_keys = HashSet::new();
         let mut backends = vec![BackendSlot {
             id: 1,
             backend: Arc::new(NoopBackend::new("cpu")),
@@ -1822,6 +1862,7 @@ mod tests {
             42,
             &mut solved,
             &mut deferred,
+            &mut deferred_keys,
             &mut backends,
             &backend_executor,
         )
@@ -1843,6 +1884,7 @@ mod tests {
             backend: "cpu",
         });
         let mut deferred = Vec::new();
+        let mut deferred_keys = HashSet::new();
         let mut backends = vec![BackendSlot {
             id: 1,
             backend: Arc::new(NoopBackend::new("cpu")),
@@ -1860,6 +1902,7 @@ mod tests {
             42,
             &mut solved,
             &mut deferred,
+            &mut deferred_keys,
             &mut backends,
             &backend_executor,
         )
@@ -1878,6 +1921,7 @@ mod tests {
         let (event_tx, event_rx) = crossbeam_channel::bounded(8);
         let mut solved = None;
         let mut deferred = Vec::new();
+        let mut deferred_keys = HashSet::new();
         let mut backends = vec![BackendSlot {
             id: 1,
             backend: Arc::new(NoopBackend::new("cpu")),
@@ -1915,6 +1959,7 @@ mod tests {
             42,
             &mut solved,
             &mut deferred,
+            &mut deferred_keys,
             &mut backends,
             &backend_executor,
         )
@@ -2236,6 +2281,7 @@ mod tests {
         let backend_executor = super::super::backend_executor::BackendExecutor::new();
         let mut solved = None;
         let mut deferred = Vec::new();
+        let mut deferred_keys = HashSet::new();
         let mut backends = vec![
             BackendSlot {
                 id: 1,
@@ -2260,6 +2306,7 @@ mod tests {
             1,
             &mut solved,
             &mut deferred,
+            &mut deferred_keys,
             &mut backends,
             &backend_executor,
         )
