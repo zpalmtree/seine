@@ -547,15 +547,14 @@ fn perform_quarantine_stop(
         };
         match worker_tx.send_timeout(stop_command, BACKEND_STOP_ENQUEUE_TIMEOUT) {
             Ok(()) => {
+                should_run_fallback_stop = false;
                 match done_rx.recv_timeout(BACKEND_STOP_ACK_TIMEOUT) {
-                    Ok(()) | Err(RecvTimeoutError::Disconnected) => {
-                        should_run_fallback_stop = false;
-                    }
+                    Ok(()) | Err(RecvTimeoutError::Disconnected) => {}
                     Err(RecvTimeoutError::Timeout) => {
                         warn(
                             "BACKEND",
                             format!(
-                                "backend stop is still in progress for {backend}#{backend_id}; requesting interrupt before fallback"
+                                "backend stop is still in progress for {backend}#{backend_id}; requesting interrupt before detach"
                             ),
                         );
                         if let Err(err) = backend_handle.request_timeout_interrupt() {
@@ -566,18 +565,16 @@ fn perform_quarantine_stop(
                                 ),
                             );
                         }
-                        match done_rx.recv_timeout(BACKEND_STOP_ACK_GRACE_TIMEOUT) {
-                            Ok(()) | Err(RecvTimeoutError::Disconnected) => {
-                                should_run_fallback_stop = false;
-                            }
-                            Err(RecvTimeoutError::Timeout) => {
-                                warn(
-                                    "BACKEND",
-                                    format!(
-                                        "backend stop did not acknowledge for {backend}#{backend_id}; running synchronous stop fallback"
-                                    ),
-                                );
-                            }
+                        if matches!(
+                            done_rx.recv_timeout(BACKEND_STOP_ACK_GRACE_TIMEOUT),
+                            Err(RecvTimeoutError::Timeout)
+                        ) {
+                            warn(
+                                "BACKEND",
+                                format!(
+                                    "backend stop did not acknowledge for {backend}#{backend_id}; detached"
+                                ),
+                            );
                         }
                     }
                 }

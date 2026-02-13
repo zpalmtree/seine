@@ -2104,6 +2104,40 @@ mod tests {
     }
 
     #[test]
+    fn remember_recent_template_evicts_by_memory_cap() {
+        let mut recent = VecDeque::new();
+        let mut bytes = 0usize;
+        let max_bytes = 150usize;
+
+        remember_recent_template(
+            &mut recent,
+            &mut bytes,
+            1,
+            SubmitTemplate::Compact {
+                template_id: "x".repeat(80),
+            },
+            Duration::from_secs(60),
+            64,
+            max_bytes,
+        );
+        remember_recent_template(
+            &mut recent,
+            &mut bytes,
+            2,
+            SubmitTemplate::Compact {
+                template_id: "y".repeat(80),
+            },
+            Duration::from_secs(60),
+            64,
+            max_bytes,
+        );
+
+        assert!(bytes <= max_bytes);
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent.front().map(|entry| entry.epoch), Some(2));
+    }
+
+    #[test]
     fn recent_template_cache_size_uses_timeout_window_and_bounds() {
         let min_entries = recent_template_cache_size_from_timeouts(
             Duration::from_secs(20),
