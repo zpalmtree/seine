@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::panic::{self, AssertUnwindSafe};
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -252,7 +251,6 @@ impl BackendTaskLatencyCounters {
     }
 }
 
-const DEFAULT_ASSIGNMENT_TIMEOUT_STRIKES_BEFORE_QUARANTINE: u32 = 3;
 const BACKEND_WORKER_QUEUE_CAPACITY_MAX: usize = 64;
 const BACKEND_WORKER_CONTROL_QUEUE_CAPACITY: usize = 16;
 const BACKEND_STOP_ACK_TIMEOUT: Duration = Duration::from_secs(1);
@@ -269,7 +267,6 @@ pub(super) struct BackendExecutor {
     assignment_timeout_strikes: Arc<Mutex<BTreeMap<BackendWorkerKey, u32>>>,
     task_timeout_counters: Arc<Mutex<BTreeMap<BackendWorkerKey, BackendTimeoutCounters>>>,
     task_latency_counters: Arc<Mutex<BTreeMap<BackendWorkerKey, BackendTaskLatencyCounters>>>,
-    assignment_timeout_threshold: Arc<AtomicU32>,
 }
 
 impl BackendExecutor {
@@ -280,21 +277,7 @@ impl BackendExecutor {
             assignment_timeout_strikes: Arc::new(Mutex::new(BTreeMap::new())),
             task_timeout_counters: Arc::new(Mutex::new(BTreeMap::new())),
             task_latency_counters: Arc::new(Mutex::new(BTreeMap::new())),
-            assignment_timeout_threshold: Arc::new(AtomicU32::new(
-                DEFAULT_ASSIGNMENT_TIMEOUT_STRIKES_BEFORE_QUARANTINE,
-            )),
         }
-    }
-
-    pub(super) fn set_assignment_timeout_threshold(&self, threshold: u32) {
-        self.assignment_timeout_threshold
-            .store(threshold.max(1), Ordering::Release);
-    }
-
-    fn assignment_timeout_threshold(&self) -> u32 {
-        self.assignment_timeout_threshold
-            .load(Ordering::Acquire)
-            .max(1)
     }
 
     fn record_task_timeout(&self, key: BackendWorkerKey, bucket: TaskTimeoutCounterBucket) {
@@ -712,18 +695,6 @@ impl BackendExecutor {
         if let Ok(mut strikes) = self.assignment_timeout_strikes.lock() {
             strikes.remove(&key);
         }
-    }
-
-    pub(super) fn note_assignment_timeout(
-        &self,
-        backend_id: BackendInstanceId,
-        backend_handle: &Arc<dyn PowBackend>,
-    ) -> AssignmentTimeoutDecision {
-        self.note_assignment_timeout_with_threshold(
-            backend_id,
-            backend_handle,
-            self.assignment_timeout_threshold(),
-        )
     }
 
     pub(super) fn note_assignment_timeout_with_threshold(
@@ -2031,16 +2002,14 @@ mod tests {
             },
         };
 
-        let outcomes = executor.dispatch_backend_tasks(
-            vec![BackendTask {
-                idx: 0,
-                backend_id: 77,
-                backend: "slow-assign",
-                backend_handle: backend,
-                kind: BackendTaskKind::Assign(work),
-                timeout: Duration::from_millis(5),
-            }],
-        );
+        let outcomes = executor.dispatch_backend_tasks(vec![BackendTask {
+            idx: 0,
+            backend_id: 77,
+            backend: "slow-assign",
+            backend_handle: backend,
+            kind: BackendTaskKind::Assign(work),
+            timeout: Duration::from_millis(5),
+        }]);
 
         assert!(
             matches!(
@@ -2162,16 +2131,14 @@ mod tests {
             })
             .expect("second prefill command should enqueue while first is running");
 
-        let outcomes = executor.dispatch_backend_tasks(
-            vec![BackendTask {
-                idx: 0,
-                backend_id: 79,
-                backend: "slow-assign",
-                backend_handle: Arc::clone(&backend),
-                kind: BackendTaskKind::Assign(make_work()),
-                timeout: Duration::from_millis(1),
-            }],
-        );
+        let outcomes = executor.dispatch_backend_tasks(vec![BackendTask {
+            idx: 0,
+            backend_id: 79,
+            backend: "slow-assign",
+            backend_handle: Arc::clone(&backend),
+            kind: BackendTaskKind::Assign(make_work()),
+            timeout: Duration::from_millis(1),
+        }]);
 
         assert!(
             matches!(
@@ -2246,16 +2213,14 @@ mod tests {
             })
             .expect("second prefill command should enqueue while first is running");
 
-        let outcomes = executor.dispatch_backend_tasks(
-            vec![BackendTask {
-                idx: 0,
-                backend_id: 80,
-                backend: "slow-assign",
-                backend_handle: Arc::clone(&backend),
-                kind: BackendTaskKind::Cancel,
-                timeout: Duration::from_millis(20),
-            }],
-        );
+        let outcomes = executor.dispatch_backend_tasks(vec![BackendTask {
+            idx: 0,
+            backend_id: 80,
+            backend: "slow-assign",
+            backend_handle: Arc::clone(&backend),
+            kind: BackendTaskKind::Cancel,
+            timeout: Duration::from_millis(20),
+        }]);
 
         assert!(
             matches!(
@@ -2295,16 +2260,14 @@ mod tests {
             },
         };
 
-        let outcomes = executor.dispatch_backend_tasks(
-            vec![BackendTask {
-                idx: 0,
-                backend_id: 81,
-                backend: "slow-assign",
-                backend_handle: Arc::clone(&backend),
-                kind: BackendTaskKind::Assign(work),
-                timeout: Duration::from_millis(5),
-            }],
-        );
+        let outcomes = executor.dispatch_backend_tasks(vec![BackendTask {
+            idx: 0,
+            backend_id: 81,
+            backend: "slow-assign",
+            backend_handle: Arc::clone(&backend),
+            kind: BackendTaskKind::Assign(work),
+            timeout: Duration::from_millis(5),
+        }]);
 
         assert!(matches!(
             outcomes[0],
@@ -2424,16 +2387,14 @@ mod tests {
             },
         };
 
-        let outcomes = executor.dispatch_backend_tasks(
-            vec![BackendTask {
-                idx: 0,
-                backend_id: 1,
-                backend: "pending-assign",
-                backend_handle: backend_dyn,
-                kind: BackendTaskKind::Assign(work),
-                timeout: Duration::from_millis(25),
-            }],
-        );
+        let outcomes = executor.dispatch_backend_tasks(vec![BackendTask {
+            idx: 0,
+            backend_id: 1,
+            backend: "pending-assign",
+            backend_handle: backend_dyn,
+            kind: BackendTaskKind::Assign(work),
+            timeout: Duration::from_millis(25),
+        }]);
 
         assert!(outcomes[0].as_ref().is_some_and(|outcome| matches!(
             outcome,

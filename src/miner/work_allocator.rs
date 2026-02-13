@@ -109,11 +109,8 @@ pub(super) fn distribute_work(
             chunk_start = chunk_start.wrapping_add(nonce_count);
         }
 
-        let (survivors, failures, attempt_consumed_span) = dispatch_assignment_tasks(
-            dispatch_tasks,
-            slots_by_idx,
-            backend_executor,
-        );
+        let (survivors, failures, attempt_consumed_span) =
+            dispatch_assignment_tasks(dispatch_tasks, slots_by_idx, backend_executor);
         *backends = survivors;
         backend_executor.prune(backends);
 
@@ -217,7 +214,10 @@ fn dispatch_assignment_tasks(
         .into_iter()
         .map(|task| {
             span_end_offsets.insert(task.idx, task.span_end_offset);
-            task_timeouts.insert(task.idx, task.assignment_timeout.max(Duration::from_millis(1)));
+            task_timeouts.insert(
+                task.idx,
+                task.assignment_timeout.max(Duration::from_millis(1)),
+            );
             task_timeout_strikes.insert(task.idx, task.assignment_timeout_strikes.max(1));
             BackendTask {
                 idx: task.idx,

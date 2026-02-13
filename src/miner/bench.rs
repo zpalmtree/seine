@@ -198,7 +198,6 @@ const BENCH_REPORT_COMPAT_MIN_SCHEMA_VERSION: u32 = 2;
 pub(super) fn run_benchmark(cfg: &Config, shutdown: &AtomicBool) -> Result<()> {
     let instances = super::build_backend_instances(cfg);
     let backend_executor = super::backend_executor::BackendExecutor::new();
-    backend_executor.set_assignment_timeout_threshold(cfg.backend_assign_timeout_strikes);
 
     match cfg.bench_kind {
         BenchKind::Kernel => run_kernel_benchmark(
@@ -427,7 +426,6 @@ fn run_worker_benchmark(
     super::enforce_deadline_policy(
         &mut backends,
         cfg.allow_best_effort_deadlines,
-        cfg.backend_control_timeout,
         RuntimeMode::Bench,
         backend_executor,
     )?;
@@ -588,17 +586,18 @@ fn run_worker_benchmark_inner(
         let mut round_backend_telemetry = BTreeMap::new();
         let mut backend_poll_state = build_backend_poll_state(backends, cfg.hash_poll_interval);
         while Instant::now() < stop_at && !shutdown.load(Ordering::Relaxed) {
-            let step = super::round_driver::drive_round_step(
-                backends,
-                backend_events,
-                backend_executor,
-                cfg.hash_poll_interval,
-                &mut backend_poll_state,
-                &mut round_backend_hashes,
-                &mut round_backend_telemetry,
-                stop_at,
-                None,
-            )?;
+            let step =
+                super::round_driver::drive_round_step(super::round_driver::RoundDriverInput {
+                    backends,
+                    backend_events,
+                    backend_executor,
+                    configured_hash_poll_interval: cfg.hash_poll_interval,
+                    poll_state: &mut backend_poll_state,
+                    round_backend_hashes: &mut round_backend_hashes,
+                    round_backend_telemetry: &mut round_backend_telemetry,
+                    stop_at,
+                    extra_deadline: None,
+                })?;
             round_hashes = round_hashes.saturating_add(step.collected_hashes);
 
             if let Some(event) = step.event {
@@ -626,12 +625,8 @@ fn run_worker_benchmark_inner(
             .as_secs_f64()
             .max(0.001);
         let fence_start = Instant::now();
-        if quiesce_backend_slots(
-            backends,
-            RuntimeMode::Bench,
-            cfg.backend_control_timeout,
-            backend_executor,
-        )? == BackendEventAction::TopologyChanged
+        if quiesce_backend_slots(backends, RuntimeMode::Bench, backend_executor)?
+            == BackendEventAction::TopologyChanged
         {
             ensure_worker_topology_identity(backends, identity, &format!("{phase_label} fence"))?;
         }

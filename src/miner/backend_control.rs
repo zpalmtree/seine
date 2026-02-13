@@ -20,19 +20,17 @@ type BackendFailureMap = BTreeMap<BackendInstanceId, (&'static str, Vec<String>)
 pub(super) fn cancel_backend_slots(
     backends: &mut Vec<BackendSlot>,
     mode: RuntimeMode,
-    control_timeout: Duration,
     backend_executor: &backend_executor::BackendExecutor,
 ) -> Result<RuntimeBackendEventAction> {
-    control_backend_slots(backends, mode, false, control_timeout, backend_executor)
+    control_backend_slots(backends, mode, false, backend_executor)
 }
 
 pub(super) fn quiesce_backend_slots(
     backends: &mut Vec<BackendSlot>,
     mode: RuntimeMode,
-    control_timeout: Duration,
     backend_executor: &backend_executor::BackendExecutor,
 ) -> Result<RuntimeBackendEventAction> {
-    control_backend_slots(backends, mode, true, control_timeout, backend_executor)
+    control_backend_slots(backends, mode, true, backend_executor)
 }
 
 pub(super) fn handle_runtime_backend_event(
@@ -179,7 +177,6 @@ fn control_backend_slots(
     backends: &mut Vec<BackendSlot>,
     mode: RuntimeMode,
     include_fence: bool,
-    _control_timeout: Duration,
     backend_executor: &backend_executor::BackendExecutor,
 ) -> Result<RuntimeBackendEventAction> {
     if backends.is_empty() {
@@ -196,11 +193,8 @@ fn control_backend_slots(
     merge_backend_failures(&mut failures, cancel_failures);
 
     if include_fence && !survivors.is_empty() {
-        let (after_fence, fence_failures) = run_backend_control_phase(
-            survivors,
-            BackendControlPhase::Fence,
-            backend_executor,
-        );
+        let (after_fence, fence_failures) =
+            run_backend_control_phase(survivors, BackendControlPhase::Fence, backend_executor);
         survivors = after_fence;
         merge_backend_failures(&mut failures, fence_failures);
     }
@@ -327,7 +321,10 @@ fn run_backend_control_phase(
         let Some(slot) = slots_by_idx.get_mut(idx).and_then(Option::take) else {
             continue;
         };
-        let timeout = slot.runtime_policy.control_timeout.max(Duration::from_millis(1));
+        let timeout = slot
+            .runtime_policy
+            .control_timeout
+            .max(Duration::from_millis(1));
         let backend_id = slot.id;
         let backend = slot.backend.name();
         match outcome_slot.take() {

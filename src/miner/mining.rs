@@ -627,23 +627,13 @@ fn execute_round_phase(phase: ExecuteRoundPhase<'_, '_>) -> Result<()> {
     let append_semantics_active = super::backends_have_append_assignment_semantics(backends);
 
     if cfg.strict_round_accounting {
-        let _ = quiesce_backend_slots(
-            backends,
-            RuntimeMode::Mining,
-            cfg.backend_control_timeout,
-            backend_executor,
-        )?;
+        let _ = quiesce_backend_slots(backends, RuntimeMode::Mining, backend_executor)?;
     } else if should_cancel_relaxed_round(
         round_state.stale_tip_event,
         solved_found,
         append_semantics_active,
     ) {
-        let _ = cancel_backend_slots(
-            backends,
-            RuntimeMode::Mining,
-            cfg.backend_control_timeout,
-            backend_executor,
-        )?;
+        let _ = cancel_backend_slots(backends, RuntimeMode::Mining, backend_executor)?;
     }
     let _ = drain_mining_backend_events(
         backend_events,
@@ -937,12 +927,7 @@ pub(super) fn run_mining_loop(
 
     if !backends.is_empty() {
         let final_submit_template = SubmitTemplate::from_template(&template);
-        match quiesce_backend_slots(
-            backends,
-            RuntimeMode::Mining,
-            cfg.backend_control_timeout,
-            backend_executor,
-        ) {
+        match quiesce_backend_slots(backends, RuntimeMode::Mining, backend_executor) {
             Ok(_) => {}
             Err(err) => warn("BACKEND", format!("final backend quiesce failed: {err:#}")),
         }
@@ -1147,17 +1132,18 @@ impl<'a> RoundRuntime<'a> {
             } else {
                 None
             };
-            let step = super::round_driver::drive_round_step(
-                self.backends,
-                self.backend_events,
-                self.backend_executor,
-                self.cfg.hash_poll_interval,
-                &mut backend_poll_state,
-                &mut round_backend_hashes,
-                &mut round_backend_telemetry,
-                input.stop_at,
-                stats_deadline,
-            )?;
+            let step =
+                super::round_driver::drive_round_step(super::round_driver::RoundDriverInput {
+                    backends: self.backends,
+                    backend_events: self.backend_events,
+                    backend_executor: self.backend_executor,
+                    configured_hash_poll_interval: self.cfg.hash_poll_interval,
+                    poll_state: &mut backend_poll_state,
+                    round_backend_hashes: &mut round_backend_hashes,
+                    round_backend_telemetry: &mut round_backend_telemetry,
+                    stop_at: input.stop_at,
+                    extra_deadline: stats_deadline,
+                })?;
 
             let hashes_before = round_hashes;
             let collected = step.collected_hashes;
@@ -1237,7 +1223,6 @@ impl<'a> RoundRuntime<'a> {
                         header_base: Arc::clone(input.header_base),
                         target: input.target,
                         stop_at: input.stop_at,
-                        control_timeout: self.cfg.backend_control_timeout,
                         mode: RuntimeMode::Mining,
                         work_allocation: self.cfg.work_allocation,
                         reason: "topology change",
@@ -1314,7 +1299,6 @@ impl<'a> RoundRuntime<'a> {
                         header_base: Arc::clone(input.header_base),
                         target: input.target,
                         stop_at: input.stop_at,
-                        control_timeout: self.cfg.backend_control_timeout,
                         mode: RuntimeMode::Mining,
                         work_allocation: self.cfg.work_allocation,
                         reason: "in-round performance rebalance",

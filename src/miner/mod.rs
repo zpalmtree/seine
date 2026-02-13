@@ -5,8 +5,8 @@ mod bench;
 mod hash_poll;
 mod mining;
 mod mining_tui;
-mod round_driver;
 mod round_control;
+mod round_driver;
 mod runtime;
 mod scheduler;
 mod stats;
@@ -114,7 +114,6 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
     }
 
     let backend_executor = backend_executor::BackendExecutor::new();
-    backend_executor.set_assignment_timeout_threshold(cfg.backend_assign_timeout_strikes);
 
     let token = cfg
         .token
@@ -134,7 +133,6 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
     enforce_deadline_policy(
         &mut backends,
         cfg.allow_best_effort_deadlines,
-        cfg.backend_control_timeout,
         RuntimeMode::Mining,
         &backend_executor,
     )?;
@@ -774,19 +772,17 @@ pub(super) fn backend_round_telemetry_delta(telemetry: BackendTelemetry) -> Back
 fn cancel_backend_slots(
     backends: &mut Vec<BackendSlot>,
     mode: RuntimeMode,
-    control_timeout: Duration,
     backend_executor: &backend_executor::BackendExecutor,
 ) -> Result<RuntimeBackendEventAction> {
-    backend_control::cancel_backend_slots(backends, mode, control_timeout, backend_executor)
+    backend_control::cancel_backend_slots(backends, mode, backend_executor)
 }
 
 fn quiesce_backend_slots(
     backends: &mut Vec<BackendSlot>,
     mode: RuntimeMode,
-    control_timeout: Duration,
     backend_executor: &backend_executor::BackendExecutor,
 ) -> Result<RuntimeBackendEventAction> {
-    backend_control::quiesce_backend_slots(backends, mode, control_timeout, backend_executor)
+    backend_control::quiesce_backend_slots(backends, mode, backend_executor)
 }
 
 fn remove_backend_by_id(
@@ -820,7 +816,6 @@ enum RuntimeBackendEventAction {
 fn enforce_deadline_policy(
     backends: &mut Vec<BackendSlot>,
     allow_best_effort_deadlines: bool,
-    control_timeout: Duration,
     mode: RuntimeMode,
     backend_executor: &backend_executor::BackendExecutor,
 ) -> Result<()> {
@@ -862,8 +857,7 @@ fn enforce_deadline_policy(
         return Ok(());
     }
 
-    let probe_timeout = control_timeout.max(Duration::from_millis(1));
-    let action = quiesce_backend_slots(backends, mode, probe_timeout, backend_executor)?;
+    let action = quiesce_backend_slots(backends, mode, backend_executor)?;
     if action == RuntimeBackendEventAction::TopologyChanged {
         warn(
             "BACKEND",
@@ -2130,14 +2124,9 @@ mod tests {
             ),
         )];
 
-        let err = enforce_deadline_policy(
-            &mut backends,
-            false,
-            Duration::from_secs(1),
-            RuntimeMode::Mining,
-            &backend_executor,
-        )
-        .expect_err("best-effort backend should be rejected by default");
+        let err =
+            enforce_deadline_policy(&mut backends, false, RuntimeMode::Mining, &backend_executor)
+                .expect_err("best-effort backend should be rejected by default");
         assert!(format!("{err:#}").contains("--allow-best-effort-deadlines"));
     }
 
@@ -2165,14 +2154,8 @@ mod tests {
             ),
         ];
 
-        enforce_deadline_policy(
-            &mut backends,
-            false,
-            Duration::from_secs(1),
-            RuntimeMode::Mining,
-            &backend_executor,
-        )
-        .expect("cooperative backend should remain available");
+        enforce_deadline_policy(&mut backends, false, RuntimeMode::Mining, &backend_executor)
+            .expect("cooperative backend should remain available");
 
         assert_eq!(backends.len(), 1);
         assert_eq!(backends[0].id, 2);
@@ -2256,13 +2239,8 @@ mod tests {
             ),
         ];
 
-        quiesce_backend_slots(
-            &mut backends,
-            RuntimeMode::Mining,
-            Duration::from_secs(1),
-            &backend_executor,
-        )
-        .expect("quiesce should succeed");
+        quiesce_backend_slots(&mut backends, RuntimeMode::Mining, &backend_executor)
+            .expect("quiesce should succeed");
 
         let events = trace
             .events
@@ -2456,13 +2434,8 @@ mod tests {
             ),
         ];
 
-        let action = quiesce_backend_slots(
-            &mut backends,
-            RuntimeMode::Mining,
-            Duration::from_secs(1),
-            &backend_executor,
-        )
-        .expect("quiesce should quarantine only the failing backend");
+        let action = quiesce_backend_slots(&mut backends, RuntimeMode::Mining, &backend_executor)
+            .expect("quiesce should quarantine only the failing backend");
 
         assert_eq!(action, RuntimeBackendEventAction::TopologyChanged);
         assert_eq!(backends.len(), 1);
@@ -2502,13 +2475,8 @@ mod tests {
             ),
         ];
 
-        let action = quiesce_backend_slots(
-            &mut backends,
-            RuntimeMode::Mining,
-            Duration::from_secs(1),
-            &backend_executor,
-        )
-        .expect("quiesce should quarantine panicing backend");
+        let action = quiesce_backend_slots(&mut backends, RuntimeMode::Mining, &backend_executor)
+            .expect("quiesce should quarantine panicing backend");
 
         assert_eq!(action, RuntimeBackendEventAction::TopologyChanged);
         assert_eq!(backends.len(), 1);

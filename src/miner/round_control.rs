@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use anyhow::Result;
 
@@ -20,7 +20,6 @@ pub(super) struct TopologyRedistributionOptions<'a> {
     pub header_base: Arc<[u8]>,
     pub target: [u8; 32],
     pub stop_at: Instant,
-    pub control_timeout: Duration,
     pub mode: RuntimeMode,
     pub work_allocation: WorkAllocation,
     pub reason: &'static str,
@@ -39,12 +38,8 @@ pub(super) fn redistribute_for_topology_change(
     }
 
     if super::backends_have_append_assignment_semantics(backends)
-        && cancel_backend_slots(
-            backends,
-            options.mode,
-            options.control_timeout,
-            options.backend_executor,
-        )? == RuntimeBackendEventAction::TopologyChanged
+        && cancel_backend_slots(backends, options.mode, options.backend_executor)?
+            == RuntimeBackendEventAction::TopologyChanged
         && backends.is_empty()
     {
         return Ok(());
