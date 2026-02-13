@@ -62,15 +62,7 @@ pub fn parse_target(target_hex: &str) -> Result<[u8; 32]> {
 }
 
 pub fn hash_meets_target(hash: &[u8; 32], target: &[u8; 32]) -> bool {
-    for i in 0..32 {
-        if hash[i] < target[i] {
-            return true;
-        }
-        if hash[i] > target[i] {
-            return false;
-        }
-    }
-    true
+    hash <= target
 }
 
 pub fn set_block_nonce(block: &mut TemplateBlock, nonce: u64) {

@@ -47,6 +47,8 @@ pub(super) fn cpu_worker_loop(
     let mut nonce = 0u64;
     let mut lane_iters = 0u64;
     let lane_stride = shared.hash_slots.len().max(1) as u64;
+    let hash_batch_size = shared.hash_batch_size.max(1);
+    let control_check_interval_hashes = shared.control_check_interval_hashes.max(1);
     let mut lane_quota = 0u64;
     let mut pending_hashes = 0u64;
     let mut next_flush_at = Instant::now() + shared.hash_flush_interval;
@@ -125,7 +127,7 @@ pub(super) fn cpu_worker_loop(
             if control_hashes_remaining == 0 {
                 control_hashes_remaining = lane_quota
                     .saturating_sub(lane_iters)
-                    .clamp(1, shared.control_check_interval_hashes.max(1));
+                    .clamp(1, control_check_interval_hashes);
             }
             if deadline_check_due {
                 next_deadline_check_at = now + MAX_DEADLINE_CHECK_INTERVAL;
@@ -150,13 +152,12 @@ pub(super) fn cpu_worker_loop(
             break;
         }
 
-        lane_iters = lane_iters.saturating_add(1);
-        control_hashes_remaining = control_hashes_remaining.saturating_sub(1);
-        pending_hashes = pending_hashes.saturating_add(1);
+        lane_iters += 1;
+        control_hashes_remaining -= 1;
+        pending_hashes += 1;
 
         let now = Instant::now();
-        let should_flush =
-            should_flush_hashes(pending_hashes, now, next_flush_at, shared.hash_batch_size);
+        let should_flush = should_flush_hashes(pending_hashes, now, next_flush_at, hash_batch_size);
         if should_flush {
             flush_hashes(&shared, thread_idx, &mut pending_hashes);
             next_flush_at = now + shared.hash_flush_interval;
@@ -169,8 +170,8 @@ pub(super) fn cpu_worker_loop(
                 .compare_exchange(
                     template.work_id,
                     solved_state,
-                    Ordering::SeqCst,
-                    Ordering::SeqCst,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
                 )
                 .is_ok()
             {
