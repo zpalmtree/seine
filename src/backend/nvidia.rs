@@ -7,17 +7,19 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, bail, Context, Result};
 use blocknet_pow_spec::CPU_LANE_MEMORY_BYTES;
 use crossbeam_channel::{bounded, Receiver, Sender};
+use sysinfo::System;
 
 use crate::backend::cpu::{CpuBackend, CpuBackendTuning};
 use crate::backend::{
-    AssignmentSemantics, BackendCallStatus, BackendCapabilities, BackendEvent,
-    BackendExecutionModel, BackendInstanceId, BackendTelemetry, BenchBackend, DeadlineSupport,
-    PowBackend, PreemptionGranularity, WorkAssignment,
+    AssignmentSemantics, BackendCapabilities, BackendEvent, BackendExecutionModel,
+    BackendInstanceId, BackendTelemetry, BenchBackend, DeadlineSupport, MiningSolution, NonceChunk,
+    PowBackend, PreemptionGranularity, WorkAssignment, WorkTemplate,
 };
 use crate::config::CpuAffinityMode;
 
 const BACKEND_NAME: &str = "nvidia";
-const EVENT_FORWARD_CAPACITY: usize = 256;
+const EVENT_FORWARD_CAPACITY: usize = 1024;
+const MAX_RECOMMENDED_LANES: usize = 8;
 
 #[derive(Debug, Clone)]
 struct NvidiaDeviceInfo {
@@ -37,16 +39,15 @@ pub struct NvidiaBackend {
 
 impl NvidiaBackend {
     pub fn new(device_index: Option<u32>) -> Self {
-        let inner = CpuBackend::with_tuning(
-            1,
-            CpuAffinityMode::Off,
-            CpuBackendTuning {
-                hash_batch_size: 64,
-                control_check_interval_hashes: 1,
-                hash_flush_interval: Duration::from_millis(50),
-                event_dispatch_capacity: EVENT_FORWARD_CAPACITY,
-            },
-        );
+        let host_threads = std::thread::available_parallelism()
+            .map(|parallelism| parallelism.get())
+            .unwrap_or(1)
+            .max(1);
+        let memory_budget = detect_available_memory_budget_bytes();
+        let estimated_instances = detect_nvidia_instance_count_for_sizing().max(1);
+        let lanes = recommend_worker_lanes(host_threads, memory_budget, estimated_instances);
+
+        let inner = CpuBackend::with_tuning(lanes, CpuAffinityMode::Auto, throughput_tuning(lanes));
 
         let event_sink = Arc::new(RwLock::new(None));
         let (inner_event_tx, inner_event_rx) = bounded::<BackendEvent>(EVENT_FORWARD_CAPACITY);
@@ -155,20 +156,11 @@ impl PowBackend for NvidiaBackend {
         self.inner.assign_work(work)
     }
 
-    fn assign_work_with_deadline(&self, work: &WorkAssignment, deadline: Instant) -> Result<()> {
-        self.inner.assign_work_with_deadline(work, deadline)
-    }
-
-    fn supports_assignment_batching(&self) -> bool {
-        self.inner.supports_assignment_batching()
-    }
-
-    fn supports_true_nonblocking(&self) -> bool {
-        self.inner.supports_true_nonblocking()
-    }
-
     fn assign_work_batch(&self, work: &[WorkAssignment]) -> Result<()> {
-        self.inner.assign_work_batch(work)
+        let Some(collapsed) = collapse_assignment_batch(work)? else {
+            return Ok(());
+        };
+        self.inner.assign_work(collapsed)
     }
 
     fn assign_work_batch_with_deadline(
@@ -176,23 +168,14 @@ impl PowBackend for NvidiaBackend {
         work: &[WorkAssignment],
         deadline: Instant,
     ) -> Result<()> {
-        self.inner.assign_work_batch_with_deadline(work, deadline)
+        let Some(collapsed) = collapse_assignment_batch(work)? else {
+            return Ok(());
+        };
+        self.inner.assign_work_with_deadline(&collapsed, deadline)
     }
 
-    fn assign_work_batch_nonblocking(&self, work: &[WorkAssignment]) -> Result<BackendCallStatus> {
-        self.inner.assign_work_batch_nonblocking(work)
-    }
-
-    fn wait_for_nonblocking_progress(&self, wait_for: Duration) -> Result<()> {
-        self.inner.wait_for_nonblocking_progress(wait_for)
-    }
-
-    fn cancel_work_nonblocking(&self) -> Result<BackendCallStatus> {
-        self.inner.cancel_work_nonblocking()
-    }
-
-    fn fence_nonblocking(&self) -> Result<BackendCallStatus> {
-        self.inner.fence_nonblocking()
+    fn supports_assignment_batching(&self) -> bool {
+        true
     }
 
     fn cancel_work(&self) -> Result<()> {
@@ -229,14 +212,14 @@ impl PowBackend for NvidiaBackend {
 
     fn capabilities(&self) -> BackendCapabilities {
         BackendCapabilities {
-            preferred_iters_per_lane: Some(1),
-            preferred_allocation_iters_per_lane: Some(1),
-            preferred_hash_poll_interval: Some(Duration::from_millis(50)),
+            preferred_iters_per_lane: Some(1 << 18),
+            preferred_allocation_iters_per_lane: Some(1 << 20),
+            preferred_hash_poll_interval: Some(Duration::from_millis(20)),
             preferred_assignment_timeout: None,
             preferred_control_timeout: None,
             preferred_assignment_timeout_strikes: None,
-            preferred_worker_queue_depth: None,
-            max_inflight_assignments: 1,
+            preferred_worker_queue_depth: Some(16),
+            max_inflight_assignments: 8,
             deadline_support: DeadlineSupport::Cooperative,
             assignment_semantics: AssignmentSemantics::Replace,
             execution_model: BackendExecutionModel::Blocking,
@@ -257,6 +240,155 @@ impl BenchBackend for NvidiaBackend {
     }
 }
 
+fn throughput_tuning(lanes: usize) -> CpuBackendTuning {
+    let lanes = lanes.max(1);
+    let hash_batch_size = if lanes >= 8 {
+        2048
+    } else if lanes >= 4 {
+        1024
+    } else {
+        512
+    };
+    let control_check_interval_hashes = if lanes >= 8 { 32 } else { 16 };
+    let hash_flush_interval = if lanes >= 4 {
+        Duration::from_millis(200)
+    } else {
+        Duration::from_millis(150)
+    };
+    let event_dispatch_capacity = (lanes.saturating_mul(256)).clamp(256, 4096);
+
+    CpuBackendTuning {
+        hash_batch_size,
+        control_check_interval_hashes,
+        hash_flush_interval,
+        event_dispatch_capacity,
+    }
+}
+
+fn recommend_worker_lanes(
+    host_threads: usize,
+    available_memory_bytes: Option<u64>,
+    nvidia_instance_count: usize,
+) -> usize {
+    let instances = nvidia_instance_count.max(1);
+    let host_threads = host_threads.max(1);
+    let host_per_instance = host_threads.saturating_div(instances).max(1);
+
+    let memory_total_lanes = available_memory_bytes
+        .map(|available| {
+            let usable = available.saturating_mul(3) / 4;
+            usable.saturating_div(CPU_LANE_MEMORY_BYTES).max(1)
+        })
+        .unwrap_or(host_threads as u64);
+    let memory_per_instance = (memory_total_lanes / instances as u64).max(1) as usize;
+
+    host_per_instance
+        .min(memory_per_instance)
+        .max(1)
+        .min(MAX_RECOMMENDED_LANES)
+}
+
+fn detect_nvidia_instance_count_for_sizing() -> usize {
+    match query_nvidia_devices() {
+        Ok(devices) => devices.len().max(1),
+        Err(_) => 1,
+    }
+}
+
+fn detect_available_memory_budget_bytes() -> Option<u64> {
+    let mut sys = System::new();
+    sys.refresh_memory();
+
+    let total = sys.total_memory();
+    if total == 0 {
+        return None;
+    }
+
+    let mut available = sys.available_memory().min(total);
+    if available == 0 {
+        available = total;
+    }
+
+    if let Some(cgroup) = sys.cgroup_limits() {
+        if cgroup.total_memory > 0 {
+            available = available.min(cgroup.total_memory);
+        }
+        if cgroup.free_memory > 0 {
+            available = available.min(cgroup.free_memory);
+        }
+    }
+
+    Some(available.max(CPU_LANE_MEMORY_BYTES))
+}
+
+fn collapse_assignment_batch(work: &[WorkAssignment]) -> Result<Option<WorkAssignment>> {
+    let Some(first) = work.first() else {
+        return Ok(None);
+    };
+    if work.len() == 1 {
+        return Ok(Some(first.clone()));
+    }
+
+    let mut expected_start = first
+        .nonce_chunk
+        .start_nonce
+        .wrapping_add(first.nonce_chunk.nonce_count);
+    let mut nonce_count = first.nonce_chunk.nonce_count;
+
+    for (idx, assignment) in work.iter().enumerate().skip(1) {
+        ensure_compatible_template(&first.template, &assignment.template).with_context(|| {
+            format!(
+                "assignment batch item {} references a different template",
+                idx + 1
+            )
+        })?;
+        if assignment.nonce_chunk.start_nonce != expected_start {
+            bail!(
+                "assignment batch is not contiguous at item {} (expected nonce {}, got {})",
+                idx + 1,
+                expected_start,
+                assignment.nonce_chunk.start_nonce
+            );
+        }
+
+        nonce_count = nonce_count
+            .checked_add(assignment.nonce_chunk.nonce_count)
+            .ok_or_else(|| anyhow!("assignment batch nonce_count overflow"))?;
+        expected_start = expected_start.wrapping_add(assignment.nonce_chunk.nonce_count);
+    }
+
+    Ok(Some(WorkAssignment {
+        template: Arc::clone(&first.template),
+        nonce_chunk: NonceChunk {
+            start_nonce: first.nonce_chunk.start_nonce,
+            nonce_count,
+        },
+    }))
+}
+
+fn ensure_compatible_template(first: &Arc<WorkTemplate>, second: &Arc<WorkTemplate>) -> Result<()> {
+    if first.work_id != second.work_id {
+        bail!(
+            "mismatched work ids ({} vs {})",
+            first.work_id,
+            second.work_id
+        );
+    }
+    if first.epoch != second.epoch {
+        bail!("mismatched epochs ({} vs {})", first.epoch, second.epoch);
+    }
+    if first.target != second.target {
+        bail!("mismatched target");
+    }
+    if first.stop_at != second.stop_at {
+        bail!("mismatched stop_at");
+    }
+    if first.header_base.as_ref() != second.header_base.as_ref() {
+        bail!("mismatched header_base");
+    }
+    Ok(())
+}
+
 fn spawn_event_forwarder(
     sink: Arc<RwLock<Option<Sender<BackendEvent>>>>,
     rx: Receiver<BackendEvent>,
@@ -265,10 +397,10 @@ fn spawn_event_forwarder(
     thread::spawn(move || {
         while let Ok(event) = rx.recv() {
             let translated = match event {
-                BackendEvent::Solution(mut solution) => {
-                    solution.backend = backend_name;
-                    BackendEvent::Solution(solution)
-                }
+                BackendEvent::Solution(solution) => BackendEvent::Solution(MiningSolution {
+                    backend: backend_name,
+                    ..solution
+                }),
                 BackendEvent::Error {
                     backend_id,
                     message,
@@ -370,6 +502,16 @@ fn parse_nvidia_smi_query_output(raw: &str) -> Result<Vec<NvidiaDeviceInfo>> {
 mod tests {
     use super::*;
 
+    fn test_template(work_id: u64) -> Arc<WorkTemplate> {
+        Arc::new(WorkTemplate {
+            work_id,
+            epoch: 7,
+            header_base: Arc::<[u8]>::from(vec![1u8; 92]),
+            target: [0xff; 32],
+            stop_at: Instant::now() + Duration::from_secs(30),
+        })
+    }
+
     #[test]
     fn parse_nvidia_smi_query_output_parses_multiple_rows() {
         let parsed = parse_nvidia_smi_query_output(
@@ -390,5 +532,73 @@ mod tests {
         let err =
             parse_nvidia_smi_query_output("abc, RTX, 8192").expect_err("invalid index should fail");
         assert!(format!("{err:#}").contains("invalid GPU index"));
+    }
+
+    #[test]
+    fn recommend_worker_lanes_respects_memory_and_instances() {
+        assert_eq!(
+            recommend_worker_lanes(16, Some(4 * 1024 * 1024 * 1024), 1),
+            1
+        );
+        assert_eq!(
+            recommend_worker_lanes(16, Some(64 * 1024 * 1024 * 1024), 2),
+            8
+        );
+        assert_eq!(
+            recommend_worker_lanes(3, Some(64 * 1024 * 1024 * 1024), 1),
+            3
+        );
+    }
+
+    #[test]
+    fn collapse_assignment_batch_merges_contiguous_chunks() {
+        let template = test_template(11);
+        let assignments = vec![
+            WorkAssignment {
+                template: Arc::clone(&template),
+                nonce_chunk: NonceChunk {
+                    start_nonce: 100,
+                    nonce_count: 4,
+                },
+            },
+            WorkAssignment {
+                template,
+                nonce_chunk: NonceChunk {
+                    start_nonce: 104,
+                    nonce_count: 6,
+                },
+            },
+        ];
+
+        let collapsed = collapse_assignment_batch(&assignments)
+            .expect("batch collapse should succeed")
+            .expect("batch should not be empty");
+        assert_eq!(collapsed.nonce_chunk.start_nonce, 100);
+        assert_eq!(collapsed.nonce_chunk.nonce_count, 10);
+    }
+
+    #[test]
+    fn collapse_assignment_batch_rejects_non_contiguous_chunks() {
+        let template = test_template(11);
+        let assignments = vec![
+            WorkAssignment {
+                template: Arc::clone(&template),
+                nonce_chunk: NonceChunk {
+                    start_nonce: 100,
+                    nonce_count: 4,
+                },
+            },
+            WorkAssignment {
+                template,
+                nonce_chunk: NonceChunk {
+                    start_nonce: 105,
+                    nonce_count: 6,
+                },
+            },
+        ];
+
+        let err =
+            collapse_assignment_batch(&assignments).expect_err("non-contiguous chunks should fail");
+        assert!(format!("{err:#}").contains("not contiguous"));
     }
 }
