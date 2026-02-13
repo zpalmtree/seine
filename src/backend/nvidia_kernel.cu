@@ -5,6 +5,12 @@ extern "C" {
 
 constexpr unsigned int ARGON2_COOP_THREADS = 32U;
 constexpr unsigned int ARGON2_COOP_WARP_MASK = 0xFFFFFFFFU;
+#ifndef SEINE_FIXED_M_BLOCKS
+#define SEINE_FIXED_M_BLOCKS 0U
+#endif
+#ifndef SEINE_FIXED_T_COST
+#define SEINE_FIXED_T_COST 0U
+#endif
 
 __device__ __forceinline__ void coop_sync() {
     __syncwarp(ARGON2_COOP_WARP_MASK);
@@ -67,6 +73,7 @@ __device__ __forceinline__ void compress_block_coop(
     const unsigned long long *__restrict__ rhs,
     const unsigned long long *__restrict__ lhs,
     unsigned long long *__restrict__ out,
+    bool xor_out,
     unsigned long long *__restrict__ scratch_r,
     unsigned long long *__restrict__ scratch_q,
     unsigned int tid
@@ -165,7 +172,12 @@ __device__ __forceinline__ void compress_block_coop(
     coop_sync();
 
     for (unsigned int i = tid; i < 128U; i += ARGON2_COOP_THREADS) {
-        out[i] = scratch_q[i] ^ scratch_r[i];
+        const unsigned long long mixed = scratch_q[i] ^ scratch_r[i];
+        if (xor_out) {
+            out[i] ^= mixed;
+        } else {
+            out[i] = mixed;
+        }
     }
 }
 
@@ -185,6 +197,7 @@ __device__ __forceinline__ void update_address_block_coop(
         zero_block,
         input_block,
         address_block,
+        false,
         scratch_r,
         scratch_q,
         tid
@@ -193,6 +206,7 @@ __device__ __forceinline__ void update_address_block_coop(
         zero_block,
         address_block,
         address_block,
+        false,
         scratch_r,
         scratch_q,
         tid
@@ -233,12 +247,16 @@ __global__ void argon2id_fill_kernel(
 ) {
     const unsigned int lane = blockIdx.x;
     const unsigned int tid = threadIdx.x;
-    if (lane >= lanes_active || m_blocks < 8U) {
+    const unsigned int effective_m_blocks =
+        (SEINE_FIXED_M_BLOCKS > 0U) ? SEINE_FIXED_M_BLOCKS : m_blocks;
+    const unsigned int effective_t_cost =
+        (SEINE_FIXED_T_COST > 0U) ? SEINE_FIXED_T_COST : t_cost;
+    if (lane >= lanes_active || effective_m_blocks < 8U) {
         return;
     }
 
     const unsigned long long lane_stride_words =
-        static_cast<unsigned long long>(m_blocks) * 128ULL;
+        static_cast<unsigned long long>(effective_m_blocks) * 128ULL;
     unsigned long long *memory =
         lane_memory + static_cast<unsigned long long>(lane) * lane_stride_words;
     const unsigned long long *seed =
@@ -249,13 +267,12 @@ __global__ void argon2id_fill_kernel(
     }
     coop_sync();
 
-    const unsigned int segment_length = m_blocks / 4U;
-    const unsigned int lane_length = m_blocks;
+    const unsigned int segment_length = effective_m_blocks / 4U;
+    const unsigned int lane_length = effective_m_blocks;
 
     __shared__ unsigned long long address_block[128];
     __shared__ unsigned long long input_block[128];
     __shared__ unsigned long long zero_block[128];
-    __shared__ unsigned long long block_tmp[128];
     __shared__ unsigned long long scratch_r[128];
     __shared__ unsigned long long scratch_q[128];
 
@@ -266,7 +283,7 @@ __global__ void argon2id_fill_kernel(
     }
     coop_sync();
 
-    for (unsigned int pass = 0; pass < t_cost; ++pass) {
+    for (unsigned int pass = 0; pass < effective_t_cost; ++pass) {
         for (unsigned int slice = 0; slice < 4U; ++slice) {
             const bool data_independent = (pass == 0U && slice < 2U);
             if (data_independent) {
@@ -278,8 +295,8 @@ __global__ void argon2id_fill_kernel(
                     input_block[0] = static_cast<unsigned long long>(pass);
                     input_block[1] = 0ULL; // lane index (p=1)
                     input_block[2] = static_cast<unsigned long long>(slice);
-                    input_block[3] = static_cast<unsigned long long>(m_blocks);
-                    input_block[4] = static_cast<unsigned long long>(t_cost);
+                    input_block[3] = static_cast<unsigned long long>(effective_m_blocks);
+                    input_block[4] = static_cast<unsigned long long>(effective_t_cost);
                     input_block[5] = 2ULL; // Argon2id
                 }
                 coop_sync();
@@ -345,25 +362,32 @@ __global__ void argon2id_fill_kernel(
                         static_cast<unsigned long long>(lane_length)
                     );
 
-                compress_block_coop(
-                    memory + static_cast<unsigned long long>(prev_index) * 128ULL,
-                    memory + static_cast<unsigned long long>(ref_index) * 128ULL,
-                    block_tmp,
-                    scratch_r,
-                    scratch_q,
-                    tid
-                );
-
                 const unsigned long long dst_offset =
                     static_cast<unsigned long long>(cur_index) * 128ULL;
+                const unsigned long long rhs_offset =
+                    static_cast<unsigned long long>(prev_index) * 128ULL;
+                const unsigned long long lhs_offset =
+                    static_cast<unsigned long long>(ref_index) * 128ULL;
                 if (pass == 0U) {
-                    for (unsigned int i = tid; i < 128U; i += ARGON2_COOP_THREADS) {
-                        memory[dst_offset + static_cast<unsigned long long>(i)] = block_tmp[i];
-                    }
+                    compress_block_coop(
+                        memory + rhs_offset,
+                        memory + lhs_offset,
+                        memory + dst_offset,
+                        false,
+                        scratch_r,
+                        scratch_q,
+                        tid
+                    );
                 } else {
-                    for (unsigned int i = tid; i < 128U; i += ARGON2_COOP_THREADS) {
-                        memory[dst_offset + static_cast<unsigned long long>(i)] ^= block_tmp[i];
-                    }
+                    compress_block_coop(
+                        memory + rhs_offset,
+                        memory + lhs_offset,
+                        memory + dst_offset,
+                        true,
+                        scratch_r,
+                        scratch_q,
+                        tid
+                    );
                 }
                 coop_sync();
 

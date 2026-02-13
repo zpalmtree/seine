@@ -181,6 +181,12 @@ impl CudaArgon2Engine {
             .compute_capability()
             .map_err(|err| anyhow!("failed to query compute capability: {err:?}"))?;
 
+        let params = pow_params()
+            .map_err(|err| anyhow!("invalid Argon2 parameters for CUDA backend: {err}"))?;
+        let m_blocks = params.block_count() as u32;
+        let m_cost_kib = params.m_cost();
+        let t_cost = params.t_cost();
+
         let nvrtc_options = vec![
             "--std=c++14".to_string(),
             "--extra-device-vectorization".to_string(),
@@ -188,6 +194,8 @@ impl CudaArgon2Engine {
             "--use_fast_math".to_string(),
             "--ftz=true".to_string(),
             "--fmad=true".to_string(),
+            format!("-DSEINE_FIXED_M_BLOCKS={}U", m_blocks),
+            format!("-DSEINE_FIXED_T_COST={}U", t_cost),
             format!("--maxrregcount={}", tuning.max_rregcount.max(1)),
             format!("--gpu-architecture=sm_{}{}", cc_major, cc_minor),
         ];
@@ -203,12 +211,6 @@ impl CudaArgon2Engine {
         let touch_kernel = module
             .load_function("touch_lane_memory_kernel")
             .map_err(|err| anyhow!("failed to load CUDA probe kernel function: {err:?}"))?;
-
-        let params = pow_params()
-            .map_err(|err| anyhow!("invalid Argon2 parameters for CUDA backend: {err}"))?;
-        let m_blocks = params.block_count() as u32;
-        let m_cost_kib = params.m_cost();
-        let t_cost = params.t_cost();
 
         let lane_bytes = CPU_LANE_MEMORY_BYTES.max(u64::from(m_blocks) * 1024);
         let memory_budget_mib = memory_total_mib.max(memory_free_mib.unwrap_or(0)).max(1);
