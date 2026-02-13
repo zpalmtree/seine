@@ -68,6 +68,7 @@ struct BackendSlot {
     backend: Arc<dyn PowBackend>,
     lanes: u64,
     runtime_policy: BackendRuntimePolicy,
+    capabilities: BackendCapabilities,
 }
 
 struct DistributeWorkOptions<'a> {
@@ -449,6 +450,7 @@ fn activate_backends(
                     backend,
                     lanes,
                     runtime_policy,
+                    capabilities,
                 });
             }
             Err(err) => {
@@ -1056,16 +1058,7 @@ fn backend_runtime_policy(
 }
 
 fn backend_capabilities(slot: &BackendSlot) -> BackendCapabilities {
-    let mut capabilities = normalize_backend_capabilities(
-        slot.backend.capabilities(),
-        slot.backend.supports_assignment_batching(),
-    );
-    if capabilities.execution_model == BackendExecutionModel::Nonblocking
-        && !slot.backend.supports_true_nonblocking()
-    {
-        capabilities.execution_model = BackendExecutionModel::Blocking;
-    }
-    capabilities
+    slot.capabilities
 }
 
 fn cpu_lane_count(backends: &[BackendSlot]) -> u64 {
@@ -1429,11 +1422,21 @@ mod tests {
     }
 
     fn slot(id: BackendInstanceId, lanes: u64, backend: Arc<dyn PowBackend>) -> BackendSlot {
+        let mut capabilities = normalize_backend_capabilities(
+            backend.capabilities(),
+            backend.supports_assignment_batching(),
+        );
+        if capabilities.execution_model == BackendExecutionModel::Nonblocking
+            && !backend.supports_true_nonblocking()
+        {
+            capabilities.execution_model = BackendExecutionModel::Blocking;
+        }
         BackendSlot {
             id,
             backend,
             lanes,
             runtime_policy: BackendRuntimePolicy::default(),
+            capabilities,
         }
     }
 

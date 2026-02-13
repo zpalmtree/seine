@@ -1803,6 +1803,7 @@ mod tests {
             backend: Arc::new(NoopBackend),
             lanes: 1,
             runtime_policy: crate::miner::BackendRuntimePolicy::default(),
+            capabilities: crate::backend::BackendCapabilities::default(),
         }];
         let round_backend_hashes = BTreeMap::new();
         let round_backend_telemetry = BTreeMap::new();
@@ -1826,6 +1827,7 @@ mod tests {
             backend: Arc::new(NoopBackend),
             lanes: 1,
             runtime_policy: crate::miner::BackendRuntimePolicy::default(),
+            capabilities: crate::backend::BackendCapabilities::default(),
         }];
         let round_backend_hashes = BTreeMap::new();
 
@@ -1841,12 +1843,14 @@ mod tests {
                 backend: Arc::new(NoopBackend),
                 lanes: 1,
                 runtime_policy: crate::miner::BackendRuntimePolicy::default(),
+                capabilities: crate::backend::BackendCapabilities::default(),
             },
             BackendSlot {
                 id: 9,
                 backend: Arc::new(NoopBackend),
                 lanes: 2,
                 runtime_policy: crate::miner::BackendRuntimePolicy::default(),
+                capabilities: crate::backend::BackendCapabilities::default(),
             },
         ];
 
@@ -1874,12 +1878,14 @@ mod tests {
                 backend: Arc::new(NoopBackend),
                 lanes: 1,
                 runtime_policy: crate::miner::BackendRuntimePolicy::default(),
+                capabilities: crate::backend::BackendCapabilities::default(),
             },
             BackendSlot {
                 id: 9,
                 backend: Arc::new(NoopBackend),
                 lanes: 1,
                 runtime_policy: crate::miner::BackendRuntimePolicy::default(),
+                capabilities: crate::backend::BackendCapabilities::default(),
             },
         ];
         let current = vec![BackendSlot {
@@ -1887,6 +1893,7 @@ mod tests {
             backend: Arc::new(NoopBackend),
             lanes: 1,
             runtime_policy: crate::miner::BackendRuntimePolicy::default(),
+            capabilities: crate::backend::BackendCapabilities::default(),
         }];
         let identity = worker_benchmark_identity(&expected);
 
@@ -1902,12 +1909,14 @@ mod tests {
             backend: Arc::new(NoopBackend),
             lanes: 2,
             runtime_policy: crate::miner::BackendRuntimePolicy::default(),
+            capabilities: crate::backend::BackendCapabilities::default(),
         }];
         let current = vec![BackendSlot {
             id: 2,
             backend: Arc::new(NoopBackend),
             lanes: 1,
             runtime_policy: crate::miner::BackendRuntimePolicy::default(),
+            capabilities: crate::backend::BackendCapabilities::default(),
         }];
         let identity = worker_benchmark_identity(&expected);
 

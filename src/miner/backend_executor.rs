@@ -1763,6 +1763,7 @@ mod tests {
             backend: Arc::clone(&active_backend),
             lanes: 1,
             runtime_policy: crate::miner::BackendRuntimePolicy::default(),
+            capabilities: crate::backend::BackendCapabilities::default(),
         }];
         executor.prune(&backends);
 

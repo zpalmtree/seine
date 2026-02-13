@@ -156,11 +156,13 @@ mod tests {
     }
 
     fn slot(id: BackendInstanceId, backend: Arc<dyn PowBackend>) -> BackendSlot {
+        let capabilities = backend.capabilities();
         BackendSlot {
             id,
             backend,
             lanes: 1,
             runtime_policy: crate::miner::BackendRuntimePolicy::default(),
+            capabilities,
         }
     }
 

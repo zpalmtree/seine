@@ -1973,6 +1973,7 @@ mod tests {
             backend: Arc::new(NoopBackend::new("cpu")),
             lanes: 1,
             runtime_policy: crate::miner::BackendRuntimePolicy::default(),
+            capabilities: crate::backend::BackendCapabilities::default(),
         }];
 
         let action = handle_mining_backend_event(
@@ -2013,6 +2014,7 @@ mod tests {
             backend: Arc::new(NoopBackend::new("cpu")),
             lanes: 1,
             runtime_policy: crate::miner::BackendRuntimePolicy::default(),
+            capabilities: crate::backend::BackendCapabilities::default(),
         }];
 
         let action = handle_mining_backend_event(
@@ -2050,6 +2052,7 @@ mod tests {
             backend: Arc::new(NoopBackend::new("cpu")),
             lanes: 1,
             runtime_policy: crate::miner::BackendRuntimePolicy::default(),
+            capabilities: crate::backend::BackendCapabilities::default(),
         }];
 
         event_tx
@@ -2411,12 +2414,14 @@ mod tests {
                 backend: Arc::new(NoopBackend::new("cpu")),
                 lanes: 1,
                 runtime_policy: crate::miner::BackendRuntimePolicy::default(),
+                capabilities: crate::backend::BackendCapabilities::default(),
             },
             BackendSlot {
                 id: 2,
                 backend: Arc::new(NoopBackend::new("cpu")),
                 lanes: 1,
                 runtime_policy: crate::miner::BackendRuntimePolicy::default(),
+                capabilities: crate::backend::BackendCapabilities::default(),
             },
         ];
 
@@ -2469,12 +2474,14 @@ mod tests {
                 backend: Arc::new(NoopBackend::new("cpu")),
                 lanes: 1,
                 runtime_policy: crate::miner::BackendRuntimePolicy::default(),
+                capabilities: crate::backend::BackendCapabilities::default(),
             },
             BackendSlot {
                 id: 2,
                 backend: Arc::new(NoopBackend::new("cpu")),
                 lanes: 1,
                 runtime_policy: crate::miner::BackendRuntimePolicy::default(),
+                capabilities: crate::backend::BackendCapabilities::default(),
             },
         ];
         let mut weights = seed_backend_weights(&backends);
@@ -2505,6 +2512,7 @@ mod tests {
             backend: Arc::new(NoopBackend::new("cpu")),
             lanes: 1,
             runtime_policy: crate::miner::BackendRuntimePolicy::default(),
+            capabilities: crate::backend::BackendCapabilities::default(),
         }];
         let mut weights = seed_backend_weights(&backends);
         let mut round_hashes = BTreeMap::new();
@@ -2533,6 +2541,7 @@ mod tests {
             backend: Arc::new(NoopBackend::new("cpu")),
             lanes: 1,
             runtime_policy: crate::miner::BackendRuntimePolicy::default(),
+            capabilities: crate::backend::BackendCapabilities::default(),
         }];
         let mut weights = seed_backend_weights(&backends);
         let mut round_hashes = BTreeMap::new();
@@ -2563,6 +2572,7 @@ mod tests {
             backend: Arc::new(NoopBackend::new("cpu")),
             lanes: 1,
             runtime_policy: crate::miner::BackendRuntimePolicy::default(),
+            capabilities: crate::backend::BackendCapabilities::default(),
         }];
         let mut weights = seed_backend_weights(&backends);
         let mut round_hashes = BTreeMap::new();
@@ -2594,6 +2604,7 @@ mod tests {
             backend: Arc::new(NoopBackend::new("cpu")),
             lanes: 1,
             runtime_policy: crate::miner::BackendRuntimePolicy::default(),
+            capabilities: crate::backend::BackendCapabilities::default(),
         }];
         let mut weights = seed_backend_weights(&backends);
         let mut round_hashes = BTreeMap::new();
@@ -2633,6 +2644,7 @@ mod tests {
             backend: Arc::new(NoopBackend::new("cpu")),
             lanes: 3,
             runtime_policy: crate::miner::BackendRuntimePolicy::default(),
+            capabilities: crate::backend::BackendCapabilities::default(),
         }];
         let mut weights = BTreeMap::new();
         weights.insert(9, 999.0);
