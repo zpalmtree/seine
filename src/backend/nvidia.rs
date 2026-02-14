@@ -52,6 +52,8 @@ const ADAPTIVE_DEPTH_PRESSURE_CONTROL_BONUS: u32 = 4;
 const ADAPTIVE_DEPTH_PRESSURE_REPLACE_BONUS: u32 = 2;
 const ADAPTIVE_DEPTH_PRESSURE_DECAY_PER_BATCH: u32 = 1;
 const ADAPTIVE_DEPTH_DEADLINE_SLACK_FRAC: f64 = 0.75;
+const ADAPTIVE_DEPTH_DEADLINE_LAUNCH_HEADROOM_FRAC: f64 = 0.95;
+const ADAPTIVE_DEPTH_HASH_EMA_ALPHA: f64 = 0.25;
 
 fn default_hashes_per_launch_per_lane() -> u32 {
     DEFAULT_HASHES_PER_LAUNCH_PER_LANE
@@ -228,6 +230,7 @@ struct ActiveAssignment {
     next_nonce: u64,
     remaining: u64,
     hashes_done: u64,
+    hash_micros_ema: Option<f64>,
     started_at: Instant,
 }
 
@@ -237,6 +240,7 @@ impl ActiveAssignment {
             next_nonce: work.nonce_chunk.start_nonce,
             remaining: work.nonce_chunk.nonce_count,
             hashes_done: 0,
+            hash_micros_ema: None,
             started_at: Instant::now(),
             work,
         }
@@ -1703,6 +1707,37 @@ fn worker_loop(
                     hashes_per_launch_per_lane = 1;
                 }
             }
+
+            // Near round/template boundaries, trim launch depth to avoid long tail launches that
+            // finish after stop_at and inflate fence/late-work overhead.
+            if let Some(hash_micros) = current
+                .hash_micros_ema
+                .filter(|value| value.is_finite() && *value > 0.0)
+            {
+                let remaining_micros = current
+                    .work
+                    .template
+                    .stop_at
+                    .saturating_duration_since(Instant::now())
+                    .as_secs_f64()
+                    * 1_000_000.0;
+                if remaining_micros > 0.0 {
+                    let lanes_for_estimate = engine.max_lanes().max(1);
+                    let budget_micros =
+                        remaining_micros * ADAPTIVE_DEPTH_DEADLINE_LAUNCH_HEADROOM_FRAC;
+                    while hashes_per_launch_per_lane > 1 {
+                        let predicted_hashes = lanes_for_estimate
+                            .saturating_mul(hashes_per_launch_per_lane)
+                            .max(1) as f64;
+                        let predicted_micros = hash_micros * predicted_hashes;
+                        if predicted_micros <= budget_micros {
+                            break;
+                        }
+                        hashes_per_launch_per_lane =
+                            (hashes_per_launch_per_lane.saturating_add(1) / 2).max(1);
+                    }
+                }
+            }
         }
         hashes_per_launch_per_lane = hashes_per_launch_per_lane.max(1);
 
@@ -1730,6 +1765,7 @@ fn worker_loop(
             .active_hashes_per_launch_per_lane
             .store(effective_launch_depth as u32, Ordering::Release);
 
+        let launch_started = Instant::now();
         let done = match engine.run_fill_batch(
             current.work.template.header_base.as_ref(),
             &nonce_buf[..hashes_per_batch],
@@ -1773,9 +1809,23 @@ fn worker_loop(
             continue;
         }
 
+        let launch_elapsed = launch_started.elapsed();
         current.hashes_done = current.hashes_done.saturating_add(done.hashes_done as u64);
         current.next_nonce = current.next_nonce.wrapping_add(done.hashes_done as u64);
         current.remaining = current.remaining.saturating_sub(done.hashes_done as u64);
+        if done.hashes_done > 0 {
+            let batch_hashes = done.hashes_done as f64;
+            let per_hash_micros = (launch_elapsed.as_secs_f64() * 1_000_000.0) / batch_hashes;
+            if per_hash_micros.is_finite() && per_hash_micros > 0.0 {
+                current.hash_micros_ema = Some(match current.hash_micros_ema {
+                    Some(previous) => {
+                        previous * (1.0 - ADAPTIVE_DEPTH_HASH_EMA_ALPHA)
+                            + per_hash_micros * ADAPTIVE_DEPTH_HASH_EMA_ALPHA
+                    }
+                    None => per_hash_micros,
+                });
+            }
+        }
 
         shared
             .hashes

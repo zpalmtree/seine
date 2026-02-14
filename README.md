@@ -146,7 +146,7 @@ Run headless/plain logs (no fullscreen TUI):
     - `--nvidia-max-lanes` caps active NVIDIA lanes per device instance.
     - `--nvidia-dispatch-iters-per-lane` and `--nvidia-allocation-iters-per-lane` override scheduler/allocator lane-iteration hints.
     - `--nvidia-hashes-per-launch-per-lane` (default `2`) controls CUDA launch depth per lane (`higher => fewer launches`, often higher H/s on this workload, but coarser cancel/fence preemption).
-    - `--nvidia-no-adaptive-launch-depth` disables backend pressure-based launch-depth reduction.
+    - `--nvidia-no-adaptive-launch-depth` disables backend pressure/deadline-based launch-depth shaping.
     - `--nvidia-fused-target-check` enables in-fill-kernel target checking (disabled by default; can regress throughput on some GPUs).
     - `--nvidia-template-stop-policy` (`auto`, `on`, `off`) controls whether NVIDIA workers enforce template `stop_at`; `auto` follows `--strict-round-accounting`.
   - `--stats-secs` (default `10`) controls periodic stats log emission cadence.
