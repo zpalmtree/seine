@@ -114,3 +114,73 @@ cargo run --release -- --bench --bench-kind backend --backend cpu --threads 1 --
 
 - Correctness checks during each retained candidate: `cargo test fixed_kernel_matches_reference_for_small_memory_configs -- --nocapture`
 - Full suite at end of sweep: `cargo test` (`180 passed`).
+
+## 2026-02-14 additional miner/backend/kernel rewrite pass (A/B with detached baseline)
+
+This pass explicitly paired baseline and candidate runs from a detached `HEAD` worktree (`bedc837`) and the active worktree, with sequential (non-overlapping) benchmark execution.
+
+### Notes on benchmark hygiene
+
+- The first capture (`data/bench_cpu_kernel_rewrite_baseline.json`, `data/bench_cpu_backend_rewrite_baseline.json`) accidentally ran kernel/backend in parallel and is not used for decision-making.
+- All acceptance decisions below use sequential A/B runs.
+- Long runs showed thermal drift over time, so late-phase baseline repeats were also captured for pairing.
+
+### Attempt 7: Linux huge-page hint + deterministic-slice prefetch (not adopted)
+
+- Candidate reports:
+  - Kernel: `data/bench_cpu_kernel_attempt7_opt_seq.json` (`avg=1.417 H/s`)
+  - Backend: `data/bench_cpu_backend_attempt7_opt_seq.json` (`avg=1.332 H/s`)
+- Baseline (same protocol):
+  - Kernel: `data/bench_cpu_kernel_attempt7_baseline_seq.json` (`avg=1.396 H/s`)
+  - Backend: `data/bench_cpu_backend_attempt7_baseline_seq.json` (`avg=1.373 H/s`)
+- Outcome:
+  - Kernel showed a short-run uplift, but backend regressed materially.
+  - Status: rejected; prefetch removed.
+
+### Attempt 7b: Linux huge-page hint only (not adopted)
+
+- Candidate reports:
+  - Kernel: `data/bench_cpu_kernel_attempt7_opt2_seq.json` (`avg=1.417 H/s`)
+  - Backend: `data/bench_cpu_backend_attempt7_opt2_seq.json` (`avg=1.358 H/s`)
+- Long confirmation:
+  - Baseline long backend: `data/bench_cpu_backend_attempt7_baseline_long.json` (`avg=1.360 H/s`)
+  - Candidate long backend: `data/bench_cpu_backend_attempt7_opt2_long.json` (`avg=1.351 H/s`)
+- Outcome: no reproducible backend gain; status rejected.
+
+### Attempt 8: isolated BLAMKA helper rewrite (not adopted)
+
+- Candidate reports:
+  - Kernel: `data/bench_cpu_kernel_attempt8_opt_seq.json` (`avg=1.396 H/s`)
+  - Backend: `data/bench_cpu_backend_attempt8_opt_seq.json` (`avg=1.361 H/s`)
+- Outcome: kernel flat, backend below baseline; status rejected.
+
+### Attempt 9: AVX2 dispatch once per hash (remove per-block target-feature call indirection) (not adopted)
+
+- Candidate reports:
+  - Kernel short: `data/bench_cpu_kernel_attempt9_opt_seq.json` (`avg=1.417 H/s`)
+  - Backend short: `data/bench_cpu_backend_attempt9_opt_seq.json` (`avg=1.354 H/s`)
+  - Kernel long: `data/bench_cpu_kernel_attempt9_opt_long.json` (`avg=1.322 H/s`)
+  - Kernel long repeat: `data/bench_cpu_kernel_attempt9_opt_long_repeat2.json` (`avg=1.333 H/s`)
+  - Backend long: `data/bench_cpu_backend_attempt9_opt_long.json` (`avg=1.364 H/s`)
+  - Backend long repeats: `data/bench_cpu_backend_attempt9_opt_long_repeat2.json` (`avg=1.324 H/s`), `data/bench_cpu_backend_attempt9_opt_long_repeat3_late.json` (`avg=1.319 H/s`)
+- Paired late baseline:
+  - `data/bench_cpu_backend_attempt7_baseline_long_repeat2_late.json` (`avg=1.319 H/s`)
+- Outcome: results stayed inside run-to-run noise once paired; no robust, repeatable uplift. Status rejected.
+
+### Attempt 10: raw-pointer block access in `fill_block_from_refs` (not adopted)
+
+- Candidate reports:
+  - Backend short (late phase): `data/bench_cpu_backend_attempt10_opt_seq.json` (`avg=1.330 H/s`)
+  - Kernel short (late phase): `data/bench_cpu_kernel_attempt10_opt_seq_late3.json` (`avg=1.333 H/s`)
+  - Backend long (late phase): `data/bench_cpu_backend_attempt10_opt_long_late3.json` (`avg=1.266 H/s`)
+- Paired late baseline:
+  - Backend short: `data/bench_cpu_backend_attempt7_baseline_seq_late3.json` (`avg=1.322 H/s`)
+  - Kernel short: `data/bench_cpu_kernel_attempt7_baseline_seq_late3.json` (`avg=1.354 H/s`)
+  - Backend long: `data/bench_cpu_backend_attempt7_baseline_long_late4.json` (`avg=1.294 H/s`)
+- Outcome: long-run backend regression; status rejected.
+
+### Final status of this pass
+
+- No candidate delivered a stable, reproducible hashrate increase across both kernel and backend paths.
+- Code was reverted to `HEAD` after benchmarking to avoid carrying unproven changes.
+- All attempt artifacts were kept under `data/` for future A/B reference.
