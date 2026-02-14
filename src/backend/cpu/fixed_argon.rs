@@ -29,11 +29,12 @@ pub(super) enum Error {
 
 type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(super) struct FixedArgon2id {
     requested_memory_kib: u32,
     block_count: usize,
     segment_length: usize,
+    data_independent_ref_indexes: Box<[usize]>,
 }
 
 impl FixedArgon2id {
@@ -43,10 +44,13 @@ impl FixedArgon2id {
         let memory_blocks = requested_memory_kib.max(min_blocks as u32) as usize;
         let segment_length = memory_blocks / (lanes * SYNC_POINTS);
         let block_count = segment_length * lanes * SYNC_POINTS;
+        let data_independent_ref_indexes =
+            precompute_data_independent_ref_indexes(block_count, segment_length);
         Self {
             requested_memory_kib,
             block_count,
             segment_length,
+            data_independent_ref_indexes,
         }
     }
 
@@ -94,73 +98,127 @@ impl FixedArgon2id {
     }
 
     fn fill_blocks<const AVX2: bool>(&self, memory_blocks: &mut [PowBlock]) {
+        debug_assert_eq!(ARGON2_LANES, 1);
+        debug_assert_eq!(memory_blocks.len(), self.block_count);
         for slice in 0..SYNC_POINTS {
             let data_independent_addressing = slice < (SYNC_POINTS / 2);
-            let mut address_block = PowBlock::default();
-            let mut input_block = PowBlock::default();
-            let zero_block = PowBlock::default();
 
-            if data_independent_addressing {
-                input_block.as_mut()[..6].copy_from_slice(&[
-                    0,
-                    0,
-                    slice as u64,
-                    self.block_count as u64,
-                    ARGON2_T_COST as u64,
-                    ARGON2_TYPE_ID as u64,
-                ]);
-            }
-
-            let first_block = if slice == 0 {
-                if data_independent_addressing {
-                    update_address_block::<AVX2>(&mut address_block, &mut input_block, &zero_block);
-                }
-                2
-            } else {
-                0
-            };
+            let first_block = if slice == 0 { 2 } else { 0 };
 
             let mut cur_index = slice * self.segment_length + first_block;
-            let mut prev_index = cur_index.saturating_sub(1);
+            let mut prev_index = cur_index - 1;
 
-            for block in first_block..self.segment_length {
-                let rand = if data_independent_addressing {
-                    let address_idx = block % ADDRESSES_IN_BLOCK;
-                    if address_idx == 0 {
-                        update_address_block::<AVX2>(
-                            &mut address_block,
-                            &mut input_block,
-                            &zero_block,
-                        );
-                    }
-                    address_block.as_ref()[address_idx]
-                } else {
-                    memory_blocks[prev_index].as_ref()[0]
-                };
+            if data_independent_addressing {
+                let ref_base = slice * self.segment_length;
+                for block in first_block..self.segment_length {
+                    let ref_index = self.data_independent_ref_indexes[ref_base + block];
+                    fill_block_from_refs::<AVX2>(memory_blocks, prev_index, ref_index, cur_index);
+                    prev_index = cur_index;
+                    cur_index += 1;
+                }
+            } else {
+                let slice_prefix = (slice * self.segment_length) - 1;
+                for block in first_block..self.segment_length {
+                    let rand = memory_blocks[prev_index].as_ref()[0];
+                    let reference_area_size = slice_prefix + block;
+                    let ref_index = reference_index(reference_area_size, rand);
+                    debug_assert!(ref_index < self.block_count);
 
-                let reference_area_size = if slice == 0 {
-                    block.saturating_sub(1)
-                } else {
-                    slice
-                        .saturating_mul(self.segment_length)
-                        .saturating_add(block)
-                        .saturating_sub(1)
-                };
-
-                let mut map = rand & 0xFFFF_FFFF;
-                map = (map * map) >> 32;
-                let relative_position = reference_area_size
-                    .saturating_sub(1)
-                    .saturating_sub(((reference_area_size as u64 * map) >> 32) as usize);
-                let ref_index = relative_position % self.block_count;
-
-                let result =
-                    compress::<AVX2>(&memory_blocks[prev_index], &memory_blocks[ref_index]);
-                memory_blocks[cur_index] = result;
-                prev_index = cur_index;
-                cur_index = cur_index.saturating_add(1);
+                    fill_block_from_refs::<AVX2>(memory_blocks, prev_index, ref_index, cur_index);
+                    prev_index = cur_index;
+                    cur_index += 1;
+                }
             }
         }
+    }
+}
+
+fn precompute_data_independent_ref_indexes(
+    block_count: usize,
+    segment_length: usize,
+) -> Box<[usize]> {
+    debug_assert_eq!(ARGON2_LANES, 1);
+    debug_assert!(ADDRESSES_IN_BLOCK.is_power_of_two());
+    const ADDRESS_MASK: usize = ADDRESSES_IN_BLOCK - 1;
+
+    let slice_count = SYNC_POINTS / 2;
+    let mut refs = vec![0usize; slice_count * segment_length];
+    let zero_block = PowBlock::default();
+
+    for slice in 0..slice_count {
+        let mut address_block = PowBlock::default();
+        let mut input_block = PowBlock::default();
+        input_block.as_mut()[..6].copy_from_slice(&[
+            0,
+            0,
+            slice as u64,
+            block_count as u64,
+            ARGON2_T_COST as u64,
+            ARGON2_TYPE_ID as u64,
+        ]);
+
+        let first_block = if slice == 0 {
+            update_address_block::<false>(&mut address_block, &mut input_block, &zero_block);
+            2
+        } else {
+            0
+        };
+        let mut address_idx = first_block & ADDRESS_MASK;
+        let refs_base = slice * segment_length;
+        let slice_prefix = (slice * segment_length).saturating_sub(1);
+
+        for block in first_block..segment_length {
+            if address_idx == 0 {
+                update_address_block::<false>(&mut address_block, &mut input_block, &zero_block);
+            }
+
+            let rand = address_block.as_ref()[address_idx];
+            address_idx = (address_idx + 1) & ADDRESS_MASK;
+
+            let reference_area_size = if slice == 0 {
+                block - 1
+            } else {
+                slice_prefix + block
+            };
+            let ref_index = reference_index(reference_area_size, rand);
+            debug_assert!(ref_index < block_count);
+
+            refs[refs_base + block] = ref_index;
+        }
+    }
+
+    refs.into_boxed_slice()
+}
+
+#[inline(always)]
+fn reference_index(reference_area_size: usize, rand: u64) -> usize {
+    debug_assert!(reference_area_size > 0);
+    let mapped = ((rand as u32 as u64) * (rand as u32 as u64)) >> 32;
+    let offset = ((reference_area_size as u64 * mapped) >> 32) as usize;
+    (reference_area_size - 1) - offset
+}
+
+#[inline(always)]
+fn fill_block_from_refs<const AVX2: bool>(
+    memory_blocks: &mut [PowBlock],
+    prev_index: usize,
+    ref_index: usize,
+    cur_index: usize,
+) {
+    debug_assert!(prev_index < memory_blocks.len());
+    debug_assert!(ref_index < memory_blocks.len());
+    debug_assert!(cur_index < memory_blocks.len());
+
+    // Safety: caller guarantees these indices are in-bounds and refer only to already
+    // initialized blocks in the same lane; dst index always advances forward.
+    let result = unsafe {
+        compress::<AVX2>(
+            memory_blocks.get_unchecked(prev_index),
+            memory_blocks.get_unchecked(ref_index),
+        )
+    };
+    unsafe {
+        *memory_blocks.get_unchecked_mut(cur_index) = result;
     }
 }
 

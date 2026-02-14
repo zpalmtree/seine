@@ -4,6 +4,7 @@
 
 Current status:
 - CPU backend: implemented (Argon2id, consensus-compatible params).
+- CPU optimization journal: see `CPU_OPTIMIZATION_LOG.md` for measured tuning history and kept/reverted attempts.
 - NVIDIA backend: native CUDA Argon2id lane-fill engine with runtime NVRTC compilation, persistent VRAM-sized lanes, full-warp cooperative compression, and multi-hash-per-launch batching.
 - NVIDIA optimization journal: see `NVIDIA_OPTIMIZATION_LOG.md` for measured tuning history and kept/reverted attempts.
 - Runtime architecture: supports multiple backends in one process with persistent workers, configurable bounded backend event queues with lossless `Solution` delivery and deduplicated backend `Error` events (prevents multi-thread error storms from stalling worker teardown), coalesced tip notifications (deduped across SSE reconnects), template prefetch overlap to reduce round-boundary idle, and optional strict quiesce barriers for round-accurate hash accounting.
