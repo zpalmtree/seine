@@ -8,6 +8,9 @@ const ARGON2_VERSION_13: u32 = 0x13;
 const ARGON2_TYPE_ID: u32 = 2;
 const ARGON2_LANES: u32 = 1;
 const ARGON2_T_COST: u32 = 1;
+const ISA_SCALAR: u8 = 0;
+const ISA_AVX2: u8 = 1;
+const ISA_AVX512: u8 = 2;
 const ADDRESSES_IN_BLOCK: usize = 128;
 const SYNC_POINTS: usize = 4;
 const MIN_PWD_LEN: usize = 0;
@@ -81,23 +84,27 @@ impl FixedArgon2id {
 
         initialize_lane_blocks(memory_blocks, initial_hash)?;
 
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        #[cfg(target_arch = "x86_64")]
         {
-            if std::arch::is_x86_feature_detected!("avx2") {
-                self.fill_blocks::<true>(memory_blocks);
+            if std::arch::is_x86_feature_detected!("avx512f")
+                && std::arch::is_x86_feature_detected!("avx512vl")
+            {
+                self.fill_blocks::<ISA_AVX512>(memory_blocks);
+            } else if std::arch::is_x86_feature_detected!("avx2") {
+                self.fill_blocks::<ISA_AVX2>(memory_blocks);
             } else {
-                self.fill_blocks::<false>(memory_blocks);
+                self.fill_blocks::<ISA_SCALAR>(memory_blocks);
             }
         }
-        #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+        #[cfg(not(target_arch = "x86_64"))]
         {
-            self.fill_blocks::<false>(memory_blocks);
+            self.fill_blocks::<ISA_SCALAR>(memory_blocks);
         }
 
         finalize(memory_blocks, out)
     }
 
-    fn fill_blocks<const AVX2: bool>(&self, memory_blocks: &mut [PowBlock]) {
+    fn fill_blocks<const ISA: u8>(&self, memory_blocks: &mut [PowBlock]) {
         debug_assert_eq!(ARGON2_LANES, 1);
         debug_assert_eq!(memory_blocks.len(), self.block_count);
         for slice in 0..SYNC_POINTS {
@@ -112,7 +119,7 @@ impl FixedArgon2id {
                 let ref_base = slice * self.segment_length;
                 for block in first_block..self.segment_length {
                     let ref_index = self.data_independent_ref_indexes[ref_base + block];
-                    fill_block_from_refs::<AVX2>(memory_blocks, prev_index, ref_index, cur_index);
+                    fill_block_from_refs::<ISA>(memory_blocks, prev_index, ref_index, cur_index);
                     prev_index = cur_index;
                     cur_index += 1;
                 }
@@ -124,7 +131,7 @@ impl FixedArgon2id {
                     let ref_index = reference_index(reference_area_size, rand);
                     debug_assert!(ref_index < self.block_count);
 
-                    fill_block_from_refs::<AVX2>(memory_blocks, prev_index, ref_index, cur_index);
+                    fill_block_from_refs::<ISA>(memory_blocks, prev_index, ref_index, cur_index);
                     prev_index = cur_index;
                     cur_index += 1;
                 }
@@ -158,7 +165,7 @@ fn precompute_data_independent_ref_indexes(
         ]);
 
         let first_block = if slice == 0 {
-            update_address_block::<false>(&mut address_block, &mut input_block, &zero_block);
+            update_address_block::<ISA_SCALAR>(&mut address_block, &mut input_block, &zero_block);
             2
         } else {
             0
@@ -169,7 +176,11 @@ fn precompute_data_independent_ref_indexes(
 
         for block in first_block..segment_length {
             if address_idx == 0 {
-                update_address_block::<false>(&mut address_block, &mut input_block, &zero_block);
+                update_address_block::<ISA_SCALAR>(
+                    &mut address_block,
+                    &mut input_block,
+                    &zero_block,
+                );
             }
 
             let rand = address_block.as_ref()[address_idx];
@@ -199,7 +210,7 @@ fn reference_index(reference_area_size: usize, rand: u64) -> usize {
 }
 
 #[inline(always)]
-fn fill_block_from_refs<const AVX2: bool>(
+fn fill_block_from_refs<const ISA: u8>(
     memory_blocks: &mut [PowBlock],
     prev_index: usize,
     ref_index: usize,
@@ -212,7 +223,7 @@ fn fill_block_from_refs<const AVX2: bool>(
     // Safety: caller guarantees these indices are in-bounds and refer only to already
     // initialized blocks in the same lane; dst index always advances forward.
     let result = unsafe {
-        compress::<AVX2>(
+        compress::<ISA>(
             memory_blocks.get_unchecked(prev_index),
             memory_blocks.get_unchecked(ref_index),
         )
@@ -293,30 +304,232 @@ fn finalize(memory_blocks: &[PowBlock], out: &mut [u8]) -> Result<()> {
 }
 
 #[inline(always)]
-fn update_address_block<const AVX2: bool>(
+fn update_address_block<const ISA: u8>(
     address_block: &mut PowBlock,
     input_block: &mut PowBlock,
     zero_block: &PowBlock,
 ) {
     input_block.as_mut()[6] = input_block.as_mut()[6].wrapping_add(1);
-    *address_block = compress::<AVX2>(zero_block, input_block);
-    *address_block = compress::<AVX2>(zero_block, address_block);
+    *address_block = compress::<ISA>(zero_block, input_block);
+    *address_block = compress::<ISA>(zero_block, address_block);
 }
 
 #[inline(always)]
-fn compress<const AVX2: bool>(rhs: &PowBlock, lhs: &PowBlock) -> PowBlock {
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    if AVX2 {
-        unsafe {
-            return compress_avx2(rhs, lhs);
+fn compress<const ISA: u8>(rhs: &PowBlock, lhs: &PowBlock) -> PowBlock {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if ISA == ISA_AVX512 {
+            unsafe {
+                return compress_avx512(rhs, lhs);
+            }
+        }
+        if ISA == ISA_AVX2 {
+            unsafe {
+                return compress_avx2(rhs, lhs);
+            }
         }
     }
     PowBlock::compress(rhs, lhs)
 }
 
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn avx2_blamka(
+    a: std::arch::x86_64::__m256i,
+    b: std::arch::x86_64::__m256i,
+) -> std::arch::x86_64::__m256i {
+    use std::arch::x86_64::{_mm256_add_epi64, _mm256_mul_epu32};
+    let product = _mm256_mul_epu32(a, b);
+    let doubled_product = _mm256_add_epi64(product, product);
+    _mm256_add_epi64(_mm256_add_epi64(a, b), doubled_product)
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn avx2_rotr_64_32(value: std::arch::x86_64::__m256i) -> std::arch::x86_64::__m256i {
+    use std::arch::x86_64::{_mm256_or_si256, _mm256_slli_epi64, _mm256_srli_epi64};
+    _mm256_or_si256(
+        _mm256_srli_epi64::<32>(value),
+        _mm256_slli_epi64::<32>(value),
+    )
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn avx2_rotr_64_24(value: std::arch::x86_64::__m256i) -> std::arch::x86_64::__m256i {
+    use std::arch::x86_64::{_mm256_or_si256, _mm256_slli_epi64, _mm256_srli_epi64};
+    _mm256_or_si256(
+        _mm256_srli_epi64::<24>(value),
+        _mm256_slli_epi64::<40>(value),
+    )
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn avx2_rotr_64_16(value: std::arch::x86_64::__m256i) -> std::arch::x86_64::__m256i {
+    use std::arch::x86_64::{_mm256_or_si256, _mm256_slli_epi64, _mm256_srli_epi64};
+    _mm256_or_si256(
+        _mm256_srli_epi64::<16>(value),
+        _mm256_slli_epi64::<48>(value),
+    )
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn avx2_rotr_64_63(value: std::arch::x86_64::__m256i) -> std::arch::x86_64::__m256i {
+    use std::arch::x86_64::{_mm256_or_si256, _mm256_slli_epi64, _mm256_srli_epi64};
+    _mm256_or_si256(
+        _mm256_srli_epi64::<63>(value),
+        _mm256_slli_epi64::<1>(value),
+    )
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn avx2_round(
+    a: &mut std::arch::x86_64::__m256i,
+    b: &mut std::arch::x86_64::__m256i,
+    c: &mut std::arch::x86_64::__m256i,
+    d: &mut std::arch::x86_64::__m256i,
+) {
+    use std::arch::x86_64::{_mm256_permute4x64_epi64, _mm256_xor_si256};
+
+    *a = avx2_blamka(*a, *b);
+    *d = avx2_rotr_64_32(_mm256_xor_si256(*d, *a));
+    *c = avx2_blamka(*c, *d);
+    *b = avx2_rotr_64_24(_mm256_xor_si256(*b, *c));
+    *a = avx2_blamka(*a, *b);
+    *d = avx2_rotr_64_16(_mm256_xor_si256(*d, *a));
+    *c = avx2_blamka(*c, *d);
+    *b = avx2_rotr_64_63(_mm256_xor_si256(*b, *c));
+
+    let mut bb = _mm256_permute4x64_epi64::<0x39>(*b);
+    let mut cc = _mm256_permute4x64_epi64::<0x4E>(*c);
+    let mut dd = _mm256_permute4x64_epi64::<0x93>(*d);
+
+    *a = avx2_blamka(*a, bb);
+    dd = avx2_rotr_64_32(_mm256_xor_si256(dd, *a));
+    cc = avx2_blamka(cc, dd);
+    bb = avx2_rotr_64_24(_mm256_xor_si256(bb, cc));
+    *a = avx2_blamka(*a, bb);
+    dd = avx2_rotr_64_16(_mm256_xor_si256(dd, *a));
+    cc = avx2_blamka(cc, dd);
+    bb = avx2_rotr_64_63(_mm256_xor_si256(bb, cc));
+
+    *b = _mm256_permute4x64_epi64::<0x93>(bb);
+    *c = _mm256_permute4x64_epi64::<0x4E>(cc);
+    *d = _mm256_permute4x64_epi64::<0x39>(dd);
+}
+
+#[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 unsafe fn compress_avx2(rhs: &PowBlock, lhs: &PowBlock) -> PowBlock {
+    use std::arch::x86_64::{
+        __m256i, _mm256_loadu_si256, _mm256_set_epi64x, _mm256_storeu_si256, _mm256_xor_si256,
+    };
+
+    let mut r = PowBlock::default();
+    let mut q = PowBlock::default();
+
+    let rhs_ptr = rhs.0.as_ptr();
+    let lhs_ptr = lhs.0.as_ptr();
+    let r_ptr = r.0.as_mut_ptr();
+    let q_ptr = q.0.as_mut_ptr();
+
+    for vec_idx in 0..(PowBlock::SIZE / 32) {
+        let offset = vec_idx * 4;
+        let rv = _mm256_xor_si256(
+            _mm256_loadu_si256(rhs_ptr.add(offset) as *const __m256i),
+            _mm256_loadu_si256(lhs_ptr.add(offset) as *const __m256i),
+        );
+        _mm256_storeu_si256(r_ptr.add(offset) as *mut __m256i, rv);
+        _mm256_storeu_si256(q_ptr.add(offset) as *mut __m256i, rv);
+    }
+
+    for row in 0..8 {
+        let base = row * 16;
+        let mut a = _mm256_loadu_si256(q_ptr.add(base) as *const __m256i);
+        let mut b = _mm256_loadu_si256(q_ptr.add(base + 4) as *const __m256i);
+        let mut c = _mm256_loadu_si256(q_ptr.add(base + 8) as *const __m256i);
+        let mut d = _mm256_loadu_si256(q_ptr.add(base + 12) as *const __m256i);
+        avx2_round(&mut a, &mut b, &mut c, &mut d);
+        _mm256_storeu_si256(q_ptr.add(base) as *mut __m256i, a);
+        _mm256_storeu_si256(q_ptr.add(base + 4) as *mut __m256i, b);
+        _mm256_storeu_si256(q_ptr.add(base + 8) as *mut __m256i, c);
+        _mm256_storeu_si256(q_ptr.add(base + 12) as *mut __m256i, d);
+    }
+
+    for idx in 0..8 {
+        let base = idx * 2;
+
+        let mut a = _mm256_set_epi64x(
+            q.0[base + 17] as i64,
+            q.0[base + 16] as i64,
+            q.0[base + 1] as i64,
+            q.0[base] as i64,
+        );
+        let mut b = _mm256_set_epi64x(
+            q.0[base + 49] as i64,
+            q.0[base + 48] as i64,
+            q.0[base + 33] as i64,
+            q.0[base + 32] as i64,
+        );
+        let mut c = _mm256_set_epi64x(
+            q.0[base + 81] as i64,
+            q.0[base + 80] as i64,
+            q.0[base + 65] as i64,
+            q.0[base + 64] as i64,
+        );
+        let mut d = _mm256_set_epi64x(
+            q.0[base + 113] as i64,
+            q.0[base + 112] as i64,
+            q.0[base + 97] as i64,
+            q.0[base + 96] as i64,
+        );
+
+        avx2_round(&mut a, &mut b, &mut c, &mut d);
+
+        let mut aa = [0u64; 4];
+        let mut bb = [0u64; 4];
+        let mut cc = [0u64; 4];
+        let mut dd = [0u64; 4];
+        _mm256_storeu_si256(aa.as_mut_ptr() as *mut __m256i, a);
+        _mm256_storeu_si256(bb.as_mut_ptr() as *mut __m256i, b);
+        _mm256_storeu_si256(cc.as_mut_ptr() as *mut __m256i, c);
+        _mm256_storeu_si256(dd.as_mut_ptr() as *mut __m256i, d);
+
+        q.0[base] = aa[0];
+        q.0[base + 1] = aa[1];
+        q.0[base + 16] = aa[2];
+        q.0[base + 17] = aa[3];
+        q.0[base + 32] = bb[0];
+        q.0[base + 33] = bb[1];
+        q.0[base + 48] = bb[2];
+        q.0[base + 49] = bb[3];
+        q.0[base + 64] = cc[0];
+        q.0[base + 65] = cc[1];
+        q.0[base + 80] = cc[2];
+        q.0[base + 81] = cc[3];
+        q.0[base + 96] = dd[0];
+        q.0[base + 97] = dd[1];
+        q.0[base + 112] = dd[2];
+        q.0[base + 113] = dd[3];
+    }
+
+    for vec_idx in 0..(PowBlock::SIZE / 32) {
+        let offset = vec_idx * 4;
+        let qv = _mm256_loadu_si256(q_ptr.add(offset) as *const __m256i);
+        let rv = _mm256_loadu_si256(r_ptr.add(offset) as *const __m256i);
+        _mm256_storeu_si256(q_ptr.add(offset) as *mut __m256i, _mm256_xor_si256(qv, rv));
+    }
+
+    q
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f,avx512vl")]
+unsafe fn compress_avx512(rhs: &PowBlock, lhs: &PowBlock) -> PowBlock {
+    // Keep AVX-512 dispatch wired while reusing the known-correct scalar transform.
     PowBlock::compress(rhs, lhs)
 }
 

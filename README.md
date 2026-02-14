@@ -213,3 +213,34 @@ Fail CI on regression versus baseline (example: fail below `-5%`):
 ```bash
 cargo run --release -- --bench --bench-kind backend --backend cpu --threads 1 --bench-secs 20 --bench-rounds 3 --bench-baseline bench.json --bench-fail-below-pct 5
 ```
+
+### Host-native CPU build
+
+Build with host ISA tuning (`target-cpu=native`) and the `release-native` profile:
+
+```bash
+./scripts/build_cpu_native.sh --cpu-only
+```
+
+### Thermal-stable CPU A/B harness
+
+Run interleaved baseline/candidate CPU benchmarks with cooldown gaps to reduce thermal drift bias:
+
+```bash
+./scripts/bench_cpu_ab.sh \
+  --baseline-dir ../seine-baseline \
+  --candidate-dir . \
+  --bench-kind backend \
+  --pairs 4 \
+  --bench-secs 20 \
+  --bench-rounds 3 \
+  --bench-warmup-rounds 1 \
+  --threads 1 \
+  --cooldown-secs 20 \
+  --profile release
+```
+
+Output goes to `data/bench_cpu_ab_<kind>_<timestamp>/` and includes:
+- `results.tsv` with per-run metrics.
+- `summary.txt` with baseline/candidate means and percent delta.
+- Optional: use `--baseline-profile` / `--candidate-profile` and `--baseline-native` / `--candidate-native` to A/B build profiles or ISA flags in one interleaved run.

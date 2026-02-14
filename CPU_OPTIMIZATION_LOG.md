@@ -184,3 +184,45 @@ This pass explicitly paired baseline and candidate runs from a detached `HEAD` w
 - No candidate delivered a stable, reproducible hashrate increase across both kernel and backend paths.
 - Code was reverted to `HEAD` after benchmarking to avoid carrying unproven changes.
 - All attempt artifacts were kept under `data/` for future A/B reference.
+
+## 2026-02-14 AVX2 SIMD rewrite + thermal-stable interleaved A/B harness
+
+This pass implemented the remaining rework items that were previously proposed:
+
+- True SIMD kernel path for CPU Argon2 block compression (AVX2).
+- Native-build workflow and profile (`scripts/build_cpu_native.sh`, `profile.release-native`).
+- Thermal-stable interleaved A/B benchmark harness (`scripts/bench_cpu_ab.sh`) with cooldown + alternating order.
+
+### Attempt 11: AVX2 SIMD `PowBlock::compress` path (adopted)
+
+- Implemented AVX2 vector path in `src/backend/cpu/fixed_argon.rs`:
+  - Runtime ISA dispatch per hash (`scalar` / `avx2` / `avx512`).
+  - AVX2 BLAMKA + rotate + row/column permutation rounds.
+  - Safe scalar fallback preserved.
+  - AVX-512 dispatch remains wired but currently reuses scalar transform for correctness.
+- Interleaved A/B (detached baseline worktree `f953098` vs candidate, release profile):
+  - Backend summary: `data/bench_cpu_ab_backend_attempt11b_release/summary.txt`
+    - Baseline avg: `1.305448201389 H/s`
+    - Candidate avg: `1.567800481676 H/s`
+    - Delta: `+20.0967%`
+  - Kernel summary: `data/bench_cpu_ab_kernel_attempt11b_release/summary.txt`
+    - Baseline avg: `1.333333333333 H/s`
+    - Candidate avg: `1.583333333333 H/s`
+    - Delta: `+18.7500%`
+- Status: adopted.
+
+### Attempt 12: native-build profile/workflow A/B (not adopted as default)
+
+- Added host-native build wrapper:
+  - `scripts/build_cpu_native.sh` (`RUSTFLAGS += -C target-cpu=native`).
+- Added per-side profile/native selection to A/B harness for fair release-vs-native comparison.
+- Interleaved A/B on same candidate code (`release` vs `release-native + target-cpu=native`):
+  - First run: `data/bench_cpu_ab_backend_native_attempt11b/summary.txt` => `-0.3836%`
+  - Retest after simplifying `profile.release-native` to inherit `release` only:
+    - `data/bench_cpu_ab_backend_native_attempt11c/summary.txt` => `-0.8391%`
+- Status: keep workflow as optional/manual, not default.
+
+### Validation
+
+- Correctness: `cargo test fixed_kernel_matches_reference_for_small_memory_configs -- --nocapture`
+- Full suite after changes: `cargo test` (`177 passed`).
