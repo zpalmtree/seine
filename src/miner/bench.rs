@@ -174,6 +174,9 @@ struct BenchConfigFingerprint {
     nvidia_dispatch_iters_per_lane: Option<u64>,
     nvidia_allocation_iters_per_lane: Option<u64>,
     nvidia_hashes_per_launch_per_lane: u32,
+    nvidia_fused_target_check: bool,
+    nvidia_adaptive_launch_depth: bool,
+    nvidia_enforce_template_stop: bool,
     backend_assign_timeout_ms: u64,
     backend_assign_timeout_strikes: u32,
     backend_control_timeout_ms: u64,
@@ -232,7 +235,7 @@ struct WorkerBenchmarkIdentity {
 }
 
 type BackendEventAction = RuntimeBackendEventAction;
-const BENCH_REPORT_SCHEMA_VERSION: u32 = 8;
+const BENCH_REPORT_SCHEMA_VERSION: u32 = 10;
 const BENCH_REPORT_COMPAT_MIN_SCHEMA_VERSION: u32 = 2;
 
 pub(super) fn run_benchmark(cfg: &Config, shutdown: &AtomicBool) -> Result<()> {
@@ -1147,13 +1150,48 @@ fn baseline_compatibility_issues(
                     current.config_fingerprint.nvidia_allocation_iters_per_lane
                 ));
             }
-            if baseline.config_fingerprint.nvidia_hashes_per_launch_per_lane
+            if baseline
+                .config_fingerprint
+                .nvidia_hashes_per_launch_per_lane
                 != current.config_fingerprint.nvidia_hashes_per_launch_per_lane
             {
                 issues.push(format!(
                     "nvidia_hashes_per_launch_per_lane mismatch baseline={} current={}",
-                    baseline.config_fingerprint.nvidia_hashes_per_launch_per_lane,
+                    baseline
+                        .config_fingerprint
+                        .nvidia_hashes_per_launch_per_lane,
                     current.config_fingerprint.nvidia_hashes_per_launch_per_lane
+                ));
+            }
+        }
+        if baseline.schema_version >= 9 && current.schema_version >= 9 {
+            if baseline.config_fingerprint.nvidia_adaptive_launch_depth
+                != current.config_fingerprint.nvidia_adaptive_launch_depth
+            {
+                issues.push(format!(
+                    "nvidia_adaptive_launch_depth mismatch baseline={} current={}",
+                    baseline.config_fingerprint.nvidia_adaptive_launch_depth,
+                    current.config_fingerprint.nvidia_adaptive_launch_depth
+                ));
+            }
+            if baseline.config_fingerprint.nvidia_enforce_template_stop
+                != current.config_fingerprint.nvidia_enforce_template_stop
+            {
+                issues.push(format!(
+                    "nvidia_enforce_template_stop mismatch baseline={} current={}",
+                    baseline.config_fingerprint.nvidia_enforce_template_stop,
+                    current.config_fingerprint.nvidia_enforce_template_stop
+                ));
+            }
+        }
+        if baseline.schema_version >= 10 && current.schema_version >= 10 {
+            if baseline.config_fingerprint.nvidia_fused_target_check
+                != current.config_fingerprint.nvidia_fused_target_check
+            {
+                issues.push(format!(
+                    "nvidia_fused_target_check mismatch baseline={} current={}",
+                    baseline.config_fingerprint.nvidia_fused_target_check,
+                    current.config_fingerprint.nvidia_fused_target_check
                 ));
             }
         }
@@ -1512,6 +1550,9 @@ fn benchmark_config_fingerprint(
         nvidia_dispatch_iters_per_lane: cfg.nvidia_dispatch_iters_per_lane,
         nvidia_allocation_iters_per_lane: cfg.nvidia_allocation_iters_per_lane,
         nvidia_hashes_per_launch_per_lane: cfg.nvidia_hashes_per_launch_per_lane,
+        nvidia_fused_target_check: cfg.nvidia_fused_target_check,
+        nvidia_adaptive_launch_depth: cfg.nvidia_adaptive_launch_depth,
+        nvidia_enforce_template_stop: cfg.nvidia_enforce_template_stop,
         backend_assign_timeout_ms: cfg.backend_assign_timeout.as_millis() as u64,
         backend_assign_timeout_strikes: cfg.backend_assign_timeout_strikes,
         backend_control_timeout_ms: cfg.backend_control_timeout.as_millis() as u64,
@@ -1876,6 +1917,9 @@ mod tests {
                 nvidia_dispatch_iters_per_lane: None,
                 nvidia_allocation_iters_per_lane: None,
                 nvidia_hashes_per_launch_per_lane: 2,
+                nvidia_fused_target_check: false,
+                nvidia_adaptive_launch_depth: true,
+                nvidia_enforce_template_stop: false,
                 backend_assign_timeout_ms: 1000,
                 backend_assign_timeout_strikes: 1,
                 backend_control_timeout_ms: 60_000,

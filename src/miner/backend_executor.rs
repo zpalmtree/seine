@@ -72,8 +72,11 @@ impl fmt::Display for AssignmentPreemptedByControl {
 impl std::error::Error for AssignmentPreemptedByControl {}
 
 pub(super) fn is_assignment_preempted_error(err: &anyhow::Error) -> bool {
-    err.chain()
-        .any(|cause| cause.downcast_ref::<AssignmentPreemptedByControl>().is_some())
+    err.chain().any(|cause| {
+        cause
+            .downcast_ref::<AssignmentPreemptedByControl>()
+            .is_some()
+    })
 }
 
 pub(super) struct BackendTaskOutcome {
@@ -861,7 +864,9 @@ impl BackendExecutor {
                 deadline: task_deadline,
             });
             let worker_tx = if uses_control_lane {
-                worker_handles.pending_control.fetch_add(1, Ordering::AcqRel);
+                worker_handles
+                    .pending_control
+                    .fetch_add(1, Ordering::AcqRel);
                 if let Err(err) = backend_handle.request_timeout_interrupt() {
                     warn(
                         "BACKEND",
@@ -1024,7 +1029,9 @@ impl BackendExecutor {
                     context.enqueued_at.unwrap_or(context.dispatch_started_at),
                 ),
             };
-            context.metrics.record_task_latency(timeout_bucket, timeout_elapsed);
+            context
+                .metrics
+                .record_task_latency(timeout_bucket, timeout_elapsed);
             context.metrics.record_task_timeout(timeout_bucket);
             if let Err(err) = context.backend_handle.request_timeout_interrupt() {
                 warn(
@@ -1377,8 +1384,10 @@ fn run_backend_call(
         return Err(anyhow!("task deadline elapsed before backend call"));
     }
     let assignment_preempt_requested = || pending_control.load(Ordering::Acquire) > 0;
-    if matches!(kind, BackendTaskKind::Assign(_) | BackendTaskKind::AssignBatch(_))
-        && assignment_preempt_requested()
+    if matches!(
+        kind,
+        BackendTaskKind::Assign(_) | BackendTaskKind::AssignBatch(_)
+    ) && assignment_preempt_requested()
     {
         return Err(anyhow!(AssignmentPreemptedByControl));
     }

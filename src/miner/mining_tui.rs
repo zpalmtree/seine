@@ -89,11 +89,8 @@ impl TuiDisplay {
         let snapshot = stats.snapshot();
 
         // Record sample in the sliding-window tracker
-        self.hashrate_tracker.record(
-            snapshot.hashes,
-            view.round_start,
-            view.round_backend_hashes,
-        );
+        self.hashrate_tracker
+            .record(snapshot.hashes, view.round_start, view.round_backend_hashes);
         let rates = self.hashrate_tracker.rates();
 
         // Build per-device hashrate display data

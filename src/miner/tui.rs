@@ -250,11 +250,7 @@ fn draw_dashboard(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner)
     } else {
         device_count
     };
-    let devices_height: u16 = if device_count > 0 {
-        2 + device_rows
-    } else {
-        0
-    };
+    let devices_height: u16 = if device_count > 0 { 2 + device_rows } else { 0 };
     let config_height: u16 = 4;
     let header_height: u16 = 4;
 
@@ -522,14 +518,8 @@ fn draw_devices(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner, w
                         "▸ ",
                         Style::default().fg(Color::Rgb(70, 100, 130)),
                     ));
-                    spans.push(Span::styled(
-                        format!("{:<10}", dev.name),
-                        DEVICE_NAME_STYLE,
-                    ));
-                    spans.push(Span::styled(
-                        format!("{:<14}", dev.current),
-                        VALUE_STYLE,
-                    ));
+                    spans.push(Span::styled(format!("{:<10}", dev.name), DEVICE_NAME_STYLE));
+                    spans.push(Span::styled(format!("{:<14}", dev.current), VALUE_STYLE));
                     spans.push(Span::styled("avg ", DEVICE_AVG_STYLE));
                     spans.push(Span::styled(dev.average.clone(), DEVICE_AVG_STYLE));
                 }

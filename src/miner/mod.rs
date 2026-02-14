@@ -1018,23 +1018,22 @@ fn build_backend_instances(cfg: &Config) -> Vec<(BackendSpec, Arc<dyn PowBackend
                         event_dispatch_capacity: cfg.cpu_event_dispatch_capacity,
                     },
                 )) as Arc<dyn PowBackend>,
-                BackendKind::Nvidia => {
-                    Arc::new(NvidiaBackend::new(
-                        backend_spec.device_index,
-                        cfg.nvidia_autotune_config_path.clone(),
-                        cfg.nvidia_autotune_secs,
-                        NvidiaBackendTuningOptions {
-                            max_rregcount_override: cfg.nvidia_max_rregcount,
-                            max_lanes_override: cfg.nvidia_max_lanes,
-                            autotune_samples: cfg.nvidia_autotune_samples,
-                            dispatch_iters_per_lane: cfg.nvidia_dispatch_iters_per_lane,
-                            allocation_iters_per_lane: cfg.nvidia_allocation_iters_per_lane,
-                            hashes_per_launch_per_lane: cfg.nvidia_hashes_per_launch_per_lane,
-                            adaptive_launch_depth: true,
-                            enforce_template_stop: cfg.strict_round_accounting,
-                        },
-                    )) as Arc<dyn PowBackend>
-                }
+                BackendKind::Nvidia => Arc::new(NvidiaBackend::new(
+                    backend_spec.device_index,
+                    cfg.nvidia_autotune_config_path.clone(),
+                    cfg.nvidia_autotune_secs,
+                    NvidiaBackendTuningOptions {
+                        max_rregcount_override: cfg.nvidia_max_rregcount,
+                        max_lanes_override: cfg.nvidia_max_lanes,
+                        autotune_samples: cfg.nvidia_autotune_samples,
+                        dispatch_iters_per_lane: cfg.nvidia_dispatch_iters_per_lane,
+                        allocation_iters_per_lane: cfg.nvidia_allocation_iters_per_lane,
+                        hashes_per_launch_per_lane: cfg.nvidia_hashes_per_launch_per_lane,
+                        fused_target_check: cfg.nvidia_fused_target_check,
+                        adaptive_launch_depth: cfg.nvidia_adaptive_launch_depth,
+                        enforce_template_stop: cfg.nvidia_enforce_template_stop,
+                    },
+                )) as Arc<dyn PowBackend>,
             };
             (backend_spec, backend)
         })
@@ -2203,6 +2202,9 @@ mod tests {
             nvidia_dispatch_iters_per_lane: None,
             nvidia_allocation_iters_per_lane: None,
             nvidia_hashes_per_launch_per_lane: 2,
+            nvidia_fused_target_check: false,
+            nvidia_adaptive_launch_depth: true,
+            nvidia_enforce_template_stop: false,
             backend_assign_timeout: Duration::from_millis(1_000),
             backend_assign_timeout_strikes: 3,
             backend_control_timeout: Duration::from_millis(60_000),

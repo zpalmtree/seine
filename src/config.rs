@@ -55,6 +55,13 @@ pub enum WorkAllocation {
     Adaptive,
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+pub enum NvidiaTemplateStopPolicy {
+    Auto,
+    On,
+    Off,
+}
+
 const DEFAULT_HASH_POLL_MS: u64 = 200;
 const DEFAULT_CPU_HASH_BATCH_SIZE: u64 = 64;
 const DEFAULT_CPU_CONTROL_CHECK_INTERVAL_HASHES: u64 = 1;
@@ -299,6 +306,19 @@ struct Cli {
     )]
     nvidia_hashes_per_launch_per_lane: u32,
 
+    /// Disable adaptive NVIDIA launch-depth pressure control and keep the configured launch depth.
+    #[arg(long, action = ArgAction::SetTrue)]
+    nvidia_no_adaptive_launch_depth: bool,
+
+    /// Enable fused target-check in the fill kernel (can regress throughput on some GPUs).
+    #[arg(long, action = ArgAction::SetTrue)]
+    nvidia_fused_target_check: bool,
+
+    /// NVIDIA stop-at-template policy: `auto` follows round accounting mode, `on` always enforces,
+    /// `off` never enforces in the backend worker loop.
+    #[arg(long, value_enum, default_value_t = NvidiaTemplateStopPolicy::Auto)]
+    nvidia_template_stop_policy: NvidiaTemplateStopPolicy,
+
     /// Maximum time to wait for one backend assignment dispatch call, in milliseconds.
     #[arg(long, default_value_t = 1000)]
     backend_assign_timeout_ms: u64,
@@ -464,6 +484,9 @@ pub struct Config {
     pub nvidia_dispatch_iters_per_lane: Option<u64>,
     pub nvidia_allocation_iters_per_lane: Option<u64>,
     pub nvidia_hashes_per_launch_per_lane: u32,
+    pub nvidia_fused_target_check: bool,
+    pub nvidia_adaptive_launch_depth: bool,
+    pub nvidia_enforce_template_stop: bool,
     pub backend_assign_timeout: Duration,
     pub backend_assign_timeout_strikes: u32,
     pub backend_control_timeout: Duration,
@@ -679,6 +702,12 @@ impl Config {
             (Some(token), cookie_path)
         };
         let api_url = normalize_api_url(&cli.api_url);
+        let strict_round_accounting = cli.strict_round_accounting && !cli.relaxed_accounting;
+        let nvidia_enforce_template_stop = match cli.nvidia_template_stop_policy {
+            NvidiaTemplateStopPolicy::Auto => strict_round_accounting,
+            NvidiaTemplateStopPolicy::On => true,
+            NvidiaTemplateStopPolicy::Off => false,
+        };
 
         Ok(Self {
             api_url,
@@ -712,13 +741,14 @@ impl Config {
             nvidia_autotune_config_path,
             nvidia_max_rregcount: cli.nvidia_max_rregcount.filter(|v| *v > 0),
             nvidia_max_lanes: cli.nvidia_max_lanes.filter(|v| *v > 0),
-            nvidia_dispatch_iters_per_lane: cli
-                .nvidia_dispatch_iters_per_lane
-                .filter(|v| *v > 0),
+            nvidia_dispatch_iters_per_lane: cli.nvidia_dispatch_iters_per_lane.filter(|v| *v > 0),
             nvidia_allocation_iters_per_lane: cli
                 .nvidia_allocation_iters_per_lane
                 .filter(|v| *v > 0),
             nvidia_hashes_per_launch_per_lane: cli.nvidia_hashes_per_launch_per_lane.max(1),
+            nvidia_fused_target_check: cli.nvidia_fused_target_check,
+            nvidia_adaptive_launch_depth: !cli.nvidia_no_adaptive_launch_depth,
+            nvidia_enforce_template_stop,
             backend_assign_timeout: Duration::from_millis(cli.backend_assign_timeout_ms),
             backend_assign_timeout_strikes: cli.backend_assign_timeout_strikes.max(1),
             backend_control_timeout: Duration::from_millis(cli.backend_control_timeout_ms),
@@ -726,7 +756,7 @@ impl Config {
             prefetch_wait: Duration::from_millis(cli.prefetch_wait_ms),
             tip_listener_join_wait: Duration::from_millis(cli.tip_listener_join_wait_ms),
             submit_join_wait: Duration::from_millis(cli.submit_join_wait_ms),
-            strict_round_accounting: cli.strict_round_accounting && !cli.relaxed_accounting,
+            strict_round_accounting,
             start_nonce: cli.start_nonce.unwrap_or_else(|| {
                 if cli.bench {
                     0
@@ -1181,6 +1211,9 @@ mod tests {
             nvidia_dispatch_iters_per_lane: None,
             nvidia_allocation_iters_per_lane: None,
             nvidia_hashes_per_launch_per_lane: DEFAULT_NVIDIA_HASHES_PER_LAUNCH_PER_LANE,
+            nvidia_fused_target_check: false,
+            nvidia_no_adaptive_launch_depth: false,
+            nvidia_template_stop_policy: NvidiaTemplateStopPolicy::Auto,
             backend_assign_timeout_ms: 1000,
             backend_assign_timeout_ms_per_instance: Vec::new(),
             backend_assign_timeout_strikes: 3,

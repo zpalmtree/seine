@@ -12,14 +12,15 @@ This log tracks every measurable NVIDIA backend optimization attempt so we can i
 - Commit: `working tree` (post-pass)
 - Kernel model: cooperative per-lane execution (`32` threads/lane block) with full-warp compression mapping (`8` states x `4` threads/state)
 - NVRTC flags include: `--maxrregcount=<autotuned>`, `-DSEINE_FIXED_M_BLOCKS=2097152U`, `-DSEINE_FIXED_T_COST=1U`
-- NVIDIA autotune schema: `5`; regcap sweep: `240/224/208/192/160`
+- NVIDIA autotune schema: `7`; regcap sweep: `240/224/208/192/160`
   - Autotune key includes CUDA compute capability, bucketed effective memory budget (512 MiB buckets), and lane-capacity tier.
-  - Candidate scoring uses median across `nvidia_autotune_samples` (default `2`) with mean tie-break.
+  - Candidate scoring uses deadline-window counted H/s median across `nvidia_autotune_samples` (default `2`), then mean counted H/s and throughput tie-breaks.
 - Startup lane sizing now uses free-VRAM-aware budgeting with a small reserve (`max(total/64, 64 MiB)`)
 - Kernel hot path writes compression output directly to destination memory (no `block_tmp` shared staging buffer)
 - Runtime hot path:
   - no explicit pre-`memcpy_dtoh` stream synchronize in `run_fill_batch`
   - seed expansion and target checks are now GPU-side kernels (`build_seed_blocks_kernel`, `evaluate_hashes_kernel`) with single-index D2H readback for solutions
+  - optional fused in-fill target-check path is available via `--nvidia-fused-target-check` (default off after regression on RTX 3080)
 - Default launch depth: `nvidia_hashes_per_launch_per_lane=2` (override to `1` for finer preemption).
 - Observed best 3-round averages so far (2026-02-14): kernel `1.600 H/s`, backend `1.532 H/s` (counted-window + fence accounting)
 
@@ -58,6 +59,7 @@ This log tracks every measurable NVIDIA backend optimization attempt so we can i
 | 2026-02-14 | working tree | NVIDIA tuning surface expansion (`--nvidia-max-rregcount`, `--nvidia-max-lanes`, `--nvidia-dispatch-iters-per-lane`, `--nvidia-allocation-iters-per-lane`, `--nvidia-autotune-samples`), autotune schema bump `3 -> 4`, key update (`memory_budget_mib`), per-candidate multi-sample median scoring | validation reruns (before launch-depth default switch): kernel `1.600 H/s` (`/tmp/nv-final-kernel.log`), backend `1.386 H/s` (`/tmp/nv-final-backend.log`) | Kept (robust autotune cache identity + lower tuning variance; no correctness/runtime regressions) |
 | 2026-02-14 | working tree | Multi-hash-per-launch path + increase default `nvidia_hashes_per_launch_per_lane` `1 -> 2` | baseline default(1) backend `1.386/1.330 H/s`; depth-2 runs `1.459/1.455 H/s`; final default-state validation `1.503 H/s` | Kept (higher counted throughput on RTX 3080; baseline-mean `1.358` -> final `1.503` (`+10.68%`); tradeoff: late-hash share increased from `25%` to `42.86-50.00%`, keep CLI override for finer preemption) |
 | 2026-02-14 | working tree | GPU-side seed and solution evaluation pipeline (`build_seed_blocks_kernel` + `evaluate_hashes_kernel`), worker loop migrated to GPU-found nonce path, pinned lane hint across starts, autotune key/schema update (`4 -> 5`) with memory-budget bucketing + lane-capacity tier | final validation reruns: kernel `1.600 H/s` (`/tmp/nv-final-kernel-20260214.log`), backend `1.532 H/s` (`/tmp/nv-final-backend-20260214.log`) | Kept (backend uplift vs prior best `1.503 H/s` is `+1.93%`, stable 3-round kernel parity, and removes host-side hashing overhead + cache-key churn) |
+| 2026-02-14 | working tree | NVIDIA policy/config surface + optional fused in-kernel target evaluation + finer in-kernel cancel checkpoints + autotune schema bump `6 -> 7` with deadline-aware counted-H/s scoring and expanded depth candidates | backend validation on RTX 3080 (fixed `--nvidia-max-rregcount 224 --nvidia-hashes-per-launch-per-lane 2`): separate eval path `1.559 H/s` (`/tmp/nv-reg224-d2-long.json`), fused path `1.480 H/s` (`/tmp/nv-postchange-backend-long.json`), strict separate path `1.518 H/s` (`/tmp/nv-reg224-d2-long-strict.json`) | Kept with fused default OFF (control responsiveness improved under stale/cancel pressure and autotune now optimizes deadline-window effective work; fused path retained as experimental knob) |
 
 ## New Entry Template
 Copy this row and fill in all fields after each pass:

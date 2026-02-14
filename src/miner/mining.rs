@@ -1265,8 +1265,11 @@ impl RoundRebalanceState {
 impl<'a> RoundRuntime<'a> {
     fn run(&mut self, input: RoundInput<'_>) -> Result<RoundLoopState> {
         let mut progress = RoundProgressState::new();
-        let mut rebalance =
-            RoundRebalanceState::new(self.backends, self.cfg.hash_poll_interval, input.round_start);
+        let mut rebalance = RoundRebalanceState::new(
+            self.backends,
+            self.cfg.hash_poll_interval,
+            input.round_start,
+        );
         rebalance.configure_rebalance_interval(
             self.cfg
                 .sub_round_rebalance_interval

@@ -7,6 +7,7 @@ constexpr unsigned int ARGON2_COOP_THREADS = 32U;
 constexpr unsigned int ARGON2_COOP_WARP_MASK = 0xFFFFFFFFU;
 constexpr unsigned int SEED_KERNEL_THREADS = 64U;
 constexpr unsigned int EVAL_KERNEL_THREADS = 64U;
+constexpr unsigned int CANCEL_CHECK_BLOCK_INTERVAL = 32U;
 constexpr unsigned int BLAKE2B_BLOCK_BYTES = 128U;
 constexpr unsigned int BLAKE2B_OUT_BYTES = 64U;
 constexpr unsigned int POW_OUTPUT_BYTES = 32U;
@@ -279,6 +280,28 @@ __device__ __forceinline__ void blake2b_long_32_from_block(
     blake2b_init(state, POW_OUTPUT_BYTES);
     blake2b_update(state, out_len_le, 4U);
     blake2b_update(state, block_bytes, 1024U);
+    blake2b_final(state, out_hash, POW_OUTPUT_BYTES);
+}
+
+__device__ __forceinline__ void blake2b_long_32_from_words(
+    const unsigned long long *block_words,
+    unsigned char out_hash[POW_OUTPUT_BYTES]
+) {
+    unsigned char out_len_le[4];
+    store_u32_le(out_len_le, POW_OUTPUT_BYTES);
+
+    Blake2bState state;
+    blake2b_init(state, POW_OUTPUT_BYTES);
+    blake2b_update(state, out_len_le, 4U);
+
+    unsigned char chunk[128];
+    for (unsigned int chunk_idx = 0U; chunk_idx < 8U; ++chunk_idx) {
+        const unsigned long long *chunk_words = block_words + chunk_idx * 16U;
+        for (unsigned int i = 0U; i < 16U; ++i) {
+            store_u64_le(chunk + i * 8U, chunk_words[i]);
+        }
+        blake2b_update(state, chunk, 128U);
+    }
     blake2b_final(state, out_hash, POW_OUTPUT_BYTES);
 }
 
@@ -715,7 +738,10 @@ __global__ void argon2id_fill_kernel(
     unsigned long long *__restrict__ lane_memory,
     unsigned long long *__restrict__ out_last_blocks,
     const volatile unsigned int *__restrict__ cancel_flag,
-    unsigned int *__restrict__ completed_iters
+    unsigned int *__restrict__ completed_iters,
+    const unsigned char *__restrict__ target,
+    unsigned int *__restrict__ found_index_one_based,
+    unsigned int evaluate_target
 ) {
     const unsigned int lane = blockIdx.x;
     const unsigned int tid = threadIdx.x;
@@ -740,6 +766,7 @@ __global__ void argon2id_fill_kernel(
     __shared__ unsigned long long scratch_r[128];
     __shared__ unsigned long long scratch_q[128];
     __shared__ unsigned int cancel_requested;
+    bool abort_requested = false;
 
     for (unsigned int iter = 0U; iter < lane_launch_iters; ++iter) {
         if (tid == 0U) {
@@ -770,8 +797,8 @@ __global__ void argon2id_fill_kernel(
         }
         coop_sync();
 
-        for (unsigned int pass = 0; pass < effective_t_cost; ++pass) {
-            for (unsigned int slice = 0; slice < 4U; ++slice) {
+        for (unsigned int pass = 0; pass < effective_t_cost && !abort_requested; ++pass) {
+            for (unsigned int slice = 0; slice < 4U && !abort_requested; ++slice) {
                 const bool data_independent = (pass == 0U && slice < 2U);
                 if (data_independent) {
                     for (unsigned int i = tid; i < 128U; i += ARGON2_COOP_THREADS) {
@@ -800,6 +827,17 @@ __global__ void argon2id_fill_kernel(
                         : (cur_index - 1U);
 
                 for (unsigned int block = first_block; block < segment_length; ++block) {
+                    if (((block - first_block) % CANCEL_CHECK_BLOCK_INTERVAL) == 0U) {
+                        if (tid == 0U) {
+                            cancel_requested = cancel_flag[0];
+                        }
+                        coop_sync();
+                        if (cancel_requested != 0U) {
+                            abort_requested = true;
+                            break;
+                        }
+                    }
+
                     unsigned long long rand64;
                     if (data_independent) {
                         const unsigned int address_index = block & 127U;
@@ -883,12 +921,26 @@ __global__ void argon2id_fill_kernel(
                 }
             }
         }
+        if (abort_requested) {
+            break;
+        }
 
         const unsigned long long *last =
             memory + (static_cast<unsigned long long>(lane_length) - 1ULL) * 128ULL;
         unsigned long long *out = out_last_blocks + global_hash_idx * 128ULL;
         for (unsigned int i = tid; i < 128U; i += ARGON2_COOP_THREADS) {
             out[i] = last[i];
+        }
+        coop_sync();
+        if (evaluate_target != 0U && tid == 0U) {
+            unsigned char hash[POW_OUTPUT_BYTES];
+            blake2b_long_32_from_words(last, hash);
+            if (hash_meets_target_be(hash, target)) {
+                atomicMin(
+                    found_index_one_based,
+                    static_cast<unsigned int>(global_hash_idx) + 1U
+                );
+            }
         }
         coop_sync();
         if (tid == 0U) {
@@ -909,15 +961,10 @@ __global__ void evaluate_hashes_kernel(
         return;
     }
 
-    unsigned char block_bytes[1024];
     const unsigned long long *last =
         last_blocks + static_cast<unsigned long long>(hash_idx) * 128ULL;
-    for (unsigned int i = 0U; i < 128U; ++i) {
-        store_u64_le(block_bytes + i * 8U, last[i]);
-    }
-
     unsigned char hash[POW_OUTPUT_BYTES];
-    blake2b_long_32_from_block(block_bytes, hash);
+    blake2b_long_32_from_words(last, hash);
     if (hash_meets_target_be(hash, target)) {
         atomicMin(found_index_one_based, hash_idx + 1U);
     }

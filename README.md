@@ -140,12 +140,15 @@ Run headless/plain logs (no fullscreen TUI):
       - `--cpu-autotune-config` overrides the persisted autotune config path.
   - NVIDIA backend tuning knobs for faster CUDA perf iteration:
     - `--nvidia-autotune-secs` (default `5`) controls per-candidate benchmark window for regcap autotune.
-    - `--nvidia-autotune-samples` (default `2`) runs multiple samples per regcap candidate; autotune picks by median H/s (mean tie-break).
+    - `--nvidia-autotune-samples` (default `2`) runs multiple samples per candidate; autotune prioritizes median deadline-window counted H/s (then mean counted H/s, then throughput tie-breaks).
     - `--nvidia-autotune-config` overrides the persisted NVIDIA autotune cache path (`<data-dir>/seine.nvidia-autotune.json` by default).
     - `--nvidia-max-rregcount` forces a fixed register cap and skips autotune/cache lookup.
     - `--nvidia-max-lanes` caps active NVIDIA lanes per device instance.
     - `--nvidia-dispatch-iters-per-lane` and `--nvidia-allocation-iters-per-lane` override scheduler/allocator lane-iteration hints.
     - `--nvidia-hashes-per-launch-per-lane` (default `2`) controls CUDA launch depth per lane (`higher => fewer launches`, often higher H/s on this workload, but coarser cancel/fence preemption).
+    - `--nvidia-no-adaptive-launch-depth` disables backend pressure-based launch-depth reduction.
+    - `--nvidia-fused-target-check` enables in-fill-kernel target checking (disabled by default; can regress throughput on some GPUs).
+    - `--nvidia-template-stop-policy` (`auto`, `on`, `off`) controls whether NVIDIA workers enforce template `stop_at`; `auto` follows `--strict-round-accounting`.
   - `--stats-secs` (default `10`) controls periodic stats log emission cadence.
   - `--work-allocation` (`adaptive` or `static`) controls backend nonce-chunk splitting policy in mining mode.
     - Adaptive mode now also incorporates solved/stale rounds with reduced gain so weights stay fresh under frequent tip churn.
