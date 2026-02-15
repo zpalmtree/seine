@@ -787,10 +787,29 @@ unsafe fn neon_blamka(
     a: std::arch::aarch64::uint64x2_t,
     b: std::arch::aarch64::uint64x2_t,
 ) -> std::arch::aarch64::uint64x2_t {
-    use std::arch::aarch64::{vaddq_u64, vmovn_u64, vmull_u32};
-    let product = vmull_u32(vmovn_u64(a), vmovn_u64(b));
-    let doubled = vaddq_u64(product, product);
-    vaddq_u64(vaddq_u64(a, b), doubled)
+    // a + b + 2*(lo32(a)*lo32(b))  =  (a+b) + lo(a)*lo(b) + lo(a)*lo(b)
+    // Use inline asm to force UMLAL.2D (widening multiply-accumulate):
+    //   xtn  lo_a, a       -- narrow a to 32-bit lanes
+    //   xtn  lo_b, b       -- narrow b to 32-bit lanes
+    //   add  out, a, b     -- out = a + b
+    //   umlal out, lo_a, lo_b  -- out += lo(a)*lo(b)
+    //   umlal out, lo_a, lo_b  -- out += lo(a)*lo(b)  [total: 2*product]
+    // 5 instructions, fused multiply-accumulate on critical path.
+    let out: std::arch::aarch64::uint64x2_t;
+    std::arch::asm!(
+        "xtn  {lo_a}.2s, {a:v}.2d",
+        "xtn  {lo_b}.2s, {b:v}.2d",
+        "add  {out:v}.2d, {a:v}.2d, {b:v}.2d",
+        "umlal {out:v}.2d, {lo_a}.2s, {lo_b}.2s",
+        "umlal {out:v}.2d, {lo_a}.2s, {lo_b}.2s",
+        a = in(vreg) a,
+        b = in(vreg) b,
+        lo_a = out(vreg) _,
+        lo_b = out(vreg) _,
+        out = out(vreg) out,
+        options(pure, nomem, nostack, preserves_flags),
+    );
+    out
 }
 
 /// One BLAMKA half-round on a pair of u64 lanes (2-wide).
