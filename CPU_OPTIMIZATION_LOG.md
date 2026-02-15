@@ -279,3 +279,24 @@ This pass implemented the remaining rework items that were previously proposed:
     - Delta: `+3.82%`
   - Candidate wins all 4 pairs in both benchmarks.
 - Status: adopted.
+
+### Attempt 16: fat LTO (`lto = "fat"` instead of `lto = "thin"`) (adopted)
+
+- **Rationale**: Thin LTO performs parallel, module-scoped link-time optimization. Fat LTO serializes the entire program into a single LLVM module for deeper cross-crate inlining and optimization. With `codegen-units = 1` already set, the main additional benefit is cross-crate optimization (e.g., inlining `argon2`, `blake2`, `blocknet-pow-spec` calls into our hot path). Build time increases from ~25s to ~67s but this only affects development.
+- **Change**: `Cargo.toml` `[profile.release]` `lto = "thin"` -> `lto = "fat"`.
+- Baseline: commit `86015db` (prefetch, thin LTO).
+- Interleaved A/B (4 pairs, 30s rounds, 3 rounds + 1 warmup, 20s cooldown, release profile):
+  - Kernel summary: `data/bench_cpu_ab_kernel_fatlto/summary.txt`
+    - Baseline avg: `1.531 H/s`
+    - Candidate avg: `1.650 H/s`
+    - Delta: `+7.80%`
+  - Backend summary: `data/bench_cpu_ab_backend_fatlto/summary.txt`
+    - Baseline avg: `1.520 H/s`
+    - Candidate avg: `1.616 H/s`
+    - Delta: `+6.31%`
+  - Per-pair backend breakdown (candidate wins all 4):
+    - Pair 1: baseline=1.573, candidate=1.661 (B first)
+    - Pair 2: baseline=1.508, candidate=1.652 (C first)
+    - Pair 3: baseline=1.505, candidate=1.552 (B first)
+    - Pair 4: baseline=1.496, candidate=1.600 (C first)
+- Status: adopted.
