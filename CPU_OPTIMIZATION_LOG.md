@@ -910,6 +910,105 @@ Remaining multi-thread gains are limited to:
 - macOS kernel improvements (superpage support for ARM64)
 - Future hardware (larger dTLB, faster DRAM)
 
+### Attempt 33 (Apple): earlier mid-compress prefetch (not adopted)
+
+- Hypothesis: firing prefetch after diagonal lo half-round (before hi half-round)
+  in column round 0 gives ~12ns more DRAM lead time.
+- Implementation: inlined `neon_round` for column round 0, split into column step →
+  diagonal setup → diagonal lo → PREFETCH → diagonal hi → un-rotate → stores.
+  Used `fmov` to extract lane 0 directly from register (avoids store-to-load
+  forwarding latency for the prefetch address computation).
+- Benchmark: DD/DI ratio unchanged (~1.46), no measurable improvement.
+- Root cause: Apple Silicon's OoO engine already fires the prefetch at the earliest
+  point allowed by data dependencies, regardless of instruction ordering in source.
+  Moving the prefetch earlier in source has no effect on actual execution.
+- Status: not adopted (reverted).
+
+### Attempt 34 (Apple): q-free compress with EOR3 3-way XOR (not adopted)
+
+- Hypothesis: eliminating the 1 KiB q buffer trades 64 stores for 64 loads.
+  Apple Silicon has more load ports (4) than store ports (2), so shifting
+  store pressure to load pressure should improve throughput. Additionally,
+  `veor3q_u64` (SHA3 EOR3) replaces 2 chained EOR instructions with 1.
+- Implementation: Phase 1+2 stores row-round results directly to dst (instead
+  of q buffer + dst backup). Phase 3+4 reads from dst (column-indexed), does
+  column round, then reloads rhs+lhs for final XOR via `veor3q_u64`.
+  Column iterations touch disjoint dst positions, so in-place is safe.
+- Correctness: 170 tests pass. `col_round(row_round(rhs^lhs)) ^ rhs ^ lhs`
+  is algebraically equivalent to the original `col_round(row_round(rhs^lhs)) ^ (rhs^lhs)`.
+- Benchmark (interleaved A/B, 30s × 4 pairs):
+  - Baseline: 81, 79, 79, 79 hashes → avg 79.5 (2.650 H/s)
+  - Candidate: 77, 77, 76, 76 hashes → avg 76.5 (2.550 H/s)
+  - **Regression: -3.8%**
+- Root cause: the q-based approach benefits from store-forwarding — q writes
+  in Phase 1+2 are forwarded to q reads in Phase 3+4 with ~0 latency. The
+  q-free approach replaces these with L1 loads of rhs+lhs (3-4 cycle latency).
+  Similarly, dst backup writes are store-forwarded to Phase 4 reads. Despite
+  the reduced store count, the total cost increased because store-forwarded
+  paths (0 extra latency) were replaced by L1 cache paths (3-4 cycle latency).
+- Key insight: store-forwarding is a critical optimization in the current design.
+  Any restructuring that replaces store-forwarded reads with L1 cache reads
+  will regress, even if the total memory operation count stays constant.
+- Status: not adopted (reverted).
+
+### Attempt 35 (Apple): interleaved lo/hi half-rounds in neon_round (adopted)
+
+- Discovery: assembly analysis of baseline `hash_password_into_with_memory` showed
+  that LLVM serializes the two independent half-round chains in `neon_round`.
+  The lo chain (a_lo/b_lo/c_lo/d_lo) runs all 8 steps to completion before the
+  hi chain (a_hi/b_hi/c_hi/d_hi) starts. Since both chains are completely
+  independent (separate registers, no data dependencies), the OOO core should
+  overlap them — but the serialized instruction ordering delays the hi chain's
+  decode by ~3 cycles (24 instructions ÷ 8-wide decode).
+- Root cause: LLVM inlines two sequential `neon_half_round` calls and processes
+  them in source order. The blamka inline asm is `pure, nomem, nostack`, so LLVM
+  CAN reorder, but its scheduling pass chooses not to. Three deferred q loads
+  (a_hi, c_lo, c_hi) compound the delay by arriving mid-computation.
+- Fix: replaced the two `neon_half_round` calls in `neon_round` with explicit
+  step-by-step interleaving: `blamka_lo, blamka_hi, xar_lo, xar_hi` at each
+  G-function step. Removed the now-dead `neon_half_round` function.
+- Assembly verification: LLVM now emits perfectly interleaved lo/hi patterns.
+  The xar pairs are always adjacent (xar_lo immediately followed by xar_hi at
+  every G step). Phase 1+2 row rounds, Phase 3+4 column rounds, and the DD
+  mid-prefetch path all show the interleaved pattern.
+- Benchmark (interleaved A/B, 60s × 6 pairs, M4 Max):
+  - Baseline: 163, 158, 158, 157, 157, 157 = 950 hashes (2.639 H/s avg)
+  - Candidate: 162, 161, 159, 159, 159, 159 = 959 hashes (2.664 H/s avg)
+  - **Improvement: +0.95% overall (+1.7% in second-run position)**
+  - Candidate wins 5 of 6 pairs; maintains performance under thermal stress
+    while baseline drops.
+- Status: adopted. Small but consistent gain with zero algorithmic risk.
+
+### Analysis: the DD/DI gap and the hardware floor
+
+Instrumented `fill_blocks` with per-slice timing to quantify the data-dependent
+overhead:
+
+| Metric | DI (slices 0,1) | DD (slices 2,3) | Ratio |
+|--------|-----------------|-----------------|-------|
+| Per-block time | 140 ns | 205 ns | 1.46 |
+| Compute portion | 140 ns | 140 ns | 1.00 |
+| DRAM stall | 0 ns | 65 ns | — |
+
+The 65 ns stall matches theory: DRAM latency (~130 ns) minus mid-compress
+prefetch lead time (~61 ns, = 7/8 of Phase 3+4 compute) = 69 ns ≈ 65 ns measured.
+
+The theoretical speed-up from eliminating the DD stall entirely:
+- Current: `2×seg×140 + 2×seg×205 = seg×690`
+- All-DI: `4×seg×140 = seg×560`
+- Maximum gain: `690/560 = 1.23` → 23%
+
+A 10 ns compute reduction (140→130 ns) would yield:
+- New: `2×seg×130 + 2×seg×195 = seg×650`
+- Gain: `690/650 = 1.062` → 6.2%
+
+After Attempts 33-35, the memory operation layout is confirmed optimal (q buffer
+with store-forwarding), the BLAMKA dependency chain is algorithm-fixed, and the
+assembly codegen is verified correct (LDP/STP, fused XAR, inline UMLAL, zero
+register spills, interleaved lo/hi scheduling). The ~1% gain from Attempt 35
+represents the limit of what source-level instruction ordering can achieve on
+Apple Silicon's wide OOO core.
+
 ## Metal + CPU combined mode (Apple M3 Max, 48 GB unified memory)
 
 Tested whether running Metal GPU and CPU backends simultaneously improves total

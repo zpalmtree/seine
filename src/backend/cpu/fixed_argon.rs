@@ -861,33 +861,6 @@ unsafe fn neon_blamka(
     out
 }
 
-/// One BLAMKA half-round on a pair of u64 lanes (2-wide).
-///
-/// Uses the SHA3 `xar` (XOR-and-Rotate) instruction for all four rotation
-/// steps.  LLVM auto-fuses `veor + ushr + shl + orr` into `xar` for rotr24/16/63,
-/// but does NOT recognise `veor + rev64.4s` as fusible for rotr32 — using
-/// `vxarq_u64` explicitly fixes that and cuts the rotr32 critical-path latency
-/// from 4 cycles (eor + rev64) to 2 cycles (single xar).
-#[cfg(target_arch = "aarch64")]
-#[inline(always)]
-unsafe fn neon_half_round(
-    a: &mut std::arch::aarch64::uint64x2_t,
-    b: &mut std::arch::aarch64::uint64x2_t,
-    c: &mut std::arch::aarch64::uint64x2_t,
-    d: &mut std::arch::aarch64::uint64x2_t,
-) {
-    use std::arch::aarch64::vxarq_u64;
-
-    *a = neon_blamka(*a, *b);
-    *d = vxarq_u64::<32>(*d, *a);
-    *c = neon_blamka(*c, *d);
-    *b = vxarq_u64::<24>(*b, *c);
-    *a = neon_blamka(*a, *b);
-    *d = vxarq_u64::<16>(*d, *a);
-    *c = neon_blamka(*c, *d);
-    *b = vxarq_u64::<63>(*b, *c);
-}
-
 /// Full BLAMKA round on 16 u64 elements packed as 4 lo/hi NEON register pairs.
 ///
 /// Performs both the column step and the diagonal step, matching the scalar
@@ -905,14 +878,36 @@ unsafe fn neon_round(
     d_lo: &mut std::arch::aarch64::uint64x2_t,
     d_hi: &mut std::arch::aarch64::uint64x2_t,
 ) {
-    use std::arch::aarch64::vextq_u64;
+    use std::arch::aarch64::{vextq_u64, vxarq_u64};
 
-    // Column step: independent half-rounds on lo and hi pairs.
-    neon_half_round(a_lo, b_lo, c_lo, d_lo);
-    neon_half_round(a_hi, b_hi, c_hi, d_hi);
+    // Column step: explicitly interleave lo and hi half-rounds so the OOO
+    // core sees both independent chains early in the decode window, rather
+    // than serializing one chain then the other (as the compiler tends to do
+    // when two sequential neon_half_round calls are inlined).
+    //
+    // G step 1: a = a + b + 2*lo32(a)*lo32(b);  d = rotr32(d ^ a)
+    *a_lo = neon_blamka(*a_lo, *b_lo);
+    *a_hi = neon_blamka(*a_hi, *b_hi);
+    *d_lo = vxarq_u64::<32>(*d_lo, *a_lo);
+    *d_hi = vxarq_u64::<32>(*d_hi, *a_hi);
+    // G step 2: c = c + d + 2*lo32(c)*lo32(d);  b = rotr24(b ^ c)
+    *c_lo = neon_blamka(*c_lo, *d_lo);
+    *c_hi = neon_blamka(*c_hi, *d_hi);
+    *b_lo = vxarq_u64::<24>(*b_lo, *c_lo);
+    *b_hi = vxarq_u64::<24>(*b_hi, *c_hi);
+    // G step 3: a = a + b + 2*lo32(a)*lo32(b);  d = rotr16(d ^ a)
+    *a_lo = neon_blamka(*a_lo, *b_lo);
+    *a_hi = neon_blamka(*a_hi, *b_hi);
+    *d_lo = vxarq_u64::<16>(*d_lo, *a_lo);
+    *d_hi = vxarq_u64::<16>(*d_hi, *a_hi);
+    // G step 4: c = c + d + 2*lo32(c)*lo32(d);  b = rotr63(b ^ c)
+    *c_lo = neon_blamka(*c_lo, *d_lo);
+    *c_hi = neon_blamka(*c_hi, *d_hi);
+    *b_lo = vxarq_u64::<63>(*b_lo, *c_lo);
+    *b_hi = vxarq_u64::<63>(*b_hi, *c_hi);
 
     // Diagonal step: rotate b by 1, c by 2, d by 3 across the 4-wide logical
-    // vector, then run the half-rounds, then un-rotate.
+    // vector, then run the half-rounds interleaved, then un-rotate.
     let mut bb_lo = vextq_u64::<1>(*b_lo, *b_hi);
     let mut bb_hi = vextq_u64::<1>(*b_hi, *b_lo);
     let mut cc_lo = *c_hi;
@@ -920,8 +915,26 @@ unsafe fn neon_round(
     let mut dd_lo = vextq_u64::<1>(*d_hi, *d_lo);
     let mut dd_hi = vextq_u64::<1>(*d_lo, *d_hi);
 
-    neon_half_round(a_lo, &mut bb_lo, &mut cc_lo, &mut dd_lo);
-    neon_half_round(a_hi, &mut bb_hi, &mut cc_hi, &mut dd_hi);
+    // G step 1
+    *a_lo = neon_blamka(*a_lo, bb_lo);
+    *a_hi = neon_blamka(*a_hi, bb_hi);
+    dd_lo = vxarq_u64::<32>(dd_lo, *a_lo);
+    dd_hi = vxarq_u64::<32>(dd_hi, *a_hi);
+    // G step 2
+    cc_lo = neon_blamka(cc_lo, dd_lo);
+    cc_hi = neon_blamka(cc_hi, dd_hi);
+    bb_lo = vxarq_u64::<24>(bb_lo, cc_lo);
+    bb_hi = vxarq_u64::<24>(bb_hi, cc_hi);
+    // G step 3
+    *a_lo = neon_blamka(*a_lo, bb_lo);
+    *a_hi = neon_blamka(*a_hi, bb_hi);
+    dd_lo = vxarq_u64::<16>(dd_lo, *a_lo);
+    dd_hi = vxarq_u64::<16>(dd_hi, *a_hi);
+    // G step 4
+    cc_lo = neon_blamka(cc_lo, dd_lo);
+    cc_hi = neon_blamka(cc_hi, dd_hi);
+    bb_lo = vxarq_u64::<63>(bb_lo, cc_lo);
+    bb_hi = vxarq_u64::<63>(bb_hi, cc_hi);
 
     // Un-rotate.
     *b_lo = vextq_u64::<1>(bb_hi, bb_lo);
