@@ -663,7 +663,10 @@ unsafe fn compress_avx2(rhs: &PowBlock, lhs: &PowBlock) -> PowBlock {
 #[target_feature(enable = "avx2")]
 unsafe fn compress_avx2_into(rhs: &PowBlock, lhs: &PowBlock, dst: &mut PowBlock) {
     use std::arch::x86_64::{
-        __m256i, _mm256_loadu_si256, _mm256_set_epi64x, _mm256_storeu_si256, _mm256_xor_si256,
+        __m128i, __m256i, _mm256_castsi128_si256, _mm256_castsi256_si128,
+        _mm256_extracti128_si256, _mm256_inserti128_si256, _mm256_loadu_si256,
+        _mm256_storeu_si256, _mm256_xor_si256, _mm_loadu_si128, _mm_storeu_si128,
+        _mm_xor_si128,
     };
 
     // q lives on the stack as the working buffer for round permutations.
@@ -700,74 +703,59 @@ unsafe fn compress_avx2_into(rhs: &PowBlock, lhs: &PowBlock, dst: &mut PowBlock)
         _mm256_storeu_si256(q_ptr.add(base + 12) as *mut __m256i, d);
     }
 
-    // Phase 3: Column rounds on q (stride-16 gather/scatter).
+    // Phase 3: Column rounds — gather from q via 128-bit pair loads, compute the
+    // round, then scatter results directly into dst XOR'd with the pre-round backup
+    // that dst still holds.  This fuses the column scatter with the final XOR,
+    // eliminating the separate Phase-4 pass over both buffers.
     for idx in 0..8 {
         let base = idx * 2;
 
-        let mut a = _mm256_set_epi64x(
-            q.0[base + 17] as i64,
-            q.0[base + 16] as i64,
-            q.0[base + 1] as i64,
-            q.0[base] as i64,
+        // Gather: 128-bit pair loads from q, combined into 256-bit registers.
+        // Each pair (q[off], q[off+1]) is contiguous, pairs separated by stride 16.
+        let mut a = _mm256_inserti128_si256::<1>(
+            _mm256_castsi128_si256(_mm_loadu_si128(q_ptr.add(base) as *const __m128i)),
+            _mm_loadu_si128(q_ptr.add(base + 16) as *const __m128i),
         );
-        let mut b = _mm256_set_epi64x(
-            q.0[base + 49] as i64,
-            q.0[base + 48] as i64,
-            q.0[base + 33] as i64,
-            q.0[base + 32] as i64,
+        let mut b = _mm256_inserti128_si256::<1>(
+            _mm256_castsi128_si256(_mm_loadu_si128(q_ptr.add(base + 32) as *const __m128i)),
+            _mm_loadu_si128(q_ptr.add(base + 48) as *const __m128i),
         );
-        let mut c = _mm256_set_epi64x(
-            q.0[base + 81] as i64,
-            q.0[base + 80] as i64,
-            q.0[base + 65] as i64,
-            q.0[base + 64] as i64,
+        let mut c = _mm256_inserti128_si256::<1>(
+            _mm256_castsi128_si256(_mm_loadu_si128(q_ptr.add(base + 64) as *const __m128i)),
+            _mm_loadu_si128(q_ptr.add(base + 80) as *const __m128i),
         );
-        let mut d = _mm256_set_epi64x(
-            q.0[base + 113] as i64,
-            q.0[base + 112] as i64,
-            q.0[base + 97] as i64,
-            q.0[base + 96] as i64,
+        let mut d = _mm256_inserti128_si256::<1>(
+            _mm256_castsi128_si256(_mm_loadu_si128(q_ptr.add(base + 96) as *const __m128i)),
+            _mm_loadu_si128(q_ptr.add(base + 112) as *const __m128i),
         );
 
         avx2_round(&mut a, &mut b, &mut c, &mut d);
 
-        let mut aa = [0u64; 4];
-        let mut bb = [0u64; 4];
-        let mut cc = [0u64; 4];
-        let mut dd = [0u64; 4];
-        _mm256_storeu_si256(aa.as_mut_ptr() as *mut __m256i, a);
-        _mm256_storeu_si256(bb.as_mut_ptr() as *mut __m256i, b);
-        _mm256_storeu_si256(cc.as_mut_ptr() as *mut __m256i, c);
-        _mm256_storeu_si256(dd.as_mut_ptr() as *mut __m256i, d);
+        // Fused scatter + final XOR: for each 128-bit pair of the column result,
+        // load the corresponding pre-round pair from dst, XOR, and write back.
+        macro_rules! scatter_xor_pair {
+            ($vec:expr, $lo_off:expr, $hi_off:expr) => {{
+                let lo = _mm256_castsi256_si128($vec);
+                let hi = _mm256_extracti128_si256::<1>($vec);
+                let d_lo = _mm_loadu_si128(dst_ptr.add($lo_off) as *const __m128i);
+                let d_hi = _mm_loadu_si128(dst_ptr.add($hi_off) as *const __m128i);
+                _mm_storeu_si128(
+                    dst_ptr.add($lo_off) as *mut __m128i,
+                    _mm_xor_si128(lo, d_lo),
+                );
+                _mm_storeu_si128(
+                    dst_ptr.add($hi_off) as *mut __m128i,
+                    _mm_xor_si128(hi, d_hi),
+                );
+            }};
+        }
 
-        q.0[base] = aa[0];
-        q.0[base + 1] = aa[1];
-        q.0[base + 16] = aa[2];
-        q.0[base + 17] = aa[3];
-        q.0[base + 32] = bb[0];
-        q.0[base + 33] = bb[1];
-        q.0[base + 48] = bb[2];
-        q.0[base + 49] = bb[3];
-        q.0[base + 64] = cc[0];
-        q.0[base + 65] = cc[1];
-        q.0[base + 80] = cc[2];
-        q.0[base + 81] = cc[3];
-        q.0[base + 96] = dd[0];
-        q.0[base + 97] = dd[1];
-        q.0[base + 112] = dd[2];
-        q.0[base + 113] = dd[3];
+        scatter_xor_pair!(a, base, base + 16);
+        scatter_xor_pair!(b, base + 32, base + 48);
+        scatter_xor_pair!(c, base + 64, base + 80);
+        scatter_xor_pair!(d, base + 96, base + 112);
     }
-
-    // Phase 4: Final XOR — dst = q ^ dst, where dst still holds the pre-round XOR.
-    for vec_idx in 0..(PowBlock::SIZE / 32) {
-        let offset = vec_idx * 4;
-        let qv = _mm256_loadu_si256(q_ptr.add(offset) as *const __m256i);
-        let dv = _mm256_loadu_si256(dst_ptr.add(offset) as *const __m256i);
-        _mm256_storeu_si256(
-            dst_ptr.add(offset) as *mut __m256i,
-            _mm256_xor_si256(qv, dv),
-        );
-    }
+    // No Phase 4 needed — final XOR was fused into the column scatter above.
 }
 
 #[cfg(target_arch = "x86_64")]

@@ -428,3 +428,26 @@ x86 prefetch, fat LTO) plus the NEON SIMD commit (Attempt 17).
   mandatory on all Apple Silicon (M1+) and enabled by default for `aarch64-apple-darwin`.
   Non-Apple AArch64 targets would need `sha3` feature detection or gating.
 - Status: adopted.
+
+## 2026-02-14 x86_64 fused column-scatter optimization
+
+Host: AMD Ryzen 9 5900X (Zen 3), 12C/24T, DDR4-3600.
+
+### Attempt 17: fused column-scatter + final XOR in compress_avx2_into (adopted)
+
+- **Rationale**: The column rounds in `compress_avx2_into` scattered results back to the stack buffer `q` via temporary `[u64; 4]` arrays (128 scalar stores), then Phase 4 did a separate full-buffer XOR pass (`q ^ dst` over 32 × 256-bit iterations). By fusing the final XOR into the column scatter — loading pre-round values from `dst`, XOR'ing with column results, and writing directly to `dst` via 128-bit pair operations — both the scatter-to-q and the Phase 4 pass are eliminated.
+- **Additional cleanup**: Column gather now uses explicit `_mm_loadu_si128` + `_mm256_inserti128_si256` for 128-bit pair loads instead of `_mm256_set_epi64x`.
+- **Code change**: `compress_avx2_into` in `src/backend/cpu/fixed_argon.rs` — replaced Phase 3 column scatter + Phase 4 XOR with fused `scatter_xor_pair!` macro using 128-bit SIMD operations.
+- Baseline: commit `74e840f` (fat LTO).
+- Interleaved A/B (4 pairs, 30s rounds, 3 rounds + 1 warmup, 20s cooldown, release profile):
+  - Kernel summary: `data/bench_cpu_ab_kernel_fused_scatter/summary.txt`
+    - Baseline avg: `1.617 H/s`
+    - Candidate avg: `1.658 H/s`
+    - Delta: `+2.58%`
+    - Candidate wins all 4 pairs.
+  - Backend summary: `data/bench_cpu_ab_backend_fused_scatter/summary.txt`
+    - Baseline avg: `1.600 H/s`
+    - Candidate avg: `1.621 H/s`
+    - Delta: `+1.29%`
+    - Candidate wins 3 of 4 pairs (pair 4 loss attributed to thermal drift after extended benchmarking).
+- Status: adopted.
