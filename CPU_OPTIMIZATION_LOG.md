@@ -979,6 +979,45 @@ Remaining multi-thread gains are limited to:
     while baseline drops.
 - Status: adopted. Small but consistent gain with zero algorithmic risk.
 
+### Attempt 36 (Apple): DI prefetch 4-ahead instead of 3-ahead (not adopted)
+
+- Hypothesis: increasing DI prefetch distance from 3-ahead to 4-ahead gives the
+  memory system more lead time for random reference block access.
+- Change: `block + 3` → `block + 4` in DI prefetch loop; prime 4 blocks instead
+  of 3 before entering the loop.
+- A/B test: 60s × 6 pairs, interleaved.
+  - Baseline (3-ahead): 169, 163, 162, 160, 160, 159 = 973 hashes
+  - Candidate (4-ahead): 166, 164, 161, 161, 159, 159 = 970 hashes
+  - **Result: -0.3%.** No improvement; essentially noise.
+- Why: DI blocks are already fast (140 ns). The 3-ahead distance already hides
+  the DRAM latency effectively; adding more distance doesn't help and may
+  slightly increase address-computation overhead.
+- Status: not adopted.
+
+### Attempt 37 (Apple): 2-column Phase 3+4 interleave (adopted)
+
+- Hypothesis: each column round's BLAMKA dependency chain uses only 20% of
+  available multiply port throughput (16 umlal in 40 cycles on 2 ports = 80
+  available slots). Processing two independent columns simultaneously fills
+  idle port slots.
+- Change: new `neon_round_pair` function that interleaves two columns' BLAMKA
+  operations at the G-step level. Phase 3+4 processes columns in pairs:
+  `compress_neon_into` does (0,1), (2,3), (4,5), (6,7).
+  `compress_neon_into_mid_prefetch` does column 0 solo (for ref_index),
+  then (1,2), (3,4), (5,6) as pairs, column 7 solo.
+- Assembly verification: compiler generates LDP pairs to load both columns'
+  elements at the same row position (adjacent 16-byte values). Four independent
+  BLAMKA chains (col0_lo, col1_lo, col0_hi, col1_hi) presented in tight window.
+  Function grew from 1668 to 2368 instructions (~9.5KB, fits easily in L1 i-cache).
+- A/B test: 60s × 6 pairs, interleaved.
+  - Baseline: 164, 159, 159, 160, 160, 162 = 964 hashes (2.678 H/s)
+  - Candidate: 164, 163, 162, 162, 164, 164 = 979 hashes (2.719 H/s)
+  - **Improvement: +1.56% overall (+1.9% in second-run position)**
+  - Candidate wins 5/6 pairs, ties 1; gap widens under thermal load.
+- Status: adopted. OOO core benefits from having two independent column chains
+  visible simultaneously, filling multiply port gaps that the ROB couldn't fully
+  exploit when columns were processed sequentially.
+
 ### Analysis: the DD/DI gap and the hardware floor
 
 Instrumented `fill_blocks` with per-slice timing to quantify the data-dependent
@@ -1002,12 +1041,12 @@ A 10 ns compute reduction (140→130 ns) would yield:
 - New: `2×seg×130 + 2×seg×195 = seg×650`
 - Gain: `690/650 = 1.062` → 6.2%
 
-After Attempts 33-35, the memory operation layout is confirmed optimal (q buffer
+After Attempts 33-37, the memory operation layout is confirmed optimal (q buffer
 with store-forwarding), the BLAMKA dependency chain is algorithm-fixed, and the
 assembly codegen is verified correct (LDP/STP, fused XAR, inline UMLAL, zero
-register spills, interleaved lo/hi scheduling). The ~1% gain from Attempt 35
-represents the limit of what source-level instruction ordering can achieve on
-Apple Silicon's wide OOO core.
+register spills, interleaved lo/hi scheduling, cross-column interleaving).
+Attempts 35+37 together yielded ~2.5% from instruction scheduling improvements.
+DI prefetch tuning (Attempt 36) confirmed that 3-ahead is already optimal.
 
 ## Metal + CPU combined mode (Apple M3 Max, 48 GB unified memory)
 
