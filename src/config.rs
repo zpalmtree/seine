@@ -660,7 +660,6 @@ impl Config {
             &cli.backends,
             &cli.nvidia_devices,
             detect_nvidia_backend_available(),
-            detect_metal_backend_available(),
         );
         let gpu_memory_reservation = if backends.contains(&BackendKind::Metal) {
             estimate_metal_memory_bytes(cli.metal_max_lanes)
@@ -816,18 +815,17 @@ fn resolve_backend_selection(
     requested_backends: &[BackendKind],
     nvidia_devices: &[u32],
     nvidia_available: bool,
-    metal_available: bool,
 ) -> Vec<BackendKind> {
     if !requested_backends.is_empty() {
         return requested_backends.to_vec();
     }
 
+    // Metal is not auto-enabled: on Apple Silicon unified memory, Argon2id is
+    // memory-latency-bound and CPU lanes are ~12× faster per lane than Metal.
+    // Running both degrades total throughput.  Users can opt in via --backend cpu,metal.
     let mut selected = vec![BackendKind::Cpu];
     if nvidia_available || !nvidia_devices.is_empty() {
         selected.push(BackendKind::Nvidia);
-    }
-    if metal_available {
-        selected.push(BackendKind::Metal);
     }
     selected
 }
@@ -855,16 +853,6 @@ fn detect_nvidia_backend_available() -> bool {
 
 #[cfg(not(feature = "nvidia"))]
 fn detect_nvidia_backend_available() -> bool {
-    false
-}
-
-#[cfg(all(feature = "metal", target_os = "macos"))]
-fn detect_metal_backend_available() -> bool {
-    metal::Device::system_default().is_some()
-}
-
-#[cfg(not(all(feature = "metal", target_os = "macos")))]
-fn detect_metal_backend_available() -> bool {
     false
 }
 
@@ -1620,25 +1608,25 @@ mod tests {
     #[test]
     fn resolve_backend_selection_uses_requested_backends_verbatim() {
         let selected =
-            resolve_backend_selection(&[BackendKind::Nvidia, BackendKind::Cpu], &[], false, false);
+            resolve_backend_selection(&[BackendKind::Nvidia, BackendKind::Cpu], &[], false);
         assert_eq!(selected, vec![BackendKind::Nvidia, BackendKind::Cpu]);
     }
 
     #[test]
     fn resolve_backend_selection_defaults_to_cpu_only_when_nvidia_unavailable() {
-        let selected = resolve_backend_selection(&[], &[], false, false);
+        let selected = resolve_backend_selection(&[], &[], false);
         assert_eq!(selected, vec![BackendKind::Cpu]);
     }
 
     #[test]
     fn resolve_backend_selection_defaults_to_cpu_and_nvidia_when_available() {
-        let selected = resolve_backend_selection(&[], &[], true, false);
+        let selected = resolve_backend_selection(&[], &[], true);
         assert_eq!(selected, vec![BackendKind::Cpu, BackendKind::Nvidia]);
     }
 
     #[test]
     fn resolve_backend_selection_enables_nvidia_when_devices_are_explicit() {
-        let selected = resolve_backend_selection(&[], &[0, 1], false, false);
+        let selected = resolve_backend_selection(&[], &[0, 1], false);
         assert_eq!(selected, vec![BackendKind::Cpu, BackendKind::Nvidia]);
     }
 }

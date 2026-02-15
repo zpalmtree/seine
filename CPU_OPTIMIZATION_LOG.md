@@ -710,3 +710,60 @@ From post-rebase baseline (1.533 / 1.503): **Kernel +59.4%, Backend +60.3%**.
 Both platforms are now fundamentally memory-bound. The remaining bottleneck is DRAM
 + TLB latency for random 1 KB reads across a 2 GB array, which software
 optimizations alone cannot significantly reduce further.
+
+## Metal + CPU combined mode (Apple M3 Max, 48 GB unified memory)
+
+Tested whether running Metal GPU and CPU backends simultaneously improves total
+hashrate on Apple Silicon unified memory.
+
+### Benchmark results (backend, 12s × 3 rounds)
+
+| Config | Avg H/s | CPU H/s | Metal H/s | CPU lanes | Metal lanes |
+|--------|---------|---------|-----------|-----------|-------------|
+| CPU only | **24.3** | 24.3 | — | 12 | — |
+| Metal only | 2.32 | — | 2.32 | — | 14 |
+| CPU+Metal (auto: 1+14) | 4.61 | 2.30 | 2.30 | 1 | 14 |
+| CPU+Metal (1 CPU + 7 Metal) | 3.46 | 2.31 | 1.15 | 1 | 7 |
+
+### Analysis
+
+**CPU-only is optimal.** Combined mode is 5× slower than CPU alone.
+
+Per-lane economics: CPU gets ~2.0 H/s/lane vs Metal ~0.17 H/s/lane (12× gap).
+Every 2 GB of memory given to Metal produces 12× less hashrate than giving it
+to a CPU lane instead.
+
+### Why Metal can't help on unified memory
+
+1. **Shared DRAM bandwidth** — Apple Silicon unified memory means CPU and GPU
+   share the same physical DRAM banks and memory controller (~400 GB/s on M3 Max).
+   There is no discrete VRAM to isolate. `StorageModeShared` and
+   `StorageModePrivate` both resolve to the same physical memory.
+
+2. **No bandwidth fencing** — There is no hardware or API mechanism to partition
+   memory bandwidth between CPU and GPU on Apple Silicon. Both compete for the
+   same bandwidth pool. macOS QoS and Metal priority hints affect scheduling
+   but not bandwidth allocation.
+
+3. **Argon2id is memory-latency-bound** — The workload is ~91% DRAM-bound
+   (random 1 KB reads from a 2 GB arena). GPU compute parallelism cannot
+   compensate because the bottleneck is memory access latency and bandwidth,
+   not ALU throughput. The GPU's wide SIMD lanes sit idle waiting on memory.
+
+4. **Time-slicing doesn't help** — Alternating CPU and Metal would yield
+   `max(CPU, Metal)` throughput, not their sum, making it strictly worse than
+   CPU-only.
+
+5. **Break-even requires ~50% parity** — For combined mode to beat CPU-only,
+   Metal would need per-lane throughput within ~50% of CPU. At 12× worse,
+   this is far out of reach.
+
+### Conclusion
+
+Metal is not viable for Argon2id on Apple Silicon unified memory. The optimal
+configuration is `--backend cpu` (CPU-only). No current or announced Apple
+architecture has discrete GPU memory; unified memory is Apple's core design
+direction. Metal auto-detection has been disabled — users can still opt in
+via `--backend cpu,metal` or `--backend metal`, but auto-detect defaults to
+CPU-only (+ NVIDIA when available). The memory coordination code (deducting
+Metal reservation from CPU budget) remains as a safety net for explicit opt-in.
