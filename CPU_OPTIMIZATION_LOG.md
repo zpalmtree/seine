@@ -679,6 +679,92 @@ Phase 1+2 fusion alone (wider prefetch reverted):
   to fundamental architectural differences (register count, target_feature inlining
   barrier, µop cache sensitivity).
 
+## 2026-02-15 Apple Silicon mid-compress prefetch + madvise investigation
+
+Host: Apple M4 Max, 16 cores, 48 GB unified memory.
+Post-rebase baseline includes all previous optimizations (NEON SIMD, SHA3 XAR,
+8-cache-line prefetch, inline asm UMLAL.2D).
+
+Note: This session's benchmarks were run under reduced power envelope (low
+battery + charging), giving lower absolute numbers than prior sessions.
+Relative A/B comparisons remain valid.
+
+### Multi-thread scaling baseline (kernel, 12s × 3 rounds)
+
+| Threads | Avg H/s | Per-thread | Scaling eff. |
+|---------|---------|------------|-------------|
+| 1 | 2.583 | 2.583 | 100% |
+| 4 | 9.444 | 2.361 | 91.4% |
+| 8 | 17.333 | 2.167 | 83.9% |
+| 12 | 24.167 | 2.014 | 78.0% |
+| 16 | 19.083* | 1.193 | 46.2% |
+
+\* 16 threads shows extreme variance (min=8.0, max=26.6) because 4 threads land
+on E-cores, which are much slower for memory-latency-bound workloads and waste
+2 GB each for minimal throughput.  12 P-cores is the clear scaling ceiling.
+
+### Attempt 27 (Apple): `posix_madvise(MADV_RANDOM)` on 2 GB arena (not adopted)
+
+- **Rationale**: Random 1 KiB accesses across 2 GB; `MADV_RANDOM` disables
+  OS-level page clustering and read-ahead, potentially reducing wasted memory
+  bandwidth and TLB contention in multi-thread workloads.
+- **Implementation**: Added `posix_madvise(addr, len, POSIX_MADV_RANDOM)` call
+  after `Vec<PowBlock>` allocation in both kernel worker and kernel bench paths.
+- **Result**: Severe regression — 12-thread dropped from 24.2 to 9.7 H/s.
+  Subsequent investigation confirmed the regression persisted even after reverting
+  (thermal + battery throttling confounded results), but the madvise change
+  provided no benefit at any thread count.
+- **Root cause**: On macOS with unified memory compression, `MADV_RANDOM` likely
+  causes the kernel to deprioritize/compress pages more aggressively, which is
+  catastrophic for a 24 GB active working set (12 × 2 GB).
+- Status: not adopted (reverted).
+
+### Attempt 28 (Apple): mid-compress prefetch for data-dependent slices (adopted)
+
+- **Root cause identified**: For data-dependent slices (slices 2, 3 — half of all
+  blocks), the post-compress prefetch issues the `prfm` for the NEXT iteration's
+  ref block only ~6 ns before the next compress starts loading it.  DRAM random
+  access takes ~200–400 ns, so the prefetch provides essentially zero latency
+  hiding.  The timeline:
+  1. Compress N completes (writes `dst`)
+  2. Read `dst[0]` (L1-hot, ~2 ns)
+  3. Compute `reference_index` (~2 ns)
+  4. Issue `prfm` for next ref block (~2 ns)
+  5. Start compress N+1 — immediately loads next ref block → stalls ~300 ns
+
+- **Fix**: After column round idx=0 in Phase 3+4, `dst[0]` has its **final**
+  value (each column iteration writes disjoint u64 positions).  A new
+  `compress_neon_into_mid_prefetch` variant reads `dst[0]` at that point, computes
+  `reference_index`, and prefetches the target block.  The remaining 7 column
+  iterations (~150 ns of compute) overlap with the DRAM fetch.  This gives **25×
+  more lead time** (150 ns vs 6 ns) for the memory subsystem.
+
+- **Changes** (`#[cfg(target_arch = "aarch64")]`-gated, x86 unchanged):
+  - Added `compress_neon_into_mid_prefetch` — identical to `compress_neon_into`
+    except column round 0 is unrolled out of the loop, followed by a
+    `reference_index` + `prefetch_pow_block` call before columns 1–7.
+  - Added `fill_block_from_refs_mid_prefetch` wrapper that passes prefetch
+    context to the new compress variant.
+  - Data-dependent slice loop now calls the mid-prefetch variant (for all blocks
+    except the last one in each slice, which has no next block to prefetch).
+
+- **Interleaved A/B** (4 pairs, 12s rounds, 3 rounds + 1 warmup, 15s cooldown,
+  pre-built binaries, single-thread kernel):
+  - Pair 1 (B first): baseline=2.528, candidate=2.694 (+6.6%)
+  - Pair 2 (C first): baseline=2.500, candidate=2.667 (+6.7%)
+  - Pair 3 (B first): baseline=2.472, candidate=2.667 (+7.9%)
+  - Pair 4 (C first): baseline=2.500, candidate=2.667 (+6.7%)
+  - **Baseline avg: 2.500 H/s | Candidate avg: 2.674 H/s | Delta: +6.96%**
+  - Candidate wins all 4 pairs.
+
+- **Long-window confirmation** (30s × 3 rounds):
+  - Kernel: candidate=2.667 vs baseline=2.467 (**+8.11%**)
+  - Backend: candidate=2.648 vs baseline=2.453 (**+7.95%**)
+
+- Correctness: `cargo test` (170 passed) ✓
+- Cross-arch safety: all changes `#[cfg(target_arch = "aarch64")]`-gated.
+- Status: adopted.
+
 ## Summary of cumulative adopted optimizations
 
 ### x86_64 (AMD Ryzen 9 5900X, Zen 3)
@@ -703,13 +789,15 @@ Cumulative x86_64: from ~1.19 H/s to ~1.65 H/s, **~39% total improvement**.
 | 20 | SHA3 `xar` for all BLAMKA rotations | +11.98% | +9.29% | Adopted |
 | 21 | Full prefetch coverage (8 cache lines) | ~+5-10% | ~+5-10% | Adopted |
 | 24 | Inline asm UMLAL.2D for BLAMKA | +9.4% | +9.7% | Adopted |
+| 28 | Mid-compress prefetch for data-dep slices | +8.1% | +8.0% | Adopted |
 
-Cumulative AArch64: from ~1.37 H/s (scalar) to ~2.44 H/s, **~78% total improvement**.
-From post-rebase baseline (1.533 / 1.503): **Kernel +59.4%, Backend +60.3%**.
+Cumulative AArch64: from ~1.37 H/s (scalar) to ~2.67 H/s, **~95% total improvement**.
+From post-rebase baseline (1.533 / 1.503): **Kernel +74.1%, Backend +76.2%**.
 
-Both platforms are now fundamentally memory-bound. The remaining bottleneck is DRAM
-+ TLB latency for random 1 KB reads across a 2 GB array, which software
-optimizations alone cannot significantly reduce further.
+Both platforms are fundamentally memory-bound. The remaining bottleneck is DRAM
++ TLB latency for random 1 KB reads across a 2 GB array. The mid-compress
+prefetch partially addresses this for data-dependent slices but 150 ns of lead
+time still only covers ~50% of the ~300 ns DRAM access latency.
 
 ## Metal + CPU combined mode (Apple M3 Max, 48 GB unified memory)
 

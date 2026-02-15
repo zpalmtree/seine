@@ -170,16 +170,34 @@ impl FixedArgon2id {
                     let ref_index = reference_index(reference_area_size, rand);
                     debug_assert!(ref_index < self.block_count);
 
-                    fill_block_from_refs::<ISA>(memory_blocks, prev_index, ref_index, cur_index);
+                    // On AArch64 with NEON, use mid-compress prefetch: after
+                    // column round 0 writes dst[0] (its final value), compute
+                    // the NEXT ref_index and prefetch it.  The remaining 7
+                    // column rounds (~150 ns) overlap with the DRAM fetch,
+                    // giving 25× more lead time than the post-compress prefetch.
+                    #[cfg(target_arch = "aarch64")]
+                    {
+                        if ISA == ISA_NEON && block + 1 < self.segment_length {
+                            let next_ref_area = slice_prefix + block + 1;
+                            fill_block_from_refs_mid_prefetch(
+                                memory_blocks, prev_index, ref_index, cur_index,
+                                next_ref_area,
+                            );
+                        } else {
+                            fill_block_from_refs::<ISA>(memory_blocks, prev_index, ref_index, cur_index);
+                        }
+                    }
+                    #[cfg(not(target_arch = "aarch64"))]
+                    {
+                        fill_block_from_refs::<ISA>(memory_blocks, prev_index, ref_index, cur_index);
 
-                    // After writing cur_index, compute the NEXT ref_index from the
-                    // just-written block and prefetch it.  The just-written block is
-                    // L1-hot so the read of its first u64 is essentially free.
-                    if block + 1 < self.segment_length {
-                        let next_rand = memory_blocks[cur_index].as_ref()[0];
-                        let next_ref_area = slice_prefix + block + 1;
-                        let next_ref = reference_index(next_ref_area, next_rand);
-                        prefetch_pow_block(&memory_blocks[next_ref]);
+                        // Post-compress prefetch for non-AArch64.
+                        if block + 1 < self.segment_length {
+                            let next_rand = memory_blocks[cur_index].as_ref()[0];
+                            let next_ref_area = slice_prefix + block + 1;
+                            let next_ref = reference_index(next_ref_area, next_rand);
+                            prefetch_pow_block(&memory_blocks[next_ref]);
+                        }
                     }
 
                     prev_index = cur_index;
@@ -282,6 +300,40 @@ fn fill_block_from_refs<const ISA: u8>(
         let refb = &*base.add(ref_index);
         let dst = &mut *base.add(cur_index);
         compress_into::<ISA>(prev, refb, dst);
+    }
+}
+
+/// Like [`fill_block_from_refs`] but uses the mid-compress prefetch variant
+/// on AArch64 NEON.  After column round 0 writes `dst[0]`, it computes the
+/// next iteration's ref_index and prefetches the target block, overlapping
+/// ~150 ns of remaining column-round compute with the DRAM fetch.
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+fn fill_block_from_refs_mid_prefetch(
+    memory_blocks: &mut [PowBlock],
+    prev_index: usize,
+    ref_index: usize,
+    cur_index: usize,
+    next_ref_area_size: usize,
+) {
+    debug_assert!(prev_index < memory_blocks.len());
+    debug_assert!(ref_index < memory_blocks.len());
+    debug_assert!(cur_index < memory_blocks.len());
+    debug_assert_ne!(cur_index, prev_index);
+    debug_assert_ne!(cur_index, ref_index);
+
+    unsafe {
+        let base = memory_blocks.as_mut_ptr();
+        let prev = &*base.add(prev_index);
+        let refb = &*base.add(ref_index);
+        let dst = &mut *base.add(cur_index);
+        compress_neon_into_mid_prefetch(
+            prev,
+            refb,
+            dst,
+            next_ref_area_size,
+            base as *const PowBlock,
+        );
     }
 }
 
@@ -976,6 +1028,141 @@ unsafe fn compress_neon_into(rhs: &PowBlock, lhs: &PowBlock, dst: &mut PowBlock)
         );
 
         // XOR column-rounded result with pre-round backup in dst, store to dst.
+        vst1q_u64(dst_ptr.add(base), veorq_u64(a_lo, vld1q_u64(dst_ptr.add(base))));
+        vst1q_u64(dst_ptr.add(base + 16), veorq_u64(a_hi, vld1q_u64(dst_ptr.add(base + 16))));
+        vst1q_u64(dst_ptr.add(base + 32), veorq_u64(b_lo, vld1q_u64(dst_ptr.add(base + 32))));
+        vst1q_u64(dst_ptr.add(base + 48), veorq_u64(b_hi, vld1q_u64(dst_ptr.add(base + 48))));
+        vst1q_u64(dst_ptr.add(base + 64), veorq_u64(c_lo, vld1q_u64(dst_ptr.add(base + 64))));
+        vst1q_u64(dst_ptr.add(base + 80), veorq_u64(c_hi, vld1q_u64(dst_ptr.add(base + 80))));
+        vst1q_u64(dst_ptr.add(base + 96), veorq_u64(d_lo, vld1q_u64(dst_ptr.add(base + 96))));
+        vst1q_u64(dst_ptr.add(base + 112), veorq_u64(d_hi, vld1q_u64(dst_ptr.add(base + 112))));
+    }
+}
+
+/// Like [`compress_neon_into`] but issues a prefetch for the NEXT iteration's
+/// ref block after column round 0 completes.  At that point `dst[0]` has its
+/// final value, giving ~150 ns of DRAM lead time instead of the ~6 ns that
+/// the post-compress prefetch provides.
+///
+/// Used for data-dependent slices (2, 3) where the next ref_index depends on
+/// the current block's output.
+///
+/// # Safety
+/// Same as `compress_neon_into`.  Additionally, `memory_blocks_base` must
+/// point to a valid PowBlock array of at least `block_count` elements.
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn compress_neon_into_mid_prefetch(
+    rhs: &PowBlock,
+    lhs: &PowBlock,
+    dst: &mut PowBlock,
+    next_ref_area_size: usize,
+    memory_blocks_base: *const PowBlock,
+) {
+    use std::arch::aarch64::{uint64x2_t, veorq_u64, vld1q_u64, vst1q_u64};
+
+    let mut q = std::mem::MaybeUninit::<PowBlock>::uninit();
+
+    let rhs_ptr = rhs.0.as_ptr();
+    let lhs_ptr = lhs.0.as_ptr();
+    let dst_ptr = dst.0.as_mut_ptr();
+    let q_ptr = q.as_mut_ptr() as *mut u64;
+
+    // Fused Phase 1+2 (identical to compress_neon_into).
+    for row in 0..8 {
+        let base = row * 16;
+        let mut a_lo: uint64x2_t = veorq_u64(vld1q_u64(rhs_ptr.add(base)), vld1q_u64(lhs_ptr.add(base)));
+        let mut a_hi: uint64x2_t = veorq_u64(vld1q_u64(rhs_ptr.add(base + 2)), vld1q_u64(lhs_ptr.add(base + 2)));
+        let mut b_lo: uint64x2_t = veorq_u64(vld1q_u64(rhs_ptr.add(base + 4)), vld1q_u64(lhs_ptr.add(base + 4)));
+        let mut b_hi: uint64x2_t = veorq_u64(vld1q_u64(rhs_ptr.add(base + 6)), vld1q_u64(lhs_ptr.add(base + 6)));
+        let mut c_lo: uint64x2_t = veorq_u64(vld1q_u64(rhs_ptr.add(base + 8)), vld1q_u64(lhs_ptr.add(base + 8)));
+        let mut c_hi: uint64x2_t = veorq_u64(vld1q_u64(rhs_ptr.add(base + 10)), vld1q_u64(lhs_ptr.add(base + 10)));
+        let mut d_lo: uint64x2_t = veorq_u64(vld1q_u64(rhs_ptr.add(base + 12)), vld1q_u64(lhs_ptr.add(base + 12)));
+        let mut d_hi: uint64x2_t = veorq_u64(vld1q_u64(rhs_ptr.add(base + 14)), vld1q_u64(lhs_ptr.add(base + 14)));
+
+        vst1q_u64(dst_ptr.add(base), a_lo);
+        vst1q_u64(dst_ptr.add(base + 2), a_hi);
+        vst1q_u64(dst_ptr.add(base + 4), b_lo);
+        vst1q_u64(dst_ptr.add(base + 6), b_hi);
+        vst1q_u64(dst_ptr.add(base + 8), c_lo);
+        vst1q_u64(dst_ptr.add(base + 10), c_hi);
+        vst1q_u64(dst_ptr.add(base + 12), d_lo);
+        vst1q_u64(dst_ptr.add(base + 14), d_hi);
+
+        neon_round(
+            &mut a_lo, &mut a_hi,
+            &mut b_lo, &mut b_hi,
+            &mut c_lo, &mut c_hi,
+            &mut d_lo, &mut d_hi,
+        );
+
+        vst1q_u64(q_ptr.add(base), a_lo);
+        vst1q_u64(q_ptr.add(base + 2), a_hi);
+        vst1q_u64(q_ptr.add(base + 4), b_lo);
+        vst1q_u64(q_ptr.add(base + 6), b_hi);
+        vst1q_u64(q_ptr.add(base + 8), c_lo);
+        vst1q_u64(q_ptr.add(base + 10), c_hi);
+        vst1q_u64(q_ptr.add(base + 12), d_lo);
+        vst1q_u64(q_ptr.add(base + 14), d_hi);
+    }
+
+    // Fused Phase 3+4, column 0: this writes dst[0] to its final value.
+    {
+        let mut a_lo: uint64x2_t = vld1q_u64(q_ptr.add(0));
+        let mut a_hi: uint64x2_t = vld1q_u64(q_ptr.add(16));
+        let mut b_lo: uint64x2_t = vld1q_u64(q_ptr.add(32));
+        let mut b_hi: uint64x2_t = vld1q_u64(q_ptr.add(48));
+        let mut c_lo: uint64x2_t = vld1q_u64(q_ptr.add(64));
+        let mut c_hi: uint64x2_t = vld1q_u64(q_ptr.add(80));
+        let mut d_lo: uint64x2_t = vld1q_u64(q_ptr.add(96));
+        let mut d_hi: uint64x2_t = vld1q_u64(q_ptr.add(112));
+
+        neon_round(
+            &mut a_lo, &mut a_hi,
+            &mut b_lo, &mut b_hi,
+            &mut c_lo, &mut c_hi,
+            &mut d_lo, &mut d_hi,
+        );
+
+        vst1q_u64(dst_ptr.add(0), veorq_u64(a_lo, vld1q_u64(dst_ptr.add(0))));
+        vst1q_u64(dst_ptr.add(16), veorq_u64(a_hi, vld1q_u64(dst_ptr.add(16))));
+        vst1q_u64(dst_ptr.add(32), veorq_u64(b_lo, vld1q_u64(dst_ptr.add(32))));
+        vst1q_u64(dst_ptr.add(48), veorq_u64(b_hi, vld1q_u64(dst_ptr.add(48))));
+        vst1q_u64(dst_ptr.add(64), veorq_u64(c_lo, vld1q_u64(dst_ptr.add(64))));
+        vst1q_u64(dst_ptr.add(80), veorq_u64(c_hi, vld1q_u64(dst_ptr.add(80))));
+        vst1q_u64(dst_ptr.add(96), veorq_u64(d_lo, vld1q_u64(dst_ptr.add(96))));
+        vst1q_u64(dst_ptr.add(112), veorq_u64(d_hi, vld1q_u64(dst_ptr.add(112))));
+    }
+
+    // --- Mid-compress prefetch ---
+    // dst[0] now has its final value.  Compute the NEXT iteration's ref_index
+    // and prefetch it.  The remaining 7 column iterations (~150 ns of compute)
+    // overlap with the DRAM fetch.
+    {
+        let rand = *dst_ptr;
+        let next_ref = reference_index(next_ref_area_size, rand);
+        prefetch_pow_block(&*memory_blocks_base.add(next_ref));
+    }
+
+    // Remaining column rounds (idx=1..8).
+    for idx in 1..8 {
+        let base = idx * 2;
+        let mut a_lo: uint64x2_t = vld1q_u64(q_ptr.add(base));
+        let mut a_hi: uint64x2_t = vld1q_u64(q_ptr.add(base + 16));
+        let mut b_lo: uint64x2_t = vld1q_u64(q_ptr.add(base + 32));
+        let mut b_hi: uint64x2_t = vld1q_u64(q_ptr.add(base + 48));
+        let mut c_lo: uint64x2_t = vld1q_u64(q_ptr.add(base + 64));
+        let mut c_hi: uint64x2_t = vld1q_u64(q_ptr.add(base + 80));
+        let mut d_lo: uint64x2_t = vld1q_u64(q_ptr.add(base + 96));
+        let mut d_hi: uint64x2_t = vld1q_u64(q_ptr.add(base + 112));
+
+        neon_round(
+            &mut a_lo, &mut a_hi,
+            &mut b_lo, &mut b_hi,
+            &mut c_lo, &mut c_hi,
+            &mut d_lo, &mut d_hi,
+        );
+
         vst1q_u64(dst_ptr.add(base), veorq_u64(a_lo, vld1q_u64(dst_ptr.add(base))));
         vst1q_u64(dst_ptr.add(base + 16), veorq_u64(a_hi, vld1q_u64(dst_ptr.add(base + 16))));
         vst1q_u64(dst_ptr.add(base + 32), veorq_u64(b_lo, vld1q_u64(dst_ptr.add(base + 32))));
