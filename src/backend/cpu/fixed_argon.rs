@@ -802,43 +802,13 @@ unsafe fn neon_blamka(
     vaddq_u64(vaddq_u64(a, b), doubled)
 }
 
-#[cfg(target_arch = "aarch64")]
-#[inline(always)]
-unsafe fn neon_rotr_64_32(
-    x: std::arch::aarch64::uint64x2_t,
-) -> std::arch::aarch64::uint64x2_t {
-    use std::arch::aarch64::{vreinterpretq_u32_u64, vreinterpretq_u64_u32, vrev64q_u32};
-    vreinterpretq_u64_u32(vrev64q_u32(vreinterpretq_u32_u64(x)))
-}
-
-#[cfg(target_arch = "aarch64")]
-#[inline(always)]
-unsafe fn neon_rotr_64_24(
-    x: std::arch::aarch64::uint64x2_t,
-) -> std::arch::aarch64::uint64x2_t {
-    use std::arch::aarch64::{vorrq_u64, vshlq_n_u64, vshrq_n_u64};
-    vorrq_u64(vshrq_n_u64::<24>(x), vshlq_n_u64::<40>(x))
-}
-
-#[cfg(target_arch = "aarch64")]
-#[inline(always)]
-unsafe fn neon_rotr_64_16(
-    x: std::arch::aarch64::uint64x2_t,
-) -> std::arch::aarch64::uint64x2_t {
-    use std::arch::aarch64::{vorrq_u64, vshlq_n_u64, vshrq_n_u64};
-    vorrq_u64(vshrq_n_u64::<16>(x), vshlq_n_u64::<48>(x))
-}
-
-#[cfg(target_arch = "aarch64")]
-#[inline(always)]
-unsafe fn neon_rotr_64_63(
-    x: std::arch::aarch64::uint64x2_t,
-) -> std::arch::aarch64::uint64x2_t {
-    use std::arch::aarch64::{vorrq_u64, vshlq_n_u64, vshrq_n_u64};
-    vorrq_u64(vshrq_n_u64::<63>(x), vshlq_n_u64::<1>(x))
-}
-
 /// One BLAMKA half-round on a pair of u64 lanes (2-wide).
+///
+/// Uses the SHA3 `xar` (XOR-and-Rotate) instruction for all four rotation
+/// steps.  LLVM auto-fuses `veor + ushr + shl + orr` into `xar` for rotr24/16/63,
+/// but does NOT recognise `veor + rev64.4s` as fusible for rotr32 — using
+/// `vxarq_u64` explicitly fixes that and cuts the rotr32 critical-path latency
+/// from 4 cycles (eor + rev64) to 2 cycles (single xar).
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn neon_half_round(
@@ -847,16 +817,16 @@ unsafe fn neon_half_round(
     c: &mut std::arch::aarch64::uint64x2_t,
     d: &mut std::arch::aarch64::uint64x2_t,
 ) {
-    use std::arch::aarch64::veorq_u64;
+    use std::arch::aarch64::vxarq_u64;
 
     *a = neon_blamka(*a, *b);
-    *d = neon_rotr_64_32(veorq_u64(*d, *a));
+    *d = vxarq_u64::<32>(*d, *a);
     *c = neon_blamka(*c, *d);
-    *b = neon_rotr_64_24(veorq_u64(*b, *c));
+    *b = vxarq_u64::<24>(*b, *c);
     *a = neon_blamka(*a, *b);
-    *d = neon_rotr_64_16(veorq_u64(*d, *a));
+    *d = vxarq_u64::<16>(*d, *a);
     *c = neon_blamka(*c, *d);
-    *b = neon_rotr_64_63(veorq_u64(*b, *c));
+    *b = vxarq_u64::<63>(*b, *c);
 }
 
 /// Full BLAMKA round on 16 u64 elements packed as 4 lo/hi NEON register pairs.

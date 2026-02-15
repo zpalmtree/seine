@@ -399,3 +399,32 @@ x86 prefetch, fat LTO) plus the NEON SIMD commit (Attempt 17).
   optimization, PGO adds no consistent benefit. The two-step build complexity
   (machine-specific profiles, fragile across code changes) is not justified.
 - Status: not adopted.
+
+### Attempt 20: SHA3 `xar` instruction for BLAMKA rotr32 (adopted)
+
+- **Root cause identified**: LLVM auto-fuses `veorq_u64` + shift-or rotation patterns
+  into single `xar.2d` (SHA3) instructions for rotr24, rotr16, and rotr63. However,
+  the rotr32 case used `vrev64q_u32` (compiles to `rev64.4s`), which the compiler
+  does NOT recognise as fusible with the preceding `eor.16b` into `xar.2d #32`.
+  This left 16 occurrences per compress as 2-instruction, 4-cycle serial-latency
+  sequences on the critical BLAMKA dependency chain.
+- **Fix**: Replaced all four `veorq_u64` + `neon_rotr_64_*` patterns in
+  `neon_half_round` with explicit `vxarq_u64::<N>` intrinsic calls. The SHA3
+  extension (`sha3` target feature) is enabled by default on `aarch64-apple-darwin`.
+  This emits `xar.2d` for all 64 XOR-and-rotate operations per compress (was 48
+  `xar` + 16 `eor`+`rev64`, now all 64 are `xar`).
+- **Changes** (`#[cfg(target_arch = "aarch64")]`-gated, x86 unchanged):
+  - `neon_half_round`: replaced `neon_rotr_64_32(veorq_u64(*d, *a))` with
+    `vxarq_u64::<32>(*d, *a)`, and similarly for rotr24/16/63 for consistency.
+  - Removed `neon_rotr_64_32`, `neon_rotr_64_24`, `neon_rotr_64_16`,
+    `neon_rotr_64_63` helper functions (no longer needed).
+- **Long-window confirmation** (30s × 3 rounds):
+  - Kernel: `avg=1.767 H/s` (vs 1.578 prefetch baseline, **+11.98%**)
+  - Backend: `avg=1.683 H/s` (vs 1.540 prefetch baseline, **+9.29%**)
+  - Combined delta vs post-rebase baseline (1.533 / 1.503):
+    **Kernel +15.27%, Backend +11.98%**
+- Correctness: `cargo test` (169 passed) ✓
+- Cross-arch safety: all changes `#[cfg(target_arch = "aarch64")]`-gated. `sha3` is
+  mandatory on all Apple Silicon (M1+) and enabled by default for `aarch64-apple-darwin`.
+  Non-Apple AArch64 targets would need `sha3` feature detection or gating.
+- Status: adopted.
