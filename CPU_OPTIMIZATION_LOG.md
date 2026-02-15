@@ -258,3 +258,24 @@ This pass implemented the remaining rework items that were previously proposed:
     - Pair 3: baseline=1.382, candidate=1.414 (B first)
     - Pair 4: baseline=1.309, candidate=1.438 (C first)
 - Status: adopted.
+
+### Attempt 15: software prefetching for next ref block in fill_blocks (adopted)
+
+- **Rationale**: With in-place compress eliminating ~2 GB of memcpy per hash, the memory subsystem is less saturated. The `fill_blocks` hot loop randomly accesses `memory_blocks[ref_index]` across a 2 GiB array (~524K pages), far exceeding L3 cache (32 MB) and L2 dTLB (2048 entries). Prefetching the next `ref` block during the current compress hides DRAM + TLB miss latency.
+- **Previous attempt 7**: Tried prefetching but (a) was combined with huge pages, (b) code still had memcpy overhead, (c) benchmark methodology was non-interleaved. Now viable with in-place compress reducing memory pressure.
+- **Implementation**:
+  - Added `prefetch_pow_block()` helper: issues `prefetcht0` at offsets 0 and 512 (resolves TLB, primes hardware prefetcher for full 1 KiB).
+  - Data-independent slices (0, 1): prefetch `ref_indexes[block+1]` before current compress.
+  - Data-dependent slices (2, 3): after writing `cur_index`, read its first `u64` (L1-hot), compute next `ref_index`, and prefetch that block.
+- Baseline: commit `4216b32` (in-place compress).
+- Interleaved A/B (4 pairs, 30s rounds, 3 rounds + 1 warmup, 20s cooldown, release profile):
+  - Kernel summary: `data/bench_cpu_ab_kernel_prefetch/summary.txt`
+    - Baseline avg: `1.458 H/s`
+    - Candidate avg: `1.514 H/s`
+    - Delta: `+3.81%`
+  - Backend summary: `data/bench_cpu_ab_backend_prefetch/summary.txt`
+    - Baseline avg: `1.447 H/s`
+    - Candidate avg: `1.502 H/s`
+    - Delta: `+3.82%`
+  - Candidate wins all 4 pairs in both benchmarks.
+- Status: adopted.

@@ -117,8 +117,16 @@ impl FixedArgon2id {
 
             if data_independent_addressing {
                 let ref_base = slice * self.segment_length;
+                // Prefetch the first ref block before entering the loop.
+                if first_block < self.segment_length {
+                    prefetch_pow_block(&memory_blocks[self.data_independent_ref_indexes[ref_base + first_block]]);
+                }
                 for block in first_block..self.segment_length {
                     let ref_index = self.data_independent_ref_indexes[ref_base + block];
+                    // Prefetch NEXT iteration's ref block while current compress runs.
+                    if block + 1 < self.segment_length {
+                        prefetch_pow_block(&memory_blocks[self.data_independent_ref_indexes[ref_base + block + 1]]);
+                    }
                     fill_block_from_refs::<ISA>(memory_blocks, prev_index, ref_index, cur_index);
                     prev_index = cur_index;
                     cur_index += 1;
@@ -132,6 +140,17 @@ impl FixedArgon2id {
                     debug_assert!(ref_index < self.block_count);
 
                     fill_block_from_refs::<ISA>(memory_blocks, prev_index, ref_index, cur_index);
+
+                    // After writing cur_index, compute the NEXT ref_index from the
+                    // just-written block and prefetch it.  The just-written block is
+                    // L1-hot so the read of its first u64 is essentially free.
+                    if block + 1 < self.segment_length {
+                        let next_rand = memory_blocks[cur_index].as_ref()[0];
+                        let next_ref_area = slice_prefix + block + 1;
+                        let next_ref = reference_index(next_ref_area, next_rand);
+                        prefetch_pow_block(&memory_blocks[next_ref]);
+                    }
+
                     prev_index = cur_index;
                     cur_index += 1;
                 }
@@ -232,6 +251,21 @@ fn fill_block_from_refs<const ISA: u8>(
         let refb = &*base.add(ref_index);
         let dst = &mut *base.add(cur_index);
         compress_into::<ISA>(prev, refb, dst);
+    }
+}
+
+/// Prefetch a PowBlock into cache.  Issues two prefetches (offset 0 and 512)
+/// to resolve the TLB entry and prime the hardware prefetcher for the full 1 KiB.
+#[inline(always)]
+fn prefetch_pow_block(block: &PowBlock) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        unsafe {
+            use std::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
+            let ptr = block as *const PowBlock as *const i8;
+            _mm_prefetch(ptr, _MM_HINT_T0);
+            _mm_prefetch(ptr.add(512), _MM_HINT_T0);
+        }
     }
 }
 
