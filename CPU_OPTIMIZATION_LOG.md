@@ -300,3 +300,52 @@ This pass implemented the remaining rework items that were previously proposed:
     - Pair 3: baseline=1.505, candidate=1.552 (B first)
     - Pair 4: baseline=1.496, candidate=1.600 (C first)
 - Status: adopted.
+
+## 2026-02-14 Apple Silicon (AArch64) NEON SIMD optimization
+
+Host: Apple M4 Max, 16 cores, 48 GB unified memory.
+
+Prior to this pass, the AArch64 build used the scalar fallback for all Argon2
+block compression. These changes are gated to `target_arch = "aarch64"` and do
+not affect x86_64 builds.
+
+### Apple Silicon scalar baseline (long-window, 30s × 3 rounds)
+
+- Kernel: `data/bench_cpu_kernel_apple_scalar_long.json` => `avg=1.367 H/s`
+- Backend: `data/bench_cpu_backend_apple_scalar_long.json` => `avg=1.315 H/s`
+
+### Attempt 17: NEON SIMD block compression + prefetch + MaybeUninit (adopted)
+
+- **NEON SIMD path** (`compress_neon_into`):
+  - Added `ISA_NEON` const and compile-time dispatch for `aarch64`.
+  - Implemented 2-wide NEON (128-bit) BLAMKA mixing via `vmovn_u64` + `vmull_u32`.
+  - NEON rotations: `vrev64q_u32` for rotr32, shift-or for rotr24/16/63.
+  - Full `neon_round` with `vextq_u64` lane permutations for diagonal step.
+  - Row rounds: contiguous pair loads (8 NEON registers per row).
+  - Column rounds: stride-16 gather via contiguous pair loads at computed offsets.
+  - No `#[target_feature]` needed — NEON is mandatory on AArch64, so all
+    functions inline freely with no ABI memcpy overhead.
+  - Both by-value (`compress_neon`) and in-place (`compress_neon_into`) variants.
+
+- **MaybeUninit for working buffer**:
+  - Replaced `PowBlock::default()` (1024-byte zero-init) with
+    `MaybeUninit::<PowBlock>::uninit()` in `compress_neon_into`.
+  - Safe because Phase 1 fully overwrites the buffer before any reads.
+
+- **Software prefetch** (cross-platform `prefetch_pow_block`, with `prfm` on AArch64):
+  - Data-independent slices (0, 1): 2-ahead prefetch on AArch64, 1-ahead on x86_64.
+  - Data-dependent slices (2, 3): 1-ahead prefetch computed from the
+    just-written block's first u64 (cross-platform).
+  - AArch64: two cache lines prefetched per block (`prfm pldl1keep` at offsets 0 and
+    128), covering 256 bytes on Apple Silicon's 128-byte cache lines.
+  - x86_64: two prefetches at offsets 0 and 512 (64-byte cache lines).
+
+- **Long-window confirmation** (30s × 3 rounds, same protocol as baseline):
+  - Kernel: `data/bench_cpu_kernel_apple_neon_full_long.json` => `avg=1.500 H/s`
+  - Backend: `data/bench_cpu_backend_apple_neon_full_long.json` => `avg=1.474 H/s`
+  - **Kernel delta vs scalar baseline: +9.73%** (`1.500 / 1.367 - 1`)
+  - **Backend delta vs scalar baseline: +12.09%** (`1.474 / 1.315 - 1`)
+
+- Correctness: `cargo test fixed_kernel_matches_reference_for_small_memory_configs -- --nocapture` ✓
+- Cross-arch safety: all NEON changes `#[cfg(target_arch = "aarch64")]`-gated; x86_64 path unchanged.
+- Status: adopted.

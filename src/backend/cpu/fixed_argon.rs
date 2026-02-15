@@ -8,9 +8,14 @@ const ARGON2_VERSION_13: u32 = 0x13;
 const ARGON2_TYPE_ID: u32 = 2;
 const ARGON2_LANES: u32 = 1;
 const ARGON2_T_COST: u32 = 1;
+#[allow(dead_code)]
 const ISA_SCALAR: u8 = 0;
+#[allow(dead_code)]
 const ISA_AVX2: u8 = 1;
+#[allow(dead_code)]
 const ISA_AVX512: u8 = 2;
+#[allow(dead_code)]
+const ISA_NEON: u8 = 3;
 const ADDRESSES_IN_BLOCK: usize = 128;
 const SYNC_POINTS: usize = 4;
 const MIN_PWD_LEN: usize = 0;
@@ -96,7 +101,11 @@ impl FixedArgon2id {
                 self.fill_blocks::<ISA_SCALAR>(memory_blocks);
             }
         }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(target_arch = "aarch64")]
+        {
+            self.fill_blocks::<ISA_NEON>(memory_blocks);
+        }
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         {
             self.fill_blocks::<ISA_SCALAR>(memory_blocks);
         }
@@ -123,7 +132,18 @@ impl FixedArgon2id {
                 }
                 for block in first_block..self.segment_length {
                     let ref_index = self.data_independent_ref_indexes[ref_base + block];
-                    // Prefetch NEXT iteration's ref block while current compress runs.
+                    // Prefetch a future iteration's ref block while current
+                    // compress runs.  On AArch64, look 2 iterations ahead to
+                    // give the memory system more time; on x86_64, 1-ahead is
+                    // sufficient given lower random-access latency.
+                    #[cfg(target_arch = "aarch64")]
+                    {
+                        let ahead = block + 2;
+                        if ahead < self.segment_length {
+                            prefetch_pow_block(&memory_blocks[self.data_independent_ref_indexes[ref_base + ahead]]);
+                        }
+                    }
+                    #[cfg(not(target_arch = "aarch64"))]
                     if block + 1 < self.segment_length {
                         prefetch_pow_block(&memory_blocks[self.data_independent_ref_indexes[ref_base + block + 1]]);
                     }
@@ -254,8 +274,12 @@ fn fill_block_from_refs<const ISA: u8>(
     }
 }
 
-/// Prefetch a PowBlock into cache.  Issues two prefetches (offset 0 and 512)
-/// to resolve the TLB entry and prime the hardware prefetcher for the full 1 KiB.
+/// Prefetch a PowBlock into cache.  Issues two prefetches to resolve the TLB
+/// entry and prime the hardware prefetcher for the full 1 KiB block.
+///
+/// - x86_64: offsets 0 and 512 (64-byte cache lines).
+/// - AArch64: offsets 0 and 128 (Apple Silicon 128-byte cache lines); the
+///   hardware sequential prefetcher handles the remaining 768 bytes.
 #[inline(always)]
 fn prefetch_pow_block(block: &PowBlock) {
     #[cfg(target_arch = "x86_64")]
@@ -265,6 +289,18 @@ fn prefetch_pow_block(block: &PowBlock) {
             let ptr = block as *const PowBlock as *const i8;
             _mm_prefetch(ptr, _MM_HINT_T0);
             _mm_prefetch(ptr.add(512), _MM_HINT_T0);
+        }
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        unsafe {
+            let ptr = block as *const PowBlock as *const u8;
+            std::arch::asm!(
+                "prfm pldl1keep, [{ptr}]",
+                "prfm pldl1keep, [{ptr}, #128]",
+                ptr = in(reg) ptr,
+                options(nostack, preserves_flags),
+            );
         }
     }
 }
@@ -365,6 +401,14 @@ fn compress<const ISA: u8>(rhs: &PowBlock, lhs: &PowBlock) -> PowBlock {
             }
         }
     }
+    #[cfg(target_arch = "aarch64")]
+    {
+        if ISA == ISA_NEON {
+            unsafe {
+                return compress_neon(rhs, lhs);
+            }
+        }
+    }
     PowBlock::compress(rhs, lhs)
 }
 
@@ -388,6 +432,15 @@ fn compress_into<const ISA: u8>(rhs: &PowBlock, lhs: &PowBlock, dst: &mut PowBlo
                 compress_avx2_into(rhs, lhs, dst);
                 return;
             }
+        }
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        if ISA == ISA_NEON {
+            unsafe {
+                compress_neon_into(rhs, lhs, dst);
+            }
+            return;
         }
     }
     *dst = PowBlock::compress(rhs, lhs);
@@ -715,6 +768,234 @@ unsafe fn compress_avx512(rhs: &PowBlock, lhs: &PowBlock) -> PowBlock {
 #[target_feature(enable = "avx512f,avx512vl")]
 unsafe fn compress_avx512_into(rhs: &PowBlock, lhs: &PowBlock, dst: &mut PowBlock) {
     *dst = PowBlock::compress(rhs, lhs);
+}
+
+// ---------------------------------------------------------------------------
+// AArch64 NEON SIMD path
+// ---------------------------------------------------------------------------
+//
+// NEON is mandatory on AArch64, so no runtime feature detection or
+// `#[target_feature]` is needed. Functions inline freely — no ABI memcpy.
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn neon_blamka(
+    a: std::arch::aarch64::uint64x2_t,
+    b: std::arch::aarch64::uint64x2_t,
+) -> std::arch::aarch64::uint64x2_t {
+    use std::arch::aarch64::{vaddq_u64, vmovn_u64, vmull_u32};
+    let product = vmull_u32(vmovn_u64(a), vmovn_u64(b));
+    let doubled = vaddq_u64(product, product);
+    vaddq_u64(vaddq_u64(a, b), doubled)
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn neon_rotr_64_32(
+    x: std::arch::aarch64::uint64x2_t,
+) -> std::arch::aarch64::uint64x2_t {
+    use std::arch::aarch64::{vreinterpretq_u32_u64, vreinterpretq_u64_u32, vrev64q_u32};
+    vreinterpretq_u64_u32(vrev64q_u32(vreinterpretq_u32_u64(x)))
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn neon_rotr_64_24(
+    x: std::arch::aarch64::uint64x2_t,
+) -> std::arch::aarch64::uint64x2_t {
+    use std::arch::aarch64::{vorrq_u64, vshlq_n_u64, vshrq_n_u64};
+    vorrq_u64(vshrq_n_u64::<24>(x), vshlq_n_u64::<40>(x))
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn neon_rotr_64_16(
+    x: std::arch::aarch64::uint64x2_t,
+) -> std::arch::aarch64::uint64x2_t {
+    use std::arch::aarch64::{vorrq_u64, vshlq_n_u64, vshrq_n_u64};
+    vorrq_u64(vshrq_n_u64::<16>(x), vshlq_n_u64::<48>(x))
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn neon_rotr_64_63(
+    x: std::arch::aarch64::uint64x2_t,
+) -> std::arch::aarch64::uint64x2_t {
+    use std::arch::aarch64::{vorrq_u64, vshlq_n_u64, vshrq_n_u64};
+    vorrq_u64(vshrq_n_u64::<63>(x), vshlq_n_u64::<1>(x))
+}
+
+/// One BLAMKA half-round on a pair of u64 lanes (2-wide).
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn neon_half_round(
+    a: &mut std::arch::aarch64::uint64x2_t,
+    b: &mut std::arch::aarch64::uint64x2_t,
+    c: &mut std::arch::aarch64::uint64x2_t,
+    d: &mut std::arch::aarch64::uint64x2_t,
+) {
+    use std::arch::aarch64::veorq_u64;
+
+    *a = neon_blamka(*a, *b);
+    *d = neon_rotr_64_32(veorq_u64(*d, *a));
+    *c = neon_blamka(*c, *d);
+    *b = neon_rotr_64_24(veorq_u64(*b, *c));
+    *a = neon_blamka(*a, *b);
+    *d = neon_rotr_64_16(veorq_u64(*d, *a));
+    *c = neon_blamka(*c, *d);
+    *b = neon_rotr_64_63(veorq_u64(*b, *c));
+}
+
+/// Full BLAMKA round on 16 u64 elements packed as 4 lo/hi NEON register pairs.
+///
+/// Performs both the column step and the diagonal step, matching the scalar
+/// `permute!` macro semantics. The diagonal step rotates b/c/d lane assignments
+/// via `vextq_u64` to achieve cross-lane permutation without scatter/gather.
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn neon_round(
+    a_lo: &mut std::arch::aarch64::uint64x2_t,
+    a_hi: &mut std::arch::aarch64::uint64x2_t,
+    b_lo: &mut std::arch::aarch64::uint64x2_t,
+    b_hi: &mut std::arch::aarch64::uint64x2_t,
+    c_lo: &mut std::arch::aarch64::uint64x2_t,
+    c_hi: &mut std::arch::aarch64::uint64x2_t,
+    d_lo: &mut std::arch::aarch64::uint64x2_t,
+    d_hi: &mut std::arch::aarch64::uint64x2_t,
+) {
+    use std::arch::aarch64::vextq_u64;
+
+    // Column step: independent half-rounds on lo and hi pairs.
+    neon_half_round(a_lo, b_lo, c_lo, d_lo);
+    neon_half_round(a_hi, b_hi, c_hi, d_hi);
+
+    // Diagonal step: rotate b by 1, c by 2, d by 3 across the 4-wide logical
+    // vector, then run the half-rounds, then un-rotate.
+    let mut bb_lo = vextq_u64::<1>(*b_lo, *b_hi);
+    let mut bb_hi = vextq_u64::<1>(*b_hi, *b_lo);
+    let mut cc_lo = *c_hi;
+    let mut cc_hi = *c_lo;
+    let mut dd_lo = vextq_u64::<1>(*d_hi, *d_lo);
+    let mut dd_hi = vextq_u64::<1>(*d_lo, *d_hi);
+
+    neon_half_round(a_lo, &mut bb_lo, &mut cc_lo, &mut dd_lo);
+    neon_half_round(a_hi, &mut bb_hi, &mut cc_hi, &mut dd_hi);
+
+    // Un-rotate.
+    *b_lo = vextq_u64::<1>(bb_hi, bb_lo);
+    *b_hi = vextq_u64::<1>(bb_lo, bb_hi);
+    *c_lo = cc_hi;
+    *c_hi = cc_lo;
+    *d_lo = vextq_u64::<1>(dd_lo, dd_hi);
+    *d_hi = vextq_u64::<1>(dd_hi, dd_lo);
+}
+
+/// By-value NEON compress (used in `update_address_block` where dst may alias lhs).
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn compress_neon(rhs: &PowBlock, lhs: &PowBlock) -> PowBlock {
+    let mut result = PowBlock::default();
+    compress_neon_into(rhs, lhs, &mut result);
+    result
+}
+
+/// In-place NEON block compression.
+///
+/// # Safety
+/// `dst` must not alias `rhs` or `lhs`.
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+unsafe fn compress_neon_into(rhs: &PowBlock, lhs: &PowBlock, dst: &mut PowBlock) {
+    use std::arch::aarch64::{uint64x2_t, veorq_u64, vld1q_u64, vst1q_u64};
+
+    // q is the working buffer for round permutations.
+    // dst doubles as the pre-round XOR backup, eliminating a second stack buffer.
+    // Use MaybeUninit to skip zero-initialization — Phase 1 fully overwrites q.
+    let mut q = std::mem::MaybeUninit::<PowBlock>::uninit();
+
+    let rhs_ptr = rhs.0.as_ptr();
+    let lhs_ptr = lhs.0.as_ptr();
+    let dst_ptr = dst.0.as_mut_ptr();
+    let q_ptr = q.as_mut_ptr() as *mut u64;
+
+    // Phase 1: XOR rhs ^ lhs → store to both dst (backup) and q (working copy).
+    for vec_idx in 0..(PowBlock::SIZE / 16) {
+        let off = vec_idx * 2;
+        let v = veorq_u64(
+            vld1q_u64(rhs_ptr.add(off)),
+            vld1q_u64(lhs_ptr.add(off)),
+        );
+        vst1q_u64(dst_ptr.add(off), v);
+        vst1q_u64(q_ptr.add(off), v);
+    }
+
+    // Phase 2: Row rounds on q (8 rows × 16 contiguous u64 elements each).
+    for row in 0..8 {
+        let base = row * 16;
+        let mut a_lo: uint64x2_t = vld1q_u64(q_ptr.add(base));
+        let mut a_hi: uint64x2_t = vld1q_u64(q_ptr.add(base + 2));
+        let mut b_lo: uint64x2_t = vld1q_u64(q_ptr.add(base + 4));
+        let mut b_hi: uint64x2_t = vld1q_u64(q_ptr.add(base + 6));
+        let mut c_lo: uint64x2_t = vld1q_u64(q_ptr.add(base + 8));
+        let mut c_hi: uint64x2_t = vld1q_u64(q_ptr.add(base + 10));
+        let mut d_lo: uint64x2_t = vld1q_u64(q_ptr.add(base + 12));
+        let mut d_hi: uint64x2_t = vld1q_u64(q_ptr.add(base + 14));
+
+        neon_round(
+            &mut a_lo, &mut a_hi,
+            &mut b_lo, &mut b_hi,
+            &mut c_lo, &mut c_hi,
+            &mut d_lo, &mut d_hi,
+        );
+
+        vst1q_u64(q_ptr.add(base), a_lo);
+        vst1q_u64(q_ptr.add(base + 2), a_hi);
+        vst1q_u64(q_ptr.add(base + 4), b_lo);
+        vst1q_u64(q_ptr.add(base + 6), b_hi);
+        vst1q_u64(q_ptr.add(base + 8), c_lo);
+        vst1q_u64(q_ptr.add(base + 10), c_hi);
+        vst1q_u64(q_ptr.add(base + 12), d_lo);
+        vst1q_u64(q_ptr.add(base + 14), d_hi);
+    }
+
+    // Phase 3: Column rounds on q (8 columns, stride-16 gather via contiguous
+    // pair loads at offsets base, base+16, base+32, …, base+112).
+    for idx in 0..8 {
+        let base = idx * 2;
+        let mut a_lo: uint64x2_t = vld1q_u64(q_ptr.add(base));
+        let mut a_hi: uint64x2_t = vld1q_u64(q_ptr.add(base + 16));
+        let mut b_lo: uint64x2_t = vld1q_u64(q_ptr.add(base + 32));
+        let mut b_hi: uint64x2_t = vld1q_u64(q_ptr.add(base + 48));
+        let mut c_lo: uint64x2_t = vld1q_u64(q_ptr.add(base + 64));
+        let mut c_hi: uint64x2_t = vld1q_u64(q_ptr.add(base + 80));
+        let mut d_lo: uint64x2_t = vld1q_u64(q_ptr.add(base + 96));
+        let mut d_hi: uint64x2_t = vld1q_u64(q_ptr.add(base + 112));
+
+        neon_round(
+            &mut a_lo, &mut a_hi,
+            &mut b_lo, &mut b_hi,
+            &mut c_lo, &mut c_hi,
+            &mut d_lo, &mut d_hi,
+        );
+
+        vst1q_u64(q_ptr.add(base), a_lo);
+        vst1q_u64(q_ptr.add(base + 16), a_hi);
+        vst1q_u64(q_ptr.add(base + 32), b_lo);
+        vst1q_u64(q_ptr.add(base + 48), b_hi);
+        vst1q_u64(q_ptr.add(base + 64), c_lo);
+        vst1q_u64(q_ptr.add(base + 80), c_hi);
+        vst1q_u64(q_ptr.add(base + 96), d_lo);
+        vst1q_u64(q_ptr.add(base + 112), d_hi);
+    }
+
+    // Phase 4: Final XOR — dst = q ^ dst.
+    for vec_idx in 0..(PowBlock::SIZE / 16) {
+        let off = vec_idx * 2;
+        vst1q_u64(
+            dst_ptr.add(off),
+            veorq_u64(vld1q_u64(q_ptr.add(off)), vld1q_u64(dst_ptr.add(off))),
+        );
+    }
 }
 
 fn blake2b_long(inputs: &[&[u8]], out: &mut [u8]) -> Result<()> {
