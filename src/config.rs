@@ -662,13 +662,18 @@ impl Config {
             detect_nvidia_backend_available(),
             detect_metal_backend_available(),
         );
+        let gpu_memory_reservation = if backends.contains(&BackendKind::Metal) {
+            estimate_metal_memory_bytes(cli.metal_max_lanes)
+        } else {
+            0
+        };
         let cpu_backend_instances = backends
             .iter()
             .filter(|kind| matches!(kind, BackendKind::Cpu))
             .count();
         let auto_threads_cap = match cpu_backend_instances {
             0 => 1,
-            instances => auto_cpu_threads(instances),
+            instances => auto_cpu_threads(instances, gpu_memory_reservation),
         };
         let profile_defaults = cpu_profile_defaults(cli.cpu_profile, auto_threads_cap);
         let resolved_threads = cli.threads.unwrap_or(profile_defaults.threads);
@@ -715,7 +720,7 @@ impl Config {
             },
         )?;
 
-        validate_cpu_memory(&backend_specs, resolved_threads, cli.allow_oversubscribe)?;
+        validate_cpu_memory(&backend_specs, resolved_threads, cli.allow_oversubscribe, gpu_memory_reservation)?;
 
         let (token, token_cookie_path) = if cli.bench {
             (None, None)
@@ -861,6 +866,33 @@ fn detect_metal_backend_available() -> bool {
 #[cfg(not(all(feature = "metal", target_os = "macos")))]
 fn detect_metal_backend_available() -> bool {
     false
+}
+
+/// Estimate the memory Metal will consume so CPU auto-sizing can deduct it.
+/// Mirrors the lane-estimation logic in `MetalArgon2Engine::new()`.
+#[cfg(all(feature = "metal", target_os = "macos"))]
+fn estimate_metal_memory_bytes(metal_max_lanes: Option<usize>) -> u64 {
+    const MEMORY_RESERVE_RATIO: f64 = 0.10;
+    const MAX_LANES_HARD_LIMIT: usize = 64;
+
+    let lanes = match metal_max_lanes {
+        Some(forced) => forced.min(MAX_LANES_HARD_LIMIT).max(1),
+        None => {
+            let Some(device) = metal::Device::system_default() else {
+                return 0;
+            };
+            let max_working_set = device.recommended_max_working_set_size();
+            let usable = ((max_working_set as f64) * (1.0 - MEMORY_RESERVE_RATIO)) as u64;
+            let estimated = (usable / CPU_LANE_MEMORY_BYTES) as usize;
+            estimated.min(MAX_LANES_HARD_LIMIT).max(1)
+        }
+    };
+    lanes as u64 * CPU_LANE_MEMORY_BYTES
+}
+
+#[cfg(not(all(feature = "metal", target_os = "macos")))]
+fn estimate_metal_memory_bytes(_metal_max_lanes: Option<usize>) -> u64 {
+    0
 }
 
 fn resolve_token_with_source(cli: &Cli) -> Result<(String, Option<PathBuf>)> {
@@ -1091,13 +1123,16 @@ fn expand_backend_specs(
     Ok(specs)
 }
 
-fn auto_cpu_threads(cpu_backend_instances: usize) -> usize {
+fn auto_cpu_threads(cpu_backend_instances: usize, gpu_memory_reservation: u64) -> usize {
     let cpu_parallelism = std::thread::available_parallelism()
         .map(|parallelism| parallelism.get())
         .unwrap_or(1)
         .max(1);
     let memory_cap_total = detect_memory_budget_bytes()
-        .map(|budget| (budget.effective_available / CPU_LANE_MEMORY_BYTES) as usize)
+        .map(|budget| {
+            let available = budget.effective_available.saturating_sub(gpu_memory_reservation);
+            (available / CPU_LANE_MEMORY_BYTES) as usize
+        })
         .unwrap_or(cpu_parallelism)
         .max(1);
     let total_lanes_cap = cpu_parallelism.min(memory_cap_total).max(1);
@@ -1114,6 +1149,7 @@ fn validate_cpu_memory(
     backend_specs: &[BackendSpec],
     threads: usize,
     allow_oversubscribe: bool,
+    gpu_memory_reservation: u64,
 ) -> Result<()> {
     let cpu_lane_configs = backend_specs
         .iter()
@@ -1127,25 +1163,34 @@ fn validate_cpu_memory(
     let total_cpu_lanes = cpu_lane_configs
         .iter()
         .fold(0u64, |acc, lanes| acc.saturating_add(*lanes));
-    let required = CPU_LANE_MEMORY_BYTES.saturating_mul(total_cpu_lanes);
+    let cpu_required = CPU_LANE_MEMORY_BYTES.saturating_mul(total_cpu_lanes);
+    let required = cpu_required.saturating_add(gpu_memory_reservation);
     let Some(budget) = detect_memory_budget_bytes() else {
         return Ok(());
     };
 
+    let gpu_note = if gpu_memory_reservation > 0 {
+        format!(" + ~{} GPU/Metal reservation", human_bytes(gpu_memory_reservation))
+    } else {
+        String::new()
+    };
+
     if required > budget.effective_total && !allow_oversubscribe {
         bail!(
-            "configured CPU lanes need ~{} RAM ({} CPU lane(s) * 2GB), but effective memory limit is ~{}. Use fewer CPU lanes or pass --allow-oversubscribe to bypass this safety check.",
-            human_bytes(required),
+            "configured CPU lanes need ~{} RAM ({} CPU lane(s) * 2GB){}, but effective memory limit is ~{}. Use fewer CPU lanes or pass --allow-oversubscribe to bypass this safety check.",
+            human_bytes(cpu_required),
             total_cpu_lanes,
+            gpu_note,
             human_bytes(budget.effective_total),
         );
     }
 
     if required > budget.effective_available && !allow_oversubscribe {
         bail!(
-            "configured CPU lanes need ~{} RAM ({} CPU lane(s) * 2GB), but currently available memory is ~{} (effective limit ~{}). Reduce CPU lanes or pass --allow-oversubscribe if you accept potential swap/OOM risk.",
-            human_bytes(required),
+            "configured CPU lanes need ~{} RAM ({} CPU lane(s) * 2GB){}, but currently available memory is ~{} (effective limit ~{}). Reduce CPU lanes or pass --allow-oversubscribe if you accept potential swap/OOM risk.",
+            human_bytes(cpu_required),
             total_cpu_lanes,
+            gpu_note,
             human_bytes(budget.effective_available),
             human_bytes(budget.effective_total),
         );
@@ -1492,12 +1537,22 @@ mod tests {
 
     #[test]
     fn auto_cpu_threads_is_never_zero_and_scales_per_instance() {
-        let single_instance = auto_cpu_threads(1);
-        let dual_instance = auto_cpu_threads(2);
+        let single_instance = auto_cpu_threads(1, 0);
+        let dual_instance = auto_cpu_threads(2, 0);
 
         assert!(single_instance >= 1);
         assert!(dual_instance >= 1);
         assert!(dual_instance <= single_instance);
+    }
+
+    #[test]
+    fn auto_cpu_threads_reduced_by_gpu_reservation() {
+        let without_gpu = auto_cpu_threads(1, 0);
+        let with_gpu = auto_cpu_threads(1, 4 * CPU_LANE_MEMORY_BYTES);
+
+        assert!(with_gpu >= 1);
+        // With a 4-lane GPU reservation, the CPU should get fewer (or equal) lanes
+        assert!(with_gpu <= without_gpu);
     }
 
     #[test]
@@ -1530,7 +1585,7 @@ mod tests {
             .iter()
             .filter(|kind| matches!(kind, BackendKind::Cpu))
             .count();
-        let auto_threads_cap = auto_cpu_threads(cpu_backend_instances);
+        let auto_threads_cap = auto_cpu_threads(cpu_backend_instances, 0);
         let defaults = cpu_profile_defaults(cli.cpu_profile, auto_threads_cap);
         let cpu_autotune_default_enabled = cli.threads.is_none() && cpu_backend_instances > 0;
         let cpu_autotune_threads = if cli.disable_cpu_autotune_threads {
