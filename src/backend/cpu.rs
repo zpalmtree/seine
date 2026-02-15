@@ -39,6 +39,24 @@ const STARTUP_READY_TIMEOUT_MAX: Duration = Duration::from_secs(180);
 const BYTES_PER_GIB: u64 = 1024 * 1024 * 1024;
 const DEFAULT_EVENT_DISPATCH_CAPACITY: usize = 256;
 
+/// On macOS, promote the calling thread to the highest QoS class to ensure
+/// scheduling on performance cores (P-cores) rather than efficiency cores.
+/// No-op on other platforms.
+#[inline]
+fn set_thread_high_perf() {
+    #[cfg(target_os = "macos")]
+    {
+        extern "C" {
+            fn pthread_set_qos_class_self_np(qos_class: u32, relative_priority: i32) -> i32;
+        }
+        // QOS_CLASS_USER_INTERACTIVE = 0x21 — highest priority, P-core affinity.
+        const QOS_CLASS_USER_INTERACTIVE: u32 = 0x21;
+        unsafe {
+            let _ = pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct CpuBackendTuning {
     pub hash_batch_size: u64,
@@ -586,6 +604,7 @@ impl BenchBackend for CpuBackend {
                     .and_then(|ids| ids.get(lane % ids.len()))
                     .copied();
                 scope.spawn(move || {
+                    set_thread_high_perf();
                     if let Some(core_id) = core_id {
                         let _ = core_affinity::set_for_current(core_id);
                     }

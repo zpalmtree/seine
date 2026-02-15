@@ -10,7 +10,8 @@ use crate::types::hash_meets_target;
 use super::{
     emit_error, emit_event, fixed_argon, flush_hashes, lane_quota_for_chunk, mark_worker_active,
     mark_worker_inactive, mark_worker_ready, request_shutdown, request_work_pause,
-    should_flush_hashes, wait_for_work_update, Shared, MAX_DEADLINE_CHECK_INTERVAL, SOLVED_MASK,
+    set_thread_high_perf, should_flush_hashes, wait_for_work_update, Shared,
+    MAX_DEADLINE_CHECK_INTERVAL, SOLVED_MASK,
 };
 
 pub(super) fn cpu_worker_loop(
@@ -18,6 +19,7 @@ pub(super) fn cpu_worker_loop(
     thread_idx: usize,
     core_id: Option<core_affinity::CoreId>,
 ) {
+    set_thread_high_perf();
     if let Some(core_id) = core_id {
         let _ = core_affinity::set_for_current(core_id);
     }
