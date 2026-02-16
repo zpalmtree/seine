@@ -154,7 +154,7 @@ struct Cli {
     cookie: Option<PathBuf>,
 
     /// Daemon data directory (used to locate api.cookie when --cookie is unset).
-    #[arg(long, default_value = "./data")]
+    #[arg(long, default_value = "./blocknet-data-mainnet")]
     data_dir: PathBuf,
 
     /// One or more mining backends. Repeat the flag or pass comma-separated values.
@@ -909,13 +909,77 @@ fn resolve_token_with_source(cli: &Cli) -> Result<(String, Option<PathBuf>)> {
         return Ok((trimmed.to_string(), None));
     }
 
-    let cookie_path = cli
-        .cookie
-        .clone()
-        .unwrap_or_else(|| cli.data_dir.join("api.cookie"));
+    // Explicit --cookie: use that path only.
+    if let Some(cookie) = &cli.cookie {
+        let token = read_token_from_cookie_file(cookie)?;
+        return Ok((token, Some(cookie.clone())));
+    }
 
-    let token = read_token_from_cookie_file(&cookie_path)?;
-    Ok((token, Some(cookie_path)))
+    // Build candidate cookie paths in priority order.
+    let mut candidates: Vec<PathBuf> = vec![cli.data_dir.join("api.cookie")];
+
+    // Try to discover the daemon's data directory from a running process.
+    if let Some(daemon_data_dir) = detect_daemon_data_dir() {
+        let daemon_cookie = daemon_data_dir.join("api.cookie");
+        if !candidates.contains(&daemon_cookie) {
+            candidates.push(daemon_cookie);
+        }
+    }
+
+    for path in &candidates {
+        if let Ok(token) = read_token_from_cookie_file(path) {
+            return Ok((token, Some(path.clone())));
+        }
+    }
+
+    let searched = candidates
+        .iter()
+        .map(|p| format!("  - {}", p.display()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    bail!(
+        "could not find api.cookie in any of these locations:\n\
+         {searched}\n\n\
+         Make sure the Blocknet daemon is running, then either:\n  \
+         (a) run seine from the same directory as the daemon, or\n  \
+         (b) pass --cookie /path/to/api.cookie, or\n  \
+         (c) pass --data-dir /path/to/blocknet-data-mainnet"
+    );
+}
+
+/// Inspect running processes to find a `blocknet` daemon and resolve its data directory.
+fn detect_daemon_data_dir() -> Option<PathBuf> {
+    use std::ffi::OsStr;
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+
+    let mut sys = System::new();
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        ProcessRefreshKind::new().with_cmd(UpdateKind::Always),
+    );
+
+    for process in sys.processes_by_name(OsStr::new("blocknet")) {
+        let cmd: Vec<String> = process.cmd().iter().filter_map(|s| s.to_str().map(String::from)).collect();
+
+        // Look for --data <path> in the daemon's arguments.
+        let data_dir = cmd
+            .windows(2)
+            .find(|pair| pair[0] == "--data")
+            .map(|pair| PathBuf::from(&pair[1]));
+
+        let data_dir = data_dir.unwrap_or_else(|| PathBuf::from("blocknet-data-mainnet"));
+
+        // If the data dir is relative, resolve it against the daemon's cwd.
+        if data_dir.is_relative() {
+            if let Some(cwd) = process.cwd() {
+                return Some(cwd.join(&data_dir));
+            }
+        }
+
+        return Some(data_dir);
+    }
+
+    None
 }
 
 pub fn read_token_from_cookie_file(cookie_path: &Path) -> Result<String> {
@@ -1317,7 +1381,7 @@ mod tests {
             wallet_password: None,
             wallet_password_file: None,
             cookie: None,
-            data_dir: PathBuf::from("./data"),
+            data_dir: PathBuf::from("./blocknet-data-mainnet"),
             backends: vec![BackendKind::Cpu],
             nvidia_devices: Vec::new(),
             threads: Some(1),
