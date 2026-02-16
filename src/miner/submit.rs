@@ -17,7 +17,7 @@ use crate::types::{
 use super::auth::{refresh_api_token_from_cookie, TokenRefreshOutcome};
 use super::mining_tui::TuiDisplay;
 use super::stats::Stats;
-use super::ui::{error, info, mined, warn};
+use super::ui::{error, info, success, warn};
 
 const SUBMIT_REQUEST_CAPACITY: usize = 128;
 const SUBMIT_RESULT_CAPACITY: usize = 128;
@@ -112,7 +112,6 @@ pub(super) enum SubmitOutcome {
 }
 
 pub(super) struct SubmitResult {
-    pub(super) request_id: u64,
     pub(super) solution: MiningSolution,
     pub(super) template_height: Option<u64>,
     pub(super) outcome: SubmitOutcome,
@@ -265,7 +264,6 @@ pub(super) fn process_submit_request(
         match submit_request_once(client, &mut payload, nonce, request_id) {
             Ok(resp) => {
                 return SubmitResult {
-                    request_id,
                     solution,
                     template_height,
                     outcome: SubmitOutcome::Response(resp),
@@ -276,7 +274,6 @@ pub(super) fn process_submit_request(
             Err(err) => {
                 if shutdown.load(Ordering::Relaxed) {
                     return SubmitResult {
-                        request_id,
                         solution,
                         template_height,
                         outcome: SubmitOutcome::TerminalError(
@@ -291,7 +288,6 @@ pub(super) fn process_submit_request(
                 let mut error_context = format!("{err:#}");
                 if let Some(outcome) = stale_submit_outcome(attempts, &error_context) {
                     return SubmitResult {
-                        request_id,
                         solution,
                         template_height,
                         outcome,
@@ -333,7 +329,6 @@ pub(super) fn process_submit_request(
 
                 if let Some(outcome) = stale_submit_outcome(attempts, &error_context) {
                     return SubmitResult {
-                        request_id,
                         solution,
                         template_height,
                         outcome,
@@ -345,7 +340,6 @@ pub(super) fn process_submit_request(
                 if retryable && attempts < max_attempts {
                     if !sleep_with_shutdown(shutdown, submit_retry_delay(attempts)) {
                         return SubmitResult {
-                            request_id,
                             solution,
                             template_height,
                             outcome: SubmitOutcome::TerminalError(
@@ -359,7 +353,6 @@ pub(super) fn process_submit_request(
                 }
 
                 return SubmitResult {
-                    request_id,
                     solution,
                     template_height,
                     outcome: if retryable {
@@ -420,14 +413,48 @@ fn stale_submit_outcome(attempts: u32, error_context: &str) -> Option<SubmitOutc
         .map(|reason| SubmitOutcome::StaleTipError { message, reason })
 }
 
+fn stale_submit_summary(message: &str) -> Option<String> {
+    if let Some((expected_height, got_height)) = parse_stale_height_error(message) {
+        return Some(format!(
+            "tip advanced before submit (expected height {}, solution was for height {})",
+            expected_height, got_height
+        ));
+    }
+    if let Some(reason) = parse_stale_tip_reject_reason(message) {
+        let summary = match reason {
+            "prev-hash mismatch" => "template no longer matches current tip".to_string(),
+            "duplicate-or-stale" => "block already accepted elsewhere".to_string(),
+            _ => format!("template rejected ({reason})"),
+        };
+        return Some(summary);
+    }
+
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("submitblock")
+        && lower.contains("invalid block")
+        && lower.contains("height")
+        && lower.contains("expected")
+        && lower.contains("got")
+    {
+        return Some("tip advanced before submit".to_string());
+    }
+    None
+}
+
+fn compact_submit_error(message: &str) -> String {
+    message
+        .split_once("attempt(s): ")
+        .map(|(_, tail)| tail.to_string())
+        .unwrap_or_else(|| message.to_string())
+}
+
 fn parse_stale_height_error(message: &str) -> Option<(u64, u64)> {
     let lower = message.to_ascii_lowercase();
-    let marker = "invalid height: expected ";
-    let marker_idx = lower.find(marker)?;
-    let after_marker = &lower[marker_idx + marker.len()..];
-    let (expected_part, got_part) = after_marker.split_once(", got ")?;
-    let expected_height = parse_leading_u64(expected_part.trim())?;
-    let got_height = parse_leading_u64(got_part.trim())?;
+    if !lower.contains("height") {
+        return None;
+    }
+    let expected_height = parse_u64_after_keyword(&lower, "expected")?;
+    let got_height = parse_u64_after_keyword(&lower, "got")?;
     Some((expected_height, got_height))
 }
 
@@ -451,12 +478,15 @@ fn parse_leading_u64(value: &str) -> Option<u64> {
     }
 }
 
+fn parse_u64_after_keyword(value: &str, keyword: &str) -> Option<u64> {
+    let idx = value.find(keyword)?;
+    let tail = &value[idx + keyword.len()..];
+    let digit_idx = tail.find(|ch: char| ch.is_ascii_digit())?;
+    parse_leading_u64(&tail[digit_idx..])
+}
+
 fn handle_submit_result(result: &SubmitResult, stats: &Stats, tui: &mut Option<TuiDisplay>) {
-    let request_id = result.request_id;
-    let template_height = result
-        .template_height
-        .map(|h| h.to_string())
-        .unwrap_or_else(|| "unknown".to_string());
+    let template_height = result.template_height;
 
     if result.is_dev_fee {
         // Still track stats, but don't log anything for dev fee submissions.
@@ -476,35 +506,17 @@ fn handle_submit_result(result: &SubmitResult, stats: &Stats, tui: &mut Option<T
                 }
                 let accepted_height = resp
                     .height
+                    .or(template_height)
                     .map(|h| h.to_string())
                     .unwrap_or_else(|| "unknown".to_string());
-                let hash = resp.hash.as_deref().unwrap_or("unknown").to_string();
-                mined(
-                    "SUBMIT",
-                    format!(
-                        "request_id={request_id} accepted epoch={} nonce={} backend={}#{} submitted_height={} accepted_height={}",
-                        result.solution.epoch,
-                        result.solution.nonce,
-                        result.solution.backend,
-                        result.solution.backend_id,
-                        template_height,
-                        accepted_height
-                    ),
-                );
-                mined(
-                    "SUBMIT",
-                    format!("request_id={request_id} hash {}", compact_hash(&hash)),
+                success(
+                    "ACCEPT",
+                    format!("block accepted at height={accepted_height}"),
                 );
                 if result.attempts > 1 {
                     info(
-                        "SUBMIT",
-                        format!(
-                            "request_id={request_id} accepted epoch={} nonce={} template_height={} after {} submit attempts",
-                            result.solution.epoch,
-                            result.solution.nonce,
-                            template_height,
-                            result.attempts
-                        ),
+                        "ACCEPT",
+                        format!("accepted after {} submit attempts", result.attempts,),
                     );
                 }
             } else {
@@ -515,14 +527,8 @@ fn handle_submit_result(result: &SubmitResult, stats: &Stats, tui: &mut Option<T
                 warn(
                     "SUBMIT",
                     format!(
-                        "request_id={request_id} rejected by daemon epoch={} nonce={} backend={}#{} submitted_height={} daemon_height={} attempts={}",
-                        result.solution.epoch,
-                        result.solution.nonce,
-                        result.solution.backend,
-                        result.solution.backend_id,
-                        template_height,
-                        daemon_height,
-                        result.attempts
+                        "submit rejected by daemon at height={daemon_height} (attempts={})",
+                        result.attempts,
                     ),
                 );
             }
@@ -547,55 +553,29 @@ fn handle_submit_result(result: &SubmitResult, stats: &Stats, tui: &mut Option<T
             );
         }
         SubmitOutcome::RetryableError(message) => {
-            warn(
-                "SUBMIT",
-                format!(
-                    "request_id={request_id} submit failed (retryable) epoch={} nonce={} backend={}#{} submitted_height={} attempts={}: {}",
-                    result.solution.epoch,
-                    result.solution.nonce,
-                    result.solution.backend,
-                    result.solution.backend_id,
-                    template_height,
-                    result.attempts,
-                    message
-                ),
-            );
+            if let Some(summary) = stale_submit_summary(message) {
+                warn("SUBMIT", format!("stale solution: {summary}"));
+            } else {
+                warn(
+                    "SUBMIT",
+                    format!(
+                        "submit failed (retryable): {}",
+                        compact_submit_error(message)
+                    ),
+                );
+            }
         }
         SubmitOutcome::TerminalError(message) => {
-            error(
-                "SUBMIT",
-                format!(
-                    "request_id={request_id} submit failed epoch={} nonce={} backend={}#{} submitted_height={} attempts={}: {}",
-                    result.solution.epoch,
-                    result.solution.nonce,
-                    result.solution.backend,
-                    result.solution.backend_id,
-                    template_height,
-                    result.attempts,
-                    message
-                ),
-            );
+            if let Some(summary) = stale_submit_summary(message) {
+                warn("SUBMIT", format!("stale solution: {summary}"));
+            } else {
+                error(
+                    "SUBMIT",
+                    format!("submit failed: {}", compact_submit_error(message)),
+                );
+            }
         }
     }
-}
-
-fn compact_hash(hash: &str) -> String {
-    let value = hash.trim();
-    let len = value.chars().count();
-    if len <= 8 {
-        return value.to_string();
-    }
-
-    let prefix: String = value.chars().take(4).collect();
-    let suffix: String = value
-        .chars()
-        .rev()
-        .take(4)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect();
-    format!("{prefix}...{suffix}")
 }
 
 fn sleep_with_shutdown(shutdown: &AtomicBool, duration: Duration) -> bool {
@@ -617,12 +597,18 @@ fn sleep_with_shutdown(shutdown: &AtomicBool, duration: Duration) -> bool {
 mod tests {
     use super::{
         parse_stale_height_error, parse_stale_tip_reject_reason, stale_submit_outcome,
-        SubmitOutcome,
+        stale_submit_summary, SubmitOutcome,
     };
 
     #[test]
     fn parse_stale_height_reject_extracts_expected_and_got() {
         let message = "submit failed after 1 attempt(s): submitblock failed (500 Internal Server Error): invalid block: invalid height: expected 60, got 59";
+        assert_eq!(parse_stale_height_error(message), Some((60, 59)));
+    }
+
+    #[test]
+    fn parse_stale_height_reject_tolerates_variant_spacing() {
+        let message = "submitblock failed: invalid block: invalid height expected 60 got 59";
         assert_eq!(parse_stale_height_error(message), Some((60, 59)));
     }
 
@@ -682,5 +668,13 @@ mod tests {
             }
             _ => panic!("expected stale tip outcome"),
         }
+    }
+
+    #[test]
+    fn stale_submit_summary_detects_stale_height_patterns() {
+        let summary = stale_submit_summary(
+            "submit failed after 1 attempt(s): submitblock failed (500): invalid block: invalid height expected 77 got 76",
+        );
+        assert!(summary.is_some());
     }
 }

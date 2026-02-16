@@ -365,19 +365,6 @@ impl<'a> MiningControlPlane<'a> {
     ) -> bool {
         let is_dev_fee = self.dev_fee_address.is_some();
         let request_id = self.next_submit_request_id();
-        let submitted_height = template
-            .template_height()
-            .map(|height| height.to_string())
-            .unwrap_or_else(|| "unknown".to_string());
-        if !is_dev_fee {
-            info(
-                "SUBMIT",
-                format!(
-                    "request_id={request_id} enqueue epoch={} nonce={} backend={}#{} submitted_height={submitted_height}",
-                    solution.epoch, solution.nonce, solution.backend, solution.backend_id
-                ),
-            );
-        }
         if !self.enqueue_submit_request(
             SubmitRequest {
                 request_id,
@@ -723,13 +710,7 @@ fn execute_round_phase(phase: ExecuteRoundPhase<'_, '_>) -> Result<()> {
         if already_submitted_solution(submitted_solution_keys, &solution)
             || inflight_solution_keys.contains(&key)
         {
-            warn(
-                "SUBMIT",
-                format!(
-                    "skipping duplicate solution epoch={} nonce={}",
-                    solution.epoch, solution.nonce
-                ),
-            );
+            warn("SUBMIT", "skipping duplicate solution");
         } else {
             let submit_template = current_submit_template
                 .get_or_insert_with(|| SubmitTemplate::from_template(current_template))
@@ -738,13 +719,7 @@ fn execute_round_phase(phase: ExecuteRoundPhase<'_, '_>) -> Result<()> {
                 inflight_solution_keys.insert(key);
                 enqueued_solution = Some(solution.clone());
             } else {
-                warn(
-                    "SUBMIT",
-                    format!(
-                        "submit queue saturated; deferring solution epoch={} nonce={}",
-                        solution.epoch, solution.nonce
-                    ),
-                );
+                warn("SUBMIT", "submit queue saturated; deferring solution");
                 defer_solution_indexed(
                     deferred_solutions,
                     deferred_solution_keys,
@@ -842,10 +817,8 @@ fn execute_round_phase(phase: ExecuteRoundPhase<'_, '_>) -> Result<()> {
         mined(
             "SOLVE",
             format!(
-                "solution found! elapsed={:.2}s backend={}#{}",
-                round_start.elapsed().as_secs_f64(),
-                solution.backend,
-                solution.backend_id,
+                "solution found! backend={}#{}",
+                solution.backend, solution.backend_id
             ),
         );
     } else if round_state.stale_tip_event {
@@ -1145,13 +1118,7 @@ pub(super) fn run_mining_loop(
             if already_submitted_solution(&submitted_solution_keys, solution)
                 || inflight_solution_keys.contains(&key)
             {
-                warn(
-                    "SUBMIT",
-                    format!(
-                        "skipping duplicate solution epoch={} nonce={}",
-                        solution.epoch, solution.nonce
-                    ),
-                );
+                warn("SUBMIT", "skipping duplicate solution");
             } else if control_plane.submit_template(
                 final_submit_template.clone(),
                 solution.clone(),
@@ -1161,13 +1128,7 @@ pub(super) fn run_mining_loop(
                 inflight_solution_keys.insert(key);
                 final_enqueued_solution = final_pending_solution.clone();
             } else {
-                warn(
-                    "SUBMIT",
-                    format!(
-                        "submit queue saturated; deferring solution epoch={} nonce={}",
-                        solution.epoch, solution.nonce
-                    ),
-                );
+                warn("SUBMIT", "submit queue saturated; deferring solution");
                 defer_solution_indexed(
                     &mut deferred_solutions,
                     &mut deferred_solution_keys,
@@ -1860,8 +1821,8 @@ fn route_mining_solution(
         warn(
             "BACKEND",
             format!(
-                "ignoring future solution from {}#{} epoch={} current_epoch={}",
-                solution.backend, solution.backend_id, solution.epoch, epoch
+                "ignoring future solution from {}#{} (ahead of current round)",
+                solution.backend, solution.backend_id
             ),
         );
     }
@@ -1936,8 +1897,8 @@ fn process_submit_results(
             info(
                 "SUBMIT",
                 format!(
-                    "dropped {} queued same-epoch solution(s) after accepted block epoch={}",
-                    dropped, epoch
+                    "dropped {} queued solution(s) after accepted block",
+                    dropped
                 ),
             );
         }
@@ -2022,8 +1983,8 @@ fn submit_deferred_solutions(
             warn(
                 "BACKEND",
                 format!(
-                    "dropping stale solution from {}#{} epoch={} (current_epoch={})",
-                    solution.backend, solution.backend_id, solution.epoch, current_epoch
+                    "dropping stale solution from {}#{} (older than current round)",
+                    solution.backend, solution.backend_id
                 ),
             );
             state.stats.add_dropped(1);
@@ -2651,7 +2612,6 @@ mod tests {
         let mut inflight_solution_keys = HashSet::new();
         inflight_solution_keys.insert((42, 7));
         let results = vec![SubmitResult {
-            request_id: 1,
             solution: MiningSolution {
                 epoch: 42,
                 nonce: 7,

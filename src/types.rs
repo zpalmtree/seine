@@ -39,6 +39,7 @@ pub struct TemplateHeader {
 #[derive(Debug, Deserialize)]
 pub struct SubmitBlockResponse {
     pub accepted: bool,
+    #[allow(dead_code)]
     pub hash: Option<String>,
     pub height: Option<u64>,
 }
