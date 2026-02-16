@@ -1733,3 +1733,106 @@ Closing the gap requires hardware changes:
 1. **Wider OOO window** — Zen 5 (448-entry ROB) could overlap ~5-6 iterations
 2. **AVX-512** — halves instruction count, better throughput utilization
 3. **Algorithmic changes** — not possible (Argon2id spec is fixed)
+
+## 2026-02-16 Apple Silicon post-pull DD prefetch refinement sweep
+
+Host: Apple M4 Max, arm64 macOS.
+Baseline: current `HEAD` (`d0af7f2`) vs detached baseline worktree
+`../seine-baseline-ab` at the same commit.
+
+Goal: re-test previously unattractive DD prefetch variants now that row-pair
+Phase 1+2 (Attempt 38) is in place, and verify assembly-level placement changes.
+
+### Benchmark protocol for this sweep
+
+```bash
+bash scripts/bench_cpu_ab.sh \
+  --baseline-dir ../seine-baseline-ab \
+  --candidate-dir . \
+  --bench-kind backend \
+  --threads 1 \
+  --pairs 2 \
+  --bench-secs 15 \
+  --bench-rounds 2 \
+  --bench-warmup-rounds 1 \
+  --cooldown-secs 10 \
+  --profile release \
+  --output-dir <report_dir>
+```
+
+Correctness guard for each candidate:
+
+```bash
+cargo test --release --no-default-features fixed_kernel_matches_reference_for_small_memory_configs
+```
+
+### Attempt 40 (Apple): DD mid-prefetch half-coverage (4 cache lines) (not adopted)
+
+- Change: in DD mid-compress path, prefetch only first 4 cache lines (512 B)
+  instead of full 8 lines (1024 B).
+- Result (pair 1 only, run aborted early due large drop):
+  - Baseline: `2.881513353324 H/s`
+  - Candidate: `2.652982720664 H/s`
+  - Delta: **`-7.9309%`**
+- Artifacts:
+  - `data/bench_cpu_ab_backend_dd_mid_half_prefetch_t1/baseline_pair1_first.json`
+  - `data/bench_cpu_ab_backend_dd_mid_half_prefetch_t1/candidate_pair1_second.json`
+- Outcome: clearly regressive; reverted before full-pair completion.
+
+### Attempt 41 (Apple): DD mid-prefetch split hints (L1 head + L2 tail) (not adopted)
+
+- Change: keep 8-line coverage but hint first 4 lines with `pldl1keep` and last
+  4 lines with `pldl2keep`.
+- Backend A/B:
+  - Summary: `data/bench_cpu_ab_backend_dd_mid_l1l2_t1_triage/summary.txt`
+  - Baseline avg: `2.875452046510 H/s`
+  - Candidate avg: `2.827109832894 H/s`
+  - Delta: **`-1.6812%`**
+- Outcome: rejected.
+
+### Attempt 42 (Apple): earlier DD mid-prefetch after `dst[0]` finalization (register lane extract) (not adopted)
+
+- Change: move DD mid-prefetch earlier in column-0 writeback:
+  - compute/store `dst[0]`,
+  - extract lane 0 from vector register,
+  - compute `reference_index`,
+  - issue full 8-line prefetch,
+  - then write remaining 7 vectors.
+- Backend A/B:
+  - Summary: `data/bench_cpu_ab_backend_dd_mid_early_prefetch_t1_triage/summary.txt`
+  - Baseline avg: `2.870891399471 H/s`
+  - Candidate avg: `2.858217991297 H/s`
+  - Delta: **`-0.4414%`**
+- Outcome: rejected.
+
+### Attempt 43 (Apple): earlier DD mid-prefetch with store-forwarded `dst[0]` load (not adopted)
+
+- Change: same as Attempt 42, but read `rand` from `*dst_ptr` (store-forwarded
+  load) instead of extracting the SIMD lane.
+- Backend A/B:
+  - Summary: `data/bench_cpu_ab_backend_dd_mid_early_prefetch_loadrand_t1_triage/summary.txt`
+  - Baseline avg: `2.870255402046 H/s`
+  - Candidate avg: `2.853698919423 H/s`
+  - Delta: **`-0.5768%`**
+- Outcome: rejected.
+
+### Assembly review from this sweep
+
+- Verified on candidate binaries with `otool -tvV`:
+  - Hot symbol: `__ZN5seine7backend3cpu11fixed_argon13FixedArgon2id30hash_password_into_with_memory...`
+  - BLAMKA core remains optimal (`umlal.2d` + `xar.2d` patterns unchanged).
+- For Attempts 42/43, DD prefetch block moved earlier exactly as intended:
+  - Baseline location: around `0x1000c6c80` (after all column-0 writeback stores).
+  - Candidate location: around `0x1000c6c2c` (before most writeback stores).
+  - Net shift: ~7 vector writeback groups earlier.
+- Despite earlier issue point, throughput did not improve. This indicates the
+  remaining gap is not instruction ordering inside the writeback tail; memory
+  latency/queueing dominates.
+
+### Frontier update after Attempts 40–43
+
+- Re-testing failed ideas after Attempt 38 did **not** unlock a new gain.
+- Full 8-line DD prefetch with current placement remains the best-performing
+  variant in this codebase.
+- Effective Apple Silicon hot-path status unchanged: near DRAM-latency floor;
+  additional software-prefetch retiming/hint tweaks remain negative or noise.
