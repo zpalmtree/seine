@@ -1118,7 +1118,33 @@ fn activate_backends(
         };
         info("BACKEND", &backend_start_detail);
         let start_t = Instant::now();
-        match backend.start() {
+
+        // Run backend.start() on a separate thread so we can poll the
+        // shutdown flag while FFI calls (e.g. NVRTC compilation) block.
+        let start_result = {
+            let backend_ref = Arc::clone(&backend);
+            let (tx, rx) = bounded::<Result<()>>(1);
+            std::thread::Builder::new()
+                .name(format!("{backend_name}-init"))
+                .spawn(move || {
+                    let _ = tx.send(backend_ref.start());
+                })
+                .expect("failed to spawn backend init thread");
+            loop {
+                match rx.recv_timeout(Duration::from_millis(100)) {
+                    Ok(result) => break result,
+                    Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                        if shutdown.load(Ordering::Relaxed) {
+                            break Err(anyhow!("interrupted by user"));
+                        }
+                    }
+                    Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                        break Err(anyhow!("{backend_name} init thread panicked"));
+                    }
+                }
+            }
+        };
+        match start_result {
             Ok(()) => {
                 info(
                     "BACKEND",
