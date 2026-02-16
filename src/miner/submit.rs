@@ -50,6 +50,7 @@ impl SubmitTemplate {
 pub(super) struct SubmitRequest {
     pub(super) template: SubmitTemplate,
     pub(super) solution: MiningSolution,
+    pub(super) is_dev_fee: bool,
 }
 
 enum SubmitAttemptPayload {
@@ -85,6 +86,7 @@ pub(super) struct SubmitResult {
     pub(super) solution: MiningSolution,
     pub(super) outcome: SubmitOutcome,
     pub(super) attempts: u32,
+    pub(super) is_dev_fee: bool,
 }
 
 pub(super) struct SubmitWorker {
@@ -220,6 +222,7 @@ pub(super) fn process_submit_request(
 ) -> SubmitResult {
     let max_attempts = SUBMIT_RETRY_MAX_ATTEMPTS.max(1);
     let nonce = request.solution.nonce;
+    let is_dev_fee = request.is_dev_fee;
     let solution = request.solution.clone();
     let mut payload = SubmitAttemptPayload::from_request(&request);
     let mut attempts = 0u32;
@@ -232,6 +235,7 @@ pub(super) fn process_submit_request(
                     solution,
                     outcome: SubmitOutcome::Response(resp),
                     attempts,
+                    is_dev_fee,
                 };
             }
             Err(err) => {
@@ -242,6 +246,7 @@ pub(super) fn process_submit_request(
                             "submit aborted by shutdown".to_string(),
                         ),
                         attempts,
+                        is_dev_fee,
                     };
                 }
 
@@ -287,6 +292,7 @@ pub(super) fn process_submit_request(
                                 "submit aborted by shutdown".to_string(),
                             ),
                             attempts,
+                            is_dev_fee,
                         };
                     }
                     continue;
@@ -314,6 +320,7 @@ pub(super) fn process_submit_request(
                         }
                     },
                     attempts,
+                    is_dev_fee,
                 };
             }
         }
@@ -365,6 +372,15 @@ fn parse_leading_u64(value: &str) -> Option<u64> {
 }
 
 fn handle_submit_result(result: &SubmitResult, stats: &Stats, tui: &mut Option<TuiDisplay>) {
+    if result.is_dev_fee {
+        // Still track stats, but don't log anything for dev fee submissions.
+        if let SubmitOutcome::Response(resp) = &result.outcome {
+            if resp.accepted {
+                stats.bump_accepted();
+            }
+        }
+        return;
+    }
     match &result.outcome {
         SubmitOutcome::Response(resp) => {
             if resp.accepted {

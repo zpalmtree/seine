@@ -354,7 +354,8 @@ impl<'a> MiningControlPlane<'a> {
         stats: &Stats,
         tui: &mut Option<TuiDisplay>,
     ) -> bool {
-        if !self.enqueue_submit_request(SubmitRequest { template, solution }, stats, tui) {
+        let is_dev_fee = self.dev_fee_address.is_some();
+        if !self.enqueue_submit_request(SubmitRequest { template, solution, is_dev_fee }, stats, tui) {
             return false;
         }
         stats.bump_submitted();
@@ -2124,6 +2125,7 @@ mod tests {
                 backend_id: 1,
                 backend: "cpu",
             },
+            is_dev_fee: false,
         };
         let shutdown = AtomicBool::new(false);
 
@@ -2577,6 +2579,7 @@ mod tests {
                 height: Some(7),
             }),
             attempts: 1,
+            is_dev_fee: false,
         }];
 
         process_submit_results(
