@@ -127,36 +127,20 @@ impl FixedArgon2id {
             if data_independent_addressing {
                 let ref_base = slice * self.segment_length;
                 // Prefetch the first ref blocks before entering the loop.
-                // AArch64 uses 3-ahead, so prime the first 3; others use 1-ahead.
-                #[cfg(target_arch = "aarch64")]
-                {
-                    for pre in 0..3usize {
-                        let idx = first_block + pre;
-                        if idx < self.segment_length {
-                            prefetch_pow_block(&memory_blocks[self.data_independent_ref_indexes[ref_base + idx]]);
-                        }
+                // Prime 3 blocks ahead to give DRAM time to respond.
+                for pre in 0..3usize {
+                    let idx = first_block + pre;
+                    if idx < self.segment_length {
+                        prefetch_pow_block(&memory_blocks[self.data_independent_ref_indexes[ref_base + idx]]);
                     }
-                }
-                #[cfg(not(target_arch = "aarch64"))]
-                if first_block < self.segment_length {
-                    prefetch_pow_block(&memory_blocks[self.data_independent_ref_indexes[ref_base + first_block]]);
                 }
                 for block in first_block..self.segment_length {
                     let ref_index = self.data_independent_ref_indexes[ref_base + block];
-                    // Prefetch a future iteration's ref block while current
-                    // compress runs.  On AArch64, look 3 iterations ahead to
-                    // give the memory system more time; on x86_64, 1-ahead is
-                    // sufficient given lower random-access latency.
-                    #[cfg(target_arch = "aarch64")]
-                    {
-                        let ahead = block + 3;
-                        if ahead < self.segment_length {
-                            prefetch_pow_block(&memory_blocks[self.data_independent_ref_indexes[ref_base + ahead]]);
-                        }
-                    }
-                    #[cfg(not(target_arch = "aarch64"))]
-                    if block + 1 < self.segment_length {
-                        prefetch_pow_block(&memory_blocks[self.data_independent_ref_indexes[ref_base + block + 1]]);
+                    // Prefetch 3 iterations ahead — gives ~240 ns of lead time
+                    // (3 compress calls) to cover DRAM random-access latency.
+                    let ahead = block + 3;
+                    if ahead < self.segment_length {
+                        prefetch_pow_block(&memory_blocks[self.data_independent_ref_indexes[ref_base + ahead]]);
                     }
                     fill_block_from_refs::<ISA>(memory_blocks, prev_index, ref_index, cur_index);
                     prev_index = cur_index;
@@ -170,11 +154,10 @@ impl FixedArgon2id {
                     let ref_index = reference_index(reference_area_size, rand);
                     debug_assert!(ref_index < self.block_count);
 
-                    // On AArch64 with NEON, use mid-compress prefetch: after
-                    // column round 0 writes dst[0] (its final value), compute
-                    // the NEXT ref_index and prefetch it.  The remaining 7
-                    // column rounds (~150 ns) overlap with the DRAM fetch,
-                    // giving 25× more lead time than the post-compress prefetch.
+                    // Mid-compress prefetch: fire the prefetch for the NEXT
+                    // ref block INSIDE the compress function, after column
+                    // round 0 writes dst[0] to its final value.  Remaining
+                    // column rounds overlap with the DRAM fetch.
                     #[cfg(target_arch = "aarch64")]
                     {
                         if ISA == ISA_NEON && block + 1 < self.segment_length {
@@ -187,17 +170,21 @@ impl FixedArgon2id {
                             fill_block_from_refs::<ISA>(memory_blocks, prev_index, ref_index, cur_index);
                         }
                     }
-                    #[cfg(not(target_arch = "aarch64"))]
+                    #[cfg(target_arch = "x86_64")]
+                    {
+                        if ISA == ISA_AVX2 && block + 1 < self.segment_length {
+                            let next_ref_area = slice_prefix + block + 1;
+                            fill_block_from_refs_mid_prefetch(
+                                memory_blocks, prev_index, ref_index, cur_index,
+                                next_ref_area,
+                            );
+                        } else {
+                            fill_block_from_refs::<ISA>(memory_blocks, prev_index, ref_index, cur_index);
+                        }
+                    }
+                    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
                     {
                         fill_block_from_refs::<ISA>(memory_blocks, prev_index, ref_index, cur_index);
-
-                        // Post-compress prefetch for non-AArch64.
-                        if block + 1 < self.segment_length {
-                            let next_rand = memory_blocks[cur_index].as_ref()[0];
-                            let next_ref_area = slice_prefix + block + 1;
-                            let next_ref = reference_index(next_ref_area, next_rand);
-                            prefetch_pow_block(&memory_blocks[next_ref]);
-                        }
                     }
 
                     prev_index = cur_index;
@@ -303,10 +290,43 @@ fn fill_block_from_refs<const ISA: u8>(
     }
 }
 
-/// Like [`fill_block_from_refs`] but uses the mid-compress prefetch variant
-/// on AArch64 NEON.  After column round 0 writes `dst[0]`, it computes the
-/// next iteration's ref_index and prefetches the target block, overlapping
-/// ~150 ns of remaining column-round compute with the DRAM fetch.
+/// Like [`fill_block_from_refs`] but uses the mid-compress prefetch variant.
+/// After column round 0 writes `dst[0]`, it computes the next iteration's
+/// ref_index and prefetches the target block, overlapping remaining column-round
+/// compute with the DRAM fetch.
+///
+/// On x86_64 AVX2 this gives ~35-40 ns of overlap (7 of 8 column rounds).
+/// On AArch64 NEON this gives ~150 ns of overlap.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn fill_block_from_refs_mid_prefetch(
+    memory_blocks: &mut [PowBlock],
+    prev_index: usize,
+    ref_index: usize,
+    cur_index: usize,
+    next_ref_area_size: usize,
+) {
+    debug_assert!(prev_index < memory_blocks.len());
+    debug_assert!(ref_index < memory_blocks.len());
+    debug_assert!(cur_index < memory_blocks.len());
+    debug_assert_ne!(cur_index, prev_index);
+    debug_assert_ne!(cur_index, ref_index);
+
+    unsafe {
+        let base = memory_blocks.as_mut_ptr();
+        let prev = &*base.add(prev_index);
+        let refb = &*base.add(ref_index);
+        let dst = &mut *base.add(cur_index);
+        compress_avx2_into_mid_prefetch(
+            prev,
+            refb,
+            dst,
+            next_ref_area_size,
+            base as *const PowBlock,
+        );
+    }
+}
+
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 fn fill_block_from_refs_mid_prefetch(
@@ -337,10 +357,10 @@ fn fill_block_from_refs_mid_prefetch(
     }
 }
 
-/// Prefetch a PowBlock into cache.  Issues two prefetches to resolve the TLB
-/// entry and prime the hardware prefetcher for the full 1 KiB block.
+/// Prefetch a PowBlock into cache.  Covers the full 1 KiB block so the
+/// hardware prefetcher doesn't have to ramp up from scratch.
 ///
-/// - x86_64: offsets 0 and 512 (64-byte cache lines).
+/// - x86_64: all 16 cache lines at 64-byte stride (full 1024-byte block).
 /// - AArch64: all 8 cache lines at 128-byte stride (full 1024-byte block).
 #[inline(always)]
 fn prefetch_pow_block(block: &PowBlock) {
@@ -350,7 +370,21 @@ fn prefetch_pow_block(block: &PowBlock) {
             use std::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
             let ptr = block as *const PowBlock as *const i8;
             _mm_prefetch(ptr, _MM_HINT_T0);
+            _mm_prefetch(ptr.add(64), _MM_HINT_T0);
+            _mm_prefetch(ptr.add(128), _MM_HINT_T0);
+            _mm_prefetch(ptr.add(192), _MM_HINT_T0);
+            _mm_prefetch(ptr.add(256), _MM_HINT_T0);
+            _mm_prefetch(ptr.add(320), _MM_HINT_T0);
+            _mm_prefetch(ptr.add(384), _MM_HINT_T0);
+            _mm_prefetch(ptr.add(448), _MM_HINT_T0);
             _mm_prefetch(ptr.add(512), _MM_HINT_T0);
+            _mm_prefetch(ptr.add(576), _MM_HINT_T0);
+            _mm_prefetch(ptr.add(640), _MM_HINT_T0);
+            _mm_prefetch(ptr.add(704), _MM_HINT_T0);
+            _mm_prefetch(ptr.add(768), _MM_HINT_T0);
+            _mm_prefetch(ptr.add(832), _MM_HINT_T0);
+            _mm_prefetch(ptr.add(896), _MM_HINT_T0);
+            _mm_prefetch(ptr.add(960), _MM_HINT_T0);
         }
     }
     #[cfg(target_arch = "aarch64")]
@@ -811,6 +845,151 @@ unsafe fn compress_avx2_into(rhs: &PowBlock, lhs: &PowBlock, dst: &mut PowBlock)
         scatter_xor_pair!(d, base + 96, base + 112);
     }
     // No Phase 4 needed — final XOR was fused into the column scatter above.
+}
+
+/// Like [`compress_avx2_into`] but performs a mid-compress prefetch for the
+/// data-dependent phase.  After column round 0 finalises `dst[0]`, this reads
+/// that value, computes the next iteration's ref_index, and prefetches the
+/// target block.  The remaining 7 column rounds (~35-40 ns of compute) overlap
+/// with the DRAM fetch, instead of the current zero-overlap post-compress
+/// prefetch.
+///
+/// # Safety
+/// * Requires AVX2.
+/// * `dst` must not alias `rhs` or `lhs`.
+/// * `memory_blocks_base` must point to a valid PowBlock array.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn compress_avx2_into_mid_prefetch(
+    rhs: &PowBlock,
+    lhs: &PowBlock,
+    dst: &mut PowBlock,
+    next_ref_area_size: usize,
+    memory_blocks_base: *const PowBlock,
+) {
+    use std::arch::x86_64::{
+        __m128i, __m256i, _mm256_castsi128_si256, _mm256_castsi256_si128,
+        _mm256_extracti128_si256, _mm256_inserti128_si256, _mm256_loadu_si256,
+        _mm256_storeu_si256, _mm256_xor_si256, _mm_loadu_si128, _mm_storeu_si128,
+        _mm_xor_si128,
+    };
+
+    let mut q = PowBlock::default();
+
+    let rhs_ptr = rhs.0.as_ptr();
+    let lhs_ptr = lhs.0.as_ptr();
+    let dst_ptr = dst.0.as_mut_ptr();
+    let q_ptr = q.0.as_mut_ptr();
+
+    // Phase 1: XOR rhs ^ lhs → store to both dst (pre-round backup) and q (working copy).
+    for vec_idx in 0..(PowBlock::SIZE / 32) {
+        let offset = vec_idx * 4;
+        let rv = _mm256_xor_si256(
+            _mm256_loadu_si256(rhs_ptr.add(offset) as *const __m256i),
+            _mm256_loadu_si256(lhs_ptr.add(offset) as *const __m256i),
+        );
+        _mm256_storeu_si256(dst_ptr.add(offset) as *mut __m256i, rv);
+        _mm256_storeu_si256(q_ptr.add(offset) as *mut __m256i, rv);
+    }
+
+    // Phase 2: Row rounds on q (contiguous 16-element rows).
+    for row in 0..8 {
+        let base = row * 16;
+        let mut a = _mm256_loadu_si256(q_ptr.add(base) as *const __m256i);
+        let mut b = _mm256_loadu_si256(q_ptr.add(base + 4) as *const __m256i);
+        let mut c = _mm256_loadu_si256(q_ptr.add(base + 8) as *const __m256i);
+        let mut d = _mm256_loadu_si256(q_ptr.add(base + 12) as *const __m256i);
+        avx2_round(&mut a, &mut b, &mut c, &mut d);
+        _mm256_storeu_si256(q_ptr.add(base) as *mut __m256i, a);
+        _mm256_storeu_si256(q_ptr.add(base + 4) as *mut __m256i, b);
+        _mm256_storeu_si256(q_ptr.add(base + 8) as *mut __m256i, c);
+        _mm256_storeu_si256(q_ptr.add(base + 12) as *mut __m256i, d);
+    }
+
+    // Scatter-XOR macro shared by all column rounds.
+    macro_rules! scatter_xor_pair {
+        ($vec:expr, $lo_off:expr, $hi_off:expr) => {{
+            let lo = _mm256_castsi256_si128($vec);
+            let hi = _mm256_extracti128_si256::<1>($vec);
+            let d_lo = _mm_loadu_si128(dst_ptr.add($lo_off) as *const __m128i);
+            let d_hi = _mm_loadu_si128(dst_ptr.add($hi_off) as *const __m128i);
+            _mm_storeu_si128(
+                dst_ptr.add($lo_off) as *mut __m128i,
+                _mm_xor_si128(lo, d_lo),
+            );
+            _mm_storeu_si128(
+                dst_ptr.add($hi_off) as *mut __m128i,
+                _mm_xor_si128(hi, d_hi),
+            );
+        }};
+    }
+
+    // Phase 3a: Column round 0 — writes dst[0] to its final value.
+    {
+        let base = 0;
+        let mut a = _mm256_inserti128_si256::<1>(
+            _mm256_castsi128_si256(_mm_loadu_si128(q_ptr.add(base) as *const __m128i)),
+            _mm_loadu_si128(q_ptr.add(base + 16) as *const __m128i),
+        );
+        let mut b = _mm256_inserti128_si256::<1>(
+            _mm256_castsi128_si256(_mm_loadu_si128(q_ptr.add(base + 32) as *const __m128i)),
+            _mm_loadu_si128(q_ptr.add(base + 48) as *const __m128i),
+        );
+        let mut c = _mm256_inserti128_si256::<1>(
+            _mm256_castsi128_si256(_mm_loadu_si128(q_ptr.add(base + 64) as *const __m128i)),
+            _mm_loadu_si128(q_ptr.add(base + 80) as *const __m128i),
+        );
+        let mut d = _mm256_inserti128_si256::<1>(
+            _mm256_castsi128_si256(_mm_loadu_si128(q_ptr.add(base + 96) as *const __m128i)),
+            _mm_loadu_si128(q_ptr.add(base + 112) as *const __m128i),
+        );
+
+        avx2_round(&mut a, &mut b, &mut c, &mut d);
+
+        scatter_xor_pair!(a, base, base + 16);
+        scatter_xor_pair!(b, base + 32, base + 48);
+        scatter_xor_pair!(c, base + 64, base + 80);
+        scatter_xor_pair!(d, base + 96, base + 112);
+    }
+
+    // --- Mid-compress prefetch ---
+    // dst[0] now has its final value.  Compute the NEXT iteration's ref_index
+    // and prefetch it.  The remaining 7 column rounds (~35-40 ns of compute)
+    // overlap with the DRAM fetch.
+    {
+        let rand = *dst_ptr;
+        let next_ref = reference_index(next_ref_area_size, rand);
+        prefetch_pow_block(&*memory_blocks_base.add(next_ref));
+    }
+
+    // Phase 3b: Column rounds 1..8.
+    for idx in 1..8 {
+        let base = idx * 2;
+
+        let mut a = _mm256_inserti128_si256::<1>(
+            _mm256_castsi128_si256(_mm_loadu_si128(q_ptr.add(base) as *const __m128i)),
+            _mm_loadu_si128(q_ptr.add(base + 16) as *const __m128i),
+        );
+        let mut b = _mm256_inserti128_si256::<1>(
+            _mm256_castsi128_si256(_mm_loadu_si128(q_ptr.add(base + 32) as *const __m128i)),
+            _mm_loadu_si128(q_ptr.add(base + 48) as *const __m128i),
+        );
+        let mut c = _mm256_inserti128_si256::<1>(
+            _mm256_castsi128_si256(_mm_loadu_si128(q_ptr.add(base + 64) as *const __m128i)),
+            _mm_loadu_si128(q_ptr.add(base + 80) as *const __m128i),
+        );
+        let mut d = _mm256_inserti128_si256::<1>(
+            _mm256_castsi128_si256(_mm_loadu_si128(q_ptr.add(base + 96) as *const __m128i)),
+            _mm_loadu_si128(q_ptr.add(base + 112) as *const __m128i),
+        );
+
+        avx2_round(&mut a, &mut b, &mut c, &mut d);
+
+        scatter_xor_pair!(a, base, base + 16);
+        scatter_xor_pair!(b, base + 32, base + 48);
+        scatter_xor_pair!(c, base + 64, base + 80);
+        scatter_xor_pair!(d, base + 96, base + 112);
+    }
 }
 
 #[cfg(target_arch = "x86_64")]

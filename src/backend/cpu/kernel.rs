@@ -26,6 +26,18 @@ pub(super) fn cpu_worker_loop(
 
     let hasher = fixed_argon::FixedArgon2id::new(POW_MEMORY_KB);
     let mut memory_blocks = vec![fixed_argon::PowBlock::default(); hasher.block_count()];
+
+    // Hint the kernel to back this 2 GB arena with 2 MB huge pages,
+    // reducing TLB misses on the random ref-block accesses.
+    #[cfg(target_os = "linux")]
+    unsafe {
+        libc::madvise(
+            memory_blocks.as_mut_ptr() as *mut libc::c_void,
+            memory_blocks.len() * std::mem::size_of::<fixed_argon::PowBlock>(),
+            libc::MADV_HUGEPAGE,
+        );
+    }
+
     let mut output = [0u8; POW_OUTPUT_LEN];
     mark_worker_ready(&shared);
     let mut local_generation = 0u64;

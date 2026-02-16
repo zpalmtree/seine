@@ -2178,6 +2178,7 @@ dependencies = [
  "cudarc",
  "hex",
  "httpmock",
+ "libc",
  "metal",
  "ratatui",
  "reqwest",
