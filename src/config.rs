@@ -988,7 +988,9 @@ fn detect_daemon_context() -> Option<DaemonContext> {
     let mut sys = System::new();
     sys.refresh_processes_specifics(
         ProcessesToUpdate::All,
-        ProcessRefreshKind::new().with_cmd(UpdateKind::Always),
+        ProcessRefreshKind::new()
+            .with_cmd(UpdateKind::Always)
+            .with_cwd(UpdateKind::Always),
     );
 
     for process in sys.processes_by_name(OsStr::new("blocknet")) {
