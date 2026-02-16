@@ -1,6 +1,34 @@
-# CPU optimization journal
+# CPU Optimization Log
 
-This journal tracks CPU backend/hash-kernel tuning attempts and measured outcomes.
+This log tracks CPU backend/hash-kernel tuning attempts and measured outcomes.
+
+## Conventions
+
+- Attempt numbers are historical labels and may repeat across platform-specific sections (`x86_64` vs `Apple`).
+- The canonical roll-up is in `Updated summary of cumulative adopted optimizations` near the end of this file.
+- Short-window probes are directional unless explicitly confirmed with long or interleaved A/B runs.
+- For ongoing maintenance, add new sections in newest-to-oldest order.
+
+## Newest-first index
+
+- `Updated summary of cumulative adopted optimizations`
+- `First-principles performance analysis (x86_64, Zen 3)`
+- `2026-02-16 x86_64 mid-compress prefetch, TLB analysis, and huge page allocation`
+- `Metal + CPU combined mode (Apple M3 Max, 48 GB unified memory)`
+- `2026-02-15 Apple Silicon further investigation (post mid-compress prefetch)`
+- `2026-02-15 Apple Silicon mid-compress prefetch + madvise investigation`
+- `2026-02-15 x86_64 cross-porting Apple Silicon optimizations`
+- `2026-02-15 Apple Silicon continued optimization`
+- `2026-02-14 x86_64 fused column-scatter optimization`
+- `2026-02-14 Apple Silicon prefetch tuning + PGO investigation`
+- `2026-02-14 Apple Silicon (AArch64) NEON SIMD optimization`
+- `2026-02-14 in-place compress to eliminate memcpy ABI overhead`
+- `2026-02-14 AVX2 SIMD rewrite + thermal-stable interleaved A/B harness`
+- `2026-02-14 additional miner/backend/kernel rewrite pass (A/B with detached baseline)`
+- `2026-02-14 full miner + CPU backend rework sweep`
+- `Attempted changes` (Attempts 1-16 and cross-platform setup)
+- `Baseline`
+- `Benchmark protocol`
 
 ## Benchmark protocol
 
@@ -804,7 +832,6 @@ time still only covers ~50% of the ~300 ns DRAM access latency. Full assembly
 review (post-Attempt 37) confirms ~1–2% maximum remaining gain, requiring
 extremely difficult 2-row Phase 1+2 interleaving with high regression risk.
 The hot path is at its architectural limit.
-
 ## 2026-02-15 Apple Silicon further investigation (post mid-compress prefetch)
 
 Host: Apple M4 Max, 16 cores (12P+4E), 48 GB unified memory.
@@ -868,7 +895,7 @@ Note: benchmarks in this session ran under reduced power envelope (low battery
   overwhelmed by the cache/TLB penalty (~38% measured).
 - Status: not adopted (reverted).
 
-## Attempt 32 — 2 MB superpage allocation (aarch64, not adopted)
+### Attempt 32 (Apple): 2 MB superpage allocation (not adopted)
 
 - Hypothesis: reducing TLB entries from 131K (16 KB pages) to 1024 (2 MB pages)
   would eliminate ~2.4% overhead from TLB walks on the random ref block accesses.
@@ -882,15 +909,6 @@ Note: benchmarks in this session ran under reduced power envelope (low battery
   already reduce TLB pressure 4× vs x86 4 KB pages. The TLB contribution to
   the performance gap is smaller than initially estimated.
 - Status: not adopted (reverted). API not available on target platform.
-
-### P-core detection (adopted)
-
-- Added `pcore_count()` using `sysctlbyname("hw.perflevel0.logicalcpu")` FFI to
-  detect P-core count on macOS Apple Silicon (returns 12 on M3/M4 Max).
-- Modified `auto_cpu_threads()` to prefer P-core count over
-  `available_parallelism()` (which returns 16 = 12P + 4E on M4 Max).
-- Prevents E-core threads from causing contention and thermal throttling.
-- Status: adopted.
 
 ### Optimization frontier update
 
