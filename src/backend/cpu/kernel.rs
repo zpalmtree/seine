@@ -26,7 +26,6 @@ pub(super) fn cpu_worker_loop(
 
     let hasher = fixed_argon::FixedArgon2id::new(POW_MEMORY_KB);
     let block_count = hasher.block_count();
-    let block_bytes = block_count * std::mem::size_of::<fixed_argon::PowBlock>();
 
     // Allocate the 2 GB arena WITHOUT initialising, then mark it for
     // huge pages BEFORE faulting.  With THP defrag=[madvise], this lets
@@ -36,6 +35,7 @@ pub(super) fn cpu_worker_loop(
         let mut v: Vec<fixed_argon::PowBlock> = Vec::with_capacity(block_count);
         #[cfg(target_os = "linux")]
         unsafe {
+            let block_bytes = block_count * std::mem::size_of::<fixed_argon::PowBlock>();
             libc::madvise(
                 v.as_mut_ptr() as *mut libc::c_void,
                 block_bytes,

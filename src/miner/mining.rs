@@ -1800,11 +1800,27 @@ fn process_submit_results(
     inflight_solution_keys: &mut HashSet<(u64, u64)>,
     stats: &Stats,
 ) {
+    let mut accepted_epochs = HashSet::new();
     for result in results {
         let key = (result.solution.epoch, result.solution.nonce);
         inflight_solution_keys.remove(&key);
         match result.outcome {
-            SubmitOutcome::Response(_) | SubmitOutcome::TerminalError(_) => {
+            SubmitOutcome::Response(resp) => {
+                if resp.accepted {
+                    accepted_epochs.insert(result.solution.epoch);
+                }
+                remember_submitted_solution(
+                    submitted_solution_order,
+                    submitted_solution_keys,
+                    &result.solution,
+                );
+                drop_solution_from_deferred_indexed(
+                    deferred_solutions,
+                    deferred_solution_keys,
+                    Some(&result.solution),
+                );
+            }
+            SubmitOutcome::StaleHeightError { .. } | SubmitOutcome::TerminalError(_) => {
                 remember_submitted_solution(
                     submitted_solution_order,
                     submitted_solution_keys,
@@ -1830,6 +1846,24 @@ fn process_submit_results(
             }
         }
     }
+
+    for epoch in accepted_epochs {
+        let dropped = drop_deferred_solutions_for_epoch_indexed(
+            deferred_solutions,
+            deferred_solution_keys,
+            epoch,
+        );
+        if dropped > 0 {
+            stats.add_dropped(dropped);
+            info(
+                "SUBMIT",
+                format!(
+                    "dropped {} queued same-epoch solution(s) after accepted block epoch={}",
+                    dropped, epoch
+                ),
+            );
+        }
+    }
 }
 
 fn defer_solution_indexed(
@@ -1844,6 +1878,32 @@ fn defer_solution_indexed(
         stats.add_deferred(1);
     }
     stats.add_dropped(outcome.dropped);
+}
+
+fn drop_deferred_solutions_for_epoch_indexed(
+    deferred_solutions: &mut VecDeque<MiningSolution>,
+    deferred_solution_keys: &mut HashSet<(u64, u64)>,
+    epoch: u64,
+) -> u64 {
+    if deferred_solutions.is_empty() || deferred_solution_keys.is_empty() {
+        return 0;
+    }
+
+    let mut dropped = 0u64;
+    deferred_solutions.retain(|solution| {
+        if solution.epoch != epoch {
+            return true;
+        }
+        let key = (solution.epoch, solution.nonce);
+        if deferred_solution_keys.remove(&key) {
+            dropped = dropped.saturating_add(1);
+        }
+        false
+    });
+    if deferred_solutions.is_empty() {
+        deferred_solution_keys.clear();
+    }
+    dropped
 }
 
 struct DeferredSubmitState<'a> {
@@ -2073,6 +2133,13 @@ mod tests {
         match result.outcome {
             SubmitOutcome::TerminalError(message) => {
                 assert!(message.contains("no cookie refresh source is available"));
+            }
+            SubmitOutcome::StaleHeightError {
+                message,
+                expected_height: _,
+                got_height: _,
+            } => {
+                panic!("expected terminal submit failure, got stale-height error: {message}");
             }
             SubmitOutcome::RetryableError(message) => {
                 panic!("expected terminal submit failure, got retryable error: {message}");
@@ -2452,6 +2519,86 @@ mod tests {
         );
 
         assert_eq!(deferred.len(), 1);
+    }
+
+    #[test]
+    fn accepted_submit_drops_queued_same_epoch_solutions() {
+        let stats = Stats::new();
+        let mut deferred_solutions = VecDeque::new();
+        let mut deferred_solution_keys = HashSet::new();
+        defer_solution_indexed(
+            &mut deferred_solutions,
+            &mut deferred_solution_keys,
+            MiningSolution {
+                epoch: 42,
+                nonce: 11,
+                backend_id: 1,
+                backend: "cpu",
+            },
+            &stats,
+        );
+        defer_solution_indexed(
+            &mut deferred_solutions,
+            &mut deferred_solution_keys,
+            MiningSolution {
+                epoch: 42,
+                nonce: 13,
+                backend_id: 1,
+                backend: "cpu",
+            },
+            &stats,
+        );
+        defer_solution_indexed(
+            &mut deferred_solutions,
+            &mut deferred_solution_keys,
+            MiningSolution {
+                epoch: 43,
+                nonce: 17,
+                backend_id: 1,
+                backend: "cpu",
+            },
+            &stats,
+        );
+
+        let mut submitted_solution_order = VecDeque::new();
+        let mut submitted_solution_keys = HashSet::new();
+        let mut inflight_solution_keys = HashSet::new();
+        inflight_solution_keys.insert((42, 7));
+        let results = vec![SubmitResult {
+            solution: MiningSolution {
+                epoch: 42,
+                nonce: 7,
+                backend_id: 1,
+                backend: "cpu",
+            },
+            outcome: SubmitOutcome::Response(crate::types::SubmitBlockResponse {
+                accepted: true,
+                hash: None,
+                height: Some(7),
+            }),
+            attempts: 1,
+        }];
+
+        process_submit_results(
+            results,
+            &mut deferred_solutions,
+            &mut deferred_solution_keys,
+            &mut submitted_solution_order,
+            &mut submitted_solution_keys,
+            &mut inflight_solution_keys,
+            &stats,
+        );
+
+        assert!(deferred_solutions
+            .iter()
+            .all(|solution| solution.epoch != 42));
+        assert!(deferred_solutions
+            .iter()
+            .any(|solution| solution.epoch == 43));
+        assert!(deferred_solution_keys.contains(&(43, 17)));
+        assert!(!deferred_solution_keys.contains(&(42, 11)));
+        assert!(!deferred_solution_keys.contains(&(42, 13)));
+        assert!(!inflight_solution_keys.contains(&(42, 7)));
     }
 
     #[test]

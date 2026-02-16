@@ -73,6 +73,11 @@ impl SubmitAttemptPayload {
 pub(super) enum SubmitOutcome {
     Response(SubmitBlockResponse),
     RetryableError(String),
+    StaleHeightError {
+        message: String,
+        expected_height: u64,
+        got_height: u64,
+    },
     TerminalError(String),
 }
 
@@ -294,9 +299,19 @@ pub(super) fn process_submit_request(
                             "submit failed after {attempts} attempt(s): {error_context}"
                         ))
                     } else {
-                        SubmitOutcome::TerminalError(format!(
-                            "submit failed after {attempts} attempt(s): {error_context}"
-                        ))
+                        let message =
+                            format!("submit failed after {attempts} attempt(s): {error_context}");
+                        if let Some((expected_height, got_height)) =
+                            parse_stale_height_error(&message)
+                        {
+                            SubmitOutcome::StaleHeightError {
+                                message,
+                                expected_height,
+                                got_height,
+                            }
+                        } else {
+                            SubmitOutcome::TerminalError(message)
+                        }
                     },
                     attempts,
                 };
@@ -327,6 +342,26 @@ fn submit_retry_delay(attempt: u32) -> Duration {
     SUBMIT_RETRY_BASE_DELAY
         .saturating_mul(multiplier)
         .min(SUBMIT_RETRY_MAX_DELAY)
+}
+
+fn parse_stale_height_error(message: &str) -> Option<(u64, u64)> {
+    let lower = message.to_ascii_lowercase();
+    let marker = "invalid height: expected ";
+    let marker_idx = lower.find(marker)?;
+    let after_marker = &lower[marker_idx + marker.len()..];
+    let (expected_part, got_part) = after_marker.split_once(", got ")?;
+    let expected_height = parse_leading_u64(expected_part.trim())?;
+    let got_height = parse_leading_u64(got_part.trim())?;
+    Some((expected_height, got_height))
+}
+
+fn parse_leading_u64(value: &str) -> Option<u64> {
+    let digits: String = value.chars().take_while(|ch| ch.is_ascii_digit()).collect();
+    if digits.is_empty() {
+        None
+    } else {
+        digits.parse().ok()
+    }
 }
 
 fn handle_submit_result(result: &SubmitResult, stats: &Stats, tui: &mut Option<TuiDisplay>) {
@@ -366,6 +401,24 @@ fn handle_submit_result(result: &SubmitResult, stats: &Stats, tui: &mut Option<T
                     ),
                 );
             }
+        }
+        SubmitOutcome::StaleHeightError {
+            message: _,
+            expected_height,
+            got_height,
+        } => {
+            warn(
+                "SUBMIT",
+                format!(
+                    "stale solution rejected epoch={} nonce={} backend={}#{}: daemon advanced tip (expected {}, got {})",
+                    result.solution.epoch,
+                    result.solution.nonce,
+                    result.solution.backend,
+                    result.solution.backend_id,
+                    expected_height,
+                    got_height
+                ),
+            );
         }
         SubmitOutcome::RetryableError(message) => {
             warn(
@@ -430,4 +483,22 @@ fn sleep_with_shutdown(shutdown: &AtomicBool, duration: Duration) -> bool {
         thread::sleep(sleep_for);
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_stale_height_error;
+
+    #[test]
+    fn parse_stale_height_reject_extracts_expected_and_got() {
+        let message = "submit failed after 1 attempt(s): submitblock failed (500 Internal Server Error): invalid block: invalid height: expected 60, got 59";
+        assert_eq!(parse_stale_height_error(message), Some((60, 59)));
+    }
+
+    #[test]
+    fn parse_stale_height_reject_ignores_other_errors() {
+        let message =
+            "submit failed after 1 attempt(s): submitblock failed (400 Bad Request): invalid_pow";
+        assert_eq!(parse_stale_height_error(message), None);
+    }
 }
