@@ -481,7 +481,7 @@ fn run_worker_benchmark(
         info("HINT", hint);
     }
     let (mut backends, backend_events) =
-        activate_backends(instances, cfg.backend_event_capacity, cfg)?;
+        activate_backends(instances, cfg.backend_event_capacity, cfg, shutdown)?;
     super::enforce_deadline_policy(
         &mut backends,
         cfg.allow_best_effort_deadlines,

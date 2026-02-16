@@ -26,7 +26,10 @@ fn run() -> Result<()> {
     {
         let shutdown = Arc::clone(&shutdown);
         ctrlc::set_handler(move || {
-            shutdown.store(true, Ordering::SeqCst);
+            if shutdown.swap(true, Ordering::SeqCst) {
+                // Second Ctrl+C — force exit immediately (e.g. stuck in FFI).
+                std::process::exit(130);
+            }
         })?;
     }
 

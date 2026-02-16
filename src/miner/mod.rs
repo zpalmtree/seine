@@ -180,7 +180,7 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
 
     let backend_instances = build_backend_instances(cfg);
     let (mut backends, backend_events) =
-        activate_backends(backend_instances, cfg.backend_event_capacity, cfg)?;
+        activate_backends(backend_instances, cfg.backend_event_capacity, cfg, shutdown.as_ref())?;
     enforce_deadline_policy(
         &mut backends,
         cfg.allow_best_effort_deadlines,
@@ -712,6 +712,7 @@ fn maybe_autotune_cpu_threads(
 
     if interrupted {
         warn(tag, "cpu-autotune | interrupted by shutdown request");
+        return Ok(());
     }
 
     let selection = select_cpu_autotune_candidate(cfg.cpu_profile, &measurements).unwrap_or(
@@ -1082,6 +1083,7 @@ fn activate_backends(
     mut backends: Vec<(BackendSpec, Arc<dyn PowBackend>)>,
     event_capacity: usize,
     cfg: &Config,
+    shutdown: &AtomicBool,
 ) -> Result<(Vec<BackendSlot>, Receiver<BackendEvent>)> {
     let mut active = Vec::new();
     let mut backend_event_sources = Vec::new();
@@ -1090,6 +1092,9 @@ fn activate_backends(
     let per_backend_event_capacity = event_capacity.clamp(8, BACKEND_EVENT_SOURCE_CAPACITY_MAX);
 
     for (backend_spec, backend) in backends.drain(..) {
+        if shutdown.load(Ordering::Relaxed) {
+            break;
+        }
         let backend_id = next_backend_id;
         next_backend_id = next_backend_id.saturating_add(1);
         let backend_name = backend.name();
@@ -1107,7 +1112,7 @@ fn activate_backends(
                 )
             }
             "nvidia" => format!(
-                "{backend_name}: compiling CUDA kernel and allocating device memory (first launch may take ~2 min)...",
+                "{backend_name}: compiling CUDA kernel and allocating device memory (one-time, may take ~2 min)...",
             ),
             _ => format!("{backend_name}: initializing..."),
         };
@@ -2841,7 +2846,8 @@ mod tests {
             ),
         ];
 
-        let (active, _events) = activate_backends(instances, 16, &cfg)
+        let no_shutdown = AtomicBool::new(false);
+        let (active, _events) = activate_backends(instances, 16, &cfg, &no_shutdown)
             .expect("activation should continue with the healthy backend");
 
         assert_eq!(active.len(), 1);
