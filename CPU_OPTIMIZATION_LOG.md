@@ -790,14 +790,19 @@ Cumulative x86_64: from ~1.19 H/s to ~1.65 H/s, **~39% total improvement**.
 | 21 | Full prefetch coverage (8 cache lines) | ~+5-10% | ~+5-10% | Adopted |
 | 24 | Inline asm UMLAL.2D for BLAMKA | +9.4% | +9.7% | Adopted |
 | 28 | Mid-compress prefetch for data-dep slices | +8.1% | +8.0% | Adopted |
+| 35 | Interleaved lo/hi BLAMKA half-rounds | +0.95% | — | Adopted |
+| 37 | 2-column Phase 3+4 interleave | +1.56% | — | Adopted |
 
-Cumulative AArch64: from ~1.37 H/s (scalar) to ~2.67 H/s, **~95% total improvement**.
-From post-rebase baseline (1.533 / 1.503): **Kernel +74.1%, Backend +76.2%**.
+Cumulative AArch64: from ~1.37 H/s (scalar) to ~2.72 H/s, **~98% total improvement**.
+From post-rebase baseline (1.533 / 1.503): **Kernel +77.4%, Backend +79.6%**.
 
 Both platforms are fundamentally memory-bound. The remaining bottleneck is DRAM
 + TLB latency for random 1 KB reads across a 2 GB array. The mid-compress
 prefetch partially addresses this for data-dependent slices but 150 ns of lead
-time still only covers ~50% of the ~300 ns DRAM access latency.
+time still only covers ~50% of the ~300 ns DRAM access latency. Full assembly
+review (post-Attempt 37) confirms ~1–2% maximum remaining gain, requiring
+extremely difficult 2-row Phase 1+2 interleaving with high regression risk.
+The hot path is at its architectural limit.
 
 ## 2026-02-15 Apple Silicon further investigation (post mid-compress prefetch)
 
@@ -1047,6 +1052,105 @@ assembly codegen is verified correct (LDP/STP, fused XAR, inline UMLAL, zero
 register spills, interleaved lo/hi scheduling, cross-column interleaving).
 Attempts 35+37 together yielded ~2.5% from instruction scheduling improvements.
 DI prefetch tuning (Attempt 36) confirmed that 3-ahead is already optimal.
+
+### Full assembly review — post-Attempt 37 (AArch64)
+
+Comprehensive review of the generated assembly for `hash_password_into_with_memory`
+on AArch64 (1977 instructions, ~7.9 KB). All sections verified for codegen quality.
+
+#### Assembly structure map
+
+| Lines | Size | Section | Description |
+|-------|------|---------|-------------|
+| 1–286 | 1.1 KB | Prologue | Blake2b H0 hashing, initial block setup, register saves |
+| 286–398 | 0.4 KB | DI outer loop | fill_blocks loop entry, 3-ahead prefetch priming |
+| 398–535 | 0.5 KB | DI Phase 1+2 | Row rounds: LDP/STP pairs, interleaved lo/hi BLAMKA |
+| 536–790 | 1.0 KB | DI Phase 3+4 | 2-column interleave: 4 pair iterations |
+| 790–810 | 0.1 KB | DI loop ctrl | Prefetch next block, branch back |
+| 810–958 | 0.6 KB | DD Phase 1+2 | ref_index compute, XOR load, BLAMKA, stores to dst+q |
+| 959–1103 | 0.6 KB | DD P3+4 col 0 | Solo column 0 (produces dst[0] for mid-compress ref_index) |
+| 1104–1111 | 32 B | DD prefetch | 8 × `prfm pldl1keep` (1024B full block coverage) |
+| 1112–1365 | 1.0 KB | DD P3+4 pairs | Columns (1,2), (3,4), (5,6) — 3 pair iterations |
+| 1366–1503 | 0.5 KB | DD P3+4 col 7 | Solo column 7 |
+| 1504–1511 | 32 B | DD loop ctrl | Increment counters, branch back |
+| 1512–1910 | 1.6 KB | DI first-block | XOR-into-dst path (executes once per hash — cold) |
+| 1912–1936 | 0.1 KB | Epilogue | blake2b_long finalization, register restores, ret |
+| 1937–1975 | 0.2 KB | Error paths | Bounds check panics (cold) |
+
+Total: ~7.9 KB. L1 I-cache on Apple Silicon is 192 KB — no pressure.
+
+#### Per-section codegen assessment
+
+**BLAMKA G-step: OPTIMAL.** Every instance is exactly 5 instructions:
+`xtn, xtn, add.2d, umlal.2d, umlal.2d`. All rotations use single-instruction
+`xar.2d` (SHA3). Zero waste. 128 UMLAL.2D and 64 XAR.2D per compress confirmed.
+
+**DI Phase 1+2 (398–535): OPTIMAL.** LDP pairs for contiguous loads from rhs/lhs,
+EOR for XOR, STP pairs for stores to dst and q. Interleaved lo/hi BLAMKA chains
+fill multiply-port bubbles (Attempt 35). 8 iterations at 0x80 stride. Minimal
+loop overhead (3 instructions: add/cmp/b.ne).
+
+**DI Phase 3+4 (536–790): NEAR-OPTIMAL.** 2-column interleave (Attempt 37):
+LDP pairs load same-row elements from two different columns. 4 independent
+BLAMKA chains visible (col0_lo, col1_lo, col0_hi, col1_hi). Writeback uses
+LDP+EOR+STP pattern (load from dst, XOR with result, store back). 4 pair
+iterations. Individual LDR/STR for 128-byte column stride reads is inherent —
+LDP pairing impossible for non-contiguous column elements.
+
+**DD Phase 1+2 (810–958): GOOD.** Mixed LDP/STP + individual LDR/STR due to
+storing to both dst and q buffer simultaneously. This duplication is inherent to
+the algorithm — q buffer needs separate writes for Phase 3+4 column access.
+Reference index computation (`fmov + umull + lsr + mul + lsr + sub + add`, ~10
+cycles) is interleaved with load/XOR operations.
+
+**DD Phase 3+4 col 0 (959–1103): GOOD.** Solo column, single BLAMKA chain. No
+interleaving possible because this column must complete before mid-compress
+prefetch can compute ref_index from dst[0].
+
+**DD mid-compress prefetch (1104–1111): OPTIMAL.** 8 `prfm pldl1keep` covering
+exactly 1024B (one full block). Ref_index computation chain (~10 cycles) is
+fully hidden behind pair (1,2) BLAMKA compute (~100+ cycles).
+
+**DD Phase 3+4 pairs (1112–1365): NEAR-OPTIMAL.** Same 2-column interleave
+pattern as DI. 3 pair iterations for columns (1,2), (3,4), (5,6). Writeback
+interleaves EOR+STP stores with LDP loads from dst for XOR-in.
+
+**DD Phase 3+4 col 7 (1366–1503): GOOD.** Solo column loads from stack spills.
+No interleaving. Writeback via individual LDR+EOR+STR (128-byte column stride).
+This is the weakest section but architecturally constrained: 8 columns - 1
+(col 0 solo for prefetch) = 7 remaining = 3 pairs + 1 solo. Mathematically
+unavoidable.
+
+**DI first-block (1512–1910): IRRELEVANT.** Executes exactly once per hash
+(~2M total block compresses). Code quality is fine but contributes ~0.00005%
+of runtime.
+
+#### Remaining optimization opportunities
+
+| Opportunity | Est. gain | Feasibility | Assessment |
+|-------------|-----------|-------------|------------|
+| 2-row Phase 1+2 interleave | ~1–2% | Very hard | Needs 16 data + 8 temp = 24+ NEON regs (32 available). Extreme register pressure, high risk of spills negating benefit. Phase 1+2 is already well-pipelined with LDP pairs. |
+| DD col 7 solo elimination | ~0.5% | Impossible | Col 0 must run first for mid-compress prefetch. 7 remaining columns = 3 pairs + 1 solo. Architectural constraint. |
+| DD ref_index chain latency | 0% | N/A | ~10 cycles fully hidden behind pair (1,2) BLAMKA compute (~100+ cycles). |
+| BLAMKA scheduling bubbles | 0% | N/A | 2-column interleave already fills umlal→xar latency gaps perfectly. |
+| Loop overhead | <0.1% | N/A | 3 instructions per 4–8 iterations. |
+| I-cache pressure | 0% | N/A | 7.9 KB total vs 192 KB L1 I-cache. |
+| Wider/different prefetch | 0% | N/A | 8 × 128B = 1024B already covers one full block exactly. |
+| Store-to-load forwarding | 0% | N/A | STP→LDP forwarding works correctly for q buffer (verified). |
+
+**Total remaining gain: ~1–2% absolute maximum**, requiring extremely difficult
+2-row Phase 1+2 interleaving with high regression risk from register spills.
+
+#### Conclusion
+
+The hot path is at its architectural limit for Apple Silicon. The compute is
+optimal (BLAMKA at minimum instruction count, 2-column interleaving fills
+pipeline bubbles, interleaved lo/hi scheduling). The memory access pattern is
+dictated by the Argon2id algorithm. The DRAM stalls in DD blocks (~65 ns per
+block, ~30% of DD time) are fundamental to data-dependent addressing and cannot
+be improved through instruction-level optimization. After 37 optimization
+attempts, the codebase has extracted essentially all available single-thread
+performance from the AArch64 microarchitecture.
 
 ## Metal + CPU combined mode (Apple M3 Max, 48 GB unified memory)
 
