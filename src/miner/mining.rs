@@ -116,6 +116,7 @@ struct MiningControlPlane<'a> {
     pending_submit_results: Vec<SubmitResult>,
     submit_backlog_high_watermark_logged: bool,
     submit_backlog_last_saturation_log: Option<Instant>,
+    next_submit_request_id: u64,
     dev_fee_address: Option<&'static str>,
 }
 
@@ -162,10 +163,17 @@ impl<'a> MiningControlPlane<'a> {
             pending_submit_results: Vec::new(),
             submit_backlog_high_watermark_logged: false,
             submit_backlog_last_saturation_log: None,
+            next_submit_request_id: 1,
             shutdown,
             tip_signal,
             dev_fee_address: None,
         }
+    }
+
+    fn next_submit_request_id(&mut self) -> u64 {
+        let request_id = self.next_submit_request_id;
+        self.next_submit_request_id = self.next_submit_request_id.wrapping_add(1).max(1);
+        request_id
     }
 
     fn ensure_submit_worker(&mut self) {
@@ -356,8 +364,23 @@ impl<'a> MiningControlPlane<'a> {
         tui: &mut Option<TuiDisplay>,
     ) -> bool {
         let is_dev_fee = self.dev_fee_address.is_some();
+        let request_id = self.next_submit_request_id();
+        let submitted_height = template
+            .template_height()
+            .map(|height| height.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        if !is_dev_fee {
+            info(
+                "SUBMIT",
+                format!(
+                    "request_id={request_id} enqueue epoch={} nonce={} backend={}#{} submitted_height={submitted_height}",
+                    solution.epoch, solution.nonce, solution.backend, solution.backend_id
+                ),
+            );
+        }
         if !self.enqueue_submit_request(
             SubmitRequest {
+                request_id,
                 template,
                 solution,
                 is_dev_fee,
@@ -2170,6 +2193,7 @@ mod tests {
 
         let client = submit_test_client(&server);
         let request = SubmitRequest {
+            request_id: 1,
             template: SubmitTemplate::Compact {
                 template_id: "tmpl-unauth".to_string(),
                 template_height: Some(1),
@@ -2627,6 +2651,7 @@ mod tests {
         let mut inflight_solution_keys = HashSet::new();
         inflight_solution_keys.insert((42, 7));
         let results = vec![SubmitResult {
+            request_id: 1,
             solution: MiningSolution {
                 epoch: 42,
                 nonce: 7,

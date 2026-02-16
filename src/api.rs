@@ -143,9 +143,12 @@ impl ApiClient {
         block: &T,
         template_id: Option<&str>,
         nonce: u64,
+        request_id: u64,
     ) -> Result<SubmitBlockResponse> {
         let url = format!("{}/api/mining/submitblock", self.base_url);
-        let request = self.with_auth(self.json_client.post(url))?;
+        let request = self
+            .with_auth(self.json_client.post(url))?
+            .header("x-request-id", format!("seine-submit-{request_id}"));
         let request = if let Some(template_id) = template_id {
             request.json(&CompactSubmitPayload { template_id, nonce })
         } else {
@@ -338,7 +341,7 @@ mod tests {
 
         let client = test_client(&server);
         let err = client
-            .submit_block(&json!({"header": {"nonce": 1}}), None, 1)
+            .submit_block(&json!({"header": {"nonce": 1}}), None, 1, 1)
             .expect_err("submit should fail");
         assert!(format!("{err:#}").contains("invalid_pow"));
         mock.assert();
@@ -362,7 +365,7 @@ mod tests {
 
         let client = test_client(&server);
         let resp = client
-            .submit_block(&json!({"header": {"nonce": 999}}), Some("tmpl-1"), 7)
+            .submit_block(&json!({"header": {"nonce": 999}}), Some("tmpl-1"), 7, 1)
             .expect("compact submit should succeed");
         assert!(resp.accepted);
         mock.assert();

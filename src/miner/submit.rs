@@ -71,6 +71,7 @@ impl SubmitTemplate {
 }
 
 pub(super) struct SubmitRequest {
+    pub(super) request_id: u64,
     pub(super) template: SubmitTemplate,
     pub(super) solution: MiningSolution,
     pub(super) is_dev_fee: bool,
@@ -111,6 +112,7 @@ pub(super) enum SubmitOutcome {
 }
 
 pub(super) struct SubmitResult {
+    pub(super) request_id: u64,
     pub(super) solution: MiningSolution,
     pub(super) template_height: Option<u64>,
     pub(super) outcome: SubmitOutcome,
@@ -250,6 +252,7 @@ pub(super) fn process_submit_request(
     token_cookie_path: Option<&PathBuf>,
 ) -> SubmitResult {
     let max_attempts = SUBMIT_RETRY_MAX_ATTEMPTS.max(1);
+    let request_id = request.request_id;
     let nonce = request.solution.nonce;
     let is_dev_fee = request.is_dev_fee;
     let solution = request.solution.clone();
@@ -259,9 +262,10 @@ pub(super) fn process_submit_request(
 
     loop {
         attempts = attempts.saturating_add(1);
-        match submit_request_once(client, &mut payload, nonce) {
+        match submit_request_once(client, &mut payload, nonce, request_id) {
             Ok(resp) => {
                 return SubmitResult {
+                    request_id,
                     solution,
                     template_height,
                     outcome: SubmitOutcome::Response(resp),
@@ -272,6 +276,7 @@ pub(super) fn process_submit_request(
             Err(err) => {
                 if shutdown.load(Ordering::Relaxed) {
                     return SubmitResult {
+                        request_id,
                         solution,
                         template_height,
                         outcome: SubmitOutcome::TerminalError(
@@ -319,6 +324,7 @@ pub(super) fn process_submit_request(
                 if retryable && attempts < max_attempts {
                     if !sleep_with_shutdown(shutdown, submit_retry_delay(attempts)) {
                         return SubmitResult {
+                            request_id,
                             solution,
                             template_height,
                             outcome: SubmitOutcome::TerminalError(
@@ -332,6 +338,7 @@ pub(super) fn process_submit_request(
                 }
 
                 return SubmitResult {
+                    request_id,
                     solution,
                     template_height,
                     outcome: if retryable {
@@ -367,14 +374,15 @@ fn submit_request_once(
     client: &ApiClient,
     payload: &mut SubmitAttemptPayload,
     nonce: u64,
+    request_id: u64,
 ) -> Result<SubmitBlockResponse> {
     match payload {
         SubmitAttemptPayload::Compact { template_id } => {
-            client.submit_block(&(), Some(template_id.as_str()), nonce)
+            client.submit_block(&(), Some(template_id.as_str()), nonce, request_id)
         }
         SubmitAttemptPayload::FullBlock { block } => {
             set_block_nonce(block, nonce);
-            client.submit_block(block, None, nonce)
+            client.submit_block(block, None, nonce, request_id)
         }
     }
 }
@@ -419,6 +427,7 @@ fn parse_leading_u64(value: &str) -> Option<u64> {
 }
 
 fn handle_submit_result(result: &SubmitResult, stats: &Stats, tui: &mut Option<TuiDisplay>) {
+    let request_id = result.request_id;
     let template_height = result
         .template_height
         .map(|h| h.to_string())
@@ -440,21 +449,32 @@ fn handle_submit_result(result: &SubmitResult, stats: &Stats, tui: &mut Option<T
                 if let Some(display) = tui.as_mut() {
                     display.mark_block_found();
                 }
-                let height = resp
+                let accepted_height = resp
                     .height
                     .map(|h| h.to_string())
                     .unwrap_or_else(|| "unknown".to_string());
                 let hash = resp.hash.as_deref().unwrap_or("unknown").to_string();
                 mined(
                     "SUBMIT",
-                    format!("block accepted at height {height} (template_height={template_height})"),
+                    format!(
+                        "request_id={request_id} accepted epoch={} nonce={} backend={}#{} submitted_height={} accepted_height={}",
+                        result.solution.epoch,
+                        result.solution.nonce,
+                        result.solution.backend,
+                        result.solution.backend_id,
+                        template_height,
+                        accepted_height
+                    ),
                 );
-                mined("SUBMIT", format!("hash {}", compact_hash(&hash)));
+                mined(
+                    "SUBMIT",
+                    format!("request_id={request_id} hash {}", compact_hash(&hash)),
+                );
                 if result.attempts > 1 {
                     info(
                         "SUBMIT",
                         format!(
-                            "accepted epoch={} nonce={} template_height={} after {} submit attempts",
+                            "request_id={request_id} accepted epoch={} nonce={} template_height={} after {} submit attempts",
                             result.solution.epoch,
                             result.solution.nonce,
                             template_height,
@@ -463,15 +483,20 @@ fn handle_submit_result(result: &SubmitResult, stats: &Stats, tui: &mut Option<T
                     );
                 }
             } else {
+                let daemon_height = resp
+                    .height
+                    .map(|h| h.to_string())
+                    .unwrap_or_else(|| "unknown".to_string());
                 warn(
                     "SUBMIT",
                     format!(
-                        "rejected by daemon epoch={} nonce={} backend={}#{} template_height={} attempts={}",
+                        "request_id={request_id} rejected by daemon epoch={} nonce={} backend={}#{} submitted_height={} daemon_height={} attempts={}",
                         result.solution.epoch,
                         result.solution.nonce,
                         result.solution.backend,
                         result.solution.backend_id,
                         template_height,
+                        daemon_height,
                         result.attempts
                     ),
                 );
@@ -485,7 +510,7 @@ fn handle_submit_result(result: &SubmitResult, stats: &Stats, tui: &mut Option<T
             warn(
                 "SUBMIT",
                 format!(
-                    "stale solution rejected epoch={} nonce={} backend={}#{} template_height={}: daemon advanced tip (expected {}, submitted {}) [{}]",
+                    "request_id={request_id} stale solution rejected epoch={} nonce={} backend={}#{} submitted_height={}: daemon advanced tip (expected {}, submitted {}) [{}]",
                     result.solution.epoch,
                     result.solution.nonce,
                     result.solution.backend,
@@ -501,7 +526,7 @@ fn handle_submit_result(result: &SubmitResult, stats: &Stats, tui: &mut Option<T
             warn(
                 "SUBMIT",
                 format!(
-                    "stale solution rejected epoch={} nonce={} backend={}#{} template_height={}: {reason} [{}]",
+                    "request_id={request_id} stale solution rejected epoch={} nonce={} backend={}#{} submitted_height={}: {reason} [{}]",
                     result.solution.epoch,
                     result.solution.nonce,
                     result.solution.backend,
@@ -515,7 +540,7 @@ fn handle_submit_result(result: &SubmitResult, stats: &Stats, tui: &mut Option<T
             warn(
                 "SUBMIT",
                 format!(
-                    "submit failed (retryable) epoch={} nonce={} backend={}#{} template_height={} attempts={}: {}",
+                    "request_id={request_id} submit failed (retryable) epoch={} nonce={} backend={}#{} submitted_height={} attempts={}: {}",
                     result.solution.epoch,
                     result.solution.nonce,
                     result.solution.backend,
@@ -530,7 +555,7 @@ fn handle_submit_result(result: &SubmitResult, stats: &Stats, tui: &mut Option<T
             error(
                 "SUBMIT",
                 format!(
-                    "submit failed epoch={} nonce={} backend={}#{} template_height={} attempts={}: {}",
+                    "request_id={request_id} submit failed epoch={} nonce={} backend={}#{} submitted_height={} attempts={}: {}",
                     result.solution.epoch,
                     result.solution.nonce,
                     result.solution.backend,
