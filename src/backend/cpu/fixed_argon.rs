@@ -127,8 +127,8 @@ impl FixedArgon2id {
             if data_independent_addressing {
                 let ref_base = slice * self.segment_length;
                 // Prefetch the first ref blocks before entering the loop.
-                // Prime 3 blocks ahead to give DRAM time to respond.
-                for pre in 0..3usize {
+                const DI_PREFETCH_DISTANCE: usize = 3; // tested 1-5, all equivalent
+                for pre in 0..DI_PREFETCH_DISTANCE {
                     let idx = first_block + pre;
                     if idx < self.segment_length {
                         prefetch_pow_block(&memory_blocks[self.data_independent_ref_indexes[ref_base + idx]]);
@@ -136,9 +136,7 @@ impl FixedArgon2id {
                 }
                 for block in first_block..self.segment_length {
                     let ref_index = self.data_independent_ref_indexes[ref_base + block];
-                    // Prefetch 3 iterations ahead — gives ~240 ns of lead time
-                    // (3 compress calls) to cover DRAM random-access latency.
-                    let ahead = block + 3;
+                    let ahead = block + DI_PREFETCH_DISTANCE;
                     if ahead < self.segment_length {
                         prefetch_pow_block(&memory_blocks[self.data_independent_ref_indexes[ref_base + ahead]]);
                     }
@@ -193,6 +191,7 @@ impl FixedArgon2id {
             }
         }
     }
+
 }
 
 fn precompute_data_independent_ref_indexes(

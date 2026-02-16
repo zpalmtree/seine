@@ -1388,6 +1388,174 @@ misses, not compute.
 - Commit: `c4965ac`.
 - Status: adopted.
 
+### Attempt 26 (x86): perf record profiling of AVX2 hot path
+
+- **Method**: `perf record -g --call-graph dwarf,16384 -F 5000` on kernel bench
+  (1 thread, 30s, AMD Ryzen 9 5900X / Zen 3, no AVX-512).
+- **Results** (53K samples):
+  - `compress_avx2_into_mid_prefetch` (DD path): 51.67%
+  - `compress_avx2_into` (DI path): 45.32%
+  - `clear_page_erms` (kernel page zeroing): 1.52%
+  - `hash_password_into_with_memory` (loop overhead): 0.84%
+- **Phase breakdown** within compress functions:
+  - XOR+copy (Phase 1): ~10%
+  - Column rounds (Phase 2): 41-47%
+  - Diagonal/column rounds (Phase 3): 33-36%
+  - Writeback: 10-13%
+  - Prefetch instructions (mid-compress only): <1%
+- **Hottest single instruction**: `vpermq` (3-cycle cross-lane shuffle), 1-3% each.
+- **Key insight**: 97% of time is in the compress functions, evenly distributed
+  across compute phases. XOR+copy at only 10% confirms prefetching is effective.
+  The workload is fundamentally compute-bound within the compress.
+- Status: informational (guided subsequent experiments).
+
+### Attempt 27 (x86): reduce prefetch count from 16 to 4-8 cache lines (not adopted)
+
+- **Hypothesis**: HW sequential prefetcher might handle nearby cache lines after
+  explicit prefetch of the first few lines.
+- **Results** (30s kernel bench):
+  - 4-line prefetch: 1.800 H/s (**−25%**)
+  - 8-line prefetch: 1.900 H/s (**−21%**)
+  - 16-line prefetch (baseline): 2.400 H/s
+- **Conclusion**: All 16 cache lines (1 KB PowBlock) MUST be explicitly prefetched.
+  AMD Zen 3's L2 HW prefetcher does not help for random 1 KB block accesses —
+  the stride between successive ref blocks is random, so spatial/sequential
+  prefetchers cannot predict the pattern.
+- Status: not adopted (reverted).
+
+### Attempt 28 (x86): prefetcht1 (L2 hint) instead of prefetcht0 (L1) (not adopted)
+
+- **Hypothesis**: `prefetcht1` brings data to L2 only, reducing L1 pollution.
+  If the compress function re-fetches from L2 via its own loads, L2 hit latency
+  (~4-5 cycles) may be acceptable while freeing L1 for working data.
+- **Result**: 2.400 H/s — identical to `prefetcht0` baseline.
+- **Conclusion**: On AMD Zen 3, `prefetcht0` and `prefetcht1` are likely
+  treated identically by the hardware. AMD documentation confirms that prefetch
+  hint levels are implementation-defined.
+- Status: not adopted (reverted).
+
+### Attempt 29 (x86): 1 GB huge pages (not viable at runtime)
+
+- **Hypothesis**: 1 GB huge pages would reduce TLB entries from 1024 (2 MB pages)
+  to just 2, potentially hitting L1 dTLB on every access.
+- **Result**: `nr_hugepages` writes to `/sys/kernel/mm/hugepages/hugepages-1048576kB/`
+  return 0 despite 34 GB free RAM. Memory too fragmented for contiguous 1 GB
+  physical regions.
+- **Requirement**: Must be reserved at boot via kernel command line
+  (`hugepagesz=1G hugepages=2`), not at runtime.
+- **Expected gain**: Minimal — with 2 MB pages, all 1024 entries already fit in
+  Zen 3's 1536-entry L2 dTLB, so most accesses already hit L2 TLB (~7 cycles).
+  1 GB pages would only save the L1→L2 TLB lookup, which is a small fraction of
+  the ~195 ns compress time.
+- Status: not viable at runtime (requires boot-time kernel params).
+
+### Attempt 30 (x86): DI prefetch distance tuning 1-5 (not adopted)
+
+- **Hypothesis**: Different prefetch-ahead distances might better overlap DRAM
+  latency with compute.
+- **Results** (30s kernel bench, multiple rounds):
+  - Distance=1: 2.433 H/s (neutral)
+  - Distance=2: 2.490 H/s (neutral, within noise)
+  - Distance=3 (baseline): 2.500 H/s
+  - Distance=4: 2.467 H/s (neutral)
+  - Distance=5: 2.367 H/s (neutral)
+- Extended 5-round verification (distance=2 vs distance=3): both median 2.500 H/s.
+- **Conclusion**: DRAM latency (~80 ns) is fully covered by 1 compress call
+  (~195 ns), so even distance=1 is sufficient. Prefetch distance is irrelevant
+  when compute already dominates.
+- Status: not adopted (left const at 3 with comment).
+
+### Attempt 31 (x86): DD mid-compress prefetch removal (confirms +17% contribution)
+
+- **Hypothesis**: Measure the actual contribution of mid-compress prefetch by
+  disabling it in the DD loop.
+- **Results** (30s kernel bench):
+  - Without mid-compress prefetch: 2.100 H/s
+  - With mid-compress prefetch (baseline): 2.467 H/s
+  - Delta: **−14.9%** (removing prefetch is a regression)
+- **Conclusion**: Mid-compress prefetch provides ~17% uplift in the DD path by
+  overlapping DRAM fetch with the remaining 7 column rounds (~140 ns of compute).
+  Without it, the DD path stalls on cache misses after each compress call.
+- Status: informational (confirms Attempt 23's mid-compress prefetch is essential).
+
+### Attempt 32 (x86): non-temporal stores in compress writeback (analysis only)
+
+- **Hypothesis**: `vmovntdq` stores bypass cache, reducing pollution for data that
+  won't be read again soon.
+- **Analysis**: Every written block (`dst`) is read back in the very next iteration:
+  - As `lhs` in Phase 1 of the next compress (all 16 cache lines loaded)
+  - As `prev_index` for DD random seed (first u64)
+  NT stores would force these reads to miss L1/L2 cache and fetch from DRAM,
+  costing ~1280 ns (16 lines × 80 ns) per block — far exceeding any cache
+  pollution benefit.
+- Status: not adopted (analysis shows it would cause ~50% regression).
+
+### Attempt 33 (x86): software pipelining / dual-block overlap (analysis only)
+
+- **Hypothesis**: Overlap two blocks' execution by starting the next block's
+  Phase 1 while the current block's Phase 3 completes.
+- **Analysis**:
+  - **DD path**: Serial dependency prevents overlap. Each block's ref_index depends
+    on the previous block's `dst[0]`, which isn't available until Phase 3 of the
+    current compress completes.
+  - **DI path**: Prefetch already fires 3 blocks ahead, providing ~585 ns of lead
+    time (3 × 195 ns). DRAM latency is ~80 ns. Overlap is already >7× sufficient.
+  - Loop overhead is only 0.84% of total — no room for scheduling improvements.
+- Status: not adopted (DD path is inherently serial; DI path already overlapped).
+
+## First-principles performance analysis (x86_64, Zen 3)
+
+### Instruction profile (compress_avx2_into, 1,437 dynamic instructions)
+
+| Instruction | Count | Latency | Notes |
+|-------------|-------|---------|-------|
+| vpmuludq | 128 | 3c | BLAMKA multiply-accumulate |
+| vpaddq | 416 | 1c | Addition / shift-by-1 |
+| vpermq | 104 | 3c | Cross-lane shuffle |
+| vpxor/vxorps | 224 | 1c | XOR |
+| vpshufb | 88 | 1c | In-lane shuffle (rotations) |
+| vpshufd | 56 | 1c | In-lane shuffle (rotr32) |
+| vpsrlq | 32 | 1c | Shift (rotr63) |
+| vpor | 32 | 1c | OR (rotr63) |
+| vmovaps/vmovdqa | 250 | — | Loads/stores |
+| vinserti128/vextracti128 | 48 | 3c | Column gather/scatter |
+| **Total compute** | **1,080** | | Excluding loads/stores |
+
+### Critical path through one BLAMKA G-function: 29 cycles
+
+Each G = 4 chained multiply-accumulate-XOR-rotate steps. The dependency chain is
+a→d→c→b through each step, with vpmuludq (3c latency) as the bottleneck at each
+multiply-accumulate. Each avx2_round = 2 chained G calls = 58 cycles critical path.
+
+### Throughput vs latency bounds
+
+The 8 row-round iterations are independent (disjoint 16-element slices of q).
+The 8 column-round iterations are also independent (disjoint column groups).
+Zen 3's 256-entry ROB can hold ~3.6 row-round iterations (71 insns each),
+enabling partial overlap of independent iterations.
+
+| Bound | Cycles | ns @4.6 GHz | H/s (×2M blocks) |
+|-------|--------|-------------|-------------------|
+| Throughput (perfect ILP, 2 FP pipes) | ~680 | 148 | 3.22 |
+| **Measured** | **~888** | **193** | **2.47** |
+| Latency (fully serial rounds) | ~1032 | 224 | 2.13 |
+
+- **Measured IPC**: 1,437 insns / 888 cycles = 1.62 (reasonable for dependency-heavy SIMD code)
+- **Headroom vs throughput bound**: ~23% — locked behind G-function dependency chains
+  that Zen 3's OOO engine can only partially overlap (~2-3 of 8 independent iterations
+  at a time due to ROB/scheduler depth)
+- **Margin above latency bound**: ~16% — OOO successfully overlaps some independent iterations
+
+### What would close the gap
+
+1. **Wider OOO window** — hardware upgrade; Zen 5 has 448-entry ROB which could
+   overlap ~5-6 iterations and approach the throughput bound.
+2. **AVX-512** — halves instruction count for same compute, better throughput
+   utilisation (not available on Zen 3).
+3. **Multi-hash interleaving** — run 2 independent hashes per thread to fill the
+   OOO window with truly independent work. Requires 4 GiB memory per thread.
+4. **Fundamental algorithmic changes** — not possible (Argon2id spec is fixed).
+
 ## Updated summary of cumulative adopted optimizations
 
 ### x86_64 (AMD Ryzen 9 5900X, Zen 3)
@@ -1441,3 +1609,65 @@ Cumulative AArch64: from ~1.37 H/s (scalar) to ~2.72 H/s, **~98% total improveme
   x86_64**. The function call boundary from `#[target_feature(enable = "avx2")]` was
   verified as zero-cost — Zen 3's deep OOO engine overlaps across it. The bottleneck
   is memory, not compute.
+
+### Attempt 34 (x86): multi-hash interleaving — loop-level and intra-compress (not adopted)
+
+- **Hypothesis**: Run 2 independent hashes per thread with interleaved block
+  compression to fill the OOO window with truly independent work. Zen 3's 256-entry
+  ROB can hold ~3.6 of 8 independent row-round iterations (71 insns each) for a
+  single hash — a second hash could fill the remaining ROB capacity.
+
+- **Three approaches tested**:
+
+  1. **Loop-level interleaving** (`fill_blocks_pair` + sequential compress calls):
+     Added `hash_pair_with_memory` that initializes two hashes, then alternates
+     `fill_block_from_refs` calls between arenas A and B.
+     - Result: **2.067 H/s (−16.2% vs 2.467 baseline)**
+     - The `call`/`ret` boundary between compress calls prevents OOO overlap.
+
+  2. **Sequential dual-arena (control)**: Two separate `hash_password_into_with_memory`
+     calls with two arenas, no interleaving.
+     - Result: **2.400 H/s (−2.7%, neutral)** — confirms the regression is from
+       interleaving, not from having two arenas.
+
+  3. **Intra-compress interleaving** (`compress_pair_avx2`): Full interleaved compress
+     function with both hashes' Phase 1/2/3 inline using AVX2 intrinsics directly.
+     Both BLAMKA dependency chains in the same function body.
+     - Result: **1.600 H/s (−35.1% vs baseline)**
+     - Phase 2 loop body: 170 instructions (vs 71 for single hash).
+     - ROB holds ~1.5 iterations of the pair loop vs ~3.6 iterations of the single
+       hash loop. The second hash REDUCES visible inter-iteration parallelism.
+
+- **TLB analysis** (`perf stat`): Interleaved version showed 1.67% dTLB miss rate.
+  Two 2 GiB arenas need 2048 × 2 MB TLB entries vs Zen 3's 1536-entry L2 dTLB.
+
+- **Root cause of failure**: Zen 3's 256-entry ROB already exploits ~3.6× inter-
+  iteration parallelism from the 8 independent row-round iterations within a single
+  hash. Adding a second hash to the loop body doubles the iteration size, halving the
+  number of iterations visible in the ROB (3.6 → ~1.5). The net ILP DECREASES because
+  the lost inter-iteration overlap exceeds the gained inter-hash overlap.
+
+- **Attempted `#[inline(always)]` on compress**: `#[inline(always)]` + `#[target_feature]`
+  is not allowed in stable Rust (E0658). LLVM also chose not to inline
+  `compress_avx2_into` even when caller/callee share the same target_feature
+  (function too large at 436+ instructions).
+
+- All interleaving code removed. Hugepages reverted to 1100 (single arena per thread).
+- Status: not adopted. Multi-hash interleaving is counterproductive on Zen 3.
+
+### Optimization frontier — x86_64
+
+After 34 attempts (11 x86-specific), single-thread x86_64 performance is confirmed
+near the architectural limit for Zen 3:
+
+- **Measured**: ~2.47 H/s (888 cycles per compress, IPC 1.62)
+- **Throughput bound**: ~3.22 H/s (680 cycles, perfect 2-pipe ILP)
+- **Latency bound**: ~2.13 H/s (1032 cycles, fully serial)
+- **Gap analysis**: 23% below throughput bound, locked behind G-function dependency
+  chains that Zen 3's 256-entry ROB can only partially overlap (~3.6 of 8
+  independent iterations).
+
+Closing the gap requires hardware changes:
+1. **Wider OOO window** — Zen 5 (448-entry ROB) could overlap ~5-6 iterations
+2. **AVX-512** — halves instruction count, better throughput utilization
+3. **Algorithmic changes** — not possible (Argon2id spec is fixed)
