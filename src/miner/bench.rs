@@ -477,6 +477,9 @@ fn run_worker_benchmark(
     restart_each_round: bool,
     backend_executor: &super::backend_executor::BackendExecutor,
 ) -> Result<()> {
+    if let Some(hint) = cfg.nvidia_hint {
+        info("HINT", hint);
+    }
     let (mut backends, backend_events) =
         activate_backends(instances, cfg.backend_event_capacity, cfg)?;
     super::enforce_deadline_policy(

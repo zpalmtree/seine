@@ -195,6 +195,10 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
         None
     };
 
+    if let Some(hint) = cfg.nvidia_hint {
+        info("HINT", hint);
+    }
+
     info(
         "MINER",
         format!(
@@ -431,6 +435,14 @@ fn build_tui_state(cfg: &Config, backends: &[BackendSlot]) -> TuiState {
             "relaxed".to_string()
         };
         s.version = format!("v{}", env!("CARGO_PKG_VERSION"));
+        if let Some(hint) = cfg.nvidia_hint {
+            s.push_log(tui::LogEntry {
+                elapsed_secs: 0.0,
+                level: tui::LogLevel::Info,
+                tag: "HINT".to_string(),
+                message: hint.to_string(),
+            });
+        }
     }
     tui_state
 }
@@ -1152,6 +1164,13 @@ fn activate_backends(
                     "BACKEND",
                     format!("{backend_name}#{backend_id} unavailable: {err:#}"),
                 );
+                if backend_name == "nvidia" {
+                    warn(
+                        "BACKEND",
+                        "NVIDIA mining requires: (1) NVIDIA GPU drivers and \
+                         (2) CUDA Toolkit — https://developer.nvidia.com/cuda-downloads",
+                    );
+                }
                 backend.stop();
             }
         }
@@ -2265,6 +2284,7 @@ mod tests {
             bench_baseline: None,
             bench_fail_below_pct: None,
             bench_baseline_policy: crate::config::BenchBaselinePolicy::Strict,
+            nvidia_hint: None,
         }
     }
 

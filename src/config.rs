@@ -526,6 +526,8 @@ pub struct Config {
     pub bench_baseline: Option<PathBuf>,
     pub bench_fail_below_pct: Option<f64>,
     pub bench_baseline_policy: BenchBaselinePolicy,
+    /// Informational hint about NVIDIA requirements when GPU was not auto-detected.
+    pub nvidia_hint: Option<&'static str>,
 }
 
 impl Config {
@@ -656,7 +658,7 @@ impl Config {
             }
         }
 
-        let backends = resolve_backend_selection(
+        let (backends, nvidia_hint) = resolve_backend_selection(
             &cli.backends,
             &cli.nvidia_devices,
             detect_nvidia_backend_available(),
@@ -807,6 +809,7 @@ impl Config {
             bench_baseline: cli.bench_baseline,
             bench_fail_below_pct: cli.bench_fail_below_pct,
             bench_baseline_policy: cli.bench_baseline_policy,
+            nvidia_hint,
         })
     }
 }
@@ -815,9 +818,9 @@ fn resolve_backend_selection(
     requested_backends: &[BackendKind],
     nvidia_devices: &[u32],
     nvidia_available: bool,
-) -> Vec<BackendKind> {
+) -> (Vec<BackendKind>, Option<&'static str>) {
     if !requested_backends.is_empty() {
-        return requested_backends.to_vec();
+        return (requested_backends.to_vec(), None);
     }
 
     // Metal is not auto-enabled: on Apple Silicon unified memory, Argon2id is
@@ -827,7 +830,21 @@ fn resolve_backend_selection(
     if nvidia_available || !nvidia_devices.is_empty() {
         selected.push(BackendKind::Nvidia);
     }
-    selected
+
+    #[cfg(feature = "nvidia")]
+    let hint = if !selected.contains(&BackendKind::Nvidia) {
+        Some(
+            "this build supports NVIDIA GPU mining but no GPU was detected; \
+             install NVIDIA drivers + CUDA Toolkit to enable: \
+             https://developer.nvidia.com/cuda-downloads",
+        )
+    } else {
+        None
+    };
+    #[cfg(not(feature = "nvidia"))]
+    let hint = None;
+
+    (selected, hint)
 }
 
 #[cfg(feature = "nvidia")]
@@ -1650,26 +1667,29 @@ mod tests {
 
     #[test]
     fn resolve_backend_selection_uses_requested_backends_verbatim() {
-        let selected =
+        let (selected, hint) =
             resolve_backend_selection(&[BackendKind::Nvidia, BackendKind::Cpu], &[], false);
         assert_eq!(selected, vec![BackendKind::Nvidia, BackendKind::Cpu]);
+        assert!(hint.is_none());
     }
 
     #[test]
     fn resolve_backend_selection_defaults_to_cpu_only_when_nvidia_unavailable() {
-        let selected = resolve_backend_selection(&[], &[], false);
+        let (selected, _hint) = resolve_backend_selection(&[], &[], false);
         assert_eq!(selected, vec![BackendKind::Cpu]);
     }
 
     #[test]
     fn resolve_backend_selection_defaults_to_cpu_and_nvidia_when_available() {
-        let selected = resolve_backend_selection(&[], &[], true);
+        let (selected, hint) = resolve_backend_selection(&[], &[], true);
         assert_eq!(selected, vec![BackendKind::Cpu, BackendKind::Nvidia]);
+        assert!(hint.is_none());
     }
 
     #[test]
     fn resolve_backend_selection_enables_nvidia_when_devices_are_explicit() {
-        let selected = resolve_backend_selection(&[], &[0, 1], false);
+        let (selected, hint) = resolve_backend_selection(&[], &[0, 1], false);
         assert_eq!(selected, vec![BackendKind::Cpu, BackendKind::Nvidia]);
+        assert!(hint.is_none());
     }
 }
