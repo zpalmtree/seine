@@ -792,9 +792,10 @@ Cumulative x86_64: from ~1.19 H/s to ~1.65 H/s, **~39% total improvement**.
 | 28 | Mid-compress prefetch for data-dep slices | +8.1% | +8.0% | Adopted |
 | 35 | Interleaved lo/hi BLAMKA half-rounds | +0.95% | — | Adopted |
 | 37 | 2-column Phase 3+4 interleave | +1.56% | — | Adopted |
+| 38 | 2-row Phase 1+2 interleave | +4.31% | +5.94% | Adopted |
 
-Cumulative AArch64: from ~1.37 H/s (scalar) to ~2.72 H/s, **~98% total improvement**.
-From post-rebase baseline (1.533 / 1.503): **Kernel +77.4%, Backend +79.6%**.
+Cumulative AArch64: from ~1.37 H/s (scalar) to ~2.88 H/s, **~110% total improvement**.
+From post-rebase baseline (1.533 / 1.503): **Kernel +87.5%, Backend +92.0%**.
 
 Both platforms are fundamentally memory-bound. The remaining bottleneck is DRAM
 + TLB latency for random 1 KB reads across a 2 GB array. The mid-compress
@@ -1023,6 +1024,65 @@ Remaining multi-thread gains are limited to:
   visible simultaneously, filling multiply port gaps that the ROB couldn't fully
   exploit when columns were processed sequentially.
 
+### Attempt 38 (Apple): 2-row Phase 1+2 interleave (adopted)
+
+- Hypothesis: after Attempt 37, Phase 3+4 already had 2-column interleave, but
+  Phase 1+2 still processed rows one-at-a-time. Pairing two rows in Phase 1+2
+  should expose additional independent BLAMKA chains and hide umlal dependency
+  bubbles in the row-round section as well.
+- Change:
+  - `compress_neon_into`: replaced the row loop (`row in 0..8`) with row-pair
+    loop (`pair in 0..4`), loading/storing two rows and calling
+    `neon_round_pair` once per pair.
+  - `compress_neon_into_mid_prefetch`: same Phase 1+2 row-pair conversion so DD
+    path uses identical scheduling.
+- Assembly validation (release-native AArch64):
+  - Hot row loop now increments by 256 bytes per iteration (2 rows/iter),
+    confirming pair processing.
+  - BLAMKA windows show denser interleave around `umlal.2d`/`xar.2d` groups in
+    the Phase 1+2 section, matching the intended 2-row schedule.
+  - Mid-compress prefetch remains in place after DD column-0 writeback (`prfm`
+    block unchanged, still 8 cache lines = 1024 B).
+- A/B benchmark (interleaved, threads=1, 20s × 2 rounds, 4 pairs):
+  - Kernel: `data/bench_cpu_ab_kernel_rowpair_phase12_t1_full2/summary.txt`
+    - Baseline avg: `2.756250000000 H/s`
+    - Candidate avg: `2.875000000000 H/s`
+    - Delta: **+4.3084%**
+  - Backend: `data/bench_cpu_ab_backend_rowpair_phase12_t1/summary.txt`
+    - Baseline avg: `2.724414584163 H/s`
+    - Candidate avg: `2.886176265402 H/s`
+    - Delta: **+5.9375%**
+- Multi-thread sanity check (short run, interleaved, threads=12, 15s × 2 rounds, 2 pairs):
+  - Backend: `data/bench_cpu_ab_backend_rowpair_phase12_t12_quick/summary.txt`
+    - Baseline avg: `25.986569152254 H/s`
+    - Candidate avg: `26.986770318110 H/s`
+    - Delta: **+3.8489%**
+- Status: adopted.
+
+### Attempt 39 (Apple): re-test DI prefetch 4-ahead after row-pair Phase 1+2 (not adopted)
+
+- Rationale: Attempt 36 (4-ahead DI prefetch) was previously neutral/slightly
+  negative. Retested after Attempt 38 because changed compute scheduling can
+  alter optimal prefetch distance.
+- Change tested in isolated candidate tree:
+  - DI priming: `for pre in 0..4` (was `0..3`)
+  - DI lookahead: `ahead = block + 4` (was `block + 3`)
+- A/B benchmark (interleaved, threads=1, 20s × 2 rounds, 4 pairs):
+  - Backend: `data/bench_cpu_ab_backend_rowpair_prefetch4_retry_t1/summary.txt`
+    - Baseline avg: `2.868414229907 H/s`
+    - Candidate avg: `2.877487156890 H/s`
+    - Delta: **+0.3163%** (noise-level)
+  - Kernel: `data/bench_cpu_ab_kernel_rowpair_prefetch4_retry_t1/summary.txt`
+    - Baseline avg: `2.943750000000 H/s`
+    - Candidate avg: `2.937500000000 H/s`
+    - Delta: **-0.2123%**
+- Cross-check with prior retry (threads=12, pre-row-pair):
+  - Kernel: `data/bench_cpu_ab_kernel_prefetch4_retry/summary.txt` = **-0.1197%**
+  - Backend: `data/bench_cpu_ab_backend_prefetch4_retry/summary.txt` = **-0.2579%**
+- Conclusion: 4-ahead DI prefetch still does not provide robust gain; keep
+  3-ahead distance.
+- Status: not adopted.
+
 ### Analysis: the DD/DI gap and the hardware floor
 
 Instrumented `fill_blocks` with per-slice timing to quantify the data-dependent
@@ -1046,12 +1106,13 @@ A 10 ns compute reduction (140→130 ns) would yield:
 - New: `2×seg×130 + 2×seg×195 = seg×650`
 - Gain: `690/650 = 1.062` → 6.2%
 
-After Attempts 33-37, the memory operation layout is confirmed optimal (q buffer
+After Attempts 33-39, the memory operation layout is confirmed optimal (q buffer
 with store-forwarding), the BLAMKA dependency chain is algorithm-fixed, and the
 assembly codegen is verified correct (LDP/STP, fused XAR, inline UMLAL, zero
-register spills, interleaved lo/hi scheduling, cross-column interleaving).
-Attempts 35+37 together yielded ~2.5% from instruction scheduling improvements.
-DI prefetch tuning (Attempt 36) confirmed that 3-ahead is already optimal.
+register spills, interleaved lo/hi scheduling, cross-column interleaving, and
+now row-pair Phase 1+2 interleave).
+Attempts 35+37+38 yielded additional scheduling gains; DI prefetch tuning in
+both Attempt 36 and Attempt 39 confirmed that 3-ahead remains optimal.
 
 ### Full assembly review — post-Attempt 37 (AArch64)
 
@@ -1129,7 +1190,7 @@ of runtime.
 
 | Opportunity | Est. gain | Feasibility | Assessment |
 |-------------|-----------|-------------|------------|
-| 2-row Phase 1+2 interleave | ~1–2% | Very hard | Needs 16 data + 8 temp = 24+ NEON regs (32 available). Extreme register pressure, high risk of spills negating benefit. Phase 1+2 is already well-pipelined with LDP pairs. |
+| 4-row Phase 1+2 widening | <1% | Very hard | 2-row interleave is already implemented (Attempt 38). Widening further would likely increase NEON register pressure and spill risk with marginal ILP upside. |
 | DD col 7 solo elimination | ~0.5% | Impossible | Col 0 must run first for mid-compress prefetch. 7 remaining columns = 3 pairs + 1 solo. Architectural constraint. |
 | DD ref_index chain latency | 0% | N/A | ~10 cycles fully hidden behind pair (1,2) BLAMKA compute (~100+ cycles). |
 | BLAMKA scheduling bubbles | 0% | N/A | 2-column interleave already fills umlal→xar latency gaps perfectly. |
@@ -1138,19 +1199,19 @@ of runtime.
 | Wider/different prefetch | 0% | N/A | 8 × 128B = 1024B already covers one full block exactly. |
 | Store-to-load forwarding | 0% | N/A | STP→LDP forwarding works correctly for q buffer (verified). |
 
-**Total remaining gain: ~1–2% absolute maximum**, requiring extremely difficult
-2-row Phase 1+2 interleaving with high regression risk from register spills.
+**Total remaining gain: low single-digit at best (<1–2% likely)**, with high
+implementation risk relative to measured upside.
 
 #### Conclusion
 
-The hot path is at its architectural limit for Apple Silicon. The compute is
-optimal (BLAMKA at minimum instruction count, 2-column interleaving fills
-pipeline bubbles, interleaved lo/hi scheduling). The memory access pattern is
-dictated by the Argon2id algorithm. The DRAM stalls in DD blocks (~65 ns per
-block, ~30% of DD time) are fundamental to data-dependent addressing and cannot
-be improved through instruction-level optimization. After 37 optimization
-attempts, the codebase has extracted essentially all available single-thread
-performance from the AArch64 microarchitecture.
+Attempt 38 showed that some headroom still existed beyond the post-Attempt 37
+estimate, and captured it with 2-row Phase 1+2 interleave. The remaining hot
+path is now near its architectural limit for Apple Silicon. Compute codegen is
+strong (BLAMKA at minimum instruction count, interleaved lo/hi scheduling,
+2-column Phase 3+4 interleave, and 2-row Phase 1+2 interleave). The memory
+access pattern is dictated by Argon2id, and DD DRAM stalls remain fundamental
+to data-dependent addressing. After 39 optimization attempts, most practical
+single-thread AArch64 performance has been extracted.
 
 ## Metal + CPU combined mode (Apple M3 Max, 48 GB unified memory)
 
@@ -1588,8 +1649,9 @@ Cumulative x86_64: from ~1.19 H/s (original) to ~2.34 H/s, **~97% total improvem
 | 28 | Mid-compress prefetch for data-dep slices | +8.1% | +8.0% | Adopted |
 | 35 | Interleaved lo/hi BLAMKA half-rounds | +0.95% | — | Adopted |
 | 37 | 2-column Phase 3+4 interleave | +1.56% | — | Adopted |
+| 38 | 2-row Phase 1+2 interleave | +4.31% | +5.94% | Adopted |
 
-Cumulative AArch64: from ~1.37 H/s (scalar) to ~2.72 H/s, **~98% total improvement**.
+Cumulative AArch64: from ~1.37 H/s (scalar) to ~2.88 H/s, **~110% total improvement**.
 
 ### Cross-platform insights
 

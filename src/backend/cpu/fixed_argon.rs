@@ -148,14 +148,18 @@ impl FixedArgon2id {
                 for pre in 0..DI_PREFETCH_DISTANCE {
                     let idx = first_block + pre;
                     if idx < self.segment_length {
-                        prefetch_pow_block(&memory_blocks[self.data_independent_ref_indexes[ref_base + idx]]);
+                        prefetch_pow_block(
+                            &memory_blocks[self.data_independent_ref_indexes[ref_base + idx]],
+                        );
                     }
                 }
                 for block in first_block..self.segment_length {
                     let ref_index = self.data_independent_ref_indexes[ref_base + block];
                     let ahead = block + DI_PREFETCH_DISTANCE;
                     if ahead < self.segment_length {
-                        prefetch_pow_block(&memory_blocks[self.data_independent_ref_indexes[ref_base + ahead]]);
+                        prefetch_pow_block(
+                            &memory_blocks[self.data_independent_ref_indexes[ref_base + ahead]],
+                        );
                     }
                     fill_block_from_refs::<ISA>(memory_blocks, prev_index, ref_index, cur_index);
                     prev_index = cur_index;
@@ -178,7 +182,10 @@ impl FixedArgon2id {
                         if USE_AARCH64_MID_PREFETCH {
                             let next_ref_area = slice_prefix + block + 1;
                             fill_block_from_refs_mid_prefetch(
-                                memory_blocks, prev_index, ref_index, cur_index,
+                                memory_blocks,
+                                prev_index,
+                                ref_index,
+                                cur_index,
                                 next_ref_area,
                             );
                             prev_index = cur_index;
@@ -190,7 +197,10 @@ impl FixedArgon2id {
                         if USE_X86_MID_PREFETCH {
                             let next_ref_area = slice_prefix + block + 1;
                             fill_block_from_refs_mid_prefetch::<ISA>(
-                                memory_blocks, prev_index, ref_index, cur_index,
+                                memory_blocks,
+                                prev_index,
+                                ref_index,
+                                cur_index,
                                 next_ref_area,
                             );
                             prev_index = cur_index;
@@ -843,10 +853,9 @@ unsafe fn compress_avx2(rhs: &PowBlock, lhs: &PowBlock) -> PowBlock {
 #[target_feature(enable = "avx2")]
 unsafe fn compress_avx2_into(rhs: &PowBlock, lhs: &PowBlock, dst: &mut PowBlock) {
     use std::arch::x86_64::{
-        __m128i, __m256i, _mm256_castsi128_si256, _mm256_castsi256_si128,
-        _mm256_extracti128_si256, _mm256_inserti128_si256, _mm256_loadu_si256,
-        _mm256_storeu_si256, _mm256_xor_si256, _mm_loadu_si128, _mm_storeu_si128,
-        _mm_xor_si128,
+        __m128i, __m256i, _mm256_castsi128_si256, _mm256_castsi256_si128, _mm256_extracti128_si256,
+        _mm256_inserti128_si256, _mm256_loadu_si256, _mm256_storeu_si256, _mm256_xor_si256,
+        _mm_loadu_si128, _mm_storeu_si128, _mm_xor_si128,
     };
 
     // q lives on the stack as the working buffer for round permutations.
@@ -959,10 +968,9 @@ unsafe fn compress_avx2_into_mid_prefetch(
     memory_blocks_base: *const PowBlock,
 ) {
     use std::arch::x86_64::{
-        __m128i, __m256i, _mm256_castsi128_si256, _mm256_castsi256_si128,
-        _mm256_extracti128_si256, _mm256_inserti128_si256, _mm256_loadu_si256,
-        _mm256_storeu_si256, _mm256_xor_si256, _mm_loadu_si128, _mm_storeu_si128,
-        _mm_xor_si128,
+        __m128i, __m256i, _mm256_castsi128_si256, _mm256_castsi256_si128, _mm256_extracti128_si256,
+        _mm256_inserti128_si256, _mm256_loadu_si256, _mm256_storeu_si256, _mm256_xor_si256,
+        _mm_loadu_si128, _mm_storeu_si128, _mm_xor_si128,
     };
 
     let mut q = PowBlock::default();
@@ -1758,46 +1766,118 @@ unsafe fn compress_neon_into(rhs: &PowBlock, lhs: &PowBlock, dst: &mut PowBlock)
     let q_ptr = q.as_mut_ptr() as *mut u64;
 
     // Fused Phase 1+2: XOR rhs^lhs directly into registers, store backup to
-    // dst, row-round in registers, store result to q.  Eliminates the separate
-    // Phase 1 store-to-q and Phase 2 load-from-q round-trip.
-    for row in 0..8 {
-        let base = row * 16;
-        let mut a_lo: uint64x2_t = veorq_u64(vld1q_u64(rhs_ptr.add(base)), vld1q_u64(lhs_ptr.add(base)));
-        let mut a_hi: uint64x2_t = veorq_u64(vld1q_u64(rhs_ptr.add(base + 2)), vld1q_u64(lhs_ptr.add(base + 2)));
-        let mut b_lo: uint64x2_t = veorq_u64(vld1q_u64(rhs_ptr.add(base + 4)), vld1q_u64(lhs_ptr.add(base + 4)));
-        let mut b_hi: uint64x2_t = veorq_u64(vld1q_u64(rhs_ptr.add(base + 6)), vld1q_u64(lhs_ptr.add(base + 6)));
-        let mut c_lo: uint64x2_t = veorq_u64(vld1q_u64(rhs_ptr.add(base + 8)), vld1q_u64(lhs_ptr.add(base + 8)));
-        let mut c_hi: uint64x2_t = veorq_u64(vld1q_u64(rhs_ptr.add(base + 10)), vld1q_u64(lhs_ptr.add(base + 10)));
-        let mut d_lo: uint64x2_t = veorq_u64(vld1q_u64(rhs_ptr.add(base + 12)), vld1q_u64(lhs_ptr.add(base + 12)));
-        let mut d_hi: uint64x2_t = veorq_u64(vld1q_u64(rhs_ptr.add(base + 14)), vld1q_u64(lhs_ptr.add(base + 14)));
+    // dst, row-round in registers, store result to q.  Process rows in pairs
+    // to expose two independent BLAMKA chains to the OOO scheduler.
+    for pair in 0..4 {
+        let base1 = pair * 32;
+        let base2 = base1 + 16;
+
+        let mut a1_lo: uint64x2_t =
+            veorq_u64(vld1q_u64(rhs_ptr.add(base1)), vld1q_u64(lhs_ptr.add(base1)));
+        let mut a1_hi: uint64x2_t = veorq_u64(
+            vld1q_u64(rhs_ptr.add(base1 + 2)),
+            vld1q_u64(lhs_ptr.add(base1 + 2)),
+        );
+        let mut b1_lo: uint64x2_t = veorq_u64(
+            vld1q_u64(rhs_ptr.add(base1 + 4)),
+            vld1q_u64(lhs_ptr.add(base1 + 4)),
+        );
+        let mut b1_hi: uint64x2_t = veorq_u64(
+            vld1q_u64(rhs_ptr.add(base1 + 6)),
+            vld1q_u64(lhs_ptr.add(base1 + 6)),
+        );
+        let mut c1_lo: uint64x2_t = veorq_u64(
+            vld1q_u64(rhs_ptr.add(base1 + 8)),
+            vld1q_u64(lhs_ptr.add(base1 + 8)),
+        );
+        let mut c1_hi: uint64x2_t = veorq_u64(
+            vld1q_u64(rhs_ptr.add(base1 + 10)),
+            vld1q_u64(lhs_ptr.add(base1 + 10)),
+        );
+        let mut d1_lo: uint64x2_t = veorq_u64(
+            vld1q_u64(rhs_ptr.add(base1 + 12)),
+            vld1q_u64(lhs_ptr.add(base1 + 12)),
+        );
+        let mut d1_hi: uint64x2_t = veorq_u64(
+            vld1q_u64(rhs_ptr.add(base1 + 14)),
+            vld1q_u64(lhs_ptr.add(base1 + 14)),
+        );
+
+        let mut a2_lo: uint64x2_t =
+            veorq_u64(vld1q_u64(rhs_ptr.add(base2)), vld1q_u64(lhs_ptr.add(base2)));
+        let mut a2_hi: uint64x2_t = veorq_u64(
+            vld1q_u64(rhs_ptr.add(base2 + 2)),
+            vld1q_u64(lhs_ptr.add(base2 + 2)),
+        );
+        let mut b2_lo: uint64x2_t = veorq_u64(
+            vld1q_u64(rhs_ptr.add(base2 + 4)),
+            vld1q_u64(lhs_ptr.add(base2 + 4)),
+        );
+        let mut b2_hi: uint64x2_t = veorq_u64(
+            vld1q_u64(rhs_ptr.add(base2 + 6)),
+            vld1q_u64(lhs_ptr.add(base2 + 6)),
+        );
+        let mut c2_lo: uint64x2_t = veorq_u64(
+            vld1q_u64(rhs_ptr.add(base2 + 8)),
+            vld1q_u64(lhs_ptr.add(base2 + 8)),
+        );
+        let mut c2_hi: uint64x2_t = veorq_u64(
+            vld1q_u64(rhs_ptr.add(base2 + 10)),
+            vld1q_u64(lhs_ptr.add(base2 + 10)),
+        );
+        let mut d2_lo: uint64x2_t = veorq_u64(
+            vld1q_u64(rhs_ptr.add(base2 + 12)),
+            vld1q_u64(lhs_ptr.add(base2 + 12)),
+        );
+        let mut d2_hi: uint64x2_t = veorq_u64(
+            vld1q_u64(rhs_ptr.add(base2 + 14)),
+            vld1q_u64(lhs_ptr.add(base2 + 14)),
+        );
 
         // Store pre-round XOR to dst as backup for Phase 4.
-        vst1q_u64(dst_ptr.add(base), a_lo);
-        vst1q_u64(dst_ptr.add(base + 2), a_hi);
-        vst1q_u64(dst_ptr.add(base + 4), b_lo);
-        vst1q_u64(dst_ptr.add(base + 6), b_hi);
-        vst1q_u64(dst_ptr.add(base + 8), c_lo);
-        vst1q_u64(dst_ptr.add(base + 10), c_hi);
-        vst1q_u64(dst_ptr.add(base + 12), d_lo);
-        vst1q_u64(dst_ptr.add(base + 14), d_hi);
+        vst1q_u64(dst_ptr.add(base1), a1_lo);
+        vst1q_u64(dst_ptr.add(base1 + 2), a1_hi);
+        vst1q_u64(dst_ptr.add(base1 + 4), b1_lo);
+        vst1q_u64(dst_ptr.add(base1 + 6), b1_hi);
+        vst1q_u64(dst_ptr.add(base1 + 8), c1_lo);
+        vst1q_u64(dst_ptr.add(base1 + 10), c1_hi);
+        vst1q_u64(dst_ptr.add(base1 + 12), d1_lo);
+        vst1q_u64(dst_ptr.add(base1 + 14), d1_hi);
 
-        // Row round in registers — no load/store needed.
-        neon_round(
-            &mut a_lo, &mut a_hi,
-            &mut b_lo, &mut b_hi,
-            &mut c_lo, &mut c_hi,
-            &mut d_lo, &mut d_hi,
+        vst1q_u64(dst_ptr.add(base2), a2_lo);
+        vst1q_u64(dst_ptr.add(base2 + 2), a2_hi);
+        vst1q_u64(dst_ptr.add(base2 + 4), b2_lo);
+        vst1q_u64(dst_ptr.add(base2 + 6), b2_hi);
+        vst1q_u64(dst_ptr.add(base2 + 8), c2_lo);
+        vst1q_u64(dst_ptr.add(base2 + 10), c2_hi);
+        vst1q_u64(dst_ptr.add(base2 + 12), d2_lo);
+        vst1q_u64(dst_ptr.add(base2 + 14), d2_hi);
+
+        // Row rounds in registers — no load/store needed.
+        neon_round_pair(
+            &mut a1_lo, &mut a1_hi, &mut b1_lo, &mut b1_hi, &mut c1_lo, &mut c1_hi, &mut d1_lo,
+            &mut d1_hi, &mut a2_lo, &mut a2_hi, &mut b2_lo, &mut b2_hi, &mut c2_lo, &mut c2_hi,
+            &mut d2_lo, &mut d2_hi,
         );
 
         // Store row-rounded result to q for column rounds.
-        vst1q_u64(q_ptr.add(base), a_lo);
-        vst1q_u64(q_ptr.add(base + 2), a_hi);
-        vst1q_u64(q_ptr.add(base + 4), b_lo);
-        vst1q_u64(q_ptr.add(base + 6), b_hi);
-        vst1q_u64(q_ptr.add(base + 8), c_lo);
-        vst1q_u64(q_ptr.add(base + 10), c_hi);
-        vst1q_u64(q_ptr.add(base + 12), d_lo);
-        vst1q_u64(q_ptr.add(base + 14), d_hi);
+        vst1q_u64(q_ptr.add(base1), a1_lo);
+        vst1q_u64(q_ptr.add(base1 + 2), a1_hi);
+        vst1q_u64(q_ptr.add(base1 + 4), b1_lo);
+        vst1q_u64(q_ptr.add(base1 + 6), b1_hi);
+        vst1q_u64(q_ptr.add(base1 + 8), c1_lo);
+        vst1q_u64(q_ptr.add(base1 + 10), c1_hi);
+        vst1q_u64(q_ptr.add(base1 + 12), d1_lo);
+        vst1q_u64(q_ptr.add(base1 + 14), d1_hi);
+
+        vst1q_u64(q_ptr.add(base2), a2_lo);
+        vst1q_u64(q_ptr.add(base2 + 2), a2_hi);
+        vst1q_u64(q_ptr.add(base2 + 4), b2_lo);
+        vst1q_u64(q_ptr.add(base2 + 6), b2_hi);
+        vst1q_u64(q_ptr.add(base2 + 8), c2_lo);
+        vst1q_u64(q_ptr.add(base2 + 10), c2_hi);
+        vst1q_u64(q_ptr.add(base2 + 12), d2_lo);
+        vst1q_u64(q_ptr.add(base2 + 14), d2_hi);
     }
 
     // Fused Phase 3+4: Column-round q, then XOR with dst backup and store
@@ -1829,31 +1909,78 @@ unsafe fn compress_neon_into(rhs: &PowBlock, lhs: &PowBlock, dst: &mut PowBlock)
 
         // Interleaved round for both columns.
         neon_round_pair(
-            &mut a1_lo, &mut a1_hi, &mut b1_lo, &mut b1_hi,
-            &mut c1_lo, &mut c1_hi, &mut d1_lo, &mut d1_hi,
-            &mut a2_lo, &mut a2_hi, &mut b2_lo, &mut b2_hi,
-            &mut c2_lo, &mut c2_hi, &mut d2_lo, &mut d2_hi,
+            &mut a1_lo, &mut a1_hi, &mut b1_lo, &mut b1_hi, &mut c1_lo, &mut c1_hi, &mut d1_lo,
+            &mut d1_hi, &mut a2_lo, &mut a2_hi, &mut b2_lo, &mut b2_hi, &mut c2_lo, &mut c2_hi,
+            &mut d2_lo, &mut d2_hi,
         );
 
         // Writeback column 1: XOR with pre-round backup in dst.
-        vst1q_u64(dst_ptr.add(base1), veorq_u64(a1_lo, vld1q_u64(dst_ptr.add(base1))));
-        vst1q_u64(dst_ptr.add(base1 + 16), veorq_u64(a1_hi, vld1q_u64(dst_ptr.add(base1 + 16))));
-        vst1q_u64(dst_ptr.add(base1 + 32), veorq_u64(b1_lo, vld1q_u64(dst_ptr.add(base1 + 32))));
-        vst1q_u64(dst_ptr.add(base1 + 48), veorq_u64(b1_hi, vld1q_u64(dst_ptr.add(base1 + 48))));
-        vst1q_u64(dst_ptr.add(base1 + 64), veorq_u64(c1_lo, vld1q_u64(dst_ptr.add(base1 + 64))));
-        vst1q_u64(dst_ptr.add(base1 + 80), veorq_u64(c1_hi, vld1q_u64(dst_ptr.add(base1 + 80))));
-        vst1q_u64(dst_ptr.add(base1 + 96), veorq_u64(d1_lo, vld1q_u64(dst_ptr.add(base1 + 96))));
-        vst1q_u64(dst_ptr.add(base1 + 112), veorq_u64(d1_hi, vld1q_u64(dst_ptr.add(base1 + 112))));
+        vst1q_u64(
+            dst_ptr.add(base1),
+            veorq_u64(a1_lo, vld1q_u64(dst_ptr.add(base1))),
+        );
+        vst1q_u64(
+            dst_ptr.add(base1 + 16),
+            veorq_u64(a1_hi, vld1q_u64(dst_ptr.add(base1 + 16))),
+        );
+        vst1q_u64(
+            dst_ptr.add(base1 + 32),
+            veorq_u64(b1_lo, vld1q_u64(dst_ptr.add(base1 + 32))),
+        );
+        vst1q_u64(
+            dst_ptr.add(base1 + 48),
+            veorq_u64(b1_hi, vld1q_u64(dst_ptr.add(base1 + 48))),
+        );
+        vst1q_u64(
+            dst_ptr.add(base1 + 64),
+            veorq_u64(c1_lo, vld1q_u64(dst_ptr.add(base1 + 64))),
+        );
+        vst1q_u64(
+            dst_ptr.add(base1 + 80),
+            veorq_u64(c1_hi, vld1q_u64(dst_ptr.add(base1 + 80))),
+        );
+        vst1q_u64(
+            dst_ptr.add(base1 + 96),
+            veorq_u64(d1_lo, vld1q_u64(dst_ptr.add(base1 + 96))),
+        );
+        vst1q_u64(
+            dst_ptr.add(base1 + 112),
+            veorq_u64(d1_hi, vld1q_u64(dst_ptr.add(base1 + 112))),
+        );
 
         // Writeback column 2: XOR with pre-round backup in dst.
-        vst1q_u64(dst_ptr.add(base2), veorq_u64(a2_lo, vld1q_u64(dst_ptr.add(base2))));
-        vst1q_u64(dst_ptr.add(base2 + 16), veorq_u64(a2_hi, vld1q_u64(dst_ptr.add(base2 + 16))));
-        vst1q_u64(dst_ptr.add(base2 + 32), veorq_u64(b2_lo, vld1q_u64(dst_ptr.add(base2 + 32))));
-        vst1q_u64(dst_ptr.add(base2 + 48), veorq_u64(b2_hi, vld1q_u64(dst_ptr.add(base2 + 48))));
-        vst1q_u64(dst_ptr.add(base2 + 64), veorq_u64(c2_lo, vld1q_u64(dst_ptr.add(base2 + 64))));
-        vst1q_u64(dst_ptr.add(base2 + 80), veorq_u64(c2_hi, vld1q_u64(dst_ptr.add(base2 + 80))));
-        vst1q_u64(dst_ptr.add(base2 + 96), veorq_u64(d2_lo, vld1q_u64(dst_ptr.add(base2 + 96))));
-        vst1q_u64(dst_ptr.add(base2 + 112), veorq_u64(d2_hi, vld1q_u64(dst_ptr.add(base2 + 112))));
+        vst1q_u64(
+            dst_ptr.add(base2),
+            veorq_u64(a2_lo, vld1q_u64(dst_ptr.add(base2))),
+        );
+        vst1q_u64(
+            dst_ptr.add(base2 + 16),
+            veorq_u64(a2_hi, vld1q_u64(dst_ptr.add(base2 + 16))),
+        );
+        vst1q_u64(
+            dst_ptr.add(base2 + 32),
+            veorq_u64(b2_lo, vld1q_u64(dst_ptr.add(base2 + 32))),
+        );
+        vst1q_u64(
+            dst_ptr.add(base2 + 48),
+            veorq_u64(b2_hi, vld1q_u64(dst_ptr.add(base2 + 48))),
+        );
+        vst1q_u64(
+            dst_ptr.add(base2 + 64),
+            veorq_u64(c2_lo, vld1q_u64(dst_ptr.add(base2 + 64))),
+        );
+        vst1q_u64(
+            dst_ptr.add(base2 + 80),
+            veorq_u64(c2_hi, vld1q_u64(dst_ptr.add(base2 + 80))),
+        );
+        vst1q_u64(
+            dst_ptr.add(base2 + 96),
+            veorq_u64(d2_lo, vld1q_u64(dst_ptr.add(base2 + 96))),
+        );
+        vst1q_u64(
+            dst_ptr.add(base2 + 112),
+            veorq_u64(d2_hi, vld1q_u64(dst_ptr.add(base2 + 112))),
+        );
     }
 }
 
@@ -1886,42 +2013,114 @@ unsafe fn compress_neon_into_mid_prefetch(
     let dst_ptr = dst.0.as_mut_ptr();
     let q_ptr = q.as_mut_ptr() as *mut u64;
 
-    // Fused Phase 1+2 (identical to compress_neon_into).
-    for row in 0..8 {
-        let base = row * 16;
-        let mut a_lo: uint64x2_t = veorq_u64(vld1q_u64(rhs_ptr.add(base)), vld1q_u64(lhs_ptr.add(base)));
-        let mut a_hi: uint64x2_t = veorq_u64(vld1q_u64(rhs_ptr.add(base + 2)), vld1q_u64(lhs_ptr.add(base + 2)));
-        let mut b_lo: uint64x2_t = veorq_u64(vld1q_u64(rhs_ptr.add(base + 4)), vld1q_u64(lhs_ptr.add(base + 4)));
-        let mut b_hi: uint64x2_t = veorq_u64(vld1q_u64(rhs_ptr.add(base + 6)), vld1q_u64(lhs_ptr.add(base + 6)));
-        let mut c_lo: uint64x2_t = veorq_u64(vld1q_u64(rhs_ptr.add(base + 8)), vld1q_u64(lhs_ptr.add(base + 8)));
-        let mut c_hi: uint64x2_t = veorq_u64(vld1q_u64(rhs_ptr.add(base + 10)), vld1q_u64(lhs_ptr.add(base + 10)));
-        let mut d_lo: uint64x2_t = veorq_u64(vld1q_u64(rhs_ptr.add(base + 12)), vld1q_u64(lhs_ptr.add(base + 12)));
-        let mut d_hi: uint64x2_t = veorq_u64(vld1q_u64(rhs_ptr.add(base + 14)), vld1q_u64(lhs_ptr.add(base + 14)));
+    // Fused Phase 1+2 (same row-pair strategy as compress_neon_into).
+    for pair in 0..4 {
+        let base1 = pair * 32;
+        let base2 = base1 + 16;
 
-        vst1q_u64(dst_ptr.add(base), a_lo);
-        vst1q_u64(dst_ptr.add(base + 2), a_hi);
-        vst1q_u64(dst_ptr.add(base + 4), b_lo);
-        vst1q_u64(dst_ptr.add(base + 6), b_hi);
-        vst1q_u64(dst_ptr.add(base + 8), c_lo);
-        vst1q_u64(dst_ptr.add(base + 10), c_hi);
-        vst1q_u64(dst_ptr.add(base + 12), d_lo);
-        vst1q_u64(dst_ptr.add(base + 14), d_hi);
-
-        neon_round(
-            &mut a_lo, &mut a_hi,
-            &mut b_lo, &mut b_hi,
-            &mut c_lo, &mut c_hi,
-            &mut d_lo, &mut d_hi,
+        let mut a1_lo: uint64x2_t =
+            veorq_u64(vld1q_u64(rhs_ptr.add(base1)), vld1q_u64(lhs_ptr.add(base1)));
+        let mut a1_hi: uint64x2_t = veorq_u64(
+            vld1q_u64(rhs_ptr.add(base1 + 2)),
+            vld1q_u64(lhs_ptr.add(base1 + 2)),
+        );
+        let mut b1_lo: uint64x2_t = veorq_u64(
+            vld1q_u64(rhs_ptr.add(base1 + 4)),
+            vld1q_u64(lhs_ptr.add(base1 + 4)),
+        );
+        let mut b1_hi: uint64x2_t = veorq_u64(
+            vld1q_u64(rhs_ptr.add(base1 + 6)),
+            vld1q_u64(lhs_ptr.add(base1 + 6)),
+        );
+        let mut c1_lo: uint64x2_t = veorq_u64(
+            vld1q_u64(rhs_ptr.add(base1 + 8)),
+            vld1q_u64(lhs_ptr.add(base1 + 8)),
+        );
+        let mut c1_hi: uint64x2_t = veorq_u64(
+            vld1q_u64(rhs_ptr.add(base1 + 10)),
+            vld1q_u64(lhs_ptr.add(base1 + 10)),
+        );
+        let mut d1_lo: uint64x2_t = veorq_u64(
+            vld1q_u64(rhs_ptr.add(base1 + 12)),
+            vld1q_u64(lhs_ptr.add(base1 + 12)),
+        );
+        let mut d1_hi: uint64x2_t = veorq_u64(
+            vld1q_u64(rhs_ptr.add(base1 + 14)),
+            vld1q_u64(lhs_ptr.add(base1 + 14)),
         );
 
-        vst1q_u64(q_ptr.add(base), a_lo);
-        vst1q_u64(q_ptr.add(base + 2), a_hi);
-        vst1q_u64(q_ptr.add(base + 4), b_lo);
-        vst1q_u64(q_ptr.add(base + 6), b_hi);
-        vst1q_u64(q_ptr.add(base + 8), c_lo);
-        vst1q_u64(q_ptr.add(base + 10), c_hi);
-        vst1q_u64(q_ptr.add(base + 12), d_lo);
-        vst1q_u64(q_ptr.add(base + 14), d_hi);
+        let mut a2_lo: uint64x2_t =
+            veorq_u64(vld1q_u64(rhs_ptr.add(base2)), vld1q_u64(lhs_ptr.add(base2)));
+        let mut a2_hi: uint64x2_t = veorq_u64(
+            vld1q_u64(rhs_ptr.add(base2 + 2)),
+            vld1q_u64(lhs_ptr.add(base2 + 2)),
+        );
+        let mut b2_lo: uint64x2_t = veorq_u64(
+            vld1q_u64(rhs_ptr.add(base2 + 4)),
+            vld1q_u64(lhs_ptr.add(base2 + 4)),
+        );
+        let mut b2_hi: uint64x2_t = veorq_u64(
+            vld1q_u64(rhs_ptr.add(base2 + 6)),
+            vld1q_u64(lhs_ptr.add(base2 + 6)),
+        );
+        let mut c2_lo: uint64x2_t = veorq_u64(
+            vld1q_u64(rhs_ptr.add(base2 + 8)),
+            vld1q_u64(lhs_ptr.add(base2 + 8)),
+        );
+        let mut c2_hi: uint64x2_t = veorq_u64(
+            vld1q_u64(rhs_ptr.add(base2 + 10)),
+            vld1q_u64(lhs_ptr.add(base2 + 10)),
+        );
+        let mut d2_lo: uint64x2_t = veorq_u64(
+            vld1q_u64(rhs_ptr.add(base2 + 12)),
+            vld1q_u64(lhs_ptr.add(base2 + 12)),
+        );
+        let mut d2_hi: uint64x2_t = veorq_u64(
+            vld1q_u64(rhs_ptr.add(base2 + 14)),
+            vld1q_u64(lhs_ptr.add(base2 + 14)),
+        );
+
+        vst1q_u64(dst_ptr.add(base1), a1_lo);
+        vst1q_u64(dst_ptr.add(base1 + 2), a1_hi);
+        vst1q_u64(dst_ptr.add(base1 + 4), b1_lo);
+        vst1q_u64(dst_ptr.add(base1 + 6), b1_hi);
+        vst1q_u64(dst_ptr.add(base1 + 8), c1_lo);
+        vst1q_u64(dst_ptr.add(base1 + 10), c1_hi);
+        vst1q_u64(dst_ptr.add(base1 + 12), d1_lo);
+        vst1q_u64(dst_ptr.add(base1 + 14), d1_hi);
+
+        vst1q_u64(dst_ptr.add(base2), a2_lo);
+        vst1q_u64(dst_ptr.add(base2 + 2), a2_hi);
+        vst1q_u64(dst_ptr.add(base2 + 4), b2_lo);
+        vst1q_u64(dst_ptr.add(base2 + 6), b2_hi);
+        vst1q_u64(dst_ptr.add(base2 + 8), c2_lo);
+        vst1q_u64(dst_ptr.add(base2 + 10), c2_hi);
+        vst1q_u64(dst_ptr.add(base2 + 12), d2_lo);
+        vst1q_u64(dst_ptr.add(base2 + 14), d2_hi);
+
+        neon_round_pair(
+            &mut a1_lo, &mut a1_hi, &mut b1_lo, &mut b1_hi, &mut c1_lo, &mut c1_hi, &mut d1_lo,
+            &mut d1_hi, &mut a2_lo, &mut a2_hi, &mut b2_lo, &mut b2_hi, &mut c2_lo, &mut c2_hi,
+            &mut d2_lo, &mut d2_hi,
+        );
+
+        vst1q_u64(q_ptr.add(base1), a1_lo);
+        vst1q_u64(q_ptr.add(base1 + 2), a1_hi);
+        vst1q_u64(q_ptr.add(base1 + 4), b1_lo);
+        vst1q_u64(q_ptr.add(base1 + 6), b1_hi);
+        vst1q_u64(q_ptr.add(base1 + 8), c1_lo);
+        vst1q_u64(q_ptr.add(base1 + 10), c1_hi);
+        vst1q_u64(q_ptr.add(base1 + 12), d1_lo);
+        vst1q_u64(q_ptr.add(base1 + 14), d1_hi);
+
+        vst1q_u64(q_ptr.add(base2), a2_lo);
+        vst1q_u64(q_ptr.add(base2 + 2), a2_hi);
+        vst1q_u64(q_ptr.add(base2 + 4), b2_lo);
+        vst1q_u64(q_ptr.add(base2 + 6), b2_hi);
+        vst1q_u64(q_ptr.add(base2 + 8), c2_lo);
+        vst1q_u64(q_ptr.add(base2 + 10), c2_hi);
+        vst1q_u64(q_ptr.add(base2 + 12), d2_lo);
+        vst1q_u64(q_ptr.add(base2 + 14), d2_hi);
     }
 
     // Fused Phase 3+4, column 0: this writes dst[0] to its final value.
@@ -1936,10 +2135,7 @@ unsafe fn compress_neon_into_mid_prefetch(
         let mut d_hi: uint64x2_t = vld1q_u64(q_ptr.add(112));
 
         neon_round(
-            &mut a_lo, &mut a_hi,
-            &mut b_lo, &mut b_hi,
-            &mut c_lo, &mut c_hi,
-            &mut d_lo, &mut d_hi,
+            &mut a_lo, &mut a_hi, &mut b_lo, &mut b_hi, &mut c_lo, &mut c_hi, &mut d_lo, &mut d_hi,
         );
 
         vst1q_u64(dst_ptr.add(0), veorq_u64(a_lo, vld1q_u64(dst_ptr.add(0))));
@@ -1949,7 +2145,10 @@ unsafe fn compress_neon_into_mid_prefetch(
         vst1q_u64(dst_ptr.add(64), veorq_u64(c_lo, vld1q_u64(dst_ptr.add(64))));
         vst1q_u64(dst_ptr.add(80), veorq_u64(c_hi, vld1q_u64(dst_ptr.add(80))));
         vst1q_u64(dst_ptr.add(96), veorq_u64(d_lo, vld1q_u64(dst_ptr.add(96))));
-        vst1q_u64(dst_ptr.add(112), veorq_u64(d_hi, vld1q_u64(dst_ptr.add(112))));
+        vst1q_u64(
+            dst_ptr.add(112),
+            veorq_u64(d_hi, vld1q_u64(dst_ptr.add(112))),
+        );
     }
 
     // --- Mid-compress prefetch ---
@@ -1987,29 +2186,76 @@ unsafe fn compress_neon_into_mid_prefetch(
         let mut d2_hi: uint64x2_t = vld1q_u64(q_ptr.add(base2 + 112));
 
         neon_round_pair(
-            &mut a1_lo, &mut a1_hi, &mut b1_lo, &mut b1_hi,
-            &mut c1_lo, &mut c1_hi, &mut d1_lo, &mut d1_hi,
-            &mut a2_lo, &mut a2_hi, &mut b2_lo, &mut b2_hi,
-            &mut c2_lo, &mut c2_hi, &mut d2_lo, &mut d2_hi,
+            &mut a1_lo, &mut a1_hi, &mut b1_lo, &mut b1_hi, &mut c1_lo, &mut c1_hi, &mut d1_lo,
+            &mut d1_hi, &mut a2_lo, &mut a2_hi, &mut b2_lo, &mut b2_hi, &mut c2_lo, &mut c2_hi,
+            &mut d2_lo, &mut d2_hi,
         );
 
-        vst1q_u64(dst_ptr.add(base1), veorq_u64(a1_lo, vld1q_u64(dst_ptr.add(base1))));
-        vst1q_u64(dst_ptr.add(base1 + 16), veorq_u64(a1_hi, vld1q_u64(dst_ptr.add(base1 + 16))));
-        vst1q_u64(dst_ptr.add(base1 + 32), veorq_u64(b1_lo, vld1q_u64(dst_ptr.add(base1 + 32))));
-        vst1q_u64(dst_ptr.add(base1 + 48), veorq_u64(b1_hi, vld1q_u64(dst_ptr.add(base1 + 48))));
-        vst1q_u64(dst_ptr.add(base1 + 64), veorq_u64(c1_lo, vld1q_u64(dst_ptr.add(base1 + 64))));
-        vst1q_u64(dst_ptr.add(base1 + 80), veorq_u64(c1_hi, vld1q_u64(dst_ptr.add(base1 + 80))));
-        vst1q_u64(dst_ptr.add(base1 + 96), veorq_u64(d1_lo, vld1q_u64(dst_ptr.add(base1 + 96))));
-        vst1q_u64(dst_ptr.add(base1 + 112), veorq_u64(d1_hi, vld1q_u64(dst_ptr.add(base1 + 112))));
+        vst1q_u64(
+            dst_ptr.add(base1),
+            veorq_u64(a1_lo, vld1q_u64(dst_ptr.add(base1))),
+        );
+        vst1q_u64(
+            dst_ptr.add(base1 + 16),
+            veorq_u64(a1_hi, vld1q_u64(dst_ptr.add(base1 + 16))),
+        );
+        vst1q_u64(
+            dst_ptr.add(base1 + 32),
+            veorq_u64(b1_lo, vld1q_u64(dst_ptr.add(base1 + 32))),
+        );
+        vst1q_u64(
+            dst_ptr.add(base1 + 48),
+            veorq_u64(b1_hi, vld1q_u64(dst_ptr.add(base1 + 48))),
+        );
+        vst1q_u64(
+            dst_ptr.add(base1 + 64),
+            veorq_u64(c1_lo, vld1q_u64(dst_ptr.add(base1 + 64))),
+        );
+        vst1q_u64(
+            dst_ptr.add(base1 + 80),
+            veorq_u64(c1_hi, vld1q_u64(dst_ptr.add(base1 + 80))),
+        );
+        vst1q_u64(
+            dst_ptr.add(base1 + 96),
+            veorq_u64(d1_lo, vld1q_u64(dst_ptr.add(base1 + 96))),
+        );
+        vst1q_u64(
+            dst_ptr.add(base1 + 112),
+            veorq_u64(d1_hi, vld1q_u64(dst_ptr.add(base1 + 112))),
+        );
 
-        vst1q_u64(dst_ptr.add(base2), veorq_u64(a2_lo, vld1q_u64(dst_ptr.add(base2))));
-        vst1q_u64(dst_ptr.add(base2 + 16), veorq_u64(a2_hi, vld1q_u64(dst_ptr.add(base2 + 16))));
-        vst1q_u64(dst_ptr.add(base2 + 32), veorq_u64(b2_lo, vld1q_u64(dst_ptr.add(base2 + 32))));
-        vst1q_u64(dst_ptr.add(base2 + 48), veorq_u64(b2_hi, vld1q_u64(dst_ptr.add(base2 + 48))));
-        vst1q_u64(dst_ptr.add(base2 + 64), veorq_u64(c2_lo, vld1q_u64(dst_ptr.add(base2 + 64))));
-        vst1q_u64(dst_ptr.add(base2 + 80), veorq_u64(c2_hi, vld1q_u64(dst_ptr.add(base2 + 80))));
-        vst1q_u64(dst_ptr.add(base2 + 96), veorq_u64(d2_lo, vld1q_u64(dst_ptr.add(base2 + 96))));
-        vst1q_u64(dst_ptr.add(base2 + 112), veorq_u64(d2_hi, vld1q_u64(dst_ptr.add(base2 + 112))));
+        vst1q_u64(
+            dst_ptr.add(base2),
+            veorq_u64(a2_lo, vld1q_u64(dst_ptr.add(base2))),
+        );
+        vst1q_u64(
+            dst_ptr.add(base2 + 16),
+            veorq_u64(a2_hi, vld1q_u64(dst_ptr.add(base2 + 16))),
+        );
+        vst1q_u64(
+            dst_ptr.add(base2 + 32),
+            veorq_u64(b2_lo, vld1q_u64(dst_ptr.add(base2 + 32))),
+        );
+        vst1q_u64(
+            dst_ptr.add(base2 + 48),
+            veorq_u64(b2_hi, vld1q_u64(dst_ptr.add(base2 + 48))),
+        );
+        vst1q_u64(
+            dst_ptr.add(base2 + 64),
+            veorq_u64(c2_lo, vld1q_u64(dst_ptr.add(base2 + 64))),
+        );
+        vst1q_u64(
+            dst_ptr.add(base2 + 80),
+            veorq_u64(c2_hi, vld1q_u64(dst_ptr.add(base2 + 80))),
+        );
+        vst1q_u64(
+            dst_ptr.add(base2 + 96),
+            veorq_u64(d2_lo, vld1q_u64(dst_ptr.add(base2 + 96))),
+        );
+        vst1q_u64(
+            dst_ptr.add(base2 + 112),
+            veorq_u64(d2_hi, vld1q_u64(dst_ptr.add(base2 + 112))),
+        );
     }
 
     // Column 7 (solo).
@@ -2025,20 +2271,41 @@ unsafe fn compress_neon_into_mid_prefetch(
         let mut d_hi: uint64x2_t = vld1q_u64(q_ptr.add(base + 112));
 
         neon_round(
-            &mut a_lo, &mut a_hi,
-            &mut b_lo, &mut b_hi,
-            &mut c_lo, &mut c_hi,
-            &mut d_lo, &mut d_hi,
+            &mut a_lo, &mut a_hi, &mut b_lo, &mut b_hi, &mut c_lo, &mut c_hi, &mut d_lo, &mut d_hi,
         );
 
-        vst1q_u64(dst_ptr.add(base), veorq_u64(a_lo, vld1q_u64(dst_ptr.add(base))));
-        vst1q_u64(dst_ptr.add(base + 16), veorq_u64(a_hi, vld1q_u64(dst_ptr.add(base + 16))));
-        vst1q_u64(dst_ptr.add(base + 32), veorq_u64(b_lo, vld1q_u64(dst_ptr.add(base + 32))));
-        vst1q_u64(dst_ptr.add(base + 48), veorq_u64(b_hi, vld1q_u64(dst_ptr.add(base + 48))));
-        vst1q_u64(dst_ptr.add(base + 64), veorq_u64(c_lo, vld1q_u64(dst_ptr.add(base + 64))));
-        vst1q_u64(dst_ptr.add(base + 80), veorq_u64(c_hi, vld1q_u64(dst_ptr.add(base + 80))));
-        vst1q_u64(dst_ptr.add(base + 96), veorq_u64(d_lo, vld1q_u64(dst_ptr.add(base + 96))));
-        vst1q_u64(dst_ptr.add(base + 112), veorq_u64(d_hi, vld1q_u64(dst_ptr.add(base + 112))));
+        vst1q_u64(
+            dst_ptr.add(base),
+            veorq_u64(a_lo, vld1q_u64(dst_ptr.add(base))),
+        );
+        vst1q_u64(
+            dst_ptr.add(base + 16),
+            veorq_u64(a_hi, vld1q_u64(dst_ptr.add(base + 16))),
+        );
+        vst1q_u64(
+            dst_ptr.add(base + 32),
+            veorq_u64(b_lo, vld1q_u64(dst_ptr.add(base + 32))),
+        );
+        vst1q_u64(
+            dst_ptr.add(base + 48),
+            veorq_u64(b_hi, vld1q_u64(dst_ptr.add(base + 48))),
+        );
+        vst1q_u64(
+            dst_ptr.add(base + 64),
+            veorq_u64(c_lo, vld1q_u64(dst_ptr.add(base + 64))),
+        );
+        vst1q_u64(
+            dst_ptr.add(base + 80),
+            veorq_u64(c_hi, vld1q_u64(dst_ptr.add(base + 80))),
+        );
+        vst1q_u64(
+            dst_ptr.add(base + 96),
+            veorq_u64(d_lo, vld1q_u64(dst_ptr.add(base + 96))),
+        );
+        vst1q_u64(
+            dst_ptr.add(base + 112),
+            veorq_u64(d_hi, vld1q_u64(dst_ptr.add(base + 112))),
+        );
     }
 }
 
