@@ -12,7 +12,9 @@ use crossbeam_channel::Receiver;
 use serde::{Deserialize, Serialize};
 use sysinfo::System;
 
-use crate::backend::{BackendEvent, BackendInstanceId, DeadlineSupport, PowBackend};
+use crate::backend::{
+    BackendEvent, BackendInstanceId, DeadlineSupport, KernelBenchSample, PowBackend,
+};
 use crate::config::{
     BenchBaselinePolicy, BenchKind, Config, CpuAffinityMode, CpuPerformanceProfile, WorkAllocation,
 };
@@ -350,21 +352,27 @@ fn run_kernel_benchmark(
         .bench_backend()
         .ok_or_else(|| anyhow!("kernel benchmark is not implemented for {}", backend.name()))?;
     let total_rounds = cfg.bench_warmup_rounds.saturating_add(cfg.bench_rounds);
-    let mut measured_round = 0u32;
-    for round in 0..total_rounds {
-        if shutdown.load(Ordering::Relaxed) {
-            break;
+    let round_samples = match mode {
+        KernelBenchMode::Steady => {
+            bench_backend.kernel_bench_samples(total_rounds, cfg.bench_secs, shutdown)?
         }
-
+        KernelBenchMode::Effective => {
+            bench_backend.kernel_bench_effective_samples(total_rounds, cfg.bench_secs, shutdown)?
+        }
+    };
+    let mut measured_round = 0u32;
+    for (round, sample) in round_samples
+        .into_iter()
+        .take(total_rounds as usize)
+        .enumerate()
+    {
+        let round = round as u32;
         let is_warmup = round < cfg.bench_warmup_rounds;
-        let round_start = Instant::now();
-        let hashes = match mode {
-            KernelBenchMode::Steady => bench_backend.kernel_bench(cfg.bench_secs, shutdown)?,
-            KernelBenchMode::Effective => {
-                bench_backend.kernel_bench_effective(cfg.bench_secs, shutdown)?
-            }
-        };
-        let wall_elapsed = round_start.elapsed().as_secs_f64().max(0.001);
+        let KernelBenchSample {
+            hashes,
+            elapsed_secs,
+        } = sample;
+        let wall_elapsed = elapsed_secs.max(0.001);
         let elapsed = match mode {
             // Kernel benchmark backend hooks are expected to run for bench_secs.
             // Use that steady-state window for H/s so backend init/setup overhead does not

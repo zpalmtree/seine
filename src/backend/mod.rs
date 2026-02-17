@@ -1,4 +1,4 @@
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -547,9 +547,57 @@ mod tests {
 pub trait BenchBackend: Send {
     fn kernel_bench(&self, seconds: u64, shutdown: &AtomicBool) -> Result<u64>;
 
+    fn kernel_bench_samples(
+        &self,
+        rounds: u32,
+        seconds: u64,
+        shutdown: &AtomicBool,
+    ) -> Result<Vec<KernelBenchSample>> {
+        let mut samples = Vec::with_capacity(rounds as usize);
+        for _ in 0..rounds {
+            if shutdown.load(Ordering::Acquire) {
+                break;
+            }
+            let started = Instant::now();
+            let hashes = self.kernel_bench(seconds, shutdown)?;
+            samples.push(KernelBenchSample {
+                hashes,
+                elapsed_secs: started.elapsed().as_secs_f64().max(0.001),
+            });
+        }
+        Ok(samples)
+    }
+
     fn kernel_bench_effective(&self, seconds: u64, shutdown: &AtomicBool) -> Result<u64> {
         self.kernel_bench(seconds, shutdown)
     }
+
+    fn kernel_bench_effective_samples(
+        &self,
+        rounds: u32,
+        seconds: u64,
+        shutdown: &AtomicBool,
+    ) -> Result<Vec<KernelBenchSample>> {
+        let mut samples = Vec::with_capacity(rounds as usize);
+        for _ in 0..rounds {
+            if shutdown.load(Ordering::Acquire) {
+                break;
+            }
+            let started = Instant::now();
+            let hashes = self.kernel_bench_effective(seconds, shutdown)?;
+            samples.push(KernelBenchSample {
+                hashes,
+                elapsed_secs: started.elapsed().as_secs_f64().max(0.001),
+            });
+        }
+        Ok(samples)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct KernelBenchSample {
+    pub hashes: u64,
+    pub elapsed_secs: f64,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]

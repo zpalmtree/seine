@@ -27,7 +27,8 @@ use crate::backend::NonceChunk;
 use crate::backend::{
     AssignmentSemantics, BackendCallStatus, BackendCapabilities, BackendEvent,
     BackendExecutionModel, BackendInstanceId, BackendTelemetry, BenchBackend, DeadlineSupport,
-    MiningSolution, PowBackend, PreemptionGranularity, WorkAssignment, WorkTemplate,
+    KernelBenchSample, MiningSolution, PowBackend, PreemptionGranularity, WorkAssignment,
+    WorkTemplate,
 };
 const BACKEND_NAME: &str = "nvidia";
 const CUDA_KERNEL_SRC: &str = include_str!("nvidia_kernel.cu");
@@ -1511,6 +1512,20 @@ impl BenchBackend for NvidiaBackend {
     }
 
     fn kernel_bench_effective(&self, seconds: u64, shutdown: &AtomicBool) -> Result<u64> {
+        Ok(self
+            .kernel_bench_effective_samples(1, seconds, shutdown)?
+            .into_iter()
+            .next()
+            .map(|sample| sample.hashes)
+            .unwrap_or(0))
+    }
+
+    fn kernel_bench_effective_samples(
+        &self,
+        rounds: u32,
+        seconds: u64,
+        shutdown: &AtomicBool,
+    ) -> Result<Vec<KernelBenchSample>> {
         let selected = self.validate_or_select_device()?;
         let tuning = self.resolve_kernel_tuning(&selected);
         let mut engine = CudaArgon2Engine::new(
@@ -1532,30 +1547,45 @@ impl BenchBackend for NvidiaBackend {
 
         let header = [0u8; POW_HEADER_BASE_LEN];
         let impossible_target = [0u8; POW_OUTPUT_LEN];
-        let deadline = Instant::now() + Duration::from_secs(seconds.max(1));
+        let sample_duration = Duration::from_secs(seconds.max(1));
         let mut nonce_cursor = 0u64;
-        let mut total = 0u64;
         let mut nonces = vec![0u64; engine.max_hashes_per_launch()];
+        let mut samples = Vec::with_capacity(rounds as usize);
 
-        while Instant::now() < deadline && !shutdown.load(Ordering::Acquire) {
-            let batch_hashes = engine.max_hashes_per_launch().max(1);
-            if nonces.len() < batch_hashes {
-                nonces.resize(batch_hashes, 0);
-            }
-            for nonce in nonces.iter_mut().take(batch_hashes) {
-                *nonce = nonce_cursor;
-                nonce_cursor = nonce_cursor.wrapping_add(1);
+        for _ in 0..rounds {
+            if shutdown.load(Ordering::Acquire) {
+                break;
             }
 
-            let done = engine.run_fill_batch(
-                &header,
-                &nonces[..batch_hashes],
-                Some(&impossible_target),
-            )?;
-            total = total.saturating_add(done.hashes_done as u64);
+            let round_started = Instant::now();
+            let deadline = round_started + sample_duration;
+            let mut total = 0u64;
+
+            while Instant::now() < deadline && !shutdown.load(Ordering::Acquire) {
+                let batch_hashes = engine.max_hashes_per_launch().max(1);
+                if nonces.len() < batch_hashes {
+                    nonces.resize(batch_hashes, 0);
+                }
+                for nonce in nonces.iter_mut().take(batch_hashes) {
+                    *nonce = nonce_cursor;
+                    nonce_cursor = nonce_cursor.wrapping_add(1);
+                }
+
+                let done = engine.run_fill_batch(
+                    &header,
+                    &nonces[..batch_hashes],
+                    Some(&impossible_target),
+                )?;
+                total = total.saturating_add(done.hashes_done as u64);
+            }
+
+            samples.push(KernelBenchSample {
+                hashes: total,
+                elapsed_secs: round_started.elapsed().as_secs_f64().max(0.001),
+            });
         }
 
-        Ok(total)
+        Ok(samples)
     }
 }
 
