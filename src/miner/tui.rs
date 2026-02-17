@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::io::{self, Stdout};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crossterm::execute;
 use crossterm::terminal::{
@@ -99,6 +99,7 @@ pub struct TuiStateInner {
     pub accepted: u64,
     pub device_hashrates: Vec<DeviceHashrate>,
     pub pending_nvidia: u64,
+    pub pending_nvidia_since: Option<Instant>,
 
     // Config (set once at startup)
     pub api_url: String,
@@ -135,6 +136,7 @@ impl TuiStateInner {
             accepted: 0,
             device_hashrates: Vec::new(),
             pending_nvidia: 0,
+            pending_nvidia_since: None,
 
             api_url: String::new(),
             threads: 0,
@@ -577,20 +579,27 @@ fn draw_devices(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner, w
             .collect()
     };
 
-    // Show pending NVIDIA backends that are still compiling
+    // Show pending NVIDIA backends that are still initializing.
     if state.pending_nvidia > 0 {
         let online_nvidia = state
             .device_hashrates
             .iter()
             .filter(|d| d.name.starts_with("nvidia#"))
             .count() as u64;
+        let pending_elapsed = state
+            .pending_nvidia_since
+            .map(|started| started.elapsed())
+            .unwrap_or_default();
+        let pending_status = pending_nvidia_status_label(pending_elapsed);
+        let pending_elapsed_label = format_duration_compact(pending_elapsed);
+        let pending_message = format!("{pending_status} ({pending_elapsed_label})");
         for i in 0..state.pending_nvidia {
             let name = format!("nvidia#{}", online_nvidia + i + 1);
             lines.push(Line::from(vec![
                 Span::styled("  ", Style::default()),
                 Span::styled("▸ ", Style::default().fg(Color::Rgb(70, 100, 130))),
                 Span::styled(format!("{:<10}", name), DEVICE_NAME_STYLE),
-                Span::styled("compiling CUDA kernel...", DIM_STYLE),
+                Span::styled(pending_message.clone(), DIM_STYLE),
             ]));
         }
     }
@@ -705,6 +714,27 @@ fn truncate_str(s: &str, max: usize) -> String {
     let mut out: String = s.chars().take(max - 1).collect();
     out.push('…');
     out
+}
+
+fn pending_nvidia_status_label(elapsed: Duration) -> &'static str {
+    if elapsed < Duration::from_secs(20) {
+        "starting CUDA runtime"
+    } else if elapsed < Duration::from_secs(90) {
+        "preparing NVIDIA backend"
+    } else {
+        "still initializing (first run may take a few minutes)"
+    }
+}
+
+fn format_duration_compact(duration: Duration) -> String {
+    let secs = duration.as_secs();
+    if secs < 60 {
+        format!("{secs}s")
+    } else {
+        let mins = secs / 60;
+        let rem = secs % 60;
+        format!("{mins}m {rem:02}s")
+    }
 }
 
 fn format_u64(n: u64) -> String {

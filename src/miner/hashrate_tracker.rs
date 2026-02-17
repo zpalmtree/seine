@@ -17,6 +17,7 @@ struct HashrateSnapshot {
 pub struct HashrateTracker {
     samples: VecDeque<HashrateSnapshot>,
     session_start: Option<Instant>,
+    device_session_start: BTreeMap<BackendInstanceId, Instant>,
     completed_rounds_device_hashes: BTreeMap<BackendInstanceId, u64>,
     last_round_start: Option<Instant>,
     last_round_device_hashes: BTreeMap<BackendInstanceId, u64>,
@@ -34,6 +35,7 @@ impl HashrateTracker {
         Self {
             samples: VecDeque::with_capacity(MAX_SAMPLES),
             session_start: None,
+            device_session_start: BTreeMap::new(),
             completed_rounds_device_hashes: BTreeMap::new(),
             last_round_start: None,
             last_round_device_hashes: BTreeMap::new(),
@@ -71,6 +73,11 @@ impl HashrateTracker {
         let now = Instant::now();
         if self.session_start.is_none() {
             self.session_start = Some(now);
+        }
+        for (&id, &hashes) in &cumulative_device {
+            if hashes > 0 {
+                self.device_session_start.entry(id).or_insert(now);
+            }
         }
 
         let snapshot = HashrateSnapshot {
@@ -115,7 +122,16 @@ impl HashrateTracker {
 
         let mut per_device = BTreeMap::new();
         for (&id, &hashes) in &latest.per_device {
-            per_device.insert(id, hashes as f64 / dt);
+            let device_start = self
+                .device_session_start
+                .get(&id)
+                .copied()
+                .unwrap_or(session_start);
+            let device_dt = now.duration_since(device_start).as_secs_f64();
+            if device_dt < MIN_WINDOW_SECS {
+                continue;
+            }
+            per_device.insert(id, hashes as f64 / device_dt);
         }
 
         (total, per_device)
@@ -223,5 +239,40 @@ mod tests {
         // ~1000 hashes / ~2.1s ≈ ~476 H/s, just check it's nonzero
         assert!(rates.current_total > 0.0);
         assert!(rates.average_total > 0.0);
+    }
+
+    #[test]
+    fn late_joining_device_average_is_not_diluted_by_session_start() {
+        let mut tracker = HashrateTracker::new();
+        let round_start = Instant::now();
+
+        // Establish miner session start with CPU-only hashes.
+        let mut hashes = BTreeMap::new();
+        hashes.insert(1u64, 200u64);
+        tracker.record(200, round_start, &hashes);
+        thread::sleep(Duration::from_millis(2100));
+        tracker.record(400, round_start, &hashes);
+        let baseline = tracker.rates();
+        let cpu_avg = baseline
+            .average_per_device
+            .get(&1u64)
+            .copied()
+            .unwrap_or(0.0);
+        assert!(cpu_avg > 0.0);
+
+        // NVIDIA appears later with a burst of hashes.
+        thread::sleep(Duration::from_millis(2100));
+        hashes.insert(2u64, 200u64);
+        tracker.record(600, round_start, &hashes);
+        thread::sleep(Duration::from_millis(2100));
+        hashes.insert(2u64, 400u64);
+        tracker.record(800, round_start, &hashes);
+
+        let rates = tracker.rates();
+        let nvidia_avg = rates.average_per_device.get(&2u64).copied().unwrap_or(0.0);
+        let cpu_avg_after = rates.average_per_device.get(&1u64).copied().unwrap_or(0.0);
+
+        assert!(nvidia_avg > 70.0);
+        assert!(cpu_avg_after > 0.0);
     }
 }

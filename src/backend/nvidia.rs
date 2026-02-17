@@ -2528,17 +2528,64 @@ fn load_nvidia_autotune_cache(path: &Path) -> Option<NvidiaAutotuneCache> {
 
 fn load_nvidia_cached_tuning(path: &Path, key: &NvidiaAutotuneKey) -> Option<NvidiaKernelTuning> {
     let cache = load_nvidia_autotune_cache(path)?;
-    let record = cache
+    let exact = cache
         .records
         .iter()
         .filter(|record| &record.key == key && record.max_rregcount > 0)
-        .max_by_key(|record| record.timestamp_unix_secs)?;
+        .max_by_key(|record| record.timestamp_unix_secs);
+    let record = match exact {
+        Some(record) => record,
+        None => {
+            // Fallback: tolerate memory-budget/lane-tier drift between runs
+            // (for example, desktop VRAM pressure changes) and reuse the closest
+            // compatible tuning for the same device/arch/PoW parameters.
+            let mut best: Option<&NvidiaAutotuneRecord> = None;
+            for candidate in cache.records.iter().filter(|record| {
+                record.max_rregcount > 0 && nvidia_autotune_key_compatible(&record.key, key)
+            }) {
+                match best {
+                    None => best = Some(candidate),
+                    Some(current) => {
+                        let candidate_distance = memory_budget_distance(
+                            candidate.key.memory_budget_mib,
+                            key.memory_budget_mib,
+                        );
+                        let current_distance = memory_budget_distance(
+                            current.key.memory_budget_mib,
+                            key.memory_budget_mib,
+                        );
+                        if candidate_distance < current_distance
+                            || (candidate_distance == current_distance
+                                && candidate.timestamp_unix_secs > current.timestamp_unix_secs)
+                        {
+                            best = Some(candidate);
+                        }
+                    }
+                }
+            }
+            best?
+        }
+    };
     Some(NvidiaKernelTuning {
         max_rregcount: record.max_rregcount,
         block_loop_unroll: record.block_loop_unroll,
         hashes_per_launch_per_lane: record.hashes_per_launch_per_lane.max(1),
         max_lanes_hint: record.max_lanes_hint,
     })
+}
+
+fn nvidia_autotune_key_compatible(lhs: &NvidiaAutotuneKey, rhs: &NvidiaAutotuneKey) -> bool {
+    lhs.device_name == rhs.device_name
+        && lhs.memory_total_mib == rhs.memory_total_mib
+        && lhs.compute_cap_major == rhs.compute_cap_major
+        && lhs.compute_cap_minor == rhs.compute_cap_minor
+        && lhs.m_cost_kib == rhs.m_cost_kib
+        && lhs.t_cost == rhs.t_cost
+        && lhs.kernel_threads == rhs.kernel_threads
+}
+
+fn memory_budget_distance(lhs: u64, rhs: u64) -> u64 {
+    lhs.max(rhs) - lhs.min(rhs)
 }
 
 fn persist_nvidia_autotune_record(
@@ -2966,6 +3013,66 @@ mod tests {
             load_nvidia_cached_tuning(&path, &key).expect("cached tuning should be available");
         assert_eq!(loaded.max_rregcount, 224);
         assert!(loaded.block_loop_unroll);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn nvidia_autotune_cache_fallback_uses_closest_compatible_budget() {
+        let path = unique_temp_file("budget-fallback");
+        let base_key = NvidiaAutotuneKey {
+            device_name: "NVIDIA GeForce RTX 3080".to_string(),
+            memory_total_mib: 10_240,
+            memory_budget_mib: 9_728,
+            lane_capacity_tier: 4,
+            compute_cap_major: 8,
+            compute_cap_minor: 6,
+            m_cost_kib: 2_097_152,
+            t_cost: 1,
+            kernel_threads: KERNEL_THREADS,
+        };
+        let closer_key = NvidiaAutotuneKey {
+            memory_budget_mib: 8_192,
+            lane_capacity_tier: 3,
+            ..base_key.clone()
+        };
+        let farther_key = NvidiaAutotuneKey {
+            memory_budget_mib: 7_680,
+            lane_capacity_tier: 2,
+            ..base_key.clone()
+        };
+
+        persist_nvidia_autotune_record(
+            &path,
+            closer_key,
+            NvidiaKernelTuning {
+                max_rregcount: 208,
+                block_loop_unroll: false,
+                hashes_per_launch_per_lane: 2,
+                max_lanes_hint: None,
+            },
+            1.0,
+            2,
+            2,
+        )
+        .expect("closer record should persist");
+        persist_nvidia_autotune_record(
+            &path,
+            farther_key,
+            NvidiaKernelTuning {
+                max_rregcount: 224,
+                block_loop_unroll: true,
+                hashes_per_launch_per_lane: 2,
+                max_lanes_hint: None,
+            },
+            1.0,
+            2,
+            2,
+        )
+        .expect("farther record should persist");
+
+        let loaded =
+            load_nvidia_cached_tuning(&path, &base_key).expect("fallback tuning should be found");
+        assert_eq!(loaded.max_rregcount, 208);
         let _ = fs::remove_file(path);
     }
 

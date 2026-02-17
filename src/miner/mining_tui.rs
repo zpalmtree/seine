@@ -217,6 +217,11 @@ pub(super) fn set_tui_state_label(tui: &mut Option<TuiDisplay>, state_label: &st
 pub(super) fn set_tui_pending_nvidia(tui: &mut Option<TuiDisplay>, count: u64) {
     if let Some(display) = tui.as_mut() {
         if let Ok(mut s) = display.state.lock() {
+            if count > 0 && s.pending_nvidia_since.is_none() {
+                s.pending_nvidia_since = Some(Instant::now());
+            } else if count == 0 {
+                s.pending_nvidia_since = None;
+            }
             s.pending_nvidia = count;
         }
     }

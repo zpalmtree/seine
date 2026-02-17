@@ -52,9 +52,10 @@ use super::tui::TuiState;
 use super::ui::{error, info, mined, success, warn};
 use super::wallet::auto_load_wallet;
 use super::{
-    cancel_backend_slots, collect_backend_hashes, distribute_work, format_round_backend_telemetry,
-    next_work_id, quiesce_backend_slots, total_lanes, BackendRoundTelemetry, BackendSlot,
-    RuntimeBackendEventAction, RuntimeMode, TEMPLATE_RETRY_DELAY,
+    backend_display_names, cancel_backend_slots, collect_backend_hashes, distribute_work,
+    format_round_backend_telemetry, next_work_id, quiesce_backend_slots, total_lanes,
+    BackendRoundTelemetry, BackendSlot, RuntimeBackendEventAction, RuntimeMode,
+    TEMPLATE_RETRY_DELAY,
 };
 
 type BackendEventAction = RuntimeBackendEventAction;
@@ -64,6 +65,9 @@ const SUBMIT_BACKLOG_CAPACITY: usize = 512;
 const SUBMIT_BACKLOG_HARD_CAPACITY: usize = 4096;
 const SUBMIT_BACKLOG_FLUSH_WAIT: Duration = Duration::from_millis(10);
 const SUBMIT_BACKLOG_BACKPRESSURE_LOG_INTERVAL: Duration = Duration::from_secs(5);
+const NVIDIA_INIT_PROGRESS_LOG_INTERVAL: Duration = Duration::from_secs(20);
+const NVIDIA_INIT_LONG_WAIT_HINT_AFTER: Duration = Duration::from_secs(120);
+const DEFERRED_BACKEND_ACTIVATION_ROUND_CAP: Duration = Duration::from_secs(5);
 
 #[derive(Default)]
 struct RetryTracker {
@@ -742,6 +746,7 @@ fn execute_round_phase(phase: ExecuteRoundPhase<'_, '_>) -> Result<()> {
             control_plane,
             epoch,
             submit_template,
+            backends,
             DeferredSubmitState {
                 recent_templates,
                 deferred_solutions,
@@ -800,6 +805,7 @@ fn execute_round_phase(phase: ExecuteRoundPhase<'_, '_>) -> Result<()> {
     }
 
     if let Some(solution) = submitted_solution {
+        let backend_label = solution_backend_label(backends, &solution);
         update_tui(
             tui,
             stats,
@@ -814,13 +820,7 @@ fn execute_round_phase(phase: ExecuteRoundPhase<'_, '_>) -> Result<()> {
                 state_label: "solved",
             },
         );
-        mined(
-            "SOLVE",
-            format!(
-                "solution found! backend={}#{}",
-                solution.backend, solution.backend_id
-            ),
-        );
+        mined("SOLVE", format!("solution found! backend={backend_label}"));
     } else if round_state.stale_tip_event {
         update_tui(
             tui,
@@ -899,6 +899,12 @@ pub(super) fn run_mining_loop(
     let mut submitted_solution_keys = HashSet::<(u64, u64)>::new();
     let mut submitted_solution_order = VecDeque::<(u64, u64)>::new();
     let mut inflight_solution_keys = HashSet::<(u64, u64)>::new();
+    let mut pending_nvidia_started_at = if deferred_remaining > 0 {
+        Some(Instant::now())
+    } else {
+        None
+    };
+    let mut last_nvidia_pending_log_at: Option<Instant> = None;
 
     let mut template = match control_plane.fetch_initial_template(&mut tui) {
         Some(t) => t,
@@ -953,7 +959,7 @@ pub(super) fn run_mining_loop(
                         info(
                             "BACKEND",
                             format!(
-                                "{slot_name}: online (compiled in background, {slot_lanes} lanes)"
+                                "{slot_name}: online (initialized in background, {slot_lanes} lanes)"
                             ),
                         );
                         backend_weights.insert(slot.id, slot.lanes.max(1) as f64);
@@ -968,6 +974,11 @@ pub(super) fn run_mining_loop(
                 }
             }
             set_tui_pending_nvidia(&mut tui, deferred_remaining);
+            maybe_log_pending_nvidia_progress(
+                deferred_remaining,
+                &mut pending_nvidia_started_at,
+                &mut last_nvidia_pending_log_at,
+            );
         }
 
         let mode_changed = dev_fee_tracker.begin_round();
@@ -1015,7 +1026,7 @@ pub(super) fn run_mining_loop(
         let work_id = next_work_id(&mut work_id_cursor);
         let reservation = nonce_scheduler.reserve(total_lanes(backends));
         let round_start = Instant::now();
-        let stop_at = round_start + cfg.refresh_interval;
+        let stop_at = round_start + round_duration_for_deferred_backend(cfg, deferred_remaining);
 
         stats.bump_templates();
 
@@ -1151,6 +1162,7 @@ pub(super) fn run_mining_loop(
             &mut control_plane,
             epoch,
             &final_submit_template,
+            backends,
             DeferredSubmitState {
                 recent_templates: &recent_templates,
                 deferred_solutions: &mut deferred_solutions,
@@ -1186,6 +1198,63 @@ pub(super) fn run_mining_loop(
     stats.print();
     info("MINER", "stopped");
     Ok(())
+}
+
+fn maybe_log_pending_nvidia_progress(
+    pending_count: u64,
+    pending_started_at: &mut Option<Instant>,
+    last_log_at: &mut Option<Instant>,
+) {
+    if pending_count == 0 {
+        *pending_started_at = None;
+        *last_log_at = None;
+        return;
+    }
+
+    let now = Instant::now();
+    let started_at = pending_started_at.get_or_insert(now);
+    if last_log_at
+        .is_some_and(|last| now.saturating_duration_since(last) < NVIDIA_INIT_PROGRESS_LOG_INTERVAL)
+    {
+        return;
+    }
+
+    let elapsed = now.saturating_duration_since(*started_at);
+    let elapsed_label = format_duration_compact(elapsed);
+    if elapsed >= NVIDIA_INIT_LONG_WAIT_HINT_AFTER {
+        info(
+            "BACKEND",
+            format!(
+                "nvidia initialization in progress: {pending_count} pending ({elapsed_label} elapsed; first run or cache miss can take a few minutes)"
+            ),
+        );
+    } else {
+        info(
+            "BACKEND",
+            format!("nvidia initialization in progress: {pending_count} pending ({elapsed_label} elapsed)"),
+        );
+    }
+    *last_log_at = Some(now);
+}
+
+fn round_duration_for_deferred_backend(cfg: &Config, deferred_remaining: u64) -> Duration {
+    if deferred_remaining > 0 {
+        cfg.refresh_interval
+            .min(DEFERRED_BACKEND_ACTIVATION_ROUND_CAP)
+    } else {
+        cfg.refresh_interval
+    }
+}
+
+fn format_duration_compact(duration: Duration) -> String {
+    let secs = duration.as_secs();
+    if secs < 60 {
+        format!("{secs}s")
+    } else {
+        let mins = secs / 60;
+        let rem = secs % 60;
+        format!("{mins}m {rem:02}s")
+    }
 }
 
 fn should_cancel_relaxed_round(
@@ -1771,7 +1840,7 @@ fn handle_mining_backend_event(
         backend_executor,
     )?;
     if let Some(solution) = maybe_solution {
-        route_mining_solution(solution, epoch, solved, deferred_state);
+        route_mining_solution(solution, epoch, solved, deferred_state, backends);
     }
     Ok(action)
 }
@@ -1792,7 +1861,7 @@ fn drain_mining_backend_events(
         backend_executor,
     )?;
     for solution in solutions {
-        route_mining_solution(solution, epoch, solved, deferred_state);
+        route_mining_solution(solution, epoch, solved, deferred_state, backends);
     }
     Ok(action)
 }
@@ -1802,6 +1871,7 @@ fn route_mining_solution(
     epoch: u64,
     solved: &mut Option<MiningSolution>,
     deferred_state: &mut DeferredQueueState<'_>,
+    backends: &[BackendSlot],
 ) {
     if solution.epoch == epoch {
         if solved.is_none() {
@@ -1823,12 +1893,10 @@ fn route_mining_solution(
         );
     } else {
         deferred_state.stats.add_dropped(1);
+        let backend_label = solution_backend_label(backends, &solution);
         warn(
             "BACKEND",
-            format!(
-                "ignoring future solution from {}#{} (ahead of current round)",
-                solution.backend, solution.backend_id
-            ),
+            format!("ignoring future solution from {backend_label} (ahead of current round)",),
         );
     }
 }
@@ -1964,6 +2032,7 @@ fn submit_deferred_solutions(
     control_plane: &mut MiningControlPlane<'_>,
     current_epoch: u64,
     current_submit_template: &SubmitTemplate,
+    backends: &[BackendSlot],
     state: DeferredSubmitState<'_>,
 ) {
     if state.deferred_solutions.is_empty() {
@@ -1988,8 +2057,8 @@ fn submit_deferred_solutions(
             warn(
                 "BACKEND",
                 format!(
-                    "dropping stale solution from {}#{} (older than current round)",
-                    solution.backend, solution.backend_id
+                    "dropping stale solution from {} (older than current round)",
+                    solution_backend_label(backends, &solution)
                 ),
             );
             state.stats.add_dropped(1);
@@ -2007,6 +2076,13 @@ fn submit_deferred_solutions(
             );
         }
     }
+}
+
+fn solution_backend_label(backends: &[BackendSlot], solution: &MiningSolution) -> String {
+    backend_display_names(backends)
+        .get(&solution.backend_id)
+        .cloned()
+        .unwrap_or_else(|| format!("{}#{}", solution.backend, solution.backend_id))
 }
 
 fn effective_backend_timeouts_for_template_cache(

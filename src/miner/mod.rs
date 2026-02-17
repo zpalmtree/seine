@@ -194,7 +194,7 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
             info(
                 "BACKEND",
                 format!(
-                    "nvidia: launching {nvidia_total} CUDA compilation(s) in background (CPU autotune will run in parallel)"
+                    "nvidia: launching {nvidia_total} background initialization task(s) (CPU autotune will run in parallel)"
                 ),
             );
             for spec in cfg.backend_specs.iter().copied() {
@@ -469,6 +469,7 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
         if pending_nvidia_count > 0 {
             if let Ok(mut s) = state.lock() {
                 s.pending_nvidia = pending_nvidia_count;
+                s.pending_nvidia_since = Some(Instant::now());
             }
         }
         Some(state)
