@@ -12,6 +12,7 @@ This log tracks CPU backend/hash-kernel tuning attempts and measured outcomes.
 ## Newest-first index
 
 - `Updated summary of cumulative adopted optimizations`
+- `2026-02-18 Apple Silicon hot-path revisit + build/runtime retests`
 - `2026-02-17 Apple Silicon long-window confirmations + perflevel affinity cap trial`
 - `2026-02-17 Apple Silicon cache-line alignment + DI L2 prefetch revisit`
 - `First-principles performance analysis (x86_64, Zen 3)`
@@ -87,6 +88,72 @@ Cumulative AArch64: from ~1.37 H/s (scalar) to ~2.73 H/s, **~99% total improveme
   x86_64**. The function call boundary from `#[target_feature(enable = "avx2")]` was
   verified as zero-cost — Zen 3's deep OOO engine overlaps across it. The bottleneck
   is memory, not compute.
+
+## 2026-02-18 Apple Silicon hot-path revisit + build/runtime retests
+
+Host: Apple M4 Max, 16 cores (12P + 4E), 48 GB unified memory.
+Baseline worktree: `../seine-baseline-d65dda4`.
+
+### Hot-path assembly sanity check (AArch64 release)
+
+- `target/release/seine` disassembly confirms `hash_password_into_with_memory` is still one large inlined hot body (`0x1000d3b90`, 8,589 disassembly lines in `otool -tvV` extraction), with:
+  - BLAMKA arithmetic still emitted as `umlal.2d` pairs.
+  - Rotations still emitted as `xar.2d`.
+  - DD/DI prefetch still emitted as full 8-line `prfm pldl1keep` coverage.
+  - Stack frame still 128-byte aligned (`and sp, ..., #...ff80`) from Attempt 38.
+- Throughput-to-latency check from measured baseline (`27.1883 H/s` at `12T`):
+  - Per-thread rate: `2.2657 H/s`.
+  - Seconds per hash: `0.441 s/hash`.
+  - Argon2 working set per hash: `POW_MEMORY_KB = 2,097,152` blocks (`pow-spec/src/lib.rs`).
+  - Effective block cadence: ~`210 ns/block`.
+- Interpretation: per-block service time is in the same range as Apple unified-memory DRAM latency under load, so remaining software-only headroom is small and mostly memory-system constrained.
+
+### Attempt 41 (Apple): DD `pldl1strm` streaming prefetch hint (not adopted)
+
+- **Hypothesis**: DD references may benefit from streaming L1 hints (`pldl1strm`) vs keep hints (`pldl1keep`) by reducing residency pressure.
+- **Implementation issue discovered**: the variant was wired into the AVX2 DD path, not the AArch64 NEON DD path; on Apple Silicon this made the helper dead code.
+- **A/B result (12T interleaved)**:
+  - `data/bench_cpu_ab_aarch64_dd_l1strm_t12_warm1/summary.txt`
+  - Baseline `27.2280 H/s` vs candidate `26.8403 H/s` (**-1.4242%**).
+- **Conclusion**: rejected and reverted; no actionable AArch64 gain.
+
+### Attempt 42 (Apple): DD loop split + unchecked hot-loop index loads (not adopted)
+
+- **Hypothesis**: remove per-iteration DD tail/mid-prefetch branching and cut predictable bounds-check branches in the hottest loop.
+- **A/B result (12T interleaved)**:
+  - `data/bench_cpu_ab_aarch64_dd_loopsplit_unchecked_t12_warm1/summary.txt`
+  - Baseline `27.1482 H/s` vs candidate `27.0752 H/s` (**-0.2689%**).
+- **Conclusion**: slight regression / noise-negative; reverted.
+
+### Attempt 43 (Apple): data-independent ref table `usize -> u32` (not adopted)
+
+- **Hypothesis**: halve DI metadata bandwidth and footprint by storing precomputed ref indexes as `u32`.
+- **A/B result (12T interleaved)**:
+  - `data/bench_cpu_ab_aarch64_di_refs_u32_t12_warm1/summary.txt`
+  - Baseline `27.3052 H/s` vs candidate `26.9069 H/s` (**-1.4586%**).
+- **Conclusion**: clear regression; reverted.
+
+### Attempt 44 (Apple): `release` vs `release` + `target-cpu=native` (not adopted)
+
+- **Hypothesis**: host-native codegen may improve scheduling/throughput without kernel source changes.
+- **A/B result (12T interleaved, identical code path)**:
+  - `data/bench_cpu_ab_release_vs_native_t12_warm1/summary.txt`
+  - Baseline `27.1883 H/s` vs native candidate `27.0655 H/s` (**-0.4514%**).
+- **Conclusion**: no gain on this host/build; keep default non-native release for parity.
+
+### Attempt 45 (Apple): CPU backend telemetry/control knob retests (not adopted)
+
+- **Goal**: re-check earlier runtime knobs after later kernel/layout changes.
+- **Results (12T interleaved)**:
+  - `data/bench_cpu_ab_cpuknob_b128_c1_f100_t12_warm1_full/summary.txt`: **-1.0281%**
+  - `data/bench_cpu_ab_cpuknob_b128_c1_f50_t12_warm1/summary.txt`: **-0.2903%**
+  - `data/bench_cpu_ab_cpuknob_b64_c2_f50_t12_warm1/summary.txt`: **-0.3318%**
+- **Conclusion**: baseline defaults remain best (`batch=64`, `control_check_interval_hashes=1`, `flush_ms=50`).
+
+### Net outcome of 2026-02-18 sweep
+
+- No new adopted changes from this batch.
+- Current Apple Silicon implementation remains memory-latency-limited on the DD path; recent software-only hot-loop/codegen tweaks did not produce repeatable gains.
 
 ### Attempt 34 (x86): multi-hash interleaving — loop-level and intra-compress (not adopted)
 
