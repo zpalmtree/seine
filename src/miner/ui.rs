@@ -393,9 +393,14 @@ fn output_is_terminal() -> bool {
 }
 
 fn terminal_columns() -> usize {
-    std::env::var("COLUMNS")
+    crossterm::terminal::size()
+        .map(|(cols, _)| cols as usize)
         .ok()
-        .and_then(|raw| raw.parse::<usize>().ok())
+        .or_else(|| {
+            std::env::var("COLUMNS")
+                .ok()
+                .and_then(|raw| raw.parse::<usize>().ok())
+        })
         .filter(|cols| *cols >= 60)
         .unwrap_or(120)
 }
