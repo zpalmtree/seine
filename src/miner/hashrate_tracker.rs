@@ -71,7 +71,7 @@ impl HashrateTracker {
         }
 
         let now = Instant::now();
-        if self.session_start.is_none() {
+        if self.session_start.is_none() && total_hashes > 0 {
             self.session_start = Some(now);
         }
         for (&id, &hashes) in &cumulative_device {
@@ -231,12 +231,12 @@ mod tests {
         let round_start = Instant::now();
         let device_hashes = BTreeMap::new();
 
-        tracker.record(0, round_start, &device_hashes);
+        tracker.record(1, round_start, &device_hashes);
         thread::sleep(Duration::from_millis(2100));
         tracker.record(1000, round_start, &device_hashes);
 
         let rates = tracker.rates();
-        // ~1000 hashes / ~2.1s ≈ ~476 H/s, just check it's nonzero
+        // ~999 hashes / ~2.1s ≈ ~476 H/s, just check it's nonzero
         assert!(rates.current_total > 0.0);
         assert!(rates.average_total > 0.0);
     }
