@@ -860,7 +860,7 @@ fn resolve_backend_selection(
         selected.push(BackendKind::Nvidia);
     }
 
-    #[cfg(feature = "nvidia")]
+    #[cfg(all(feature = "nvidia", not(target_os = "macos")))]
     let hint = if !selected.contains(&BackendKind::Nvidia) {
         Some(
             "this build supports NVIDIA GPU mining but no GPU was detected; \
@@ -870,7 +870,7 @@ fn resolve_backend_selection(
     } else {
         None
     };
-    #[cfg(not(feature = "nvidia"))]
+    #[cfg(any(not(feature = "nvidia"), target_os = "macos"))]
     let hint = None;
 
     (selected, hint)
@@ -1976,6 +1976,20 @@ mod tests {
     fn resolve_backend_selection_enables_nvidia_when_devices_are_explicit() {
         let (selected, hint) = resolve_backend_selection(&[], &[0, 1], false);
         assert_eq!(selected, vec![BackendKind::Cpu, BackendKind::Nvidia]);
+        assert!(hint.is_none());
+    }
+
+    #[cfg(all(feature = "nvidia", not(target_os = "macos")))]
+    #[test]
+    fn resolve_backend_selection_emits_cuda_hint_when_nvidia_unavailable() {
+        let (_, hint) = resolve_backend_selection(&[], &[], false);
+        assert!(hint.is_some());
+    }
+
+    #[cfg(all(feature = "nvidia", target_os = "macos"))]
+    #[test]
+    fn resolve_backend_selection_skips_cuda_hint_on_macos() {
+        let (_, hint) = resolve_backend_selection(&[], &[], false);
         assert!(hint.is_none());
     }
 }
