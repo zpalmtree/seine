@@ -12,6 +12,7 @@ This log tracks CPU backend/hash-kernel tuning attempts and measured outcomes.
 ## Newest-first index
 
 - `Updated summary of cumulative adopted optimizations`
+- `2026-02-18 Apple Silicon arena residency + shared-arena trials`
 - `2026-02-18 Apple Silicon hot-path revisit + build/runtime retests`
 - `2026-02-17 Apple Silicon long-window confirmations + perflevel affinity cap trial`
 - `2026-02-17 Apple Silicon cache-line alignment + DI L2 prefetch revisit`
@@ -88,6 +89,45 @@ Cumulative AArch64: from ~1.37 H/s (scalar) to ~2.73 H/s, **~99% total improveme
   x86_64**. The function call boundary from `#[target_feature(enable = "avx2")]` was
   verified as zero-cost — Zen 3's deep OOO engine overlaps across it. The bottleneck
   is memory, not compute.
+
+## 2026-02-18 Apple Silicon arena residency + shared-arena trials
+
+Host: Apple M4 Max, 16 cores (12P + 4E), 48 GB unified memory.
+
+### Goal
+
+- Re-test two previously discussed memory-allocation ideas on current Apple Silicon code:
+  - Per-worker arena residency (`prefault + mlock` best effort).
+  - One shared mega-arena split into per-lane slices.
+
+### Benchmark protocol
+
+- Primary check: interleaved backend benchmark at `12T`.
+  - Harness output: `data/bench_cpu_arena_modes_20260218_035432/summary.tsv`
+  - Per-leg records: `data/bench_cpu_arena_modes_20260218_035432/results.tsv`
+  - Config: `--bench-kind backend`, `--bench-secs 12`, `--bench-rounds 3`, `--bench-warmup-rounds 1`, `pairs=2`, `cooldown=10s`.
+- Secondary directional check: single pass at `1T`.
+  - Output: `data/bench_cpu_arena_modes_t1_20260218_041153/`.
+  - Config: `--bench-kind backend`, `--bench-secs 20`, `--bench-rounds 3`, `--bench-warmup-rounds 1`.
+
+### Results
+
+- **12T interleaved means**:
+  - Baseline: `27.6163 H/s`
+  - `--cpu-arena-residency on`: `27.5877 H/s` (**-0.1035%**)
+  - `--cpu-shared-arena`: `27.4265 H/s` (**-0.6873%**)
+  - Both enabled: `27.4524 H/s` (**-0.5936%**)
+- **1T directional (single pass)**:
+  - Baseline: `2.8884 H/s`
+  - Residency only: `2.8782 H/s` (**-0.3505%**)
+  - Shared only: `2.8983 H/s` (**+0.3444%**, low-confidence single-run signal)
+  - Both enabled: `2.8935 H/s` (**+0.1779%**, low-confidence single-run signal)
+
+### Conclusion
+
+- No repeatable throughput gain at target multi-thread throughput (`12T`); all tested variants regressed.
+- The small 1T shared-arena uptick did not justify keeping extra unsafe allocation complexity without multi-thread benefit.
+- **Status**: not adopted; experimental code paths were reverted after measurement.
 
 ## 2026-02-18 Apple Silicon hot-path revisit + build/runtime retests
 
