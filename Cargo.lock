@@ -394,6 +394,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "blocknet-pow-kernel"
+version = "0.1.0"
+dependencies = [
+ "argon2",
+ "blake2",
+]
+
+[[package]]
 name = "blocknet-pow-spec"
 version = "0.1.0"
 dependencies = [
@@ -2169,6 +2177,7 @@ dependencies = [
  "anyhow",
  "argon2",
  "blake2",
+ "blocknet-pow-kernel",
  "blocknet-pow-spec",
  "clap",
  "core_affinity",

@@ -1,0 +1,15 @@
+[package]
+name = "blocknet-pow-kernel"
+version = "0.1.0"
+edition = "2021"
+license = "BSD-3-Clause"
+
+[lib]
+name = "blocknet_pow_kernel"
+path = "src/lib.rs"
+
+[dependencies]
+blake2 = "0.10"
+
+[dev-dependencies]
+argon2 = "0.5"

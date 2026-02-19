@@ -26,7 +26,7 @@ const MIN_OUTPUT_LEN: usize = 4;
 const TRUNC: u64 = u32::MAX as u64;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub(super) enum Error {
+pub enum Error {
     PwdTooLong,
     SaltTooShort,
     SaltTooLong,
@@ -35,10 +35,10 @@ pub(super) enum Error {
     MemoryTooLittle,
 }
 
-type Result<T> = std::result::Result<T, Error>;
+pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, Clone)]
-pub(super) struct FixedArgon2id {
+pub struct FixedArgon2id {
     requested_memory_kib: u32,
     block_count: usize,
     segment_length: usize,
@@ -47,7 +47,7 @@ pub(super) struct FixedArgon2id {
 }
 
 impl FixedArgon2id {
-    pub(super) fn new(requested_memory_kib: u32) -> Self {
+    pub fn new(requested_memory_kib: u32) -> Self {
         let lanes = ARGON2_LANES as usize;
         let min_blocks = 2 * SYNC_POINTS * lanes;
         let memory_blocks = requested_memory_kib.max(min_blocks as u32) as usize;
@@ -86,11 +86,11 @@ impl FixedArgon2id {
         }
     }
 
-    pub(super) const fn block_count(&self) -> usize {
+    pub const fn block_count(&self) -> usize {
         self.block_count
     }
 
-    pub(super) fn hash_password_into_with_memory(
+    pub fn hash_password_into_with_memory(
         &self,
         pwd: &[u8],
         salt: &[u8],
@@ -2456,10 +2456,10 @@ macro_rules! permute {
 #[derive(Copy, Clone, Debug)]
 #[cfg_attr(target_arch = "aarch64", repr(align(128)))]
 #[cfg_attr(not(target_arch = "aarch64"), repr(align(64)))]
-pub(super) struct PowBlock([u64; Self::SIZE / 8]);
+pub struct PowBlock([u64; Self::SIZE / 8]);
 
 impl PowBlock {
-    pub(super) const SIZE: usize = 1024;
+    pub const SIZE: usize = 1024;
 
     #[inline(always)]
     fn load(&mut self, input: &[u8; Self::SIZE]) {

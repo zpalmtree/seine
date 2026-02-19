@@ -4,6 +4,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
+use blocknet_pow_kernel as fixed_argon;
 use blocknet_pow_spec::{CPU_LANE_MEMORY_BYTES, POW_MEMORY_KB, POW_OUTPUT_LEN};
 use crossbeam_channel::{bounded, Sender};
 
@@ -16,8 +17,6 @@ use crate::config::CpuAffinityMode;
 
 #[path = "cpu/events.rs"]
 mod events;
-#[path = "cpu/fixed_argon.rs"]
-mod fixed_argon;
 #[path = "cpu/kernel.rs"]
 mod kernel;
 
