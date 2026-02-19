@@ -125,7 +125,9 @@ impl TemplatePrefetch {
             .desired_tip_sequence
             .map_or(tip_sequence, |current| current.max(tip_sequence));
         self.desired_tip_sequence = Some(desired);
-        self.desired_address = address.map(str::to_string);
+        if self.desired_address.as_deref() != address {
+            self.desired_address = address.map(str::to_string);
+        }
         if self.inflight_tip_sequence.is_some() {
             return;
         }

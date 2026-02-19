@@ -364,18 +364,18 @@ pub(super) fn process_submit_request(
                             "submit failed after {attempts} attempt(s): {error_context}"
                         ))
                     } else {
-                        match stale_submit_outcome(attempts, &error_context) {
-                            Some(outcome) => outcome,
-                            None => infer_stale_from_tip(
-                                template_height,
-                                current_tip_height,
-                            )
-                            .unwrap_or_else(|| {
-                                SubmitOutcome::TerminalError(format!(
-                                    "submit failed after {attempts} attempt(s): {error_context}"
-                                ))
-                            }),
-                        }
+                        // stale_submit_outcome was already checked above (line 334)
+                        // and error_context has not changed since, so skip the
+                        // redundant re-parse and fall through to tip inference.
+                        infer_stale_from_tip(
+                            template_height,
+                            current_tip_height,
+                        )
+                        .unwrap_or_else(|| {
+                            SubmitOutcome::TerminalError(format!(
+                                "submit failed after {attempts} attempt(s): {error_context}"
+                            ))
+                        })
                     },
                     attempts,
                     is_dev_fee,

@@ -2331,7 +2331,7 @@ fn backend_display_names(backends: &[BackendSlot]) -> BTreeMap<BackendInstanceId
 fn format_round_backend_telemetry(
     backends: &[BackendSlot],
     round_backend_telemetry: &BTreeMap<BackendInstanceId, BackendRoundTelemetry>,
-) -> String {
+) -> Option<String> {
     let backend_names = backend_names_by_id(backends);
     let mut parts = Vec::new();
     for (backend_id, telemetry) in round_backend_telemetry {
@@ -2393,9 +2393,9 @@ fn format_round_backend_telemetry(
     }
 
     if parts.is_empty() {
-        "none".to_string()
+        None
     } else {
-        parts.join(", ")
+        Some(parts.join(", "))
     }
 }
 

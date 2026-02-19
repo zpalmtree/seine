@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -377,15 +377,17 @@ const BACKEND_ASSIGN_BATCH_TIMEOUT_SCALE_MAX: u32 = 16;
 
 #[derive(Clone)]
 pub(super) struct BackendExecutor {
-    workers: Arc<Mutex<BTreeMap<BackendWorkerKey, BackendWorker>>>,
+    workers: Arc<RwLock<BTreeMap<BackendWorkerKey, BackendWorker>>>,
     quarantined: Arc<Mutex<BTreeSet<BackendWorkerKey>>>,
+    quarantine_cv: Arc<Condvar>,
 }
 
 impl BackendExecutor {
     pub(super) fn new() -> Self {
         Self {
-            workers: Arc::new(Mutex::new(BTreeMap::new())),
+            workers: Arc::new(RwLock::new(BTreeMap::new())),
             quarantined: Arc::new(Mutex::new(BTreeSet::new())),
+            quarantine_cv: Arc::new(Condvar::new()),
         }
     }
 
@@ -396,7 +398,7 @@ impl BackendExecutor {
     ) -> Option<Arc<BackendWorkerMetrics>> {
         let key = backend_worker_key(backend_id, backend_handle);
         self.workers
-            .lock()
+            .read()
             .ok()
             .and_then(|workers| workers.get(&key).map(|worker| Arc::clone(&worker.metrics)))
     }
@@ -418,7 +420,7 @@ impl BackendExecutor {
     {
         let backends = backends.into_iter();
         let (lower_bound, _) = backends.size_hint();
-        let worker_registry = self.workers.lock().ok();
+        let worker_registry = self.workers.read().ok();
         let mut telemetry = Vec::with_capacity(lower_bound);
 
         for slot in backends {
@@ -635,8 +637,8 @@ impl BackendExecutor {
     ) -> Option<BackendWorkerHandles> {
         let key = backend_worker_key(backend_id, backend_handle);
 
-        // Fast path: worker already exists -- lock, clone handles, drop lock.
-        if let Ok(registry) = self.workers.lock() {
+        // Fast path: worker already exists -- read lock, clone handles, drop lock.
+        if let Ok(registry) = self.workers.read() {
             if let Some(worker) = registry.get(&key) {
                 return Some(BackendWorkerHandles {
                     assignment_tx: worker.assignment_tx.clone(),
@@ -649,13 +651,13 @@ impl BackendExecutor {
             return None;
         }
 
-        // Slow path: spawn worker outside the lock to avoid holding the mutex
+        // Slow path: spawn worker outside the lock to avoid holding it
         // during thread creation.
         let queue_capacity = backend_worker_queue_capacity(backend_handle);
         let new_worker = spawn_backend_worker(backend_id, backend, key.backend_ptr, queue_capacity)?;
 
-        // Re-lock and insert; check again in case of a concurrent insert.
-        let mut registry = self.workers.lock().ok()?;
+        // Write-lock and insert; check again in case of a concurrent insert.
+        let mut registry = self.workers.write().ok()?;
         if let Some(worker) = registry.get(&key) {
             return Some(BackendWorkerHandles {
                 assignment_tx: worker.assignment_tx.clone(),
@@ -685,36 +687,30 @@ impl BackendExecutor {
     }
 
     pub(super) fn clear(&self) {
-        if let Ok(mut registry) = self.workers.lock() {
+        if let Ok(mut registry) = self.workers.write() {
             registry.clear();
         }
         if let Ok(mut inflight) = self.quarantined.lock() {
             inflight.clear();
         }
+        self.quarantine_cv.notify_all();
     }
 
     pub(super) fn wait_for_quarantine_drain(&self, timeout: Duration) -> bool {
-        let deadline = Instant::now()
-            .checked_add(timeout.max(Duration::from_millis(1)))
-            .unwrap_or_else(Instant::now);
-
-        loop {
-            let pending = self
-                .quarantined
-                .lock()
-                .map(|inflight| !inflight.is_empty())
-                .unwrap_or(false);
-            if !pending {
-                return true;
-            }
-            if Instant::now() >= deadline {
-                return false;
-            }
-            // Reduced from 10ms to 1ms to minimize latency between quarantine
-            // drain and the next round start. A Condvar-based approach would
-            // eliminate polling entirely but requires structural changes to the
-            // quarantine lifecycle.
-            thread::sleep(Duration::from_millis(1));
+        let timeout = timeout.max(Duration::from_millis(1));
+        let guard = match self.quarantined.lock() {
+            Ok(guard) => guard,
+            Err(_) => return false,
+        };
+        if guard.is_empty() {
+            return true;
+        }
+        match self
+            .quarantine_cv
+            .wait_timeout_while(guard, timeout, |inflight| !inflight.is_empty())
+        {
+            Ok((guard, _)) => guard.is_empty(),
+            Err(_) => false,
         }
     }
 
@@ -723,11 +719,15 @@ impl BackendExecutor {
             .iter()
             .map(|slot| backend_worker_key(slot.id, &slot.backend))
             .collect::<BTreeSet<_>>();
-        if let Ok(mut registry) = self.workers.lock() {
+        if let Ok(mut registry) = self.workers.write() {
             registry.retain(|backend_key, _| active_keys.contains(backend_key));
         }
         if let Ok(mut inflight) = self.quarantined.lock() {
+            let before = inflight.len();
             inflight.retain(|backend_key| active_keys.contains(backend_key));
+            if inflight.len() < before {
+                self.quarantine_cv.notify_all();
+            }
         }
     }
 
@@ -737,7 +737,7 @@ impl BackendExecutor {
         backend_handle: &Arc<dyn PowBackend>,
     ) {
         let key = backend_worker_key(backend_id, backend_handle);
-        if let Ok(mut registry) = self.workers.lock() {
+        if let Ok(mut registry) = self.workers.write() {
             registry.remove(&key);
         }
     }
@@ -770,11 +770,12 @@ impl BackendExecutor {
 
         let worker_tx = self
             .workers
-            .lock()
+            .write()
             .ok()
             .and_then(|mut registry| registry.remove(&key))
             .map(|worker| worker.control_tx);
         let quarantined = Arc::clone(&self.quarantined);
+        let quarantine_cv = Arc::clone(&self.quarantine_cv);
         let detached = Arc::clone(&backend);
         let backend_name = backend.name();
         let worker_tx_for_thread = worker_tx.clone();
@@ -785,6 +786,7 @@ impl BackendExecutor {
                 if let Ok(mut inflight) = quarantined.lock() {
                     inflight.remove(&key);
                 }
+                quarantine_cv.notify_all();
             })
             .is_err()
         {
@@ -796,6 +798,7 @@ impl BackendExecutor {
             if let Ok(mut inflight) = self.quarantined.lock() {
                 inflight.remove(&key);
             }
+            self.quarantine_cv.notify_all();
         }
     }
 

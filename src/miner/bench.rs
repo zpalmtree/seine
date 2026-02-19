@@ -824,7 +824,7 @@ fn run_worker_benchmark_inner(
                     backend_rates,
                 ),
             );
-            if telemetry_line != "none" {
+            if let Some(telemetry_line) = &telemetry_line {
                 info("BENCH", format!("warmup telemetry | {telemetry_line}"));
             }
         } else {
@@ -845,7 +845,7 @@ fn run_worker_benchmark_inner(
                     backend_rates,
                 ),
             );
-            if telemetry_line != "none" {
+            if let Some(telemetry_line) = &telemetry_line {
                 info("BENCH", format!("telemetry | {telemetry_line}"));
             }
 

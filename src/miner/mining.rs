@@ -52,7 +52,7 @@ use super::tui::TuiState;
 use super::ui::{error, info, mined, success, warn};
 use super::wallet::auto_load_wallet;
 use super::{
-    backend_display_names, cancel_backend_slots, collect_backend_hashes, distribute_work,
+    cancel_backend_slots, collect_backend_hashes, distribute_work,
     format_round_backend_telemetry, next_work_id, quiesce_backend_slots, total_lanes,
     BackendRoundTelemetry, BackendSlot, RuntimeBackendEventAction, RuntimeMode,
     TEMPLATE_RETRY_DELAY,
@@ -399,10 +399,16 @@ impl<'a> MiningControlPlane<'a> {
         stats: &Stats,
         tui: &mut Option<TuiDisplay>,
     ) -> Vec<SubmitResult> {
+        // First pass: flush backlog into the submit worker, then collect results.
         self.flush_submit_backlog();
         self.collect_submit_worker_results(stats, tui);
-        self.flush_submit_backlog();
-        self.collect_submit_worker_results(stats, tui);
+        // Second pass: collecting results may have freed submit worker capacity,
+        // allowing more backlog entries to flush. Only repeat if we actually
+        // have pending backlog entries that could benefit.
+        if !self.submit_backlog.is_empty() {
+            self.flush_submit_backlog();
+            self.collect_submit_worker_results(stats, tui);
+        }
         std::mem::take(&mut self.pending_submit_results)
     }
 
@@ -805,9 +811,9 @@ fn execute_round_phase(phase: ExecuteRoundPhase<'_, '_>) -> Result<()> {
             refresh_interval: cfg.refresh_interval,
         },
     );
-    let telemetry_line =
-        format_round_backend_telemetry(backends, &round_state.round_backend_telemetry);
-    if telemetry_line != "none" {
+    if let Some(telemetry_line) =
+        format_round_backend_telemetry(backends, &round_state.round_backend_telemetry)
+    {
         info("BACKEND", format!("telemetry | {telemetry_line}"));
     }
 
@@ -896,8 +902,8 @@ pub(super) fn run_mining_loop(
         "MINER",
         format!("dev fee: {:.1}%", crate::dev_fee::DEV_FEE_PERCENT),
     );
-    let recent_template_retention = recent_template_retention_for_backends(cfg, backends);
-    let recent_template_cache_size = recent_template_cache_size_for_backends(cfg, backends);
+    let mut recent_template_retention = recent_template_retention_for_backends(cfg, backends);
+    let mut recent_template_cache_size = recent_template_cache_size_for_backends(cfg, backends);
     let recent_template_cache_max_bytes = recent_template_cache_max_bytes();
     let mut recent_templates = VecDeque::<RecentTemplateEntry>::new();
     let mut recent_templates_bytes = 0usize;
@@ -971,6 +977,12 @@ pub(super) fn run_mining_loop(
                         );
                         backend_weights.insert(slot.id, slot.lanes.max(1) as f64);
                         backends.push(slot);
+                        // Recompute template retention to account for the new
+                        // backend's potentially different timeout profile.
+                        recent_template_retention =
+                            recent_template_retention_for_backends(cfg, backends);
+                        recent_template_cache_size =
+                            recent_template_cache_size_for_backends(cfg, backends);
                     }
                     Err(crossbeam_channel::TryRecvError::Empty) => break,
                     Err(crossbeam_channel::TryRecvError::Disconnected) => {
@@ -2087,10 +2099,17 @@ fn submit_deferred_solutions(
 }
 
 fn solution_backend_label(backends: &[BackendSlot], solution: &MiningSolution) -> String {
-    backend_display_names(backends)
-        .get(&solution.backend_id)
-        .cloned()
-        .unwrap_or_else(|| format!("{}#{}", solution.backend, solution.backend_id))
+    // Direct linear scan avoids building a full BTreeMap for a single lookup.
+    let mut type_counter = 0u64;
+    for slot in backends {
+        if slot.backend.name() == solution.backend {
+            type_counter += 1;
+        }
+        if slot.id == solution.backend_id {
+            return format!("{}#{type_counter}", solution.backend);
+        }
+    }
+    format!("{}#{}", solution.backend, solution.backend_id)
 }
 
 fn effective_backend_timeouts_for_template_cache(

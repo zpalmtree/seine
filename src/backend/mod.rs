@@ -251,7 +251,7 @@ pub struct WorkAssignment {
     pub nonce_chunk: NonceChunk,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct MiningSolution {
     pub epoch: u64,
     pub nonce: u64,

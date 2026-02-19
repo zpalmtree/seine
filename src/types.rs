@@ -53,12 +53,16 @@ pub fn decode_hex(input: &str, field_name: &str) -> Result<Vec<u8>> {
 }
 
 pub fn parse_target(target_hex: &str) -> Result<[u8; 32]> {
-    let bytes = decode_hex(target_hex, "target")?;
-    if bytes.len() != 32 {
-        bail!("target must be 32 bytes, got {}", bytes.len());
+    let clean = target_hex.trim();
+    if clean.len() != 64 {
+        bail!(
+            "target must be 32 bytes (64 hex chars), got {} chars",
+            clean.len()
+        );
     }
     let mut target = [0u8; 32];
-    target.copy_from_slice(&bytes);
+    hex::decode_to_slice(clean, &mut target)
+        .context("failed to decode target hex")?;
     Ok(target)
 }
 

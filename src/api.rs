@@ -192,9 +192,8 @@ impl ApiClient {
         let token = self
             .token
             .read()
-            .map_err(|_| anyhow!("API token lock poisoned"))?
-            .clone();
-        Ok(request.bearer_auth(token))
+            .map_err(|_| anyhow!("API token lock poisoned"))?;
+        Ok(request.bearer_auth(&*token))
     }
 }
 
