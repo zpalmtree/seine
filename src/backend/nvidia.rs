@@ -40,7 +40,7 @@ const KERNEL_THREADS: u32 = 32;
 const SEED_KERNEL_THREADS: u32 = 64;
 const EVAL_KERNEL_THREADS: u32 = 64;
 const DEFAULT_NVIDIA_MAX_RREGCOUNT: u32 = 240;
-const NVIDIA_AUTOTUNE_SCHEMA_VERSION: u32 = 8;
+const NVIDIA_AUTOTUNE_SCHEMA_VERSION: u32 = 9;
 const NVIDIA_CUBIN_CACHE_SCHEMA_VERSION: u32 = 1;
 const NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_AMPERE_PLUS: &[u32] =
     &[240, 224, 208, 192, 176, 160, 144, 128];
@@ -115,6 +115,7 @@ struct NvidiaAutotuneKey {
     m_cost_kib: u32,
     t_cost: u32,
     kernel_threads: u32,
+    hashes_per_launch_per_lane_cap: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1055,7 +1056,10 @@ impl NvidiaBackend {
             return forced;
         }
 
-        let key = build_nvidia_autotune_key(selected);
+        let key = build_nvidia_autotune_key(
+            selected,
+            self.tuning_options.hashes_per_launch_per_lane.max(1),
+        );
         if let Some(cached) = load_nvidia_cached_tuning(&self.autotune_config_path, &key) {
             let cached = self.apply_runtime_tuning_overrides(cached);
             if let Ok(mut slot) = self.kernel_tuning.write() {
@@ -2594,7 +2598,10 @@ fn probe_cuda_lane_memory(
     Ok(())
 }
 
-fn build_nvidia_autotune_key(selected: &NvidiaDeviceInfo) -> NvidiaAutotuneKey {
+fn build_nvidia_autotune_key(
+    selected: &NvidiaDeviceInfo,
+    hashes_per_launch_per_lane_cap: u32,
+) -> NvidiaAutotuneKey {
     let (m_cost_kib, t_cost) = pow_params()
         .map(|params| (params.m_cost(), params.t_cost()))
         .unwrap_or((0, 0));
@@ -2615,6 +2622,7 @@ fn build_nvidia_autotune_key(selected: &NvidiaDeviceInfo) -> NvidiaAutotuneKey {
         m_cost_kib,
         t_cost,
         kernel_threads: KERNEL_THREADS,
+        hashes_per_launch_per_lane_cap: hashes_per_launch_per_lane_cap.max(1),
     }
 }
 
@@ -2696,6 +2704,7 @@ fn nvidia_autotune_key_compatible(lhs: &NvidiaAutotuneKey, rhs: &NvidiaAutotuneK
         && lhs.m_cost_kib == rhs.m_cost_kib
         && lhs.t_cost == rhs.t_cost
         && lhs.kernel_threads == rhs.kernel_threads
+        && lhs.hashes_per_launch_per_lane_cap == rhs.hashes_per_launch_per_lane_cap
 }
 
 fn memory_budget_distance(lhs: u64, rhs: u64) -> u64 {
@@ -3027,7 +3036,7 @@ fn autotune_nvidia_kernel_tuning(
         )
     })?;
 
-    let key = build_nvidia_autotune_key(selected);
+    let key = build_nvidia_autotune_key(selected, hashes_per_launch_per_lane.max(1));
     let _ = persist_nvidia_autotune_record(
         cache_path,
         key,
@@ -3105,6 +3114,7 @@ mod tests {
             m_cost_kib: 2_097_152,
             t_cost: 1,
             kernel_threads: KERNEL_THREADS,
+            hashes_per_launch_per_lane_cap: 2,
         };
         persist_nvidia_autotune_record(
             &path,
@@ -3155,6 +3165,7 @@ mod tests {
             m_cost_kib: 2_097_152,
             t_cost: 1,
             kernel_threads: KERNEL_THREADS,
+            hashes_per_launch_per_lane_cap: 2,
         };
         let closer_key = NvidiaAutotuneKey {
             memory_budget_mib: 8_192,
@@ -3199,6 +3210,50 @@ mod tests {
         let loaded =
             load_nvidia_cached_tuning(&path, &base_key).expect("fallback tuning should be found");
         assert_eq!(loaded.max_rregcount, 208);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn nvidia_autotune_cache_does_not_cross_hash_depth_caps() {
+        let path = unique_temp_file("depth-cap");
+        let base_key = NvidiaAutotuneKey {
+            device_name: "NVIDIA GeForce RTX 3080".to_string(),
+            memory_total_mib: 10_240,
+            memory_budget_mib: 9_728,
+            lane_capacity_tier: 4,
+            compute_cap_major: 8,
+            compute_cap_minor: 6,
+            m_cost_kib: 2_097_152,
+            t_cost: 1,
+            kernel_threads: KERNEL_THREADS,
+            hashes_per_launch_per_lane_cap: 2,
+        };
+        let cap1_key = NvidiaAutotuneKey {
+            hashes_per_launch_per_lane_cap: 1,
+            ..base_key.clone()
+        };
+
+        persist_nvidia_autotune_record(
+            &path,
+            cap1_key,
+            NvidiaKernelTuning {
+                max_rregcount: 208,
+                block_loop_unroll: false,
+                hashes_per_launch_per_lane: 1,
+                max_lanes_hint: None,
+            },
+            1.0,
+            2,
+            2,
+        )
+        .expect("cap-1 record should persist");
+
+        let loaded = load_nvidia_cached_tuning(&path, &base_key);
+        assert!(
+            loaded.is_none(),
+            "cache lookup should not reuse tuning from a different launch-depth cap"
+        );
+
         let _ = fs::remove_file(path);
     }
 

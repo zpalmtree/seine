@@ -31,6 +31,7 @@ use anyhow::{anyhow, bail, Result};
 use blocknet_pow_spec::CPU_LANE_MEMORY_BYTES;
 use crossbeam_channel::{bounded, Receiver, Sender};
 use serde::{Deserialize, Serialize};
+use sysinfo::System;
 
 use crate::api::ApiClient;
 use crate::backend::cpu::{CpuBackend, CpuBackendTuning};
@@ -53,6 +54,7 @@ const TEMPLATE_RETRY_DELAY: Duration = Duration::from_secs(2);
 const MIN_EVENT_WAIT: Duration = Duration::from_millis(1);
 const BACKEND_EVENT_SOURCE_CAPACITY_MAX: usize = 256;
 const CPU_AUTOTUNE_RECORD_SCHEMA_VERSION: u32 = 4;
+const CPU_AUTOTUNE_RECORD_MAX_AGE_SECS: u64 = 14 * 24 * 60 * 60;
 const CPU_AUTOTUNE_LINEAR_SCAN_MAX_CANDIDATES: usize = 8;
 const CPU_AUTOTUNE_FINAL_SWEEP_RADIUS: usize = 2;
 const CPU_AUTOTUNE_TARGET_HASHES_PER_CANDIDATE: u64 = 30;
@@ -129,6 +131,15 @@ pub(super) struct BackendRoundTelemetry {
     control_execution_latency_max_micros: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default, Eq, PartialEq)]
+#[serde(default)]
+struct CpuAutotuneHostFingerprint {
+    cpu_brand: Option<String>,
+    logical_cores: usize,
+    physical_cores: Option<usize>,
+    total_memory_bytes: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CpuAutotuneRecord {
     schema_version: u32,
@@ -140,6 +151,8 @@ struct CpuAutotuneRecord {
     selected_threads: usize,
     measured_hps: f64,
     autotune_secs: u64,
+    #[serde(default)]
+    host_fingerprint: CpuAutotuneHostFingerprint,
     timestamp_unix_secs: u64,
 }
 
@@ -1252,8 +1265,37 @@ fn load_cpu_autotune_record(
         }
     };
 
-    if record.schema_version != CPU_AUTOTUNE_RECORD_SCHEMA_VERSION
-        || record.profile != cpu_profile_label(cfg.cpu_profile)
+    if record.schema_version != CPU_AUTOTUNE_RECORD_SCHEMA_VERSION {
+        return None;
+    }
+
+    let now_unix_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    let record_age_secs = now_unix_secs.saturating_sub(record.timestamp_unix_secs);
+    if record_age_secs > CPU_AUTOTUNE_RECORD_MAX_AGE_SECS {
+        info(
+            tag,
+            format!(
+                "cpu-autotune | cache expired (age={}h > {}h); re-running autotune",
+                record_age_secs / 3600,
+                CPU_AUTOTUNE_RECORD_MAX_AGE_SECS / 3600
+            ),
+        );
+        return None;
+    }
+
+    let current_host = cpu_autotune_host_fingerprint();
+    if record.host_fingerprint != current_host {
+        info(
+            tag,
+            "cpu-autotune | host fingerprint changed; re-running autotune",
+        );
+        return None;
+    }
+
+    if record.profile != cpu_profile_label(cfg.cpu_profile)
         || record.affinity != cpu_affinity_label(cfg.cpu_affinity)
         || record.cpu_instances != cpu_instance_count
         || record.autotune_secs != autotune_secs
@@ -1291,6 +1333,7 @@ fn persist_cpu_autotune_record(
         selected_threads,
         measured_hps,
         autotune_secs,
+        host_fingerprint: cpu_autotune_host_fingerprint(),
         timestamp_unix_secs: SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|duration| duration.as_secs())
@@ -1321,6 +1364,20 @@ fn cpu_affinity_label(affinity: crate::config::CpuAffinityMode) -> &'static str 
         crate::config::CpuAffinityMode::Off => "off",
         crate::config::CpuAffinityMode::Auto => "auto",
         crate::config::CpuAffinityMode::PcoreOnly => "pcore-only",
+    }
+}
+
+fn cpu_autotune_host_fingerprint() -> CpuAutotuneHostFingerprint {
+    let mut sys = System::new();
+    sys.refresh_memory();
+    sys.refresh_cpu_all();
+    CpuAutotuneHostFingerprint {
+        cpu_brand: sys.cpus().first().map(|cpu| cpu.brand().to_string()),
+        logical_cores: std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(0),
+        physical_cores: sys.physical_core_count(),
+        total_memory_bytes: sys.total_memory(),
     }
 }
 

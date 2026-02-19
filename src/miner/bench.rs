@@ -239,6 +239,10 @@ struct WorkerBenchmarkIdentity {
 type BackendEventAction = RuntimeBackendEventAction;
 const BENCH_REPORT_SCHEMA_VERSION: u32 = 10;
 const BENCH_REPORT_COMPAT_MIN_SCHEMA_VERSION: u32 = 2;
+const BENCH_SHORT_WINDOW_WARN_SECS: u64 = 10;
+const BENCH_FENCE_JITTER_WARN_SECS: f64 = 0.250;
+const BENCH_FENCE_JITTER_WARN_RATIO: f64 = 0.50;
+const BENCH_CONTROL_LATENCY_WARN_MICROS: u64 = 300_000;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum KernelBenchMode {
@@ -966,6 +970,7 @@ fn summarize_benchmark(cfg: &Config, mut report: BenchReport) -> Result<()> {
             report.late_hash_pct,
         ),
     );
+    emit_benchmark_diagnostics(cfg, &report);
 
     let mut baseline_delta_pct = None;
     if let Some(path) = &cfg.bench_baseline {
@@ -1029,6 +1034,79 @@ fn summarize_benchmark(cfg: &Config, mut report: BenchReport) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn emit_benchmark_diagnostics(cfg: &Config, report: &BenchReport) {
+    if report.runs.is_empty() {
+        return;
+    }
+
+    let mut fence_samples: Vec<f64> = report
+        .runs
+        .iter()
+        .map(|run| run.fence_secs.max(0.0))
+        .collect();
+    fence_samples.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let fence_avg = fence_samples.iter().sum::<f64>() / fence_samples.len() as f64;
+    let fence_median = median(&fence_samples);
+    let fence_min = *fence_samples.first().unwrap_or(&0.0);
+    let fence_max = *fence_samples.last().unwrap_or(&0.0);
+    let fence_spread = fence_max - fence_min;
+    info(
+        "BENCH",
+        format!(
+            "fence | avg={:.3}s median={:.3}s min={:.3}s max={:.3}s",
+            fence_avg, fence_median, fence_min, fence_max
+        ),
+    );
+
+    let worker_mode = matches!(cfg.bench_kind, BenchKind::Backend | BenchKind::EndToEnd);
+    let short_window = cfg.bench_secs < BENCH_SHORT_WINDOW_WARN_SECS;
+    let jitter_warn = fence_spread >= BENCH_FENCE_JITTER_WARN_SECS
+        || (fence_avg > 0.0 && (fence_spread / fence_avg) >= BENCH_FENCE_JITTER_WARN_RATIO);
+    if worker_mode && (short_window || jitter_warn) {
+        warn(
+            "BENCH",
+            format!(
+                "short-window/jitter warning | bench-secs={} fence_spread={:.3}s; prefer --bench-secs >= {} and --bench-warmup-rounds 1 for stable A/B comparisons",
+                cfg.bench_secs,
+                fence_spread,
+                BENCH_SHORT_WINDOW_WARN_SECS
+            ),
+        );
+    }
+
+    let mut control_enqueue_p95_max = 0u64;
+    let mut control_execution_p95_max = 0u64;
+    let mut has_nvidia_backend = false;
+    for run in &report.runs {
+        for backend_run in &run.backend_runs {
+            has_nvidia_backend |= backend_run.backend == "nvidia";
+            control_enqueue_p95_max =
+                control_enqueue_p95_max.max(backend_run.control_enqueue_latency_p95_micros);
+            control_execution_p95_max =
+                control_execution_p95_max.max(backend_run.control_execution_latency_p95_micros);
+        }
+    }
+    if control_enqueue_p95_max > 0 || control_execution_p95_max > 0 {
+        info(
+            "BENCH",
+            format!(
+                "control-latency | enqueue_p95_max={}ms execution_p95_max={}ms",
+                control_enqueue_p95_max / 1_000,
+                control_execution_p95_max / 1_000
+            ),
+        );
+    }
+    if has_nvidia_backend
+        && (control_enqueue_p95_max >= BENCH_CONTROL_LATENCY_WARN_MICROS
+            || control_execution_p95_max >= BENCH_CONTROL_LATENCY_WARN_MICROS)
+    {
+        warn(
+            "BENCH",
+            "control-latency warning | high control latency can inflate fence overhead; consider lower launch depth (for example --nvidia-hashes-per-launch-per-lane 1 or 2) while keeping adaptive depth enabled",
+        );
+    }
 }
 
 fn baseline_compatibility_issues(
