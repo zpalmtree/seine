@@ -58,11 +58,18 @@ impl FixedArgon2id {
         let isa = {
             #[cfg(target_arch = "x86_64")]
             {
+                #[cfg(feature = "avx512")]
                 if std::arch::is_x86_feature_detected!("avx512f")
                     && std::arch::is_x86_feature_detected!("avx512vl")
                 {
                     ISA_AVX512
                 } else if std::arch::is_x86_feature_detected!("avx2") {
+                    ISA_AVX2
+                } else {
+                    ISA_SCALAR
+                }
+                #[cfg(not(feature = "avx512"))]
+                if std::arch::is_x86_feature_detected!("avx2") {
                     ISA_AVX2
                 } else {
                     ISA_SCALAR
@@ -114,6 +121,7 @@ impl FixedArgon2id {
         initialize_lane_blocks(memory_blocks, initial_hash)?;
 
         match self.isa {
+            #[cfg(feature = "avx512")]
             ISA_AVX512 => self.fill_blocks::<ISA_AVX512, true, false>(memory_blocks),
             ISA_AVX2 => self.fill_blocks::<ISA_AVX2, true, false>(memory_blocks),
             ISA_NEON => self.fill_blocks::<ISA_NEON, false, true>(memory_blocks),
@@ -340,6 +348,7 @@ fn fill_block_from_refs_mid_prefetch<const ISA: u8>(
         let prev = &*base.add(prev_index);
         let refb = &*base.add(ref_index);
         let dst = &mut *base.add(cur_index);
+        #[cfg(feature = "avx512")]
         if ISA == ISA_AVX512 {
             compress_avx512_into_mid_prefetch(
                 prev,
@@ -349,6 +358,16 @@ fn fill_block_from_refs_mid_prefetch<const ISA: u8>(
                 base as *const PowBlock,
             );
         } else {
+            compress_avx2_into_mid_prefetch(
+                prev,
+                refb,
+                dst,
+                next_ref_area_size,
+                base as *const PowBlock,
+            );
+        }
+        #[cfg(not(feature = "avx512"))]
+        {
             compress_avx2_into_mid_prefetch(
                 prev,
                 refb,
@@ -525,6 +544,7 @@ fn update_address_block<const ISA: u8>(
 fn compress<const ISA: u8>(rhs: &PowBlock, lhs: &PowBlock) -> PowBlock {
     #[cfg(target_arch = "x86_64")]
     {
+        #[cfg(feature = "avx512")]
         if ISA == ISA_AVX512 {
             unsafe {
                 return compress_avx512(rhs, lhs);
@@ -556,6 +576,7 @@ fn compress<const ISA: u8>(rhs: &PowBlock, lhs: &PowBlock) -> PowBlock {
 fn compress_into<const ISA: u8>(rhs: &PowBlock, lhs: &PowBlock, dst: &mut PowBlock) {
     #[cfg(target_arch = "x86_64")]
     {
+        #[cfg(feature = "avx512")]
         if ISA == ISA_AVX512 {
             unsafe {
                 compress_avx512_into(rhs, lhs, dst);
@@ -633,7 +654,7 @@ unsafe fn avx2_rotr_64_63(value: std::arch::x86_64::__m256i) -> std::arch::x86_6
     )
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
 #[inline(always)]
 unsafe fn avx512_blamka(
     a: std::arch::x86_64::__m512i,
@@ -651,7 +672,7 @@ unsafe fn avx512_blamka(
 /// Diagonal lane permutation uses `_mm512_permutexvar_epi64` (single VPERMQ),
 /// and rotations use `_mm512_ror_epi64` (single VPRORQ), both strictly better
 /// than the multi-instruction AVX2 equivalents.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
 #[inline(always)]
 unsafe fn avx512_round(
     a: &mut std::arch::x86_64::__m512i,
@@ -1090,7 +1111,7 @@ unsafe fn compress_avx2_into_mid_prefetch(
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
 #[target_feature(enable = "avx512f,avx512vl")]
 unsafe fn compress_avx512(rhs: &PowBlock, lhs: &PowBlock) -> PowBlock {
     let mut dst = PowBlock::default();
@@ -1104,7 +1125,7 @@ unsafe fn compress_avx512(rhs: &PowBlock, lhs: &PowBlock) -> PowBlock {
 /// # Safety
 /// * Requires AVX-512F + AVX-512VL.
 /// * `dst` must not alias `rhs` or `lhs`.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
 #[target_feature(enable = "avx512f,avx512vl")]
 unsafe fn compress_avx512_into(rhs: &PowBlock, lhs: &PowBlock, dst: &mut PowBlock) {
     use std::arch::x86_64::{
@@ -1290,7 +1311,7 @@ unsafe fn compress_avx512_into(rhs: &PowBlock, lhs: &PowBlock, dst: &mut PowBloc
 /// * Requires AVX-512F + AVX-512VL.
 /// * `dst` must not alias `rhs` or `lhs`.
 /// * `memory_blocks_base` must point to a valid PowBlock array.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "avx512"))]
 #[target_feature(enable = "avx512f,avx512vl")]
 unsafe fn compress_avx512_into_mid_prefetch(
     rhs: &PowBlock,
