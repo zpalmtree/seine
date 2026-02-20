@@ -651,39 +651,50 @@ fn draw_log(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
     // Fixed prefix: "HHHHHHs LLLL TTTTTTTT " = 8 + 6 + 10 + 1 = 25 chars
     let prefix_width = 25;
     let msg_width = inner_width.saturating_sub(prefix_width);
-    let start = state.log_entries.len().saturating_sub(inner_height);
-    let visible: Vec<Line> = state
-        .log_entries
-        .iter()
-        .skip(start)
-        .map(|entry| {
-            let time = Span::styled(format!("{:>6.0}s ", entry.elapsed_secs), DIM_STYLE);
-            let level = Span::styled(
-                format!(" {} ", entry.level.label()),
-                Style::default()
-                    .fg(entry.level.label_fg())
-                    .bg(entry.level.label_bg())
-                    .add_modifier(Modifier::BOLD),
-            );
-            let tag = Span::styled(
-                format!(" {:<8} ", entry.tag),
-                Style::default()
-                    .fg(Color::Rgb(200, 200, 200))
-                    .bg(Color::Rgb(40, 40, 40))
-                    .add_modifier(Modifier::BOLD),
-            );
-            let body = truncate_str(&entry.message, msg_width);
-            let msg_style = if matches!(entry.level, LogLevel::Mined) {
-                Style::default()
-                    .fg(entry.level.color())
-                    .add_modifier(Modifier::BOLD)
+    // Build wrapped lines from the end so recent entries are always visible.
+    let mut all_lines: Vec<Line> = Vec::new();
+    for entry in state.log_entries.iter() {
+        let time = Span::styled(format!("{:>6.0}s ", entry.elapsed_secs), DIM_STYLE);
+        let level = Span::styled(
+            format!(" {} ", entry.level.label()),
+            Style::default()
+                .fg(entry.level.label_fg())
+                .bg(entry.level.label_bg())
+                .add_modifier(Modifier::BOLD),
+        );
+        let tag = Span::styled(
+            format!(" {:<8} ", entry.tag),
+            Style::default()
+                .fg(Color::Rgb(200, 200, 200))
+                .bg(Color::Rgb(40, 40, 40))
+                .add_modifier(Modifier::BOLD),
+        );
+        let msg_style = if matches!(entry.level, LogLevel::Mined) {
+            Style::default()
+                .fg(entry.level.color())
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(entry.level.color())
+        };
+        let chunks = wrap_str(&entry.message, msg_width);
+        for (i, chunk) in chunks.iter().enumerate() {
+            if i == 0 {
+                let msg = Span::styled(format!(" {chunk}"), msg_style);
+                all_lines.push(Line::from(vec![
+                    time.clone(),
+                    level.clone(),
+                    tag.clone(),
+                    msg,
+                ]));
             } else {
-                Style::default().fg(entry.level.color())
-            };
-            let msg = Span::styled(format!(" {body}"), msg_style);
-            Line::from(vec![time, level, tag, msg])
-        })
-        .collect();
+                let pad = " ".repeat(prefix_width);
+                let msg = Span::styled(format!("{pad} {chunk}"), msg_style);
+                all_lines.push(Line::from(vec![msg]));
+            }
+        }
+    }
+    let start = all_lines.len().saturating_sub(inner_height);
+    let visible: Vec<Line> = all_lines.into_iter().skip(start).collect();
 
     let log = Paragraph::new(visible).block(log_block);
     frame.render_widget(log, area);
@@ -710,13 +721,22 @@ fn device_line(name: &str, current: &str, average: &str) -> Line<'static> {
     ])
 }
 
-fn truncate_str(s: &str, max: usize) -> String {
-    if max <= 3 || s.chars().count() <= max {
-        return s.to_string();
+fn wrap_str(s: &str, max: usize) -> Vec<String> {
+    if max == 0 {
+        return vec![s.to_string()];
     }
-    let mut out: String = s.chars().take(max - 1).collect();
-    out.push('…');
-    out
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max {
+        return vec![s.to_string()];
+    }
+    let mut lines = Vec::new();
+    let mut pos = 0;
+    while pos < chars.len() {
+        let end = (pos + max).min(chars.len());
+        lines.push(chars[pos..end].iter().collect());
+        pos = end;
+    }
+    lines
 }
 
 fn pending_nvidia_status_label(elapsed: Duration) -> &'static str {
