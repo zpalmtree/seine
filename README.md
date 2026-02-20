@@ -6,6 +6,16 @@ External miner for Blocknet with pluggable CPU and NVIDIA GPU backends.
 
 ## Quick Start
 
+### 1. Start the Blocknet daemon
+
+The miner needs a running Blocknet daemon with the API enabled:
+
+```bash
+./blocknet --daemon --api 127.0.0.1:8332
+```
+
+### 2. Run the miner
+
 **Option A — Pre-built binary** (from [Releases](../../releases)):
 
 ```bash
