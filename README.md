@@ -6,15 +6,27 @@ External miner for Blocknet with pluggable CPU and NVIDIA GPU backends.
 
 ## Quick Start
 
-### 1. Start the Blocknet daemon
+### 1. Sync the Blocknet daemon
 
-The miner needs a running Blocknet daemon with the API enabled:
+If this is your first time running the daemon, start it without any flags to create a wallet and sync the blockchain:
+
+```bash
+./blocknet
+```
+
+You will be prompted to set a wallet password. Once the daemon starts, wait for it to fully sync — you'll see `[sync] progress` messages reach 100%:
+
+![Blocknet initial sync](screenshot-sync.png)
+
+When sync is complete, type `exit` to shut down the daemon.
+
+### 2. Restart the daemon with the API enabled
 
 ```bash
 ./blocknet --daemon --api 127.0.0.1:8332
 ```
 
-### 2. Run the miner
+### 3. Run the miner
 
 **Option A — Pre-built binary** (from [Releases](../../releases)):
 
