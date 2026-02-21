@@ -529,6 +529,7 @@ fn handle_submit_result(result: &SubmitResult, stats: &Stats, tui: &mut Option<T
     match &result.outcome {
         SubmitOutcome::Response(resp) => {
             if resp.accepted {
+                // Daemon only returns accepted=true after full block validation and chain insert.
                 stats.bump_accepted();
                 if let Some(display) = tui.as_mut() {
                     display.mark_block_found();
@@ -567,6 +568,7 @@ fn handle_submit_result(result: &SubmitResult, stats: &Stats, tui: &mut Option<T
             expected_height,
             got_height,
         } => {
+            stats.bump_stale_shares();
             warn(
                 "SUBMIT",
                 format!(
@@ -576,6 +578,7 @@ fn handle_submit_result(result: &SubmitResult, stats: &Stats, tui: &mut Option<T
             );
         }
         SubmitOutcome::StaleTipError { reason } => {
+            stats.bump_stale_shares();
             warn(
                 "SUBMIT",
                 format!("stale solution: template no longer matches current tip ({reason})"),
@@ -583,6 +586,7 @@ fn handle_submit_result(result: &SubmitResult, stats: &Stats, tui: &mut Option<T
         }
         SubmitOutcome::RetryableError(message) => {
             if let Some(summary) = stale_submit_summary(message) {
+                stats.bump_stale_shares();
                 warn("SUBMIT", format!("stale solution: {summary}"));
             } else {
                 warn(
@@ -596,6 +600,7 @@ fn handle_submit_result(result: &SubmitResult, stats: &Stats, tui: &mut Option<T
         }
         SubmitOutcome::TerminalError(message) => {
             if let Some(summary) = stale_submit_summary(message) {
+                stats.bump_stale_shares();
                 warn("SUBMIT", format!("stale solution: {summary}"));
             } else {
                 error(
@@ -800,6 +805,32 @@ mod tests {
         handle_submit_result(&result, &stats, &mut tui);
 
         let snapshot = stats.snapshot();
+        assert_eq!(snapshot.accepted, 0);
+    }
+
+    #[test]
+    fn stale_tip_result_increments_stale_share_count() {
+        let stats = Stats::new();
+        let mut tui = None;
+        let result = SubmitResult {
+            solution: crate::backend::MiningSolution {
+                epoch: 1,
+                nonce: 9,
+                backend_id: 1,
+                backend: "cpu",
+            },
+            template_height: Some(10),
+            outcome: SubmitOutcome::StaleTipError {
+                reason: "duplicate-or-stale",
+            },
+            attempts: 1,
+            is_dev_fee: false,
+        };
+
+        handle_submit_result(&result, &stats, &mut tui);
+
+        let snapshot = stats.snapshot();
+        assert_eq!(snapshot.stale_shares, 1);
         assert_eq!(snapshot.accepted, 0);
     }
 }

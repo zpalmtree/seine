@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::{anyhow, bail, Context, Result};
 use reqwest::blocking::{Client, RequestBuilder, Response};
 use reqwest::StatusCode;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::types::{BlockTemplateResponse, SubmitBlockResponse};
@@ -19,6 +19,17 @@ struct CompactSubmitPayload<'a> {
 #[derive(Debug, Serialize)]
 struct WalletLoadPayload<'a> {
     password: &'a str,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WalletBalanceResponse {
+    pub spendable: u64,
+    pub pending: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WalletAddressResponse {
+    pub address: String,
 }
 
 #[derive(Debug)]
@@ -172,6 +183,26 @@ impl ApiClient {
 
         let _: Value = decode_json_response(resp, "wallet/load")?;
         Ok(())
+    }
+
+    pub fn get_wallet_balance(&self) -> Result<WalletBalanceResponse> {
+        let url = format!("{}/api/wallet/balance", self.base_url);
+        let resp = self
+            .with_auth(self.json_client.get(url))?
+            .send()
+            .context("request to wallet/balance endpoint failed")?;
+
+        decode_json_response(resp, "wallet/balance")
+    }
+
+    pub fn get_wallet_address(&self) -> Result<WalletAddressResponse> {
+        let url = format!("{}/api/wallet/address", self.base_url);
+        let resp = self
+            .with_auth(self.json_client.get(url))?
+            .send()
+            .context("request to wallet/address endpoint failed")?;
+
+        decode_json_response(resp, "wallet/address")
     }
 
     pub fn open_events_stream(&self) -> Result<Response> {
@@ -435,6 +466,50 @@ mod tests {
         client
             .load_wallet("secret")
             .expect("wallet load should succeed");
+        mock.assert();
+    }
+
+    #[test]
+    fn get_wallet_balance_success() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/api/wallet/balance")
+                .header("authorization", "Bearer testtoken");
+            then.status(200).json_body(json!({
+                "spendable": 1250000000u64,
+                "pending": 72325093035u64
+            }));
+        });
+
+        let client = test_client(&server);
+        let resp = client
+            .get_wallet_balance()
+            .expect("wallet balance request should succeed");
+        assert_eq!(resp.spendable, 1_250_000_000);
+        assert_eq!(resp.pending, 72_325_093_035);
+        mock.assert();
+    }
+
+    #[test]
+    fn get_wallet_address_success() {
+        let server = MockServer::start();
+        let expected = "B7YG69LBa6UM6wA8hYhYqNw2Toj7yMV8zQxC4Lcpj6v6QABz8c5VhM2r8K4dRrTfW9XQW3YfT4bQ5d4jG7Y9WWf3WvQ4k1";
+        let mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/api/wallet/address")
+                .header("authorization", "Bearer testtoken");
+            then.status(200).json_body(json!({
+                "address": expected,
+                "view_only": false
+            }));
+        });
+
+        let client = test_client(&server);
+        let resp = client
+            .get_wallet_address()
+            .expect("wallet address request should succeed");
+        assert_eq!(resp.address, expected);
         mock.assert();
     }
 

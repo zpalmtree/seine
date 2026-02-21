@@ -18,8 +18,8 @@ use crate::types::{
 
 use super::hash_poll::build_backend_poll_state;
 use super::mining_tui::{
-    init_tui_display, render_tui_now, set_tui_pending_nvidia, set_tui_state_label, update_tui,
-    RoundUiView, TuiDisplay,
+    init_tui_display, render_tui_now, set_tui_pending_nvidia, set_tui_state_label,
+    set_tui_wallet_overview, update_tui, RoundUiView, TuiDisplay,
 };
 use super::round_control::{redistribute_for_topology_change, TopologyRedistributionOptions};
 use super::runtime::{
@@ -67,6 +67,8 @@ const SUBMIT_BACKLOG_BACKPRESSURE_LOG_INTERVAL: Duration = Duration::from_secs(5
 const NVIDIA_INIT_PROGRESS_LOG_INTERVAL: Duration = Duration::from_secs(20);
 const NVIDIA_INIT_LONG_WAIT_HINT_AFTER: Duration = Duration::from_secs(120);
 const DEFERRED_BACKEND_ACTIVATION_ROUND_CAP: Duration = Duration::from_secs(5);
+const WALLET_TUI_REFRESH_INTERVAL: Duration = Duration::from_secs(10);
+const ATOMIC_UNITS_PER_BNT: u64 = 100_000_000;
 
 #[derive(Default)]
 struct RetryTracker {
@@ -108,6 +110,12 @@ impl RetryTracker {
     }
 }
 
+struct WalletTuiSnapshot {
+    address: String,
+    pending: String,
+    unlocked: String,
+}
+
 struct MiningControlPlane<'a> {
     client: &'a ApiClient,
     cfg: &'a Config,
@@ -122,6 +130,7 @@ struct MiningControlPlane<'a> {
     submit_backlog_last_saturation_log: Option<Instant>,
     next_submit_request_id: u64,
     dev_fee_address: Option<&'static str>,
+    next_wallet_tui_refresh_at: Instant,
 }
 
 struct RoundLoopState {
@@ -176,6 +185,7 @@ impl<'a> MiningControlPlane<'a> {
             tip_signal,
             current_tip_height,
             dev_fee_address: None,
+            next_wallet_tui_refresh_at: Instant::now(),
         }
     }
 
@@ -364,6 +374,39 @@ impl<'a> MiningControlPlane<'a> {
 
     fn set_dev_fee_address(&mut self, address: Option<&'static str>) {
         self.dev_fee_address = address;
+    }
+
+    fn maybe_refresh_tui_wallet_overview(&mut self, tui: &mut Option<TuiDisplay>, force: bool) {
+        if tui.is_none() {
+            return;
+        }
+
+        let now = Instant::now();
+        if !force && now < self.next_wallet_tui_refresh_at {
+            return;
+        }
+        self.next_wallet_tui_refresh_at = now + WALLET_TUI_REFRESH_INTERVAL;
+
+        let Some(snapshot) = self.fetch_wallet_tui_snapshot() else {
+            return;
+        };
+
+        set_tui_wallet_overview(
+            tui,
+            &snapshot.address,
+            &snapshot.pending,
+            &snapshot.unlocked,
+        );
+    }
+
+    fn fetch_wallet_tui_snapshot(&self) -> Option<WalletTuiSnapshot> {
+        let address = self.client.get_wallet_address().ok()?.address;
+        let balance = self.client.get_wallet_balance().ok()?;
+        Some(WalletTuiSnapshot {
+            address,
+            pending: format_atomic_units_bnt(balance.pending),
+            unlocked: format_atomic_units_bnt(balance.spendable),
+        })
     }
 
     fn submit_template(
@@ -944,6 +987,7 @@ pub(super) fn run_mining_loop(
             return Ok(());
         }
     };
+    control_plane.maybe_refresh_tui_wallet_overview(&mut tui, true);
     success("MINER", "connected and mining");
     info(
         "MINER",
@@ -1016,6 +1060,7 @@ pub(super) fn run_mining_loop(
                 &mut last_nvidia_pending_log_at,
             );
         }
+        control_plane.maybe_refresh_tui_wallet_overview(&mut tui, false);
 
         let mode_changed = dev_fee_tracker.begin_round();
         control_plane.set_dev_fee_address(dev_fee_tracker.address());
@@ -1276,6 +1321,43 @@ fn maybe_log_pending_nvidia_progress(
         );
     }
     *last_log_at = Some(now);
+}
+
+fn format_atomic_units_bnt(amount_atomic: u64) -> String {
+    let whole = amount_atomic / ATOMIC_UNITS_PER_BNT;
+    let fractional = amount_atomic % ATOMIC_UNITS_PER_BNT;
+    let whole = format_u64_with_commas(whole);
+    if fractional == 0 {
+        return format!("{whole} BNT");
+    }
+
+    let mut frac = format!("{fractional:08}");
+    while frac.ends_with('0') {
+        frac.pop();
+    }
+    format!("{whole}.{frac} BNT")
+}
+
+fn format_u64_with_commas(value: u64) -> String {
+    if value < 1_000 {
+        return value.to_string();
+    }
+
+    let mut digits = value.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    while digits.len() > 3 {
+        let chunk = digits.split_off(digits.len() - 3);
+        if out.is_empty() {
+            out = chunk;
+        } else {
+            out = format!("{chunk},{out}");
+        }
+    }
+    if out.is_empty() {
+        digits
+    } else {
+        format!("{digits},{out}")
+    }
 }
 
 fn round_duration_for_deferred_backend(cfg: &Config, deferred_remaining: u64) -> Duration {
@@ -3253,5 +3335,20 @@ mod tests {
         assert_eq!(compact_hash("abcdef12"), "abcdef12");
         assert_eq!(compact_hash("abc"), "abc");
         assert_eq!(compact_hash("a1b2c3d4e5f6"), "a1b2...e5f6");
+    }
+
+    #[test]
+    fn format_atomic_units_bnt_trims_trailing_fraction_zeros() {
+        assert_eq!(format_atomic_units_bnt(0), "0 BNT");
+        assert_eq!(format_atomic_units_bnt(100_000_000), "1 BNT");
+        assert_eq!(format_atomic_units_bnt(1_250_000_000), "12.5 BNT");
+        assert_eq!(format_atomic_units_bnt(1_234_567_890), "12.3456789 BNT");
+    }
+
+    #[test]
+    fn format_u64_with_commas_groups_thousands() {
+        assert_eq!(format_u64_with_commas(7), "7");
+        assert_eq!(format_u64_with_commas(1_234), "1,234");
+        assert_eq!(format_u64_with_commas(12_345_678), "12,345,678");
     }
 }

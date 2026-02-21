@@ -9,6 +9,7 @@ pub struct StatsSnapshot {
     pub hashes: u64,
     pub templates: u64,
     pub submitted: u64,
+    pub stale_shares: u64,
     pub accepted: u64,
     pub deferred: u64,
     pub dropped: u64,
@@ -20,6 +21,7 @@ pub struct Stats {
     hashes: AtomicU64,
     templates: AtomicU64,
     submitted: AtomicU64,
+    stale_shares: AtomicU64,
     accepted: AtomicU64,
     deferred: AtomicU64,
     dropped: AtomicU64,
@@ -32,6 +34,7 @@ impl Stats {
             hashes: AtomicU64::new(0),
             templates: AtomicU64::new(0),
             submitted: AtomicU64::new(0),
+            stale_shares: AtomicU64::new(0),
             accepted: AtomicU64::new(0),
             deferred: AtomicU64::new(0),
             dropped: AtomicU64::new(0),
@@ -50,6 +53,10 @@ impl Stats {
 
     pub fn bump_submitted(&self) {
         self.submitted.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn bump_stale_shares(&self) {
+        self.stale_shares.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn bump_accepted(&self) {
@@ -73,6 +80,7 @@ impl Stats {
         let hashes = self.hashes.load(Ordering::Relaxed);
         let templates = self.templates.load(Ordering::Relaxed);
         let submitted = self.submitted.load(Ordering::Relaxed);
+        let stale_shares = self.stale_shares.load(Ordering::Relaxed);
         let accepted = self.accepted.load(Ordering::Relaxed);
         let deferred = self.deferred.load(Ordering::Relaxed);
         let dropped = self.dropped.load(Ordering::Relaxed);
@@ -83,6 +91,7 @@ impl Stats {
             hashes,
             templates,
             submitted,
+            stale_shares,
             accepted,
             deferred,
             dropped,
@@ -96,12 +105,13 @@ impl Stats {
         info(
             "STATS",
             format!(
-                "elapsed={:.1}s hashes={} rate={} templates={} submitted={} accepted={} deferred={} dropped={}",
+                "elapsed={:.1}s hashes={} rate={} templates={} submitted={} stale={} accepted={} deferred={} dropped={}",
                 snapshot.elapsed_secs,
                 snapshot.hashes,
                 format_hashrate(snapshot.hps),
                 snapshot.templates,
                 snapshot.submitted,
+                snapshot.stale_shares,
                 snapshot.accepted,
                 snapshot.deferred,
                 snapshot.dropped,

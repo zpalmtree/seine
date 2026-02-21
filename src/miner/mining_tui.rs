@@ -121,6 +121,7 @@ impl TuiDisplay {
             s.total_hashes = snapshot.hashes;
             s.templates = snapshot.templates;
             s.submitted = snapshot.submitted;
+            s.stale_shares = snapshot.stale_shares;
             s.accepted = snapshot.accepted;
             s.device_hashrates = device_hashrates;
             s.backends_desc = backend_descriptions(view.backends);
@@ -224,6 +225,22 @@ pub(super) fn set_tui_pending_nvidia(tui: &mut Option<TuiDisplay>, count: u64) {
             }
             s.pending_nvidia = count;
         }
+    }
+}
+
+pub(super) fn set_tui_wallet_overview(
+    tui: &mut Option<TuiDisplay>,
+    address: &str,
+    pending: &str,
+    unlocked: &str,
+) {
+    if let Some(display) = tui.as_mut() {
+        if let Ok(mut s) = display.state.lock() {
+            s.wallet_address = address.to_string();
+            s.wallet_pending = pending.to_string();
+            s.wallet_unlocked = unlocked.to_string();
+        }
+        display.request_render();
     }
 }
 

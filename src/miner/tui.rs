@@ -96,7 +96,11 @@ pub struct TuiStateInner {
     pub total_hashes: u64,
     pub templates: u64,
     pub submitted: u64,
+    pub stale_shares: u64,
     pub accepted: u64,
+    pub wallet_address: String,
+    pub wallet_pending: String,
+    pub wallet_unlocked: String,
     pub device_hashrates: Vec<DeviceHashrate>,
     pub pending_nvidia: u64,
     pub pending_nvidia_since: Option<Instant>,
@@ -133,7 +137,11 @@ impl TuiStateInner {
             total_hashes: 0,
             templates: 0,
             submitted: 0,
+            stale_shares: 0,
             accepted: 0,
+            wallet_address: "---".to_string(),
+            wallet_pending: "---".to_string(),
+            wallet_unlocked: "---".to_string(),
             device_hashrates: Vec::new(),
             pending_nvidia: 0,
             pending_nvidia_since: None,
@@ -247,7 +255,7 @@ const DIM_STYLE: Style = Style::new().fg(Color::Rgb(90, 90, 90));
 fn draw_dashboard(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
     let wide = area.width >= 80;
 
-    let stats_height: u16 = if wide { 6 } else { 14 };
+    let stats_height: u16 = if wide { 5 } else { 14 };
     let active_device_count = state.device_hashrates.len() as u16;
     let pending_count = state.pending_nvidia as u16;
     let active_rows = if wide {
@@ -258,7 +266,7 @@ fn draw_dashboard(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner)
     // Pending devices are always 1-per-line (not paired in wide mode)
     let device_rows = active_rows + pending_count;
     let devices_height: u16 = if device_rows > 0 { 2 + device_rows } else { 0 };
-    let config_height: u16 = 4;
+    let config_height: u16 = if wide { 4 } else { 8 };
     let header_height: u16 = 4;
 
     let chunks = Layout::default()
@@ -456,11 +464,9 @@ fn draw_stats_wide(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner
         "daemon-unavailable" => Color::Rgb(210, 120, 100),
         _ => Color::Rgb(180, 180, 180),
     };
-    let epoch_str = state.epoch.to_string();
     let network_lines = vec![
         kv_line("Height", &state.height),
         kv_line("Difficulty", &state.difficulty),
-        kv_line("Epoch", &epoch_str),
         Line::from(vec![
             Span::styled("  State      ".to_string(), LABEL_STYLE),
             Span::styled(
@@ -480,12 +486,12 @@ fn draw_stats_wide(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner
 
     // Mining panel
     let submitted_str = format_u64(state.submitted);
+    let stale_shares_str = format_u64(state.stale_shares);
     let accepted_str = format_u64(state.accepted);
-    let templates_str = format_u64(state.templates);
     let mining_lines = vec![
         kv_line("Submitted", &submitted_str),
+        kv_line("Stale", &stale_shares_str),
         kv_line("Accepted", &accepted_str),
-        kv_line("Templates", &templates_str),
     ];
     let mining_block = Block::default()
         .title(Span::styled(" MINING ", TITLE_STYLE))
@@ -500,8 +506,8 @@ fn draw_stats_narrow(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInn
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(5),
-            Constraint::Length(5),
             Constraint::Length(4),
+            Constraint::Length(5),
         ])
         .split(area);
 
@@ -522,11 +528,9 @@ fn draw_stats_narrow(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInn
     );
 
     // Network
-    let epoch_str = state.epoch.to_string();
     let network_lines = vec![
         kv_line("Height", &state.height),
         kv_line("Difficulty", &state.difficulty),
-        kv_line("Epoch", &epoch_str),
     ];
     let network_block = Block::default()
         .title(Span::styled(" NETWORK ", TITLE_STYLE))
@@ -536,9 +540,11 @@ fn draw_stats_narrow(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInn
 
     // Mining
     let submitted_str = format_u64(state.submitted);
+    let stale_shares_str = format_u64(state.stale_shares);
     let accepted_str = format_u64(state.accepted);
     let mining_lines = vec![
         kv_line("Submitted", &submitted_str),
+        kv_line("Stale", &stale_shares_str),
         kv_line("Accepted", &accepted_str),
     ];
     let mining_block = Block::default()
@@ -615,22 +621,34 @@ fn draw_devices(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner, w
 }
 
 fn draw_config(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
-    let sse_str = if state.sse_enabled { "on" } else { "off" };
+    if area.width >= 90 {
+        let cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(area);
+        draw_config_runtime_panel(frame, cols[0], state);
+        draw_config_wallet_panel(frame, cols[1], state);
+        return;
+    }
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(4), Constraint::Min(4)])
+        .split(area);
+    draw_config_runtime_panel(frame, rows[0], state);
+    draw_config_wallet_panel(frame, rows[1], state);
+}
+
+fn draw_config_runtime_panel(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
     let line1 = Line::from(vec![
         Span::styled("  API: ", LABEL_STYLE),
         Span::styled(&state.api_url, VALUE_STYLE),
         Span::styled("  Threads: ", LABEL_STYLE),
         Span::styled(state.threads.to_string(), VALUE_STYLE),
-        Span::styled("  Refresh: ", LABEL_STYLE),
-        Span::styled(format!("{}s", state.refresh_secs), VALUE_STYLE),
-        Span::styled("  SSE: ", LABEL_STYLE),
-        Span::styled(sse_str, VALUE_STYLE),
     ]);
     let line2 = Line::from(vec![
         Span::styled("  Backends: ", LABEL_STYLE),
         Span::styled(&state.backends_desc, VALUE_STYLE),
-        Span::styled("  Accounting: ", LABEL_STYLE),
-        Span::styled(&state.accounting, VALUE_STYLE),
     ]);
     let config_block = Block::default()
         .title(Span::styled(" CONFIG ", TITLE_STYLE))
@@ -638,6 +656,27 @@ fn draw_config(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
         .border_style(BORDER_STYLE);
     let config = Paragraph::new(vec![line1, line2]).block(config_block);
     frame.render_widget(config, area);
+}
+
+fn draw_config_wallet_panel(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
+    let address_str = compact_wallet_address(&state.wallet_address);
+    let inner_width = area.width.saturating_sub(2) as usize;
+    let wallet_lines = vec![
+        wallet_line_with_right(
+            "Pending",
+            &state.wallet_pending,
+            "Address",
+            &address_str,
+            inner_width,
+        ),
+        kv_line("Unlocked", &state.wallet_unlocked),
+    ];
+    let wallet_block = Block::default()
+        .title(Span::styled(" WALLET ", TITLE_STYLE))
+        .borders(Borders::ALL)
+        .border_style(BORDER_STYLE);
+    let wallet = Paragraph::new(wallet_lines).block(wallet_block);
+    frame.render_widget(wallet, area);
 }
 
 fn draw_log(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
@@ -707,6 +746,32 @@ fn kv_line(label: &str, value: &str) -> Line<'static> {
     ])
 }
 
+fn wallet_line_with_right(
+    left_label: &str,
+    left_value: &str,
+    right_label: &str,
+    right_value: &str,
+    inner_width: usize,
+) -> Line<'static> {
+    let left_label_text = format!("  {:<10} ", left_label);
+    let left_value_text = left_value.to_string();
+    let right_label_text = format!("  {right_label} ");
+    let right_value_text = right_value.to_string();
+    let left_width = left_label_text.chars().count() + left_value_text.chars().count();
+    let right_width = right_label_text.chars().count() + right_value_text.chars().count();
+    let gap = inner_width
+        .saturating_sub(left_width + right_width)
+        .max(2usize);
+
+    Line::from(vec![
+        Span::styled(left_label_text, LABEL_STYLE),
+        Span::styled(left_value_text, VALUE_STYLE),
+        Span::raw(" ".repeat(gap)),
+        Span::styled(right_label_text, LABEL_STYLE),
+        Span::styled(right_value_text, VALUE_STYLE),
+    ])
+}
+
 const DEVICE_NAME_STYLE: Style = Style::new().fg(Color::Rgb(100, 140, 160));
 const DEVICE_AVG_STYLE: Style = Style::new().fg(Color::Rgb(130, 140, 155));
 
@@ -773,6 +838,18 @@ fn format_u64(n: u64) -> String {
         result.push(ch);
     }
     result.chars().rev().collect()
+}
+
+fn compact_wallet_address(address: &str) -> String {
+    const KEEP: usize = 6;
+    let chars: Vec<char> = address.chars().collect();
+    if chars.len() <= KEEP * 2 {
+        return address.to_string();
+    }
+
+    let head: String = chars.iter().take(KEEP).collect();
+    let tail: String = chars[chars.len() - KEEP..].iter().collect();
+    format!("{head}...{tail}")
 }
 
 #[cfg(test)]
