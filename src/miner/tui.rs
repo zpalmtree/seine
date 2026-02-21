@@ -755,13 +755,15 @@ fn wallet_line_with_right(
     right_value: &str,
     inner_width: usize,
 ) -> Line<'static> {
+    const RIGHT_MARGIN: usize = 1;
     let left_label_text = format!("  {:<10} ", left_label);
     let left_value_text = left_value.to_string();
     let right_label_text = format!("  {right_label} ");
     let right_value_text = right_value.to_string();
+    let usable_width = inner_width.saturating_sub(RIGHT_MARGIN);
     let left_width = left_label_text.chars().count() + left_value_text.chars().count();
     let right_width = right_label_text.chars().count() + right_value_text.chars().count();
-    let gap = inner_width
+    let gap = usable_width
         .saturating_sub(left_width + right_width)
         .max(2usize);
 
