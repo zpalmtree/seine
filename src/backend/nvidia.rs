@@ -357,7 +357,7 @@ impl CudaArgon2Engine {
         let m_cost_kib = params.m_cost();
         let t_cost = params.t_cost();
 
-        let nvrtc_options = vec![
+        let nvrtc_common_options = vec![
             "--std=c++14".to_string(),
             "--restrict".to_string(),
             "--use_fast_math".to_string(),
@@ -370,36 +370,67 @@ impl CudaArgon2Engine {
                 select_cancel_check_block_interval(cc_major_u32)
             ),
             format!("--maxrregcount={}", tuning.max_rregcount.max(1)),
-            format!("--gpu-architecture=sm_{}{}", cc_major, cc_minor),
         ];
-        let program_name = "seine_argon2id_fill.cu";
-        let cache_key = build_cubin_cache_key(CUDA_KERNEL_SRC, program_name, &nvrtc_options);
-        let cache_path = cubin_cache_file_path(cubin_cache_dir, &cache_key);
-        let mut cubin_loaded_from_cache = false;
-        let cubin = if let Some(cached) = load_cached_cubin(&cache_path) {
-            cubin_loaded_from_cache = true;
-            cached
-        } else {
-            let compiled = compile_cubin_with_nvrtc(CUDA_KERNEL_SRC, program_name, &nvrtc_options)
-                .map_err(|err| anyhow!("failed to compile CUDA CUBIN with NVRTC: {err:#}"))?;
-            let _ = persist_cached_cubin(&cache_path, &compiled);
-            compiled
+        let nvrtc_cubin_options = {
+            let mut options = nvrtc_common_options.clone();
+            options.push(format!("--gpu-architecture=sm_{}{}", cc_major, cc_minor));
+            options
         };
-        let module = match ctx.load_module(Ptx::from_binary(cubin)) {
-            Ok(module) => module,
-            Err(err) if cubin_loaded_from_cache => {
-                let _ = fs::remove_file(&cache_path);
-                let compiled = compile_cubin_with_nvrtc(CUDA_KERNEL_SRC, program_name, &nvrtc_options)
+        let nvrtc_ptx_options = {
+            let mut options = nvrtc_common_options;
+            options.push(format!(
+                "--gpu-architecture=compute_{}{}",
+                cc_major, cc_minor
+            ));
+            options
+        };
+        let program_name = "seine_argon2id_fill.cu";
+        let cache_key = build_cubin_cache_key(CUDA_KERNEL_SRC, program_name, &nvrtc_cubin_options);
+        let cache_path = cubin_cache_file_path(cubin_cache_dir, &cache_key);
+        let module = if let Some(cached) = load_cached_cubin(&cache_path) {
+            match ctx.load_module(Ptx::from_binary(cached)) {
+                Ok(module) => module,
+                Err(err) => {
+                    let _ = fs::remove_file(&cache_path);
+                    let compiled = compile_cuda_module_with_nvrtc_fallback(
+                        CUDA_KERNEL_SRC,
+                        program_name,
+                        &nvrtc_cubin_options,
+                        &nvrtc_ptx_options,
+                    )
                     .map_err(|compile_err| {
                         anyhow!(
-                            "failed to compile CUDA CUBIN with NVRTC after cache load failure ({err:?}): {compile_err:#}"
+                            "failed to compile CUDA module with NVRTC after cache load failure ({err:?}): {compile_err:#}"
                         )
                     })?;
-                let _ = persist_cached_cubin(&cache_path, &compiled);
-                ctx.load_module(Ptx::from_binary(compiled))
+                    if let NvrtcModuleArtifact::Cubin(cubin) = &compiled {
+                        let _ = persist_cached_cubin(&cache_path, cubin);
+                    }
+                    match compiled {
+                        NvrtcModuleArtifact::Cubin(cubin) => {
+                            ctx.load_module(Ptx::from_binary(cubin))
+                        }
+                        NvrtcModuleArtifact::Ptx(ptx) => ctx.load_module(Ptx::from_src(ptx)),
+                    }
                     .map_err(|load_err| anyhow!("failed to load CUDA module: {load_err:?}"))?
+                }
             }
-            Err(err) => return Err(anyhow!("failed to load CUDA module: {err:?}")),
+        } else {
+            let compiled = compile_cuda_module_with_nvrtc_fallback(
+                CUDA_KERNEL_SRC,
+                program_name,
+                &nvrtc_cubin_options,
+                &nvrtc_ptx_options,
+            )
+            .map_err(|err| anyhow!("failed to compile CUDA module with NVRTC: {err:#}"))?;
+            if let NvrtcModuleArtifact::Cubin(cubin) = &compiled {
+                let _ = persist_cached_cubin(&cache_path, cubin);
+            }
+            match compiled {
+                NvrtcModuleArtifact::Cubin(cubin) => ctx.load_module(Ptx::from_binary(cubin)),
+                NvrtcModuleArtifact::Ptx(ptx) => ctx.load_module(Ptx::from_src(ptx)),
+            }
+            .map_err(|load_err| anyhow!("failed to load CUDA module: {load_err:?}"))?
         };
         let kernel_nonfused = module
             .load_function("argon2id_fill_kernel")
@@ -2252,6 +2283,45 @@ fn is_cuda_oom_error(err: &dyn std::fmt::Debug) -> bool {
     msg.contains("OUT_OF_MEMORY") || msg.contains("OutOfMemory")
 }
 
+enum NvrtcModuleArtifact {
+    Cubin(Vec<u8>),
+    Ptx(String),
+}
+
+fn nvrtc_arch_target_unsupported(msg: &str) -> bool {
+    let msg = msg.to_ascii_lowercase();
+    msg.contains("unsupported gpu architecture")
+        || msg.contains("invalid value for --gpu-architecture")
+        || msg.contains("is not defined for option 'gpu-architecture'")
+}
+
+fn compile_cuda_module_with_nvrtc_fallback(
+    source: &str,
+    program_name: &str,
+    cubin_options: &[String],
+    ptx_options: &[String],
+) -> Result<NvrtcModuleArtifact> {
+    match compile_cubin_with_nvrtc(source, program_name, cubin_options) {
+        Ok(cubin) => Ok(NvrtcModuleArtifact::Cubin(cubin)),
+        Err(cubin_err) => match compile_ptx_with_nvrtc(source, program_name, ptx_options) {
+            Ok(ptx) => Ok(NvrtcModuleArtifact::Ptx(ptx)),
+            Err(ptx_err) => {
+                if nvrtc_arch_target_unsupported(&format!("{cubin_err:#}")) {
+                    bail!(
+                        "CUBIN compile failed for this GPU architecture and PTX fallback also failed. \
+                         For Maxwell/Pascal/Volta GPUs this usually means CUDA 13.x NVRTC is installed; \
+                         use CUDA Toolkit/NVRTC 12.x for legacy-architecture builds. \
+                         cubin_error: {cubin_err:#}; ptx_error: {ptx_err:#}"
+                    );
+                }
+                bail!(
+                    "CUBIN compile failed and PTX fallback failed; cubin_error: {cubin_err:#}; ptx_error: {ptx_err:#}"
+                );
+            }
+        },
+    }
+}
+
 fn compile_cubin_with_nvrtc(
     source: &str,
     program_name: &str,
@@ -2297,6 +2367,47 @@ fn compile_cubin_with_nvrtc(
         .map_err(|err| anyhow!("nvrtcDestroyProgram failed: {err:?}"))?;
 
     Ok(cubin)
+}
+
+fn compile_ptx_with_nvrtc(source: &str, program_name: &str, options: &[String]) -> Result<String> {
+    let source_c = CString::new(source)
+        .map_err(|_| anyhow!("CUDA kernel source contains interior NUL byte"))?;
+    let program_name_c = CString::new(program_name)
+        .map_err(|_| anyhow!("CUDA program name contains interior NUL byte"))?;
+
+    let program = nvrtc_result::create_program(&source_c, Some(&program_name_c))
+        .map_err(|err| anyhow!("nvrtcCreateProgram failed: {err:?}"))?;
+
+    let compile_result = unsafe { nvrtc_result::compile_program(program, options) };
+    if let Err(err) = compile_result {
+        let compile_log = unsafe { nvrtc_result::get_program_log(program).ok() }
+            .map(|raw| nvrtc_log_to_string(&raw))
+            .unwrap_or_default();
+        let _ = unsafe { nvrtc_result::destroy_program(program) };
+        if compile_log.is_empty() {
+            bail!("nvrtcCompileProgram failed: {err:?}");
+        }
+        bail!("nvrtcCompileProgram failed: {err:?}; log: {compile_log}");
+    }
+
+    let ptx_raw = unsafe {
+        nvrtc_result::get_ptx(program).map_err(|err| anyhow!("nvrtcGetPTX failed: {err:?}"))?
+    };
+    let ptx = if ptx_raw.is_empty() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(ptx_raw.as_ptr()) }
+            .to_string_lossy()
+            .to_string()
+    };
+
+    unsafe { nvrtc_result::destroy_program(program) }
+        .map_err(|err| anyhow!("nvrtcDestroyProgram failed: {err:?}"))?;
+
+    if ptx.trim().is_empty() {
+        bail!("nvrtcGetPTX returned empty output");
+    }
+    Ok(ptx)
 }
 
 fn build_cubin_cache_key(source: &str, program_name: &str, options: &[String]) -> String {
@@ -3489,6 +3600,19 @@ mod tests {
         assert!(!is_cuda_oom_error(&"CUDA_ERROR_LAUNCH_TIMEOUT"));
         assert!(!is_cuda_oom_error(&"invalid argument"));
         assert!(!is_cuda_oom_error(&"memory allocation succeeded"));
+    }
+
+    #[test]
+    fn nvrtc_arch_target_unsupported_matches_known_messages() {
+        assert!(nvrtc_arch_target_unsupported(
+            "nvrtcCompileProgram failed: NVRTC_ERROR_INVALID_OPTION; log: unsupported gpu architecture 'sm_61'"
+        ));
+        assert!(nvrtc_arch_target_unsupported(
+            "error: value 'sm_61' is not defined for option 'gpu-architecture'"
+        ));
+        assert!(!nvrtc_arch_target_unsupported(
+            "nvrtcCompileProgram failed: syntax error"
+        ));
     }
 
     #[test]
