@@ -131,6 +131,7 @@ struct MiningControlPlane<'a> {
     next_submit_request_id: u64,
     dev_fee_address: Option<&'static str>,
     next_wallet_tui_refresh_at: Instant,
+    wallet_address_logged: bool,
 }
 
 struct RoundLoopState {
@@ -186,6 +187,7 @@ impl<'a> MiningControlPlane<'a> {
             current_tip_height,
             dev_fee_address: None,
             next_wallet_tui_refresh_at: Instant::now(),
+            wallet_address_logged: false,
         }
     }
 
@@ -397,6 +399,10 @@ impl<'a> MiningControlPlane<'a> {
             &snapshot.pending,
             &snapshot.unlocked,
         );
+        if !self.wallet_address_logged {
+            info("WALLET", format!("address: {}", snapshot.address));
+            self.wallet_address_logged = true;
+        }
     }
 
     fn fetch_wallet_tui_snapshot(&self) -> Option<WalletTuiSnapshot> {
