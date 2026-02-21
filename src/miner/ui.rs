@@ -124,6 +124,16 @@ pub(super) fn mined(tag: &str, message: impl AsRef<str>) {
     log(Level::Mined, tag, message.as_ref());
 }
 
+pub(super) fn notify_dev_fee_mode(is_dev: bool) {
+    let mode = if is_dev { "mining for dev" } else { "mining for user" };
+    emit_log_sink(UiLogEvent {
+        elapsed_secs: log_elapsed().as_secs_f64(),
+        level: "info",
+        tag: "DEV FEE".to_string(),
+        message: mode.to_string(),
+    });
+}
+
 pub(super) fn set_tui_state(state: TuiState) {
     let _ = TUI_STATE.set(state);
 }

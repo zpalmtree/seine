@@ -18,8 +18,8 @@ use crate::types::{
 
 use super::hash_poll::build_backend_poll_state;
 use super::mining_tui::{
-    init_tui_display, render_tui_now, set_tui_pending_nvidia, set_tui_state_label,
-    set_tui_wallet_overview, update_tui, RoundUiView, TuiDisplay,
+    init_tui_display, render_tui_now, set_tui_dev_fee_active, set_tui_pending_nvidia,
+    set_tui_state_label, set_tui_wallet_overview, update_tui, RoundUiView, TuiDisplay,
 };
 use super::round_control::{redistribute_for_topology_change, TopologyRedistributionOptions};
 use super::runtime::{
@@ -49,7 +49,7 @@ use super::submit::{
 use super::template_prefetch::{fetch_template_once, PrefetchOutcome, TemplatePrefetch};
 pub(super) use super::tip::{spawn_tip_listener, TipListener, TipSignal};
 use super::tui::TuiState;
-use super::ui::{error, info, mined, success, warn};
+use super::ui::{error, info, mined, notify_dev_fee_mode, success, warn};
 use super::wallet::auto_load_wallet;
 use super::{
     cancel_backend_slots, collect_backend_hashes, distribute_work, format_round_backend_telemetry,
@@ -1072,11 +1072,8 @@ pub(super) fn run_mining_loop(
         control_plane.set_dev_fee_address(dev_fee_tracker.address());
         let is_dev_round = dev_fee_tracker.is_dev_round();
         if mode_changed {
-            if is_dev_round {
-                info("DEV FEE", "mining for dev");
-            } else {
-                info("DEV FEE", "mining for user");
-            }
+            set_tui_dev_fee_active(&mut tui, is_dev_round);
+            notify_dev_fee_mode(is_dev_round);
             // Discard any prefetched template (fetched with wrong address) and get fresh one
             let Some(fresh) = control_plane.resolve_next_template(&mut tui) else {
                 break;

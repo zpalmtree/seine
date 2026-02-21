@@ -104,6 +104,7 @@ pub struct TuiStateInner {
     pub device_hashrates: Vec<DeviceHashrate>,
     pub pending_nvidia: u64,
     pub pending_nvidia_since: Option<Instant>,
+    pub dev_fee_active: bool,
 
     // Config (set once at startup)
     pub api_url: String,
@@ -145,6 +146,7 @@ impl TuiStateInner {
             device_hashrates: Vec::new(),
             pending_nvidia: 0,
             pending_nvidia_since: None,
+            dev_fee_active: false,
 
             api_url: String::new(),
             threads: 0,
@@ -432,6 +434,23 @@ fn draw_stats(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner, wid
     }
 }
 
+fn format_state_display(state: &TuiStateInner) -> (String, Color) {
+    let base_color = match state.state.as_str() {
+        "working" => Color::Rgb(100, 170, 100),
+        "stale-tip" | "stale-refresh" => Color::Rgb(200, 170, 80),
+        "solved" => Color::Rgb(120, 190, 120),
+        "wallet-required" | "wallet-password-required" => Color::Rgb(220, 170, 90),
+        "daemon-syncing" => Color::Rgb(215, 165, 95),
+        "daemon-unavailable" => Color::Rgb(210, 120, 100),
+        _ => Color::Rgb(180, 180, 180),
+    };
+    if state.dev_fee_active && state.state == "working" {
+        ("working (dev fee)".to_string(), Color::Rgb(170, 140, 200))
+    } else {
+        (state.state.clone(), base_color)
+    }
+}
+
 fn draw_stats_wide(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
     let cols = Layout::default()
         .direction(Direction::Horizontal)
@@ -457,22 +476,14 @@ fn draw_stats_wide(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner
     frame.render_widget(hashrate, cols[0]);
 
     // Network panel
-    let state_color = match state.state.as_str() {
-        "working" => Color::Rgb(100, 170, 100),
-        "stale-tip" | "stale-refresh" => Color::Rgb(200, 170, 80),
-        "solved" => Color::Rgb(120, 190, 120),
-        "wallet-required" | "wallet-password-required" => Color::Rgb(220, 170, 90),
-        "daemon-syncing" => Color::Rgb(215, 165, 95),
-        "daemon-unavailable" => Color::Rgb(210, 120, 100),
-        _ => Color::Rgb(180, 180, 180),
-    };
+    let (state_display, state_color) = format_state_display(state);
     let network_lines = vec![
         kv_line("Height", &state.height),
         kv_line("Difficulty", &state.difficulty),
         Line::from(vec![
             Span::styled("  State      ".to_string(), LABEL_STYLE),
             Span::styled(
-                state.state.clone(),
+                state_display,
                 Style::default()
                     .fg(state_color)
                     .add_modifier(Modifier::BOLD),

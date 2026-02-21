@@ -209,6 +209,15 @@ pub(super) fn render_tui_now(tui: &mut Option<TuiDisplay>) {
     }
 }
 
+pub(super) fn set_tui_dev_fee_active(tui: &mut Option<TuiDisplay>, active: bool) {
+    if let Some(display) = tui.as_mut() {
+        if let Ok(mut s) = display.state.lock() {
+            s.dev_fee_active = active;
+        }
+        display.request_render();
+    }
+}
+
 pub(super) fn set_tui_state_label(tui: &mut Option<TuiDisplay>, state_label: &str) {
     if let Some(display) = tui.as_mut() {
         display.set_state_and_render(state_label);
