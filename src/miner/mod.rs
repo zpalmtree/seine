@@ -1299,6 +1299,8 @@ fn load_cpu_autotune_record(
     if record.profile != cpu_profile_label(cfg.cpu_profile)
         || record.affinity != cpu_affinity_label(cfg.cpu_affinity)
         || record.cpu_instances != cpu_instance_count
+        || record.min_threads != min_threads
+        || record.max_threads != max_threads
         || record.autotune_secs != autotune_secs
         || record.selected_threads < min_threads
         || record.selected_threads > max_threads

@@ -724,7 +724,7 @@ impl Config {
             .count();
         let auto_threads_cap = match cpu_backend_instances {
             0 => 1,
-            instances => auto_cpu_threads(instances, gpu_memory_reservation),
+            instances => auto_cpu_threads(instances, gpu_memory_reservation, cli.cpu_affinity),
         };
         let profile_defaults = cpu_profile_defaults(cli.cpu_profile, auto_threads_cap);
         let resolved_threads = cli.threads.unwrap_or(profile_defaults.threads);
@@ -1483,11 +1483,41 @@ fn pcore_count() -> Option<usize> {
     }
 }
 
-fn auto_cpu_threads(cpu_backend_instances: usize, gpu_memory_reservation: u64) -> usize {
-    let cpu_parallelism = pcore_count()
-        .or_else(|| std::thread::available_parallelism().map(|p| p.get()).ok())
+fn logical_cpu_parallelism() -> usize {
+    std::thread::available_parallelism()
+        .map(|p| p.get())
         .unwrap_or(1)
-        .max(1);
+        .max(1)
+}
+
+fn macos_hybrid_pcore_parallelism_cap(pcore_count: usize, logical_parallelism: usize) -> usize {
+    let logical_parallelism = logical_parallelism.max(1);
+    let pcore_count = pcore_count.max(1).min(logical_parallelism);
+    let non_pcore_count = logical_parallelism.saturating_sub(pcore_count);
+    // Keep some oversubscription headroom on P-cores without stepping all the way into
+    // full logical-core usage, which has shown unstable high-variance behavior on some Macs.
+    pcore_count.saturating_add(non_pcore_count / 2).max(1)
+}
+
+fn cpu_parallelism_cap(affinity: CpuAffinityMode) -> usize {
+    let logical_parallelism = logical_cpu_parallelism();
+    #[cfg(target_os = "macos")]
+    {
+        if affinity == CpuAffinityMode::PcoreOnly {
+            if let Some(pcore_count) = pcore_count() {
+                return macos_hybrid_pcore_parallelism_cap(pcore_count, logical_parallelism);
+            }
+        }
+    }
+    logical_parallelism
+}
+
+fn auto_cpu_threads(
+    cpu_backend_instances: usize,
+    gpu_memory_reservation: u64,
+    affinity: CpuAffinityMode,
+) -> usize {
+    let cpu_parallelism = cpu_parallelism_cap(affinity);
     let memory_cap_total = detect_memory_budget_bytes()
         .map(|budget| {
             let available = budget
@@ -2020,8 +2050,8 @@ mod tests {
 
     #[test]
     fn auto_cpu_threads_is_never_zero_and_scales_per_instance() {
-        let single_instance = auto_cpu_threads(1, 0);
-        let dual_instance = auto_cpu_threads(2, 0);
+        let single_instance = auto_cpu_threads(1, 0, CpuAffinityMode::Auto);
+        let dual_instance = auto_cpu_threads(2, 0, CpuAffinityMode::Auto);
 
         assert!(single_instance >= 1);
         assert!(dual_instance >= 1);
@@ -2030,12 +2060,20 @@ mod tests {
 
     #[test]
     fn auto_cpu_threads_reduced_by_gpu_reservation() {
-        let without_gpu = auto_cpu_threads(1, 0);
-        let with_gpu = auto_cpu_threads(1, 4 * CPU_LANE_MEMORY_BYTES);
+        let without_gpu = auto_cpu_threads(1, 0, CpuAffinityMode::Auto);
+        let with_gpu = auto_cpu_threads(1, 4 * CPU_LANE_MEMORY_BYTES, CpuAffinityMode::Auto);
 
         assert!(with_gpu >= 1);
         // With a 4-lane GPU reservation, the CPU should get fewer (or equal) lanes
         assert!(with_gpu <= without_gpu);
+    }
+
+    #[test]
+    fn macos_hybrid_pcore_parallelism_cap_is_bounded() {
+        assert_eq!(macos_hybrid_pcore_parallelism_cap(12, 16), 14);
+        assert_eq!(macos_hybrid_pcore_parallelism_cap(10, 12), 11);
+        assert_eq!(macos_hybrid_pcore_parallelism_cap(8, 8), 8);
+        assert_eq!(macos_hybrid_pcore_parallelism_cap(12, 10), 10);
     }
 
     #[test]
@@ -2068,7 +2106,7 @@ mod tests {
             .iter()
             .filter(|kind| matches!(kind, BackendKind::Cpu))
             .count();
-        let auto_threads_cap = auto_cpu_threads(cpu_backend_instances, 0);
+        let auto_threads_cap = auto_cpu_threads(cpu_backend_instances, 0, cli.cpu_affinity);
         let defaults = cpu_profile_defaults(cli.cpu_profile, auto_threads_cap);
         let cpu_autotune_default_enabled = cli.threads.is_none() && cpu_backend_instances > 0;
         let cpu_autotune_threads = if cli.disable_cpu_autotune_threads {
