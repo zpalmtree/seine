@@ -3124,6 +3124,7 @@ fn autotune_nvidia_kernel_tuning(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use blocknet_pow_kernel::ReusablePowContext;
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -3140,6 +3141,32 @@ mod tests {
             now
         ));
         path
+    }
+
+    fn unique_temp_dir(name: &str) -> PathBuf {
+        let mut path = std::env::temp_dir();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be >= unix epoch")
+            .as_nanos();
+        path.push(format!(
+            "seine-nvidia-test-{}-{}-{name}",
+            std::process::id(),
+            now
+        ));
+        path
+    }
+
+    fn decrement_target_be(mut target: [u8; POW_OUTPUT_LEN]) -> Option<[u8; POW_OUTPUT_LEN]> {
+        for byte in target.iter_mut().rev() {
+            if *byte == 0 {
+                *byte = 0xff;
+                continue;
+            }
+            *byte -= 1;
+            return Some(target);
+        }
+        None
     }
 
     fn test_template(work_id: u64) -> Arc<WorkTemplate> {
@@ -3504,5 +3531,87 @@ mod tests {
             shared.dropped_events.load(Ordering::Acquire) >= 1,
             "event should be dropped when channel is full instead of blocking"
         );
+    }
+
+    #[test]
+    #[ignore = "requires NVIDIA GPU + CUDA runtime; run manually for GPU validity checks"]
+    fn gpu_solution_target_bracket_matches_cpu_reference() {
+        let devices = query_nvidia_devices().expect(
+            "failed to query NVIDIA devices; verify nvidia-smi and CUDA driver are installed",
+        );
+        assert!(
+            !devices.is_empty(),
+            "no NVIDIA GPU detected; cannot run GPU validity differential test"
+        );
+        let selected = devices[0].clone();
+
+        let tuning = NvidiaKernelTuning {
+            max_rregcount: DEFAULT_NVIDIA_MAX_RREGCOUNT,
+            block_loop_unroll: false,
+            hashes_per_launch_per_lane: 1,
+            max_lanes_hint: Some(1),
+        };
+        let cache_dir = unique_temp_dir("gpu-diff");
+        let mut engine = CudaArgon2Engine::new(
+            selected.index,
+            selected.memory_total_mib,
+            selected.memory_free_mib,
+            tuning,
+            tuning.max_lanes_hint,
+            tuning.hashes_per_launch_per_lane,
+            false,
+            &cache_dir,
+        )
+        .expect("failed to initialize CUDA engine for GPU validity differential test");
+
+        let params = pow_params().expect("pow params should be available");
+        let mut cpu_ctx = ReusablePowContext::new(params.m_cost());
+        let mut header_base = [0u8; POW_HEADER_BASE_LEN];
+        for (idx, byte) in header_base.iter_mut().enumerate() {
+            *byte = ((idx * 37 + 11) & 0xff) as u8;
+        }
+
+        let nonces = [0u64, 1u64, 7u64, 42u64, 1_000_003u64];
+        for nonce in nonces {
+            let mut expected_hash = [0u8; POW_OUTPUT_LEN];
+            cpu_ctx
+                .hash_password_into(&nonce.to_le_bytes(), &header_base, &mut expected_hash)
+                .expect("CPU reference hashing should succeed");
+            let tighter_target = decrement_target_be(expected_hash).expect(
+                "CPU reference hash was zero; choose a different nonce set for target bracketing",
+            );
+
+            let hits_equal = engine
+                .run_fill_batch(&header_base, &[nonce], Some(&expected_hash))
+                .expect("CUDA batch execution should succeed for equal target");
+            assert_eq!(
+                hits_equal.hashes_done, 1,
+                "expected one completed hash for nonce {}",
+                nonce
+            );
+            assert_eq!(
+                hits_equal.solved_nonce,
+                Some(nonce),
+                "GPU did not report expected solution for nonce {} at equal target",
+                nonce
+            );
+
+            let misses_tighter = engine
+                .run_fill_batch(&header_base, &[nonce], Some(&tighter_target))
+                .expect("CUDA batch execution should succeed for tighter target");
+            assert_eq!(
+                misses_tighter.hashes_done, 1,
+                "expected one completed hash for nonce {}",
+                nonce
+            );
+            assert_eq!(
+                misses_tighter.solved_nonce,
+                None,
+                "GPU reported solution for nonce {} at tighter target; GPU hash differs from CPU reference",
+                nonce
+            );
+        }
+
+        let _ = fs::remove_dir_all(cache_dir);
     }
 }
