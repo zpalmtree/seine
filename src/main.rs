@@ -5,6 +5,7 @@ mod daemon_api;
 mod dev_fee;
 mod miner;
 mod types;
+mod version;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

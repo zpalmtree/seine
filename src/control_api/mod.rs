@@ -1048,7 +1048,7 @@ fn classify_start_or_restart_error(err: anyhow::Error, operation: &str) -> ApiEr
 async fn get_health(State(state): State<AppState>) -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "ok",
-        version: env!("CARGO_PKG_VERSION"),
+        version: crate::version::release_version(),
         started_unix_ms: state.started_unix_ms,
         now_unix_ms: now_unix_millis(),
     })

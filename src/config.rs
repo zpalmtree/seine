@@ -144,7 +144,11 @@ pub struct BackendSpec {
 }
 
 #[derive(Debug, Parser)]
-#[command(name = "seine", version, about = "Seine net miner for Blocknet")]
+#[command(
+    name = "seine",
+    version = crate::version::RELEASE_VERSION,
+    about = "Seine net miner for Blocknet"
+)]
 struct Cli {
     /// API base URL for the blocknet daemon.
     /// When omitted, Seine auto-detects from a running daemon and falls back to 127.0.0.1:8332.

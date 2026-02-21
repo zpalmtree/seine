@@ -748,7 +748,7 @@ fn build_tui_state(cfg: &Config, backends: &[BackendSlot]) -> TuiState {
         } else {
             "relaxed".to_string()
         };
-        s.version = format!("v{}", env!("CARGO_PKG_VERSION"));
+        s.version = crate::version::ui_display_version();
         if let Some(hint) = cfg.nvidia_hint {
             s.push_log(tui::LogEntry {
                 elapsed_secs: 0.0,
