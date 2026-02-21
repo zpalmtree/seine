@@ -16,16 +16,19 @@ all: build
 build:
 	@echo "Building seine..."
 	cargo build --release
+	@cp target/release/seine .
 
 # Build with native CPU tuning (no GPU)
 build-native:
 	@echo "Building seine (native CPU, no GPU)..."
 	RUSTFLAGS="-C target-cpu=native" cargo build --profile release-native --no-default-features
+	@cp target/release-native/seine .
 
 # Build CPU-only (no GPU, default tuning)
 build-cpu:
 	@echo "Building seine (CPU only)..."
 	cargo build --release --no-default-features
+	@cp target/release/seine .
 
 # Run tests
 test:
@@ -34,7 +37,7 @@ test:
 
 # Run after building
 run: build
-	./target/release/seine
+	./seine
 
 # Build release package for current platform
 release: build
@@ -55,6 +58,7 @@ endif
 clean:
 	@echo "Cleaning..."
 	cargo clean
+	rm -f seine
 	rm -rf releases/
 
 # Clean miner data
