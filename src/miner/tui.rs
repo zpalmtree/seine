@@ -251,6 +251,8 @@ const VALUE_STYLE: Style = Style::new()
     .fg(Color::Rgb(220, 220, 220))
     .add_modifier(Modifier::BOLD);
 const DIM_STYLE: Style = Style::new().fg(Color::Rgb(90, 90, 90));
+// Keep block marker glyph single-cell across terminals.
+const BLOCK_MARKER_GLYPH: &str = "♦";
 
 fn draw_dashboard(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
     let wide = area.width >= 80;
@@ -404,7 +406,7 @@ fn wave_row(
             .unwrap_or(false)
         {
             spans.push(Span::styled(
-                "◆",
+                BLOCK_MARKER_GLYPH,
                 Style::default()
                     .fg(block_color)
                     .add_modifier(Modifier::BOLD),
@@ -911,7 +913,7 @@ mod tests {
         let offset = tick as usize % pattern.len();
 
         for (idx, span) in crest.spans.iter().enumerate() {
-            if span.content.as_ref() == "◆" {
+            if span.content.as_ref() == BLOCK_MARKER_GLYPH {
                 let ch = pattern[(offset + idx) % pattern.len()];
                 assert_ne!(ch, ' ', "marker landed in a spacing column at {idx}");
             }
