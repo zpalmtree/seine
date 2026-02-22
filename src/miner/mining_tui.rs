@@ -224,6 +224,21 @@ pub(super) fn set_tui_state_label(tui: &mut Option<TuiDisplay>, state_label: &st
     }
 }
 
+pub(super) fn set_tui_blocktemplate_retrying(tui: &mut Option<TuiDisplay>, retrying: bool) {
+    if let Some(display) = tui.as_mut() {
+        if let Ok(mut s) = display.state.lock() {
+            if retrying {
+                if s.blocktemplate_retry_since.is_none() {
+                    s.blocktemplate_retry_since = Some(Instant::now());
+                }
+            } else {
+                s.blocktemplate_retry_since = None;
+            }
+        }
+        display.request_render();
+    }
+}
+
 pub(super) fn set_tui_pending_nvidia(tui: &mut Option<TuiDisplay>, count: u64) {
     if let Some(display) = tui.as_mut() {
         if let Ok(mut s) = display.state.lock() {

@@ -18,8 +18,9 @@ use crate::types::{
 
 use super::hash_poll::build_backend_poll_state;
 use super::mining_tui::{
-    init_tui_display, render_tui_now, set_tui_dev_fee_active, set_tui_pending_nvidia,
-    set_tui_state_label, set_tui_wallet_overview, update_tui, RoundUiView, TuiDisplay,
+    init_tui_display, render_tui_now, set_tui_blocktemplate_retrying, set_tui_dev_fee_active,
+    set_tui_pending_nvidia, set_tui_state_label, set_tui_wallet_overview, update_tui, RoundUiView,
+    TuiDisplay,
 };
 use super::round_control::{redistribute_for_topology_change, TopologyRedistributionOptions};
 use super::runtime::{
@@ -1874,12 +1875,14 @@ fn resolve_next_template(
 
         match outcome {
             PrefetchOutcome::Template(template) => {
+                set_tui_blocktemplate_retrying(tui, false);
                 network_retry.note_recovered("NETWORK", "blocktemplate fetch recovered");
                 auth_retry.note_recovered("AUTH", "auth refreshed from cookie");
                 render_tui_now(tui);
                 return Some(*template);
             }
             PrefetchOutcome::NoWalletLoaded => {
+                set_tui_blocktemplate_retrying(tui, false);
                 set_tui_state_label(tui, "wallet-required");
                 warn(
                     "WALLET",
@@ -1907,6 +1910,7 @@ fn resolve_next_template(
                 }
             }
             PrefetchOutcome::Unauthorized => {
+                set_tui_blocktemplate_retrying(tui, false);
                 if cfg.token_cookie_path.is_some() {
                     auth_retry.note_failure(
                         "AUTH",
@@ -1928,6 +1932,7 @@ fn resolve_next_template(
                 }
             }
             PrefetchOutcome::Unavailable => {
+                set_tui_blocktemplate_retrying(tui, true);
                 set_tui_state_label(tui, "daemon-unavailable");
                 network_retry.note_failure(
                     "DAEMON",

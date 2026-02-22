@@ -89,6 +89,7 @@ pub struct TuiStateInner {
     pub difficulty: String,
     pub epoch: u64,
     pub state: String,
+    pub blocktemplate_retry_since: Option<Instant>,
 
     // Mining
     pub round_hashrate: String,
@@ -132,6 +133,7 @@ impl TuiStateInner {
             difficulty: "---".to_string(),
             epoch: 0,
             state: "initializing".to_string(),
+            blocktemplate_retry_since: None,
 
             round_hashrate: "0.000 H/s".to_string(),
             avg_hashrate: "0.000 H/s".to_string(),
@@ -435,7 +437,13 @@ fn draw_stats(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner, wid
 }
 
 fn format_state_display(state: &TuiStateInner) -> (String, Color) {
-    let base_color = match state.state.as_str() {
+    let mut state_display = if state.dev_fee_active && state.state == "working" {
+        "working (dev fee)".to_string()
+    } else {
+        state.state.clone()
+    };
+
+    let mut state_color = match state.state.as_str() {
         "working" => Color::Rgb(100, 170, 100),
         "stale-tip" | "stale-refresh" => Color::Rgb(200, 170, 80),
         "solved" => Color::Rgb(120, 190, 120),
@@ -444,11 +452,22 @@ fn format_state_display(state: &TuiStateInner) -> (String, Color) {
         "daemon-unavailable" => Color::Rgb(210, 120, 100),
         _ => Color::Rgb(180, 180, 180),
     };
+
     if state.dev_fee_active && state.state == "working" {
-        ("working (dev fee)".to_string(), Color::Rgb(170, 140, 200))
-    } else {
-        (state.state.clone(), base_color)
+        state_color = Color::Rgb(170, 140, 200);
     }
+
+    if let Some(retry_since) = state.blocktemplate_retry_since {
+        let retry_for = format_duration_compact(retry_since.elapsed());
+        state_display = if state.state == "daemon-unavailable" {
+            format!("daemon-unavailable ({retry_for})")
+        } else {
+            format!("{state_display} | tpl retry {retry_for}")
+        };
+        state_color = Color::Rgb(215, 165, 95);
+    }
+
+    (state_display, state_color)
 }
 
 fn draw_stats_wide(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
@@ -931,5 +950,17 @@ mod tests {
                 assert_ne!(ch, ' ', "marker landed in a spacing column at {idx}");
             }
         }
+    }
+
+    #[test]
+    fn state_display_shows_blocktemplate_retry_status() {
+        let mut state = TuiStateInner::new();
+        state.state = "working".to_string();
+        state.blocktemplate_retry_since = Instant::now().checked_sub(Duration::from_secs(12));
+
+        let (display, color) = format_state_display(&state);
+
+        assert!(display.contains("tpl retry"));
+        assert_eq!(color, Color::Rgb(215, 165, 95));
     }
 }

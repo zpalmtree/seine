@@ -125,7 +125,11 @@ pub(super) fn mined(tag: &str, message: impl AsRef<str>) {
 }
 
 pub(super) fn notify_dev_fee_mode(is_dev: bool) {
-    let mode = if is_dev { "mining for dev" } else { "mining for user" };
+    let mode = if is_dev {
+        "mining for dev"
+    } else {
+        "mining for user"
+    };
     emit_log_sink(UiLogEvent {
         elapsed_secs: log_elapsed().as_secs_f64(),
         level: "info",
@@ -225,7 +229,16 @@ fn suppress_in_tui(tag: &str, message: &str) -> bool {
     if matches!(tag, "BACKEND" | "BENCH") && message.starts_with("telemetry |") {
         return true;
     }
-    tag == "MINER" && message.starts_with("template-history |")
+    if tag == "MINER" && message.starts_with("template-history |") {
+        return true;
+    }
+    if tag == "DAEMON"
+        && (message.starts_with("daemon did not return blocktemplate;")
+            || message.starts_with("daemon still not returning blocktemplate"))
+    {
+        return true;
+    }
+    tag == "NETWORK" && message == "blocktemplate fetch recovered"
 }
 
 fn frame_top(colors: bool) {
@@ -520,6 +533,15 @@ mod tests {
             "MINER",
             "template-history | max=16 retention=81.25s"
         ));
+        assert!(suppress_in_tui(
+            "DAEMON",
+            "daemon did not return blocktemplate; it may still be syncing or unresponsive, retrying"
+        ));
+        assert!(suppress_in_tui(
+            "DAEMON",
+            "daemon still not returning blocktemplate (possibly syncing or unresponsive), retrying"
+        ));
+        assert!(suppress_in_tui("NETWORK", "blocktemplate fetch recovered"));
         assert!(!suppress_in_tui("MINER", "connected and mining"));
     }
 }
