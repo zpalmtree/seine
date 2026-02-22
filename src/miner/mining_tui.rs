@@ -55,7 +55,7 @@ pub(super) struct RoundUiView<'a> {
     pub round_backend_hashes: &'a BTreeMap<u64, u64>,
     pub round_start: Instant,
     pub height: &'a str,
-    pub difficulty: &'a str,
+    pub network_hashrate: &'a str,
     pub epoch: u64,
     pub state_label: &'a str,
 }
@@ -113,7 +113,7 @@ impl TuiDisplay {
 
         if let Ok(mut s) = self.state.lock() {
             s.height = view.height.to_string();
-            s.difficulty = view.difficulty.to_string();
+            s.network_hashrate = view.network_hashrate.to_string();
             s.epoch = view.epoch;
             s.state = view.state_label.to_string();
             s.round_hashrate = format_hashrate(rates.current_total);

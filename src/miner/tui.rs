@@ -86,7 +86,7 @@ pub struct DeviceHashrate {
 pub struct TuiStateInner {
     // Network
     pub height: String,
-    pub difficulty: String,
+    pub network_hashrate: String,
     pub epoch: u64,
     pub state: String,
     pub blocktemplate_retry_since: Option<Instant>,
@@ -130,7 +130,7 @@ impl TuiStateInner {
     pub fn new() -> Self {
         Self {
             height: "---".to_string(),
-            difficulty: "---".to_string(),
+            network_hashrate: "---".to_string(),
             epoch: 0,
             state: "initializing".to_string(),
             blocktemplate_retry_since: None,
@@ -498,7 +498,7 @@ fn draw_stats_wide(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner
     let (state_display, state_color) = format_state_display(state);
     let network_lines = vec![
         kv_line("Height", &state.height),
-        kv_line("Difficulty", &state.difficulty),
+        kv_line("Hashrate", &state.network_hashrate),
         Line::from(vec![
             Span::styled("  State      ".to_string(), LABEL_STYLE),
             Span::styled(
@@ -562,7 +562,7 @@ fn draw_stats_narrow(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInn
     // Network
     let network_lines = vec![
         kv_line("Height", &state.height),
-        kv_line("Difficulty", &state.difficulty),
+        kv_line("Hashrate", &state.network_hashrate),
     ];
     let network_block = Block::default()
         .title(Span::styled(" NETWORK ", TITLE_STYLE))

@@ -41,7 +41,7 @@ use super::solution_cache::{
     DEFERRED_SOLUTIONS_CAPACITY, RECENT_SUBMITTED_SOLUTIONS_CAPACITY, RECENT_TEMPLATE_CACHE_MAX,
     RECENT_TEMPLATE_CACHE_MIN,
 };
-use super::stats::Stats;
+use super::stats::{format_hashrate, Stats};
 #[cfg(test)]
 use super::submit::process_submit_request;
 use super::submit::{
@@ -70,6 +70,8 @@ const NVIDIA_INIT_LONG_WAIT_HINT_AFTER: Duration = Duration::from_secs(120);
 const DEFERRED_BACKEND_ACTIVATION_ROUND_CAP: Duration = Duration::from_secs(5);
 const WALLET_TUI_REFRESH_INTERVAL: Duration = Duration::from_secs(10);
 const ATOMIC_UNITS_PER_BNT: u64 = 100_000_000;
+// Keep in sync with Blocknet daemon target interval (block.go: BlockIntervalSec = 300).
+const NETWORK_HASHRATE_TARGET_BLOCK_SECS: f64 = 300.0;
 
 #[derive(Default)]
 struct RetryTracker {
@@ -147,11 +149,17 @@ struct PreparedTemplate {
     header_base: Arc<[u8]>,
     target: [u8; 32],
     height: String,
-    difficulty: String,
+    network_hashrate: String,
 }
 
 fn current_tip_sequence(tip_signal: Option<&TipSignal>) -> u64 {
     tip_signal.map(TipSignal::snapshot_sequence).unwrap_or(0)
+}
+
+fn format_network_hashrate_from_difficulty(difficulty: Option<u64>) -> String {
+    difficulty
+        .map(|value| format_hashrate(value as f64 / NETWORK_HASHRATE_TARGET_BLOCK_SECS))
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 impl<'a> MiningControlPlane<'a> {
@@ -590,15 +598,14 @@ fn prepare_round_template(
         let height = template_height_u64
             .map(|h| h.to_string())
             .unwrap_or_else(|| "unknown".to_string());
-        let difficulty = template_difficulty(&template.block)
-            .map(|d| d.to_string())
-            .unwrap_or_else(|| "unknown".to_string());
+        let network_hashrate =
+            format_network_hashrate_from_difficulty(template_difficulty(&template.block));
 
         return Some(PreparedTemplate {
             header_base,
             target,
             height,
-            difficulty,
+            network_hashrate,
         });
     }
 }
@@ -650,7 +657,7 @@ struct ExecuteRoundPhase<'a, 'cp> {
     stop_at: Instant,
     round_start: Instant,
     height: &'a str,
-    difficulty: &'a str,
+    network_hashrate: &'a str,
     header_base: &'a Arc<[u8]>,
     target: [u8; 32],
     current_template: &'a BlockTemplateResponse,
@@ -682,7 +689,7 @@ fn execute_round_phase(phase: ExecuteRoundPhase<'_, '_>) -> Result<()> {
         stop_at,
         round_start,
         height,
-        difficulty,
+        network_hashrate,
         header_base,
         target,
         current_template,
@@ -724,7 +731,7 @@ fn execute_round_phase(phase: ExecuteRoundPhase<'_, '_>) -> Result<()> {
         stop_at,
         round_start,
         height,
-        difficulty,
+        network_hashrate,
         header_base,
         target,
     })?;
@@ -888,7 +895,7 @@ fn execute_round_phase(phase: ExecuteRoundPhase<'_, '_>) -> Result<()> {
 
                 round_start,
                 height,
-                difficulty,
+                network_hashrate,
                 epoch,
                 state_label: "solved",
             },
@@ -906,7 +913,7 @@ fn execute_round_phase(phase: ExecuteRoundPhase<'_, '_>) -> Result<()> {
 
                 round_start,
                 height,
-                difficulty,
+                network_hashrate,
                 epoch,
                 state_label: "stale-refresh",
             },
@@ -921,7 +928,7 @@ fn execute_round_phase(phase: ExecuteRoundPhase<'_, '_>) -> Result<()> {
 
                 round_start,
                 height,
-                difficulty,
+                network_hashrate,
                 epoch,
                 state_label: "refresh",
             },
@@ -1105,7 +1112,7 @@ pub(super) fn run_mining_loop(
             header_base,
             target,
             height,
-            difficulty,
+            network_hashrate,
         } = prepared_template;
 
         epoch = epoch.wrapping_add(1).max(1);
@@ -1143,7 +1150,7 @@ pub(super) fn run_mining_loop(
             stop_at,
             round_start,
             height: &height,
-            difficulty: &difficulty,
+            network_hashrate: &network_hashrate,
             header_base: &header_base,
             target,
             current_template: &template,
@@ -1440,7 +1447,7 @@ struct RoundInput<'a> {
     stop_at: Instant,
     round_start: Instant,
     height: &'a str,
-    difficulty: &'a str,
+    network_hashrate: &'a str,
     header_base: &'a Arc<[u8]>,
     target: [u8; 32],
 }
@@ -1606,7 +1613,7 @@ impl<'a> RoundRuntime<'a> {
                 round_backend_hashes: &progress.round_backend_hashes,
                 round_start: input.round_start,
                 height: input.height,
-                difficulty: input.difficulty,
+                network_hashrate: input.network_hashrate,
                 epoch: input.epoch,
                 state_label,
             },
@@ -2373,6 +2380,19 @@ mod tests {
             Duration::from_secs(1),
         )
         .expect("submit test client should be created")
+    }
+
+    #[test]
+    fn formats_network_hashrate_from_difficulty() {
+        assert_eq!(format_network_hashrate_from_difficulty(None), "unknown");
+        assert_eq!(
+            format_network_hashrate_from_difficulty(Some(300)),
+            "1.000 H/s"
+        );
+        assert_eq!(
+            format_network_hashrate_from_difficulty(Some(300_000)),
+            "1.000 KH/s"
+        );
     }
 
     #[test]
