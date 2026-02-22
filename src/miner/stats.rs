@@ -121,16 +121,24 @@ impl Stats {
 }
 
 pub fn format_hashrate(hps: f64) -> String {
+    format_hashrate_with_decimals(hps, 3)
+}
+
+pub fn format_hashrate_ui(hps: f64) -> String {
+    format_hashrate_with_decimals(hps, 2)
+}
+
+fn format_hashrate_with_decimals(hps: f64, decimals: usize) -> String {
     if hps >= 1_000_000_000.0 {
-        return format!("{:.3} GH/s", hps / 1_000_000_000.0);
+        return format!("{:.*} GH/s", decimals, hps / 1_000_000_000.0);
     }
     if hps >= 1_000_000.0 {
-        return format!("{:.3} MH/s", hps / 1_000_000.0);
+        return format!("{:.*} MH/s", decimals, hps / 1_000_000.0);
     }
     if hps >= 1_000.0 {
-        return format!("{:.3} KH/s", hps / 1_000.0);
+        return format!("{:.*} KH/s", decimals, hps / 1_000.0);
     }
-    format!("{hps:.3} H/s")
+    format!("{hps:.decimals$} H/s")
 }
 
 pub fn median(sorted: &[f64]) -> f64 {
@@ -162,5 +170,12 @@ mod tests {
         assert_eq!(format_hashrate(5.0), "5.000 H/s");
         assert_eq!(format_hashrate(5_000.0), "5.000 KH/s");
         assert_eq!(format_hashrate(5_000_000.0), "5.000 MH/s");
+    }
+
+    #[test]
+    fn format_hashrate_ui_units() {
+        assert_eq!(format_hashrate_ui(5.0), "5.00 H/s");
+        assert_eq!(format_hashrate_ui(5_000.0), "5.00 KH/s");
+        assert_eq!(format_hashrate_ui(5_000_000.0), "5.00 MH/s");
     }
 }

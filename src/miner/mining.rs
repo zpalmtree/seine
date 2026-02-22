@@ -41,7 +41,7 @@ use super::solution_cache::{
     DEFERRED_SOLUTIONS_CAPACITY, RECENT_SUBMITTED_SOLUTIONS_CAPACITY, RECENT_TEMPLATE_CACHE_MAX,
     RECENT_TEMPLATE_CACHE_MIN,
 };
-use super::stats::{format_hashrate, Stats};
+use super::stats::{format_hashrate_ui, Stats};
 #[cfg(test)]
 use super::submit::process_submit_request;
 use super::submit::{
@@ -70,6 +70,9 @@ const DEFERRED_BACKEND_ACTIVATION_ROUND_CAP: Duration = Duration::from_secs(5);
 const WALLET_TUI_REFRESH_INTERVAL: Duration = Duration::from_secs(10);
 const INVALID_ADDRESS_HALT_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 const ATOMIC_UNITS_PER_BNT: u64 = 100_000_000;
+const BNT_DISPLAY_DECIMALS: usize = 4;
+const BNT_DISPLAY_SCALE_ATOMIC_UNITS: u64 = 10_000;
+const EXPLORER_HASHRATE_SAMPLE_COUNT: usize = 10;
 // Keep in sync with Blocknet daemon target interval (block.go: BlockIntervalSec = 300).
 const NETWORK_HASHRATE_TARGET_BLOCK_SECS: f64 = 300.0;
 
@@ -143,6 +146,7 @@ struct MiningControlPlane<'a> {
     dev_fee_address: Option<&'static str>,
     next_wallet_tui_refresh_at: Instant,
     wallet_address_logged: bool,
+    network_hashrate_cache: Option<NetworkHashrateCache>,
 }
 
 struct RoundLoopState {
@@ -158,6 +162,13 @@ struct PreparedTemplate {
     target: [u8; 32],
     height: String,
     network_hashrate: String,
+}
+
+#[derive(Clone)]
+struct NetworkHashrateCache {
+    chain_height: Option<u64>,
+    difficulty: Option<u64>,
+    rendered: String,
 }
 
 fn current_tip_sequence(tip_signal: Option<&TipSignal>) -> u64 {
@@ -215,8 +226,68 @@ fn should_use_daemon_wallet_stats_for_override(
 
 fn format_network_hashrate_from_difficulty(difficulty: Option<u64>) -> String {
     difficulty
-        .map(|value| format_hashrate(value as f64 / NETWORK_HASHRATE_TARGET_BLOCK_SECS))
+        .map(|value| format_hashrate_ui(value as f64 / NETWORK_HASHRATE_TARGET_BLOCK_SECS))
         .unwrap_or_else(|| "unknown".to_string())
+}
+
+fn explorer_chain_height_from_template_height(template_height: Option<u64>) -> Option<u64> {
+    template_height.and_then(|height| height.checked_sub(1))
+}
+
+fn estimate_explorer_network_hashrate_hps(
+    client: &ApiClient,
+    chain_height: u64,
+    difficulty: u64,
+) -> Result<f64> {
+    // Match explorer.go: hashrate = NextDifficulty / avg(last 10 positive block-time deltas).
+    if chain_height < 2 {
+        return Ok(0.0);
+    }
+
+    let mut total_time = 0i64;
+    let mut count = 0usize;
+    let mut current_ts = client
+        .get_block_by_height_optional(chain_height)?
+        .map(|block| block.timestamp);
+    let mut height = chain_height;
+
+    while height > 0 && count < EXPLORER_HASHRATE_SAMPLE_COUNT {
+        let prev_ts = client
+            .get_block_by_height_optional(height - 1)?
+            .map(|block| block.timestamp);
+        if let (Some(block_ts), Some(prev_block_ts)) = (current_ts, prev_ts) {
+            let block_time = block_ts - prev_block_ts;
+            if block_time > 0 {
+                total_time += block_time;
+                count += 1;
+            }
+        }
+        current_ts = prev_ts;
+        height -= 1;
+    }
+
+    if count > 0 && total_time > 0 {
+        let avg_block_time = total_time as f64 / count as f64;
+        return Ok(difficulty as f64 / avg_block_time);
+    }
+
+    Ok(0.0)
+}
+
+fn format_network_hashrate_from_explorer_sampling(
+    client: &ApiClient,
+    template_height: Option<u64>,
+    difficulty: Option<u64>,
+) -> Result<String> {
+    let Some(difficulty) = difficulty else {
+        return Ok("unknown".to_string());
+    };
+    let Some(chain_height) = explorer_chain_height_from_template_height(template_height) else {
+        return Ok(format_hashrate_ui(0.0));
+    };
+
+    let hps = estimate_explorer_network_hashrate_hps(client, chain_height, difficulty)?;
+    Ok(format_hashrate_ui(hps))
 }
 
 impl<'a> MiningControlPlane<'a> {
@@ -254,6 +325,7 @@ impl<'a> MiningControlPlane<'a> {
             dev_fee_address: None,
             next_wallet_tui_refresh_at: Instant::now(),
             wallet_address_logged: false,
+            network_hashrate_cache: None,
         }
     }
 
@@ -261,6 +333,44 @@ impl<'a> MiningControlPlane<'a> {
         let request_id = self.next_submit_request_id;
         self.next_submit_request_id = self.next_submit_request_id.wrapping_add(1).max(1);
         request_id
+    }
+
+    fn network_hashrate_for_template(
+        &mut self,
+        template_height: Option<u64>,
+        difficulty: Option<u64>,
+    ) -> String {
+        // Recompute only when chain tip height or next difficulty changes.
+        let chain_height = explorer_chain_height_from_template_height(template_height);
+        if let Some(cache) = self.network_hashrate_cache.as_ref() {
+            if cache.chain_height == chain_height && cache.difficulty == difficulty {
+                return cache.rendered.clone();
+            }
+        }
+
+        let rendered = match format_network_hashrate_from_explorer_sampling(
+            self.client,
+            template_height,
+            difficulty,
+        ) {
+            Ok(value) => value,
+            Err(err) => {
+                warn(
+                    "NETWORK",
+                    format!(
+                        "failed to sample explorer network hashrate ({err:#}); using fixed-interval estimate"
+                    ),
+                );
+                format_network_hashrate_from_difficulty(difficulty)
+            }
+        };
+
+        self.network_hashrate_cache = Some(NetworkHashrateCache {
+            chain_height,
+            difficulty,
+            rendered: rendered.clone(),
+        });
+        rendered
     }
 
     fn ensure_submit_worker(&mut self) {
@@ -699,8 +809,10 @@ fn prepare_round_template(
         let height = template_height_u64
             .map(|h| h.to_string())
             .unwrap_or_else(|| "unknown".to_string());
-        let network_hashrate =
-            format_network_hashrate_from_difficulty(template_difficulty(&template.block));
+        let network_hashrate = control_plane.network_hashrate_for_template(
+            template_height_u64,
+            template_difficulty(&template.block),
+        );
 
         return Some(PreparedTemplate {
             header_base,
@@ -1441,14 +1553,17 @@ fn maybe_log_pending_nvidia_progress(
 }
 
 fn format_atomic_units_bnt(amount_atomic: u64) -> String {
-    let whole = amount_atomic / ATOMIC_UNITS_PER_BNT;
-    let fractional = amount_atomic % ATOMIC_UNITS_PER_BNT;
+    let rounded_atomic = amount_atomic.saturating_add(BNT_DISPLAY_SCALE_ATOMIC_UNITS / 2)
+        / BNT_DISPLAY_SCALE_ATOMIC_UNITS
+        * BNT_DISPLAY_SCALE_ATOMIC_UNITS;
+    let whole = rounded_atomic / ATOMIC_UNITS_PER_BNT;
+    let fractional = (rounded_atomic % ATOMIC_UNITS_PER_BNT) / BNT_DISPLAY_SCALE_ATOMIC_UNITS;
     let whole = format_u64_with_commas(whole);
     if fractional == 0 {
         return format!("{whole} BNT");
     }
 
-    let mut frac = format!("{fractional:08}");
+    let mut frac = format!("{fractional:0width$}", width = BNT_DISPLAY_DECIMALS);
     while frac.ends_with('0') {
         frac.pop();
     }
@@ -2514,17 +2629,62 @@ mod tests {
         .expect("submit test client should be created")
     }
 
+    fn mock_block_timestamp(server: &MockServer, height: u64, timestamp: i64) {
+        let path = format!("/api/block/{height}");
+        let _ = server.mock(move |when, then| {
+            when.method(GET)
+                .path(path.as_str())
+                .header("authorization", "Bearer test-token");
+            then.status(200).json_body(json!({
+                "height": height,
+                "timestamp": timestamp,
+                "difficulty": 6000u64
+            }));
+        });
+    }
+
     #[test]
     fn formats_network_hashrate_from_difficulty() {
         assert_eq!(format_network_hashrate_from_difficulty(None), "unknown");
         assert_eq!(
             format_network_hashrate_from_difficulty(Some(300)),
-            "1.000 H/s"
+            "1.00 H/s"
         );
         assert_eq!(
             format_network_hashrate_from_difficulty(Some(300_000)),
-            "1.000 KH/s"
+            "1.00 KH/s"
         );
+    }
+
+    #[test]
+    fn formats_network_hashrate_from_explorer_sampling() {
+        let server = MockServer::start();
+        let timestamps = [100i64, 400, 700, 1_000, 1_300, 1_600];
+        for (height, timestamp) in timestamps.into_iter().enumerate() {
+            mock_block_timestamp(&server, height as u64, timestamp);
+        }
+
+        let client = submit_test_client(&server);
+        let rendered =
+            format_network_hashrate_from_explorer_sampling(&client, Some(6), Some(3_000))
+                .expect("explorer hashrate should format");
+        assert_eq!(rendered, "10.00 H/s");
+    }
+
+    #[test]
+    fn explorer_sampling_skips_non_positive_block_deltas() {
+        let server = MockServer::start();
+        // Deltas across h=5..1: +300, 0, +300, -50, +300 => avg 300 over 3 valid samples.
+        let timestamps = [100i64, 400, 350, 650, 650, 950];
+        for (height, timestamp) in timestamps.into_iter().enumerate() {
+            mock_block_timestamp(&server, height as u64, timestamp);
+        }
+
+        let client = submit_test_client(&server);
+        let rendered =
+            format_network_hashrate_from_explorer_sampling(&client, Some(6), Some(3_000))
+                .expect("explorer hashrate should format");
+        assert_eq!(rendered, "10.00 H/s");
     }
 
     #[test]
@@ -3554,11 +3714,12 @@ mod tests {
     }
 
     #[test]
-    fn format_atomic_units_bnt_trims_trailing_fraction_zeros() {
+    fn format_atomic_units_bnt_rounds_to_four_decimals() {
         assert_eq!(format_atomic_units_bnt(0), "0 BNT");
         assert_eq!(format_atomic_units_bnt(100_000_000), "1 BNT");
         assert_eq!(format_atomic_units_bnt(1_250_000_000), "12.5 BNT");
-        assert_eq!(format_atomic_units_bnt(1_234_567_890), "12.3456789 BNT");
+        assert_eq!(format_atomic_units_bnt(1_234_567_890), "12.3457 BNT");
+        assert_eq!(format_atomic_units_bnt(199_999_999), "2 BNT");
     }
 
     #[test]

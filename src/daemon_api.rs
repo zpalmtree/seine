@@ -32,6 +32,11 @@ pub struct WalletAddressResponse {
     pub address: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct BlockSummaryResponse {
+    pub timestamp: i64,
+}
+
 #[derive(Debug)]
 pub struct ApiStatusError {
     endpoint: String,
@@ -203,6 +208,33 @@ impl ApiClient {
             .context("request to wallet/address endpoint failed")?;
 
         decode_json_response(resp, "wallet/address")
+    }
+
+    pub fn get_block_by_height(&self, height: u64) -> Result<BlockSummaryResponse> {
+        let url = format!("{}/api/block/{height}", self.base_url);
+        let resp = self
+            .with_auth(self.json_client.get(url))?
+            .send()
+            .context("request to block endpoint failed")?;
+
+        decode_json_response(resp, "block")
+    }
+
+    pub fn get_block_by_height_optional(
+        &self,
+        height: u64,
+    ) -> Result<Option<BlockSummaryResponse>> {
+        match self.get_block_by_height(height) {
+            Ok(block) => Ok(Some(block)),
+            Err(err) => {
+                if let Some(api_err) = err.downcast_ref::<ApiStatusError>() {
+                    if api_err.endpoint() == "block" && api_err.status() == StatusCode::NOT_FOUND {
+                        return Ok(None);
+                    }
+                }
+                Err(err)
+            }
+        }
     }
 
     pub fn open_events_stream(&self) -> Result<Response> {
@@ -522,6 +554,47 @@ mod tests {
             .get_wallet_address()
             .expect("wallet address request should succeed");
         assert_eq!(resp.address, expected);
+        mock.assert();
+    }
+
+    #[test]
+    fn get_block_by_height_success() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/api/block/42")
+                .header("authorization", "Bearer testtoken");
+            then.status(200).json_body(json!({
+                "height": 42,
+                "timestamp": 1_771_207_118i64,
+                "difficulty": 6000u64
+            }));
+        });
+
+        let client = test_client(&server);
+        let block = client
+            .get_block_by_height(42)
+            .expect("block request should succeed");
+        assert_eq!(block.timestamp, 1_771_207_118);
+        mock.assert();
+    }
+
+    #[test]
+    fn get_block_by_height_optional_returns_none_on_not_found() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/api/block/9")
+                .header("authorization", "Bearer testtoken");
+            then.status(404)
+                .json_body(json!({"error": "block not found"}));
+        });
+
+        let client = test_client(&server);
+        let block = client
+            .get_block_by_height_optional(9)
+            .expect("optional block request should succeed");
+        assert!(block.is_none());
         mock.assert();
     }
 

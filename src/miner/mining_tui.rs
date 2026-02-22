@@ -9,7 +9,7 @@ use crossbeam_channel::{bounded, Sender, TrySendError};
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 
 use super::hashrate_tracker::HashrateTracker;
-use super::stats::{format_hashrate, Stats};
+use super::stats::{format_hashrate_ui, Stats};
 use super::tui::{DeviceHashrate, TuiRenderer, TuiState};
 use super::ui::{set_tui_state, warn};
 use super::{backend_descriptions, backend_display_names, BackendSlot};
@@ -106,8 +106,8 @@ impl TuiDisplay {
                 .unwrap_or_else(|| slot.backend.name().to_string());
             device_hashrates.push(DeviceHashrate {
                 name,
-                current: format_hashrate(current_rate),
-                average: format_hashrate(avg_rate),
+                current: format_hashrate_ui(current_rate),
+                average: format_hashrate_ui(avg_rate),
             });
         }
 
@@ -116,8 +116,8 @@ impl TuiDisplay {
             s.network_hashrate = view.network_hashrate.to_string();
             s.epoch = view.epoch;
             s.state = view.state_label.to_string();
-            s.round_hashrate = format_hashrate(rates.current_total);
-            s.avg_hashrate = format_hashrate(rates.average_total);
+            s.round_hashrate = format_hashrate_ui(rates.current_total);
+            s.avg_hashrate = format_hashrate_ui(rates.average_total);
             s.total_hashes = snapshot.hashes;
             s.templates = snapshot.templates;
             s.submitted = snapshot.submitted;
