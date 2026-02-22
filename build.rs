@@ -5,6 +5,7 @@ fn main() {
     if let Some(tag) = first_nonempty_env(&["SEINE_GIT_TAG", "BNMINER_GIT_TAG"])
         .or_else(github_ref_tag)
         .or_else(|| run_git(&["describe", "--tags", "--exact-match", "HEAD"]))
+        .or_else(|| run_git(&["describe", "--tags", "--always"]))
     {
         println!("cargo:rustc-env=SEINE_GIT_TAG={tag}");
     }

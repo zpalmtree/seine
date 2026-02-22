@@ -1,4 +1,4 @@
-.PHONY: all clean build build-native build-cpu test run release
+.PHONY: all clean build build-native build-cpu test run release tag-release
 
 VERSION := $(shell grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
 OS := $(shell uname -s | tr '[:upper:]' '[:lower:]')
@@ -53,6 +53,15 @@ endif
 	@rm -f releases/seine
 	@echo "Built: releases/seine-$(VERSION)-$(OS)-$(ARCH).zip"
 	@echo "Checksum added to releases/SHA256SUMS.txt"
+
+# Update Cargo version + create matching git tag (annotated)
+# Usage: make tag-release TAG=v0.1.10
+tag-release:
+	@if [ -z "$(TAG)" ]; then \
+		echo "Usage: make tag-release TAG=vX.Y.Z"; \
+		exit 1; \
+	fi
+	@./scripts/release_tag.sh $(TAG)
 
 # Clean build artifacts
 clean:

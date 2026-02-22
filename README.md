@@ -215,6 +215,9 @@ make test
 
 # Package a release zip for current platform
 make release
+
+# Bump Cargo version + create matching git tag
+make tag-release TAG=v0.1.10
 ```
 
 Or directly with Cargo:
