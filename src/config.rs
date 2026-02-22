@@ -167,6 +167,11 @@ struct Cli {
     #[arg(long)]
     wallet_password_file: Option<PathBuf>,
 
+    /// Optional payout address override for mining rewards.
+    /// When set, block templates are requested with this address instead of daemon wallet default.
+    #[arg(long = "address")]
+    mining_address: Option<String>,
+
     /// Path to api.cookie file (defaults to <daemon-dir>/api.cookie).
     #[arg(long)]
     cookie: Option<PathBuf>,
@@ -513,6 +518,7 @@ pub struct Config {
     pub token_cookie_path: Option<PathBuf>,
     pub wallet_password: Option<String>,
     pub wallet_password_file: Option<PathBuf>,
+    pub mining_address: Option<String>,
     pub backend_specs: Vec<BackendSpec>,
     pub threads: usize,
     pub cpu_auto_threads_cap: usize,
@@ -587,6 +593,11 @@ impl Config {
         if let Some(threads) = cli.threads {
             if threads == 0 {
                 bail!("threads must be >= 1");
+            }
+        }
+        if let Some(mining_address) = cli.mining_address.as_ref() {
+            if mining_address.trim().is_empty() {
+                bail!("--address is empty");
             }
         }
         if cli.nonce_iters_per_lane == 0 {
@@ -817,6 +828,7 @@ impl Config {
             token_cookie_path,
             wallet_password: cli.wallet_password,
             wallet_password_file: cli.wallet_password_file,
+            mining_address: cli.mining_address.map(|address| address.trim().to_string()),
             backend_specs,
             threads: resolved_threads,
             cpu_auto_threads_cap: auto_threads_cap,
@@ -1667,6 +1679,7 @@ mod tests {
             token: None,
             wallet_password: None,
             wallet_password_file: None,
+            mining_address: None,
             cookie: None,
             daemon_dir: PathBuf::from("./blocknet-data-mainnet"),
             data_dir: PathBuf::from("./seine-data"),

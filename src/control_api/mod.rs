@@ -125,6 +125,7 @@ struct ApiConfigView {
     has_token: bool,
     cookie_path: Option<String>,
     wallet_password_present: bool,
+    mining_address: Option<String>,
     backend_specs: Vec<BackendSpecView>,
     threads: usize,
     cpu_profile: String,
@@ -195,6 +196,7 @@ impl From<&Config> for ApiConfigView {
                 .as_ref()
                 .map(|path| path.display().to_string()),
             wallet_password_present: cfg.wallet_password.is_some(),
+            mining_address: cfg.mining_address.clone(),
             backend_specs: cfg
                 .backend_specs
                 .iter()
@@ -853,6 +855,7 @@ struct StartRequest {
     cookie_path: Option<String>,
     wallet_password: Option<String>,
     wallet_password_file: Option<String>,
+    mining_address: Option<String>,
     backend_specs: Option<Vec<BackendSpecPatch>>,
     threads: Option<usize>,
     refresh_secs: Option<u64>,
@@ -1336,6 +1339,13 @@ fn apply_start_patch(cfg: &mut Config, patch: &StartRequest) -> Result<()> {
     }
     if let Some(path) = patch.wallet_password_file.as_ref() {
         cfg.wallet_password_file = Some(path.into());
+    }
+    if let Some(mining_address) = patch.mining_address.as_ref() {
+        let mining_address = mining_address.trim();
+        if mining_address.is_empty() {
+            bail!("mining_address cannot be empty");
+        }
+        cfg.mining_address = Some(mining_address.to_string());
     }
     if let Some(specs) = patch.backend_specs.as_ref() {
         cfg.backend_specs = parse_backend_specs_patch(specs)?;

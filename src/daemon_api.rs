@@ -260,6 +260,18 @@ pub fn is_unauthorized_error(err: &anyhow::Error) -> bool {
     api_err.status() == StatusCode::UNAUTHORIZED
 }
 
+pub fn is_invalid_blocktemplate_address_error(err: &anyhow::Error) -> bool {
+    let Some(api_err) = err.downcast_ref::<ApiStatusError>() else {
+        return false;
+    };
+    api_err.endpoint() == "blocktemplate"
+        && api_err.status() == StatusCode::BAD_REQUEST
+        && api_err
+            .message()
+            .to_ascii_lowercase()
+            .contains("invalid address")
+}
+
 pub fn is_retryable_api_error(err: &anyhow::Error) -> bool {
     if let Some(api_err) = err.downcast_ref::<ApiStatusError>() {
         let status = api_err.status();
@@ -561,5 +573,32 @@ mod tests {
             message: "backend down".to_string(),
         });
         assert!(!is_timeout_api_error(&err));
+    }
+
+    #[test]
+    fn invalid_blocktemplate_address_error_is_classified() {
+        let err = anyhow!(ApiStatusError {
+            endpoint: "blocktemplate".to_string(),
+            status: StatusCode::BAD_REQUEST,
+            message: "invalid address".to_string(),
+        });
+        assert!(is_invalid_blocktemplate_address_error(&err));
+    }
+
+    #[test]
+    fn invalid_blocktemplate_address_error_rejects_other_failures() {
+        let wrong_status = anyhow!(ApiStatusError {
+            endpoint: "blocktemplate".to_string(),
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            message: "invalid address".to_string(),
+        });
+        assert!(!is_invalid_blocktemplate_address_error(&wrong_status));
+
+        let wrong_message = anyhow!(ApiStatusError {
+            endpoint: "blocktemplate".to_string(),
+            status: StatusCode::BAD_REQUEST,
+            message: "bad request".to_string(),
+        });
+        assert!(!is_invalid_blocktemplate_address_error(&wrong_message));
     }
 }

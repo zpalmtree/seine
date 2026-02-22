@@ -16,6 +16,7 @@ For the raw CLI output, run:
 | `--token` | string | Explicit daemon API bearer token. |
 | `--wallet-password` | string | Wallet password for automatic wallet load when needed. |
 | `--wallet-password-file` | path | File containing the wallet password. |
+| `--address` | string | Override payout address for block template requests. If it matches daemon wallet address, TUI wallet stats remain available; otherwise pending/unlocked display as `---`. |
 | `--cookie` | path | Explicit `api.cookie` path. Used to read daemon API token. |
 | `--daemon-dir` | path, default `./blocknet-data-mainnet` | Daemon data dir used to find `api.cookie` when `--cookie` is not set. |
 | `--data-dir` | path, default `./seine-data` | Seine data dir for persisted state (autotune caches, etc). |

@@ -68,6 +68,7 @@ const SUBMIT_BACKLOG_BACKPRESSURE_LOG_INTERVAL: Duration = Duration::from_secs(5
 const NVIDIA_INIT_EXPECTED_STARTUP: Duration = Duration::from_secs(5 * 60);
 const DEFERRED_BACKEND_ACTIVATION_ROUND_CAP: Duration = Duration::from_secs(5);
 const WALLET_TUI_REFRESH_INTERVAL: Duration = Duration::from_secs(10);
+const INVALID_ADDRESS_HALT_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 const ATOMIC_UNITS_PER_BNT: u64 = 100_000_000;
 // Keep in sync with Blocknet daemon target interval (block.go: BlockIntervalSec = 300).
 const NETWORK_HASHRATE_TARGET_BLOCK_SECS: f64 = 300.0;
@@ -116,6 +117,14 @@ struct WalletTuiSnapshot {
     address: String,
     pending: String,
     unlocked: String,
+    source: WalletTuiSnapshotSource,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum WalletTuiSnapshotSource {
+    DaemonWallet,
+    AddressOverrideMatchedDaemon,
+    AddressOverrideOnly,
 }
 
 struct MiningControlPlane<'a> {
@@ -153,6 +162,55 @@ struct PreparedTemplate {
 
 fn current_tip_sequence(tip_signal: Option<&TipSignal>) -> u64 {
     tip_signal.map(TipSignal::snapshot_sequence).unwrap_or(0)
+}
+
+fn resolve_blocktemplate_address<'a>(
+    configured_address: Option<&'a str>,
+    dev_fee_address: Option<&'a str>,
+) -> Option<&'a str> {
+    dev_fee_address.or(configured_address)
+}
+
+fn invalid_reward_address_message(
+    address: Option<&str>,
+    configured_address: Option<&str>,
+) -> String {
+    if let Some(active_address) = address {
+        let compact_address = compact_log_address(active_address);
+        if configured_address.is_some_and(|configured| configured == active_address) {
+            return format!("invalid --address value: {compact_address}");
+        }
+        return format!("daemon rejected reward address: {compact_address}");
+    }
+    "daemon rejected reward address".to_string()
+}
+
+fn compact_log_address(address: &str) -> String {
+    let value = address.trim();
+    let len = value.chars().count();
+    if len <= 20 {
+        return value.to_string();
+    }
+
+    let head: String = value.chars().take(8).collect();
+    let tail: String = value
+        .chars()
+        .rev()
+        .take(8)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("{head}...{tail}")
+}
+
+fn should_use_daemon_wallet_stats_for_override(
+    configured_address: Option<&str>,
+    daemon_wallet_address: Option<&str>,
+) -> bool {
+    configured_address
+        .zip(daemon_wallet_address)
+        .is_some_and(|(configured, daemon)| configured == daemon)
 }
 
 fn format_network_hashrate_from_difficulty(difficulty: Option<u64>) -> String {
@@ -362,8 +420,9 @@ impl<'a> MiningControlPlane<'a> {
     }
 
     fn spawn_prefetch_if_needed(&mut self) {
+        let address = self.blocktemplate_address().map(str::to_string);
         if let Some(prefetch) = self.prefetch.as_mut() {
-            prefetch.request_if_idle(current_tip_sequence(self.tip_signal), self.dev_fee_address);
+            prefetch.request_if_idle(current_tip_sequence(self.tip_signal), address.as_deref());
         }
     }
 
@@ -371,6 +430,7 @@ impl<'a> MiningControlPlane<'a> {
         &mut self,
         tui: &mut Option<TuiDisplay>,
     ) -> Option<BlockTemplateResponse> {
+        let address = self.blocktemplate_address().map(str::to_string);
         resolve_next_template(
             &mut self.prefetch,
             self.client,
@@ -378,12 +438,16 @@ impl<'a> MiningControlPlane<'a> {
             &self.shutdown,
             self.tip_signal,
             tui,
-            self.dev_fee_address,
+            address.as_deref(),
         )
     }
 
     fn set_dev_fee_address(&mut self, address: Option<&'static str>) {
         self.dev_fee_address = address;
+    }
+
+    fn blocktemplate_address(&self) -> Option<&str> {
+        resolve_blocktemplate_address(self.cfg.mining_address.as_deref(), self.dev_fee_address)
     }
 
     fn maybe_refresh_tui_wallet_overview(&mut self, tui: &mut Option<TuiDisplay>, force: bool) {
@@ -408,18 +472,56 @@ impl<'a> MiningControlPlane<'a> {
             &snapshot.unlocked,
         );
         if !self.wallet_address_logged {
-            info("WALLET", format!("address: {}", snapshot.address));
+            match snapshot.source {
+                WalletTuiSnapshotSource::DaemonWallet => {
+                    info("WALLET", format!("address: {}", snapshot.address));
+                }
+                WalletTuiSnapshotSource::AddressOverrideMatchedDaemon => {
+                    info("WALLET", format!("address: {}", snapshot.address));
+                }
+                WalletTuiSnapshotSource::AddressOverrideOnly => {
+                    info("WALLET", format!("address: {}", snapshot.address));
+                    warn(
+                        "WALLET",
+                        "address override differs from daemon wallet; pending/unlocked stats unavailable",
+                    );
+                }
+            }
             self.wallet_address_logged = true;
         }
     }
 
     fn fetch_wallet_tui_snapshot(&self) -> Option<WalletTuiSnapshot> {
+        if let Some(address) = self.cfg.mining_address.as_ref() {
+            let daemon_wallet_address = self.client.get_wallet_address().ok().map(|v| v.address);
+            if should_use_daemon_wallet_stats_for_override(
+                Some(address.as_str()),
+                daemon_wallet_address.as_deref(),
+            ) {
+                if let Ok(balance) = self.client.get_wallet_balance() {
+                    return Some(WalletTuiSnapshot {
+                        address: address.clone(),
+                        pending: format_atomic_units_bnt(balance.pending),
+                        unlocked: format_atomic_units_bnt(balance.spendable),
+                        source: WalletTuiSnapshotSource::AddressOverrideMatchedDaemon,
+                    });
+                }
+            }
+            return Some(WalletTuiSnapshot {
+                address: address.clone(),
+                pending: "---".to_string(),
+                unlocked: "---".to_string(),
+                source: WalletTuiSnapshotSource::AddressOverrideOnly,
+            });
+        }
+
         let address = self.client.get_wallet_address().ok()?.address;
         let balance = self.client.get_wallet_balance().ok()?;
         Some(WalletTuiSnapshot {
             address,
             pending: format_atomic_units_bnt(balance.pending),
             unlocked: format_atomic_units_bnt(balance.spendable),
+            source: WalletTuiSnapshotSource::DaemonWallet,
         })
     }
 
@@ -1942,6 +2044,21 @@ fn resolve_next_template(
                     return None;
                 }
             }
+            PrefetchOutcome::InvalidAddress => {
+                set_tui_blocktemplate_retrying(tui, false);
+                set_tui_state_label(tui, "invalid-address");
+                error(
+                    "WALLET",
+                    invalid_reward_address_message(address, cfg.mining_address.as_deref()),
+                );
+                error(
+                    "MINER",
+                    "mining halted: invalid payout address (fix --address and restart)",
+                );
+                render_tui_now(tui);
+                wait_invalid_address_halt(shutdown.as_ref(), tui);
+                return None;
+            }
             PrefetchOutcome::Unavailable => {
                 set_tui_blocktemplate_retrying(tui, true);
                 set_tui_state_label(tui, "daemon-unavailable");
@@ -2322,6 +2439,17 @@ fn sleep_with_shutdown(shutdown: &AtomicBool, duration: Duration) -> bool {
     false
 }
 
+fn wait_invalid_address_halt(shutdown: &AtomicBool, tui: &mut Option<TuiDisplay>) {
+    if tui.is_none() {
+        return;
+    }
+
+    render_tui_now(tui);
+    while sleep_with_shutdown(shutdown, INVALID_ADDRESS_HALT_REFRESH_INTERVAL) {
+        render_tui_now(tui);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crossbeam_channel::Sender;
@@ -2397,6 +2525,62 @@ mod tests {
             format_network_hashrate_from_difficulty(Some(300_000)),
             "1.000 KH/s"
         );
+    }
+
+    #[test]
+    fn blocktemplate_address_prefers_dev_fee_when_active() {
+        assert_eq!(
+            resolve_blocktemplate_address(Some("user-address"), None),
+            Some("user-address")
+        );
+        assert_eq!(
+            resolve_blocktemplate_address(Some("user-address"), Some("dev-fee")),
+            Some("dev-fee")
+        );
+        assert_eq!(
+            resolve_blocktemplate_address(None, Some("dev-fee")),
+            Some("dev-fee")
+        );
+        assert_eq!(resolve_blocktemplate_address(None, None), None);
+    }
+
+    #[test]
+    fn override_wallet_stats_only_enabled_on_exact_daemon_match() {
+        assert!(should_use_daemon_wallet_stats_for_override(
+            Some("PpkFxY123"),
+            Some("PpkFxY123")
+        ));
+        assert!(!should_use_daemon_wallet_stats_for_override(
+            Some("PpkFxY123"),
+            Some("PpkFxY999")
+        ));
+        assert!(!should_use_daemon_wallet_stats_for_override(
+            Some("PpkFxY123"),
+            None
+        ));
+        assert!(!should_use_daemon_wallet_stats_for_override(
+            None,
+            Some("PpkFxY123")
+        ));
+    }
+
+    #[test]
+    fn invalid_reward_address_message_prioritizes_address_flag_hint() {
+        assert!(
+            invalid_reward_address_message(Some("bad-addr"), Some("bad-addr"))
+                .contains("invalid --address value")
+        );
+        assert!(
+            invalid_reward_address_message(Some("other-addr"), Some("configured-addr"))
+                .contains("daemon rejected reward address")
+        );
+    }
+
+    #[test]
+    fn invalid_reward_address_message_compacts_long_address() {
+        let address = "PpkFTCpDTBpjwaHcjWEXJwoT5MHrFpoi9cTuftzNLN7bNoBJjCSJEH5ZGXwNcUauhjgoV2ocF9RJWm8Ui2k1QAkAYrwMgG8Wk";
+        let message = invalid_reward_address_message(Some(address), Some(address));
+        assert!(message.contains("invalid --address value: PpkFTCpD...rwMgG8Wk"));
     }
 
     #[test]

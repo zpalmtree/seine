@@ -2952,6 +2952,7 @@ mod tests {
             token_cookie_path: None,
             wallet_password: None,
             wallet_password_file: None,
+            mining_address: None,
             backend_specs: vec![BackendSpec {
                 kind: BackendKind::Cpu,
                 device_index: None,

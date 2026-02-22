@@ -6,7 +6,10 @@ use std::time::Duration;
 use crossbeam_channel::{bounded, unbounded, Receiver, RecvTimeoutError, Sender, TrySendError};
 
 use crate::config::Config;
-use crate::daemon_api::{is_no_wallet_loaded_error, is_unauthorized_error, ApiClient};
+use crate::daemon_api::{
+    is_invalid_blocktemplate_address_error, is_no_wallet_loaded_error, is_unauthorized_error,
+    ApiClient,
+};
 use crate::types::BlockTemplateResponse;
 
 use super::auth::{refresh_api_token_from_cookie, TokenRefreshOutcome};
@@ -33,6 +36,7 @@ pub(super) enum PrefetchOutcome {
     Template(Box<BlockTemplateResponse>),
     NoWalletLoaded,
     Unauthorized,
+    InvalidAddress,
     Unavailable,
 }
 
@@ -220,6 +224,7 @@ pub(super) fn fetch_template_once(
     match client.get_block_template_with_timeout(timeout, address) {
         Ok(template) => PrefetchOutcome::Template(Box::new(template)),
         Err(err) if is_no_wallet_loaded_error(&err) => PrefetchOutcome::NoWalletLoaded,
+        Err(err) if is_invalid_blocktemplate_address_error(&err) => PrefetchOutcome::InvalidAddress,
         Err(err) if is_unauthorized_error(&err) => {
             if matches!(
                 refresh_api_token_from_cookie(client, cfg.token_cookie_path.as_deref()),
@@ -228,6 +233,9 @@ pub(super) fn fetch_template_once(
                 match client.get_block_template_with_timeout(timeout, address) {
                     Ok(template) => PrefetchOutcome::Template(Box::new(template)),
                     Err(err) if is_no_wallet_loaded_error(&err) => PrefetchOutcome::NoWalletLoaded,
+                    Err(err) if is_invalid_blocktemplate_address_error(&err) => {
+                        PrefetchOutcome::InvalidAddress
+                    }
                     Err(err) if is_unauthorized_error(&err) => PrefetchOutcome::Unauthorized,
                     Err(_) => PrefetchOutcome::Unavailable,
                 }

@@ -128,9 +128,14 @@ All miner flags are documented in [`docs/MINER_FLAGS.md`](docs/MINER_FLAGS.md).
 # Wallet password (if wallet is encrypted)
 ./seine --wallet-password-file /path/to/wallet.pass
 
+# Mine to a specific payout address (instead of daemon wallet default)
+./seine --address PpkFxY...
+
 # Plain log output instead of TUI
 ./seine --ui plain
 ```
+
+Note: when `--address` matches the daemon wallet address, Seine keeps wallet pending/unlocked stats in the TUI. If it differs, TUI balance fields show `---` for the override address.
 
 ## Control API
 

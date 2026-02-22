@@ -450,6 +450,7 @@ fn format_state_display(state: &TuiStateInner) -> (String, Color) {
         "wallet-required" | "wallet-password-required" => Color::Rgb(220, 170, 90),
         "daemon-syncing" => Color::Rgb(215, 165, 95),
         "daemon-unavailable" => Color::Rgb(210, 120, 100),
+        "invalid-address" => Color::Rgb(220, 105, 95),
         _ => Color::Rgb(180, 180, 180),
     };
 
