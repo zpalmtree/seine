@@ -65,8 +65,7 @@ const SUBMIT_BACKLOG_CAPACITY: usize = 512;
 const SUBMIT_BACKLOG_HARD_CAPACITY: usize = 4096;
 const SUBMIT_BACKLOG_FLUSH_WAIT: Duration = Duration::from_millis(10);
 const SUBMIT_BACKLOG_BACKPRESSURE_LOG_INTERVAL: Duration = Duration::from_secs(5);
-const NVIDIA_INIT_PROGRESS_LOG_INTERVAL: Duration = Duration::from_secs(20);
-const NVIDIA_INIT_LONG_WAIT_HINT_AFTER: Duration = Duration::from_secs(120);
+const NVIDIA_INIT_EXPECTED_STARTUP: Duration = Duration::from_secs(5 * 60);
 const DEFERRED_BACKEND_ACTIVATION_ROUND_CAP: Duration = Duration::from_secs(5);
 const WALLET_TUI_REFRESH_INTERVAL: Duration = Duration::from_secs(10);
 const ATOMIC_UNITS_PER_BNT: u64 = 100_000_000;
@@ -991,7 +990,8 @@ pub(super) fn run_mining_loop(
     } else {
         None
     };
-    let mut last_nvidia_pending_log_at: Option<Instant> = None;
+    let mut nvidia_pending_logged = false;
+    let mut nvidia_pending_long_wait_logged = false;
 
     let mut template = match control_plane.fetch_initial_template(&mut tui) {
         Some(t) => t,
@@ -1071,7 +1071,8 @@ pub(super) fn run_mining_loop(
             maybe_log_pending_nvidia_progress(
                 deferred_remaining,
                 &mut pending_nvidia_started_at,
-                &mut last_nvidia_pending_log_at,
+                &mut nvidia_pending_logged,
+                &mut nvidia_pending_long_wait_logged,
             );
         }
         control_plane.maybe_refresh_tui_wallet_overview(&mut tui, false);
@@ -1300,38 +1301,41 @@ pub(super) fn run_mining_loop(
 fn maybe_log_pending_nvidia_progress(
     pending_count: u64,
     pending_started_at: &mut Option<Instant>,
-    last_log_at: &mut Option<Instant>,
+    pending_logged: &mut bool,
+    long_wait_logged: &mut bool,
 ) {
     if pending_count == 0 {
         *pending_started_at = None;
-        *last_log_at = None;
+        *pending_logged = false;
+        *long_wait_logged = false;
         return;
     }
 
     let now = Instant::now();
     let started_at = pending_started_at.get_or_insert(now);
-    if last_log_at
-        .is_some_and(|last| now.saturating_duration_since(last) < NVIDIA_INIT_PROGRESS_LOG_INTERVAL)
-    {
+    if !*pending_logged {
+        info(
+            "BACKEND",
+            format!(
+                "nvidia initialization in progress: {pending_count} pending (first run or cache miss can take around {} minutes)",
+                NVIDIA_INIT_EXPECTED_STARTUP.as_secs() / 60
+            ),
+        );
+        *pending_logged = true;
         return;
     }
 
     let elapsed = now.saturating_duration_since(*started_at);
-    let elapsed_label = format_duration_compact(elapsed);
-    if elapsed >= NVIDIA_INIT_LONG_WAIT_HINT_AFTER {
+    if !*long_wait_logged && elapsed >= NVIDIA_INIT_EXPECTED_STARTUP {
+        let elapsed_label = format_duration_compact(elapsed);
         info(
             "BACKEND",
             format!(
-                "nvidia initialization in progress: {pending_count} pending ({elapsed_label} elapsed; first run or cache miss can take a few minutes)"
+                "nvidia initialization still in progress: {pending_count} pending ({elapsed_label} elapsed)"
             ),
         );
-    } else {
-        info(
-            "BACKEND",
-            format!("nvidia initialization in progress: {pending_count} pending ({elapsed_label} elapsed)"),
-        );
+        *long_wait_logged = true;
     }
-    *last_log_at = Some(now);
 }
 
 fn format_atomic_units_bnt(amount_atomic: u64) -> String {

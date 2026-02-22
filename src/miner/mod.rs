@@ -252,7 +252,7 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
                         info(
                             "BACKEND",
                             format!(
-                                "{backend_name}: initializing CUDA engine (loads cached kernel if available; first run may take ~2 min)...",
+                                "{backend_name}: initializing CUDA engine (loads cached kernel if available; first run may take around 5 minutes)...",
                             ),
                         );
                         let start_t = Instant::now();
