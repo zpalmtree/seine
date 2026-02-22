@@ -719,27 +719,31 @@ fn draw_log(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
 
     let inner_height = area.height.saturating_sub(2) as usize;
     let inner_width = area.width.saturating_sub(2) as usize;
-    // Fixed prefix: "HHHHHHs LLLL TTTTTTTT " = 8 + 6 + 10 + 1 = 25 chars
-    let prefix_width = 25;
-    let msg_width = inner_width.saturating_sub(prefix_width);
     // Build wrapped lines from the end so recent entries are always visible.
     let mut all_lines: Vec<Line> = Vec::new();
     for entry in state.log_entries.iter() {
-        let time = Span::styled(format!("{:>6.0}s ", entry.elapsed_secs), DIM_STYLE);
+        let elapsed = format_elapsed_log_clock(entry.elapsed_secs);
+        let time_text = format!("{elapsed:>8} ");
+        let time = Span::styled(time_text.clone(), DIM_STYLE);
+        let level_text = format!(" {} ", entry.level.label());
         let level = Span::styled(
-            format!(" {} ", entry.level.label()),
+            level_text.clone(),
             Style::default()
                 .fg(entry.level.label_fg())
                 .bg(entry.level.label_bg())
                 .add_modifier(Modifier::BOLD),
         );
+        let tag_text = format!(" {:<8} ", entry.tag);
+        let tag_width = tag_text.chars().count();
         let tag = Span::styled(
-            format!(" {:<8} ", entry.tag),
+            tag_text,
             Style::default()
                 .fg(Color::Rgb(200, 200, 200))
                 .bg(Color::Rgb(40, 40, 40))
                 .add_modifier(Modifier::BOLD),
         );
+        let prefix_width = time_text.chars().count() + level_text.chars().count() + tag_width;
+        let msg_width = inner_width.saturating_sub(prefix_width + 1);
         let msg_style = if matches!(entry.level, LogLevel::Mined) {
             Style::default()
                 .fg(entry.level.color())
@@ -769,6 +773,18 @@ fn draw_log(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
 
     let log = Paragraph::new(visible).block(log_block);
     frame.render_widget(log, area);
+}
+
+fn format_elapsed_log_clock(elapsed_secs: f64) -> String {
+    let total = elapsed_secs.max(0.0).floor() as u64;
+    let hours = total / 3600;
+    let mins = (total % 3600) / 60;
+    let secs = total % 60;
+    if hours < 100 {
+        format!("{hours:02}:{mins:02}:{secs:02}")
+    } else {
+        format!("{hours}:{mins:02}:{secs:02}")
+    }
 }
 
 fn kv_line(label: &str, value: &str) -> Line<'static> {
@@ -928,6 +944,14 @@ mod tests {
         let state = TuiStateInner::new();
         // Just verify it doesn't panic - actual value depends on timing
         let _uptime = state.uptime();
+    }
+
+    #[test]
+    fn log_elapsed_formatter_uses_clock_style() {
+        assert_eq!(format_elapsed_log_clock(0.0), "00:00:00");
+        assert_eq!(format_elapsed_log_clock(65.0), "00:01:05");
+        assert_eq!(format_elapsed_log_clock(32_857.9), "09:07:37");
+        assert_eq!(format_elapsed_log_clock(360_000.0), "100:00:00");
     }
 
     #[test]
