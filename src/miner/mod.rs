@@ -53,12 +53,15 @@ use ui::{info, warn};
 const TEMPLATE_RETRY_DELAY: Duration = Duration::from_secs(2);
 const MIN_EVENT_WAIT: Duration = Duration::from_millis(1);
 const BACKEND_EVENT_SOURCE_CAPACITY_MAX: usize = 256;
-const CPU_AUTOTUNE_RECORD_SCHEMA_VERSION: u32 = 4;
+const CPU_AUTOTUNE_RECORD_SCHEMA_VERSION: u32 = 5;
 const CPU_AUTOTUNE_RECORD_MAX_AGE_SECS: u64 = 14 * 24 * 60 * 60;
 const CPU_AUTOTUNE_LINEAR_SCAN_MAX_CANDIDATES: usize = 8;
 const CPU_AUTOTUNE_FINAL_SWEEP_RADIUS: usize = 2;
-const CPU_AUTOTUNE_TARGET_HASHES_PER_CANDIDATE: u64 = 30;
-const CPU_AUTOTUNE_MAX_SAMPLE_SECS_PER_CANDIDATE: u64 = 60;
+const CPU_AUTOTUNE_TARGET_HASHES_PER_CANDIDATE: u64 = 20;
+const CPU_AUTOTUNE_MAX_SAMPLE_SECS_PER_CANDIDATE: u64 = 30;
+const CPU_AUTOTUNE_RAMP_EARLY_STOP_MIN_SAMPLES: usize = 5;
+const CPU_AUTOTUNE_RAMP_EARLY_STOP_STREAK: usize = 2;
+const CPU_AUTOTUNE_RAMP_EARLY_STOP_FLOOR_FRAC: f64 = 0.985;
 const CPU_AUTOTUNE_BALANCED_PEAK_FLOOR_FRAC: f64 = 0.99;
 const CPU_AUTOTUNE_EFFICIENCY_PEAK_FLOOR_FRAC: f64 = 0.75;
 
@@ -170,6 +173,13 @@ struct CpuAutotuneSelection {
     peak_threads: usize,
     peak_hps: f64,
     peak_floor_frac: f64,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum CpuAutotuneMeasureOutcome {
+    Measured,
+    Interrupted,
+    MemoryLimited,
 }
 
 pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
@@ -874,104 +884,124 @@ fn maybe_autotune_cpu_threads(
                     threads
                 ),
             );
-            if shutdown.load(Ordering::Relaxed)
-                || !measure_cpu_autotune_candidate(
-                    cfg,
-                    tag,
-                    shutdown,
-                    threads,
-                    autotune_secs,
-                    &mut measurements,
-                )?
-            {
-                interrupted = true;
-                break;
+            match measure_cpu_autotune_candidate(
+                cfg,
+                tag,
+                shutdown,
+                threads,
+                autotune_secs,
+                &mut measurements,
+            )? {
+                CpuAutotuneMeasureOutcome::Measured => {}
+                CpuAutotuneMeasureOutcome::Interrupted => {
+                    interrupted = true;
+                    break;
+                }
+                CpuAutotuneMeasureOutcome::MemoryLimited => break,
             }
         }
     } else {
         info(
             tag,
             format!(
-                "cpu-autotune | {candidate_count} thread counts to search — using binary search to narrow down quickly",
+                "cpu-autotune | {candidate_count} thread counts to search — ramping threads up until throughput saturates",
             ),
         );
         info(
             tag,
-            "cpu-autotune | phase 1/2: narrowing down the optimal range ...",
+            "cpu-autotune | phase 1/2: ramping upward to find peak/saturation (and memory ceiling if reached) ...",
         );
-        let mut lo = min_threads;
-        let mut hi = max_threads;
-        let mut binary_step: usize = 0;
-        while lo < hi {
-            if shutdown.load(Ordering::Relaxed) {
-                interrupted = true;
-                break;
-            }
-            binary_step += 1;
-            let mid = lo + (hi - lo) / 2;
-            let right = (mid + 1).min(max_threads);
+        let mut peak_threads = min_threads;
+        let mut peak_hps = 0.0f64;
+        let mut below_peak_streak = 0usize;
+        let mut ramp_stopped_early = false;
+
+        for (step, threads) in (min_threads..=max_threads).enumerate() {
             info(
                 tag,
                 format!(
-                    "cpu-autotune | phase 1 step {binary_step}: comparing {mid} vs {right} threads (range {}..{}) ...",
-                    lo, hi
+                    "cpu-autotune | phase 1 step {}: benchmarking {} threads ...",
+                    step + 1,
+                    threads
                 ),
             );
-            if !measure_cpu_autotune_candidate(
+            match measure_cpu_autotune_candidate(
                 cfg,
                 tag,
                 shutdown,
-                mid,
-                autotune_secs,
-                &mut measurements,
-            )? || !measure_cpu_autotune_candidate(
-                cfg,
-                tag,
-                shutdown,
-                right,
+                threads,
                 autotune_secs,
                 &mut measurements,
             )? {
-                interrupted = true;
-                break;
+                CpuAutotuneMeasureOutcome::Measured => {}
+                CpuAutotuneMeasureOutcome::Interrupted => {
+                    interrupted = true;
+                    break;
+                }
+                CpuAutotuneMeasureOutcome::MemoryLimited => {
+                    ramp_stopped_early = true;
+                    break;
+                }
             }
-            let mid_hps = measurements.get(&mid).map(|m| m.hps).unwrap_or(0.0);
-            let right_hps = measurements.get(&right).map(|m| m.hps).unwrap_or(0.0);
-            if right_hps >= mid_hps {
-                lo = right;
+            let current_hps = measurements.get(&threads).map(|m| m.hps).unwrap_or(0.0);
+            if current_hps >= peak_hps {
+                peak_hps = current_hps;
+                peak_threads = threads;
+                below_peak_streak = 0;
+            } else if threads > peak_threads
+                && cpu_autotune_is_ramp_drop(peak_hps, current_hps)
+                && step + 1 >= CPU_AUTOTUNE_RAMP_EARLY_STOP_MIN_SAMPLES
+            {
+                below_peak_streak = below_peak_streak.saturating_add(1);
+                if below_peak_streak >= CPU_AUTOTUNE_RAMP_EARLY_STOP_STREAK {
+                    ramp_stopped_early = true;
+                    info(
+                        tag,
+                        format!(
+                            "cpu-autotune | phase 1: throughput plateaued below {:.1}% of peak for {} step(s); stopping ramp at {} threads (peak so far: {} at {})",
+                            CPU_AUTOTUNE_RAMP_EARLY_STOP_FLOOR_FRAC * 100.0,
+                            below_peak_streak,
+                            threads,
+                            peak_threads,
+                            format_hashrate(peak_hps),
+                        ),
+                    );
+                    break;
+                }
             } else {
-                hi = mid;
+                below_peak_streak = 0;
             }
         }
 
-        if !interrupted {
-            let mut final_candidates = BTreeSet::new();
-            final_candidates.insert(min_threads);
-            final_candidates.insert(max_threads);
-            final_candidates.insert(lo);
-            let sweep_min = lo
-                .saturating_sub(CPU_AUTOTUNE_FINAL_SWEEP_RADIUS)
-                .max(min_threads);
-            let sweep_max = lo
-                .saturating_add(CPU_AUTOTUNE_FINAL_SWEEP_RADIUS)
-                .min(max_threads);
-            for threads in sweep_min..=sweep_max {
-                final_candidates.insert(threads);
-            }
-
-            // Remove already-measured candidates so the step counter is accurate.
-            let final_candidates: Vec<usize> = final_candidates
-                .into_iter()
-                .filter(|t| !measurements.contains_key(t))
-                .collect();
+        if !interrupted && !measurements.is_empty() {
+            let phase2_center = select_peak_autotune_candidate(&measurements)
+                .map(|(threads, _)| threads)
+                .unwrap_or(peak_threads);
+            let include_low_anchor = cfg.cpu_profile != CpuPerformanceProfile::Throughput;
+            let (sweep_min, sweep_max) =
+                cpu_autotune_refinement_window(min_threads, max_threads, phase2_center);
+            let final_candidates = cpu_autotune_refinement_candidates(
+                min_threads,
+                max_threads,
+                phase2_center,
+                include_low_anchor,
+                &measurements,
+            );
             if !final_candidates.is_empty() {
                 info(
                     tag,
                     format!(
-                        "cpu-autotune | phase 2/2: fine-tuning around {} threads ({} candidates left) ...",
-                        lo,
+                        "cpu-autotune | phase 2/2: fine-tuning in {}..{} threads around peak {} ({} candidates left) ...",
+                        sweep_min,
+                        sweep_max,
+                        phase2_center,
                         final_candidates.len()
                     ),
+                );
+            } else if ramp_stopped_early {
+                info(
+                    tag,
+                    "cpu-autotune | phase 2/2: no extra candidates needed after ramp stop",
                 );
             }
 
@@ -985,18 +1015,20 @@ fn maybe_autotune_cpu_threads(
                         threads
                     ),
                 );
-                if shutdown.load(Ordering::Relaxed)
-                    || !measure_cpu_autotune_candidate(
-                        cfg,
-                        tag,
-                        shutdown,
-                        *threads,
-                        autotune_secs,
-                        &mut measurements,
-                    )?
-                {
-                    interrupted = true;
-                    break;
+                match measure_cpu_autotune_candidate(
+                    cfg,
+                    tag,
+                    shutdown,
+                    *threads,
+                    autotune_secs,
+                    &mut measurements,
+                )? {
+                    CpuAutotuneMeasureOutcome::Measured => {}
+                    CpuAutotuneMeasureOutcome::Interrupted => {
+                        interrupted = true;
+                        break;
+                    }
+                    CpuAutotuneMeasureOutcome::MemoryLimited => break,
                 }
             }
         }
@@ -1131,6 +1163,86 @@ fn select_cpu_autotune_candidate(
     })
 }
 
+fn cpu_autotune_is_ramp_drop(peak_hps: f64, current_hps: f64) -> bool {
+    peak_hps > 0.0
+        && current_hps + f64::EPSILON < peak_hps * CPU_AUTOTUNE_RAMP_EARLY_STOP_FLOOR_FRAC
+}
+
+fn cpu_autotune_refinement_window(
+    min_threads: usize,
+    max_threads: usize,
+    center_threads: usize,
+) -> (usize, usize) {
+    let sweep_min = center_threads
+        .saturating_sub(CPU_AUTOTUNE_FINAL_SWEEP_RADIUS)
+        .max(min_threads);
+    let sweep_max = center_threads
+        .saturating_add(CPU_AUTOTUNE_FINAL_SWEEP_RADIUS)
+        .min(max_threads);
+    (sweep_min, sweep_max)
+}
+
+fn cpu_autotune_refinement_candidates(
+    min_threads: usize,
+    max_threads: usize,
+    center_threads: usize,
+    include_low_anchor: bool,
+    measurements: &BTreeMap<usize, CpuAutotuneMeasurement>,
+) -> Vec<usize> {
+    let (sweep_min, sweep_max) =
+        cpu_autotune_refinement_window(min_threads, max_threads, center_threads);
+    let mut final_candidates = BTreeSet::new();
+    for threads in sweep_min..=sweep_max {
+        final_candidates.insert(threads);
+    }
+    if include_low_anchor {
+        final_candidates.insert(min_threads);
+    }
+    final_candidates
+        .into_iter()
+        .filter(|threads| !measurements.contains_key(threads))
+        .collect()
+}
+
+fn cpu_autotune_is_memory_limit_error(err: &anyhow::Error) -> bool {
+    let rendered = format!("{err:#}").to_ascii_lowercase();
+    let hints = [
+        "out of memory",
+        "cannot allocate",
+        "memory allocation",
+        "allocation failed",
+        "failed to allocate",
+        "hugetlb",
+        "mmap",
+    ];
+    hints.iter().any(|hint| rendered.contains(hint))
+}
+
+fn cpu_autotune_next_sample_chunk_secs(
+    sample_window_secs: u64,
+    sampled_secs: u64,
+    sampled_hashes: u64,
+    wall_secs: f64,
+) -> u64 {
+    let remaining_secs = CPU_AUTOTUNE_MAX_SAMPLE_SECS_PER_CANDIDATE.saturating_sub(sampled_secs);
+    if remaining_secs == 0 {
+        return 0;
+    }
+    let mut chunk_secs = sample_window_secs.min(remaining_secs).max(1);
+    if sampled_hashes > 0
+        && sampled_hashes < CPU_AUTOTUNE_TARGET_HASHES_PER_CANDIDATE
+        && wall_secs > f64::EPSILON
+    {
+        let hashes_remaining = CPU_AUTOTUNE_TARGET_HASHES_PER_CANDIDATE - sampled_hashes;
+        let estimated_hps = sampled_hashes as f64 / wall_secs;
+        if estimated_hps > f64::EPSILON {
+            let estimated_secs = ((hashes_remaining as f64) / estimated_hps).ceil() as u64;
+            chunk_secs = chunk_secs.min(estimated_secs.max(1));
+        }
+    }
+    chunk_secs
+}
+
 fn measure_cpu_autotune_candidate(
     cfg: &Config,
     tag: &str,
@@ -1138,14 +1250,27 @@ fn measure_cpu_autotune_candidate(
     threads: usize,
     window_secs: u64,
     measurements: &mut BTreeMap<usize, CpuAutotuneMeasurement>,
-) -> Result<bool> {
+) -> Result<CpuAutotuneMeasureOutcome> {
     if measurements.contains_key(&threads) {
-        return Ok(true);
+        return Ok(CpuAutotuneMeasureOutcome::Measured);
     }
 
-    let Some(measurement) = bench_cpu_autotune_candidate(cfg, shutdown, threads, window_secs)?
-    else {
-        return Ok(false);
+    let measurement = match bench_cpu_autotune_candidate(cfg, shutdown, threads, window_secs) {
+        Ok(Some(measurement)) => measurement,
+        Ok(None) => return Ok(CpuAutotuneMeasureOutcome::Interrupted),
+        Err(err) => {
+            if cpu_autotune_is_memory_limit_error(&err) {
+                warn(
+                    tag,
+                    format!(
+                        "cpu-autotune | {} threads exceeded memory headroom ({err:#}); stopping ramp at this point",
+                        threads
+                    ),
+                );
+                return Ok(CpuAutotuneMeasureOutcome::MemoryLimited);
+            }
+            return Err(err);
+        }
     };
     info(
         tag,
@@ -1158,7 +1283,7 @@ fn measure_cpu_autotune_candidate(
         ),
     );
     measurements.insert(threads, measurement);
-    Ok(true)
+    Ok(CpuAutotuneMeasureOutcome::Measured)
 }
 
 fn bench_cpu_autotune_candidate(
@@ -1194,8 +1319,15 @@ fn bench_cpu_autotune_candidate(
             break;
         }
 
-        let remaining_secs = CPU_AUTOTUNE_MAX_SAMPLE_SECS_PER_CANDIDATE - sampled_secs;
-        let chunk_secs = sample_window_secs.min(remaining_secs).max(1);
+        let chunk_secs = cpu_autotune_next_sample_chunk_secs(
+            sample_window_secs,
+            sampled_secs,
+            sampled_hashes,
+            wall_secs,
+        );
+        if chunk_secs == 0 {
+            break;
+        }
         let started_at = Instant::now();
         let chunk_hashes = BenchBackend::kernel_bench(&backend, chunk_secs, shutdown)?;
         wall_secs += started_at.elapsed().as_secs_f64();
@@ -2912,6 +3044,43 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    #[test]
+    fn autotune_refinement_candidates_focus_peak_window_for_throughput() {
+        let measurements = autotune_measurements(&[(9, 3.0), (10, 3.2)]);
+        let candidates = cpu_autotune_refinement_candidates(1, 20, 10, false, &measurements);
+        assert_eq!(candidates, vec![8, 11, 12]);
+    }
+
+    #[test]
+    fn autotune_refinement_candidates_include_low_anchor_for_non_throughput() {
+        let measurements = autotune_measurements(&[(9, 3.0), (10, 3.2)]);
+        let candidates = cpu_autotune_refinement_candidates(1, 20, 10, true, &measurements);
+        assert_eq!(candidates, vec![1, 8, 11, 12]);
+    }
+
+    #[test]
+    fn autotune_ramp_drop_threshold_filters_small_noise() {
+        assert!(!cpu_autotune_is_ramp_drop(4.0, 3.95));
+        assert!(cpu_autotune_is_ramp_drop(4.0, 3.90));
+    }
+
+    #[test]
+    fn autotune_next_sample_chunk_secs_shortens_tail_chunk() {
+        assert_eq!(cpu_autotune_next_sample_chunk_secs(6, 0, 0, 0.0), 6);
+        assert_eq!(cpu_autotune_next_sample_chunk_secs(6, 6, 15, 6.0), 2);
+        assert_eq!(cpu_autotune_next_sample_chunk_secs(6, 29, 19, 8.0), 1);
+    }
+
+    #[test]
+    fn autotune_memory_limit_error_detection_matches_common_messages() {
+        assert!(cpu_autotune_is_memory_limit_error(&anyhow!(
+            "thread spawn failed: Cannot allocate memory"
+        )));
+        assert!(!cpu_autotune_is_memory_limit_error(&anyhow!(
+            "rpc request timeout"
+        )));
     }
 
     #[test]
