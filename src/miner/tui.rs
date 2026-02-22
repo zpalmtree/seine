@@ -496,11 +496,16 @@ fn draw_stats_wide(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner
 
     // Network panel
     let (state_display, state_color) = format_state_display(state);
+    let network_label_width = "Network Hashrate".chars().count();
     let network_lines = vec![
-        kv_line("Height", &state.height),
-        kv_line("Hashrate", &state.network_hashrate),
+        kv_line_with_label_width("Height", &state.height, network_label_width),
+        kv_line_with_label_width(
+            "Network Hashrate",
+            &state.network_hashrate,
+            network_label_width,
+        ),
         Line::from(vec![
-            Span::styled("  State      ".to_string(), LABEL_STYLE),
+            Span::styled(format!("  {:<network_label_width$} ", "State"), LABEL_STYLE),
             Span::styled(
                 state_display,
                 Style::default()
@@ -560,9 +565,14 @@ fn draw_stats_narrow(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInn
     );
 
     // Network
+    let network_label_width = "Network Hashrate".chars().count();
     let network_lines = vec![
-        kv_line("Height", &state.height),
-        kv_line("Hashrate", &state.network_hashrate),
+        kv_line_with_label_width("Height", &state.height, network_label_width),
+        kv_line_with_label_width(
+            "Network Hashrate",
+            &state.network_hashrate,
+            network_label_width,
+        ),
     ];
     let network_block = Block::default()
         .title(Span::styled(" NETWORK ", TITLE_STYLE))
@@ -721,9 +731,19 @@ fn draw_log(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
     let inner_width = area.width.saturating_sub(2) as usize;
     // Build wrapped lines from the end so recent entries are always visible.
     let mut all_lines: Vec<Line> = Vec::new();
-    for entry in state.log_entries.iter() {
-        let elapsed = format_elapsed_log_clock(entry.elapsed_secs);
-        let time_text = format!("{elapsed:>8} ");
+    let elapsed_labels: Vec<String> = state
+        .log_entries
+        .iter()
+        .map(|entry| format_elapsed_log_ago(entry.elapsed_secs))
+        .collect();
+    let time_col_width = elapsed_labels
+        .iter()
+        .map(|label| label.chars().count())
+        .max()
+        .unwrap_or(8)
+        .max(8);
+    for (entry, elapsed) in state.log_entries.iter().zip(elapsed_labels.iter()) {
+        let time_text = format!("{elapsed:>time_col_width$} ");
         let time = Span::styled(time_text.clone(), DIM_STYLE);
         let level_text = format!(" {} ", entry.level.label());
         let level = Span::styled(
@@ -775,21 +795,58 @@ fn draw_log(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
     frame.render_widget(log, area);
 }
 
-fn format_elapsed_log_clock(elapsed_secs: f64) -> String {
+fn format_elapsed_log_ago(elapsed_secs: f64) -> String {
     let total = elapsed_secs.max(0.0).floor() as u64;
-    let hours = total / 3600;
-    let mins = (total % 3600) / 60;
-    let secs = total % 60;
-    if hours < 100 {
-        format!("{hours:02}:{mins:02}:{secs:02}")
+    if total < 60 {
+        return if total == 1 {
+            "1 sec ago".to_string()
+        } else {
+            format!("{total} sec ago")
+        };
+    }
+
+    let minutes = total / 60;
+    if minutes < 60 {
+        return if minutes == 1 {
+            "1 min ago".to_string()
+        } else {
+            format!("{minutes} mins ago")
+        };
+    }
+
+    let hours = minutes / 60;
+    if hours < 24 {
+        return if hours == 1 {
+            "1 hour ago".to_string()
+        } else {
+            format!("{hours} hours ago")
+        };
+    }
+
+    let days = hours / 24;
+    if days < 7 {
+        return if days == 1 {
+            "1 day ago".to_string()
+        } else {
+            format!("{days} days ago")
+        };
+    }
+
+    let weeks = days / 7;
+    if weeks == 1 {
+        "1 week ago".to_string()
     } else {
-        format!("{hours}:{mins:02}:{secs:02}")
+        format!("{weeks} weeks ago")
     }
 }
 
 fn kv_line(label: &str, value: &str) -> Line<'static> {
+    kv_line_with_label_width(label, value, 10)
+}
+
+fn kv_line_with_label_width(label: &str, value: &str, label_width: usize) -> Line<'static> {
     Line::from(vec![
-        Span::styled(format!("  {:<10} ", label), LABEL_STYLE),
+        Span::styled(format!("  {:<label_width$} ", label), LABEL_STYLE),
         Span::styled(value.to_string(), VALUE_STYLE),
     ])
 }
@@ -947,11 +1004,12 @@ mod tests {
     }
 
     #[test]
-    fn log_elapsed_formatter_uses_clock_style() {
-        assert_eq!(format_elapsed_log_clock(0.0), "00:00:00");
-        assert_eq!(format_elapsed_log_clock(65.0), "00:01:05");
-        assert_eq!(format_elapsed_log_clock(32_857.9), "09:07:37");
-        assert_eq!(format_elapsed_log_clock(360_000.0), "100:00:00");
+    fn log_elapsed_formatter_uses_relative_ago_style() {
+        assert_eq!(format_elapsed_log_ago(0.0), "0 sec ago");
+        assert_eq!(format_elapsed_log_ago(65.0), "1 min ago");
+        assert_eq!(format_elapsed_log_ago(3_600.0), "1 hour ago");
+        assert_eq!(format_elapsed_log_ago(32_857.9), "9 hours ago");
+        assert_eq!(format_elapsed_log_ago(360_000.0), "4 days ago");
     }
 
     #[test]
