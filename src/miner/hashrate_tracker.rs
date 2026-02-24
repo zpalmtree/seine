@@ -98,22 +98,38 @@ impl HashrateTracker {
         }
 
         let now = Instant::now();
-        let paused_baseline = self.paused_duration_at(now);
         if self.session_start.is_none() && total_hashes > 0 {
+            let start_time = self
+                .samples
+                .back()
+                .and_then(|sample| (sample.total < total_hashes).then_some(sample.time))
+                .unwrap_or(now);
             self.session_start = Some(SessionClockStart {
-                time: now,
-                paused_baseline,
+                time: start_time,
+                paused_baseline: self.paused_duration_at(start_time),
             });
         }
         for (&id, &hashes) in &cumulative_device {
-            if hashes > 0 {
-                self.device_session_start
-                    .entry(id)
-                    .or_insert(SessionClockStart {
-                        time: now,
-                        paused_baseline,
-                    });
+            if hashes == 0 || self.device_session_start.contains_key(&id) {
+                continue;
             }
+
+            let start_time = self
+                .samples
+                .back()
+                .and_then(|sample| {
+                    let previous_hashes = sample.per_device.get(&id).copied().unwrap_or(0);
+                    (previous_hashes < hashes).then_some(sample.time)
+                })
+                .unwrap_or(now);
+
+            self.device_session_start.insert(
+                id,
+                SessionClockStart {
+                    time: start_time,
+                    paused_baseline: self.paused_duration_at(start_time),
+                },
+            );
         }
 
         let snapshot = HashrateSnapshot {
@@ -260,9 +276,12 @@ impl HashrateTracker {
     }
 
     fn paused_duration_at(&self, now: Instant) -> Duration {
-        self.paused_since.map_or(self.paused_total, |paused_since| {
-            self.paused_total + now.duration_since(paused_since)
-        })
+        match self.paused_since {
+            Some(paused_since) if now >= paused_since => {
+                self.paused_total + now.duration_since(paused_since)
+            }
+            _ => self.paused_total,
+        }
     }
 
     fn active_elapsed(&self, now: Instant, start: SessionClockStart) -> Duration {
@@ -358,6 +377,33 @@ mod tests {
         assert!(
             avg_after_pause > paused_time_diluted * 1.2,
             "average should stay above paused-time-diluted estimate: diluted={paused_time_diluted} after={avg_after_pause}"
+        );
+    }
+
+    #[test]
+    fn average_anchor_uses_prior_sample_boundary() {
+        let mut tracker = HashrateTracker::new();
+        let round_start = Instant::now();
+        let mut device_hashes = BTreeMap::new();
+        device_hashes.insert(1u64, 0u64);
+
+        tracker.record(0, round_start, &device_hashes);
+        thread::sleep(Duration::from_millis(1100));
+
+        device_hashes.insert(1u64, 100u64);
+        tracker.record(100, round_start, &device_hashes);
+        thread::sleep(Duration::from_millis(1100));
+
+        device_hashes.insert(1u64, 200u64);
+        tracker.record(200, round_start, &device_hashes);
+
+        let rates = tracker.rates();
+        // With boundary anchoring, average should be near 200 hashes / ~2.2s.
+        // Without anchoring it would be closer to 200 / ~1.1s (inflated).
+        assert!(
+            rates.average_total < 130.0,
+            "average appears inflated; got {}",
+            rates.average_total
         );
     }
 
