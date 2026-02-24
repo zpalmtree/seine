@@ -87,6 +87,8 @@ impl TuiDisplay {
         }
 
         let snapshot = stats.snapshot();
+        let paused = should_zero_current_hashrate(view.state_label);
+        self.hashrate_tracker.set_paused(paused);
 
         // Record sample in the sliding-window tracker
         self.hashrate_tracker
@@ -146,9 +148,11 @@ impl TuiDisplay {
     }
 
     fn set_state_and_render(&mut self, state_label: &str) {
+        let paused = should_zero_current_hashrate(state_label);
+        self.hashrate_tracker.set_paused(paused);
         if let Ok(mut s) = self.state.lock() {
             s.state = state_label.to_string();
-            if should_zero_current_hashrate(state_label) {
+            if paused {
                 let zero = format_hashrate_ui(0.0);
                 s.round_hashrate = zero.clone();
                 for device in &mut s.device_hashrates {

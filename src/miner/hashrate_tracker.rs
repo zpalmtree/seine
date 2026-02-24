@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, VecDeque};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::backend::BackendInstanceId;
 
@@ -17,10 +17,18 @@ struct HashrateSnapshot {
     per_device: BTreeMap<BackendInstanceId, u64>,
 }
 
+#[derive(Clone, Copy)]
+struct SessionClockStart {
+    time: Instant,
+    paused_baseline: Duration,
+}
+
 pub struct HashrateTracker {
     samples: VecDeque<HashrateSnapshot>,
-    session_start: Option<Instant>,
-    device_session_start: BTreeMap<BackendInstanceId, Instant>,
+    session_start: Option<SessionClockStart>,
+    device_session_start: BTreeMap<BackendInstanceId, SessionClockStart>,
+    paused_since: Option<Instant>,
+    paused_total: Duration,
     completed_rounds_device_hashes: BTreeMap<BackendInstanceId, u64>,
     last_round_start: Option<Instant>,
     last_round_device_hashes: BTreeMap<BackendInstanceId, u64>,
@@ -39,9 +47,25 @@ impl HashrateTracker {
             samples: VecDeque::with_capacity(MAX_SAMPLES),
             session_start: None,
             device_session_start: BTreeMap::new(),
+            paused_since: None,
+            paused_total: Duration::ZERO,
             completed_rounds_device_hashes: BTreeMap::new(),
             last_round_start: None,
             last_round_device_hashes: BTreeMap::new(),
+        }
+    }
+
+    pub fn set_paused(&mut self, paused: bool) {
+        let now = Instant::now();
+        if paused {
+            if self.paused_since.is_none() {
+                self.paused_since = Some(now);
+            }
+            return;
+        }
+
+        if let Some(paused_since) = self.paused_since.take() {
+            self.paused_total += now.duration_since(paused_since);
         }
     }
 
@@ -74,12 +98,21 @@ impl HashrateTracker {
         }
 
         let now = Instant::now();
+        let paused_baseline = self.paused_duration_at(now);
         if self.session_start.is_none() && total_hashes > 0 {
-            self.session_start = Some(now);
+            self.session_start = Some(SessionClockStart {
+                time: now,
+                paused_baseline,
+            });
         }
         for (&id, &hashes) in &cumulative_device {
             if hashes > 0 {
-                self.device_session_start.entry(id).or_insert(now);
+                self.device_session_start
+                    .entry(id)
+                    .or_insert(SessionClockStart {
+                        time: now,
+                        paused_baseline,
+                    });
             }
         }
 
@@ -95,7 +128,7 @@ impl HashrateTracker {
         self.samples.push_back(snapshot);
     }
 
-    /// Compute hashrates: current uses a 30s rolling window, average is session-lifetime.
+    /// Compute hashrates: current uses a rolling window, average uses active (unpaused) time.
     pub fn rates(&self) -> HashrateRates {
         let now = Instant::now();
         let (average_total, average_per_device) = self.session_rates(now);
@@ -116,7 +149,7 @@ impl HashrateTracker {
             Some(t) => t,
             None => return (0.0, BTreeMap::new()),
         };
-        let dt = now.duration_since(session_start).as_secs_f64();
+        let dt = self.active_elapsed(now, session_start).as_secs_f64();
         if dt < MIN_WINDOW_SECS {
             return (0.0, BTreeMap::new());
         }
@@ -130,7 +163,7 @@ impl HashrateTracker {
                 .get(&id)
                 .copied()
                 .unwrap_or(session_start);
-            let device_dt = now.duration_since(device_start).as_secs_f64();
+            let device_dt = self.active_elapsed(now, device_start).as_secs_f64();
             if device_dt < MIN_WINDOW_SECS {
                 continue;
             }
@@ -225,6 +258,19 @@ impl HashrateTracker {
         }
         None
     }
+
+    fn paused_duration_at(&self, now: Instant) -> Duration {
+        self.paused_since.map_or(self.paused_total, |paused_since| {
+            self.paused_total + now.duration_since(paused_since)
+        })
+    }
+
+    fn active_elapsed(&self, now: Instant, start: SessionClockStart) -> Duration {
+        let paused = self.paused_duration_at(now);
+        let paused_since_start = paused.saturating_sub(start.paused_baseline);
+        now.duration_since(start.time)
+            .saturating_sub(paused_since_start)
+    }
 }
 
 #[cfg(test)]
@@ -278,6 +324,41 @@ mod tests {
         // ~999 hashes / ~2.1s ≈ ~476 H/s, just check it's nonzero
         assert!(rates.current_total > 0.0);
         assert!(rates.average_total > 0.0);
+    }
+
+    #[test]
+    fn average_excludes_paused_time() {
+        let mut tracker = HashrateTracker::new();
+        let round_start = Instant::now();
+        let mut device_hashes = BTreeMap::new();
+        device_hashes.insert(1u64, 100u64);
+
+        tracker.record(100, round_start, &device_hashes);
+        thread::sleep(Duration::from_millis(2100));
+
+        device_hashes.insert(1u64, 200u64);
+        tracker.record(200, round_start, &device_hashes);
+        let baseline_avg = tracker.rates().average_total;
+        assert!(baseline_avg > 0.0);
+
+        tracker.set_paused(true);
+        thread::sleep(Duration::from_millis(2100));
+        tracker.set_paused(false);
+
+        thread::sleep(Duration::from_millis(2100));
+        device_hashes.insert(1u64, 400u64);
+        tracker.record(400, round_start, &device_hashes);
+
+        let avg_after_pause = tracker.rates().average_total;
+        let paused_time_diluted = 400.0 / 6.3;
+        assert!(
+            avg_after_pause > baseline_avg * 0.85,
+            "paused time should not heavily dilute average: baseline={baseline_avg} after={avg_after_pause}"
+        );
+        assert!(
+            avg_after_pause > paused_time_diluted * 1.2,
+            "average should stay above paused-time-diluted estimate: diluted={paused_time_diluted} after={avg_after_pause}"
+        );
     }
 
     #[test]
