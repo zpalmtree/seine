@@ -1629,6 +1629,12 @@ fn detect_memory_budget_bytes() -> Option<MemoryBudgetBytes> {
         if effective_available == 0 {
             effective_available = total;
         }
+        if let Some(hugetlb_unreserved_bytes) = linux_hugetlb_unreserved_bytes() {
+            // HugeTLB pools are typically excluded from MemAvailable even though CPU workers
+            // can map them via MAP_HUGETLB. Add unreserved HugeTLB bytes back to avoid
+            // under-capping CPU autotune when users pre-reserve hugepages.
+            effective_available = effective_available.saturating_add(hugetlb_unreserved_bytes);
+        }
 
         if let Some(cgroup) = sys.cgroup_limits() {
             if cgroup.total_memory > 0 {
@@ -1645,6 +1651,52 @@ fn detect_memory_budget_bytes() -> Option<MemoryBudgetBytes> {
             effective_available,
         })
     }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_hugetlb_unreserved_bytes() -> Option<u64> {
+    let content = fs::read_to_string("/proc/meminfo").ok()?;
+    parse_linux_hugetlb_unreserved_bytes(&content)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn linux_hugetlb_unreserved_bytes() -> Option<u64> {
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn parse_linux_hugetlb_unreserved_bytes(meminfo: &str) -> Option<u64> {
+    let mut free_pages = 0u64;
+    let mut reserved_pages = 0u64;
+    let mut page_size_kib = 0u64;
+    for line in meminfo.lines() {
+        if let Some(rest) = line.strip_prefix("HugePages_Free:") {
+            free_pages = parse_meminfo_u64_field(rest).unwrap_or(free_pages);
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("HugePages_Rsvd:") {
+            reserved_pages = parse_meminfo_u64_field(rest).unwrap_or(reserved_pages);
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("Hugepagesize:") {
+            page_size_kib = parse_meminfo_u64_field(rest).unwrap_or(page_size_kib);
+        }
+    }
+
+    if page_size_kib == 0 {
+        return None;
+    }
+    let unreserved_pages = free_pages.saturating_sub(reserved_pages);
+    Some(
+        unreserved_pages
+            .saturating_mul(page_size_kib)
+            .saturating_mul(1024),
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn parse_meminfo_u64_field(value: &str) -> Option<u64> {
+    value.split_whitespace().next()?.parse::<u64>().ok()
 }
 
 fn human_bytes(bytes: u64) -> String {
@@ -1755,6 +1807,31 @@ mod tests {
             bench_fail_below_pct: None,
             bench_baseline_policy: BenchBaselinePolicy::Strict,
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn parse_linux_hugetlb_unreserved_bytes_uses_free_minus_reserved_pages() {
+        let meminfo = "\
+HugePages_Free:      10240
+HugePages_Rsvd:        512
+Hugepagesize:         2048 kB
+";
+        let expected = 9728u64 * 2048 * 1024;
+        assert_eq!(
+            parse_linux_hugetlb_unreserved_bytes(meminfo),
+            Some(expected)
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn parse_linux_hugetlb_unreserved_bytes_requires_page_size() {
+        let meminfo = "\
+HugePages_Free:      10240
+HugePages_Rsvd:          0
+";
+        assert_eq!(parse_linux_hugetlb_unreserved_bytes(meminfo), None);
     }
 
     #[test]
