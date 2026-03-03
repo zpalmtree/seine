@@ -688,8 +688,6 @@ fn draw_config_runtime_panel(frame: &mut ratatui::Frame, area: Rect, state: &Tui
         Span::styled(state.threads.to_string(), VALUE_STYLE),
         Span::styled("  Worker: ", LABEL_STYLE),
         Span::styled(&state.pool_worker, VALUE_STYLE),
-    ]);
-    let line3 = Line::from(vec![
         Span::styled("  Backends: ", LABEL_STYLE),
         Span::styled(&state.backends_desc, VALUE_STYLE),
     ]);
@@ -697,7 +695,7 @@ fn draw_config_runtime_panel(frame: &mut ratatui::Frame, area: Rect, state: &Tui
         .title(Span::styled(" CONFIG ", TITLE_STYLE))
         .borders(Borders::ALL)
         .border_style(BORDER_STYLE);
-    let config = Paragraph::new(vec![line1, line2, line3]).block(config_block);
+    let config = Paragraph::new(vec![line1, line2]).block(config_block);
     frame.render_widget(config, area);
 }
 
@@ -766,7 +764,7 @@ fn draw_log(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
                 .bg(entry.level.label_bg())
                 .add_modifier(Modifier::BOLD),
         );
-        let tag_text = format!(" {:<8} ", entry.tag);
+        let tag_text = format!(" {:^8} ", entry.tag);
         let tag_width = tag_text.chars().count();
         let tag = Span::styled(
             tag_text,

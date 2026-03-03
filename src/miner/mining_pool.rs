@@ -722,8 +722,13 @@ impl PoolUiTelemetryClient {
 
         let hashrate = body
             .pointer("/pool/hashrate")
-            .and_then(Value::as_f64)
-            .ok_or_else(|| anyhow!("missing field pool.hashrate"))?;
+            .and_then(value_as_f64)
+            .or_else(|| body.pointer("/hashrate").and_then(value_as_f64))
+            .or_else(|| {
+                body.pointer("/pool/estimated_hashrate")
+                    .and_then(value_as_f64)
+            })
+            .ok_or_else(|| anyhow!("missing pool hashrate field"))?;
         if !hashrate.is_finite() || hashrate < 0.0 {
             bail!("invalid pool.hashrate value");
         }
@@ -830,6 +835,13 @@ fn format_u64_with_commas(value: u64) -> String {
     } else {
         format!("{digits},{out}")
     }
+}
+
+fn value_as_f64(value: &Value) -> Option<f64> {
+    value
+        .as_f64()
+        .or_else(|| value.as_u64().map(|v| v as f64))
+        .or_else(|| value.as_i64().filter(|v| *v >= 0).map(|v| v as f64))
 }
 
 fn compact_pool_address_for_log(address: &str) -> String {
