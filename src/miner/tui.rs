@@ -692,12 +692,12 @@ fn draw_config_runtime_panel(frame: &mut ratatui::Frame, area: Rect, state: &Tui
     let line1 = Line::from(vec![
         Span::styled("  Endpoint: ", LABEL_STYLE),
         Span::styled(&state.api_url, VALUE_STYLE),
+        Span::styled("  Worker: ", LABEL_STYLE),
+        Span::styled(&state.pool_worker, VALUE_STYLE),
     ]);
     let line2 = Line::from(vec![
         Span::styled("  Threads: ", LABEL_STYLE),
         Span::styled(state.threads.to_string(), VALUE_STYLE),
-        Span::styled("  Worker: ", LABEL_STYLE),
-        Span::styled(&state.pool_worker, VALUE_STYLE),
         Span::styled("  Backends: ", LABEL_STYLE),
         Span::styled(&state.backends_desc, VALUE_STYLE),
     ]);
