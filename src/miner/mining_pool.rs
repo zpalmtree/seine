@@ -71,6 +71,14 @@ struct PoolUiTelemetryClient {
     http: HttpClient,
 }
 
+struct PoolSession {
+    connection: PoolConnectionConfig,
+    client: PoolClient,
+    telemetry: Option<PoolUiTelemetryClient>,
+    latest_job: Option<PoolJob>,
+    connected: bool,
+}
+
 struct ActivePoolJob {
     job: PoolJob,
     header_base: Arc<[u8]>,
@@ -152,9 +160,12 @@ fn connect_pool_session(
     connection: &PoolConnectionConfig,
     shutdown: Arc<AtomicBool>,
     tui: &mut Option<TuiDisplay>,
+    update_ui: bool,
 ) -> Result<(PoolClient, Option<PoolUiTelemetryClient>)> {
-    set_tui_state_label(tui, "pool-connecting");
-    render_tui_now(tui);
+    if update_ui {
+        set_tui_state_label(tui, "pool-connecting");
+        render_tui_now(tui);
+    }
 
     let pool_client = PoolClient::connect(
         &connection.pool_url,
@@ -183,7 +194,9 @@ fn connect_pool_session(
             ),
         );
     }
-    set_tui_wallet_overview(tui, &connection.address, "---", "---");
+    if update_ui {
+        set_tui_wallet_overview(tui, &connection.address, "---", "---");
+    }
     Ok((pool_client, telemetry))
 }
 
@@ -223,22 +236,50 @@ pub(super) fn run_pool_mining_loop(
     let mut dev_fee_tracker = DevFeeTracker::new();
     let mut dev_fee_round_started = Instant::now();
     let _ = dev_fee_tracker.begin_round();
-    let initial_dev_round = dev_fee_tracker.is_dev_round();
-    let mut active_connection = if initial_dev_round {
-        dev_connection.clone()
+    let mut active_mode = if dev_fee_tracker.is_dev_round() {
+        PoolConnectionMode::Dev
     } else {
-        user_connection.clone()
+        PoolConnectionMode::User
     };
 
     if tui.is_some() {
         super::maybe_warn_linux_hugepages_setup(cfg, RuntimeMode::Mining);
-        set_tui_dev_fee_active(&mut tui, initial_dev_round);
-        set_tui_wallet_overview(&mut tui, &active_connection.address, "---", "---");
+        set_tui_dev_fee_active(&mut tui, active_mode == PoolConnectionMode::Dev);
+        let active_address = if active_mode == PoolConnectionMode::Dev {
+            dev_connection.address.as_str()
+        } else {
+            user_connection.address.as_str()
+        };
+        set_tui_wallet_overview(&mut tui, active_address, "---", "---");
     }
     info("MINER", format!("dev fee: {:.1}%", DEV_FEE_PERCENT));
 
-    let (mut pool_client, mut pool_ui_telemetry) =
-        connect_pool_session(&active_connection, Arc::clone(&shutdown), &mut tui)?;
+    let (user_client, user_telemetry) = connect_pool_session(
+        &user_connection,
+        Arc::clone(&shutdown),
+        &mut tui,
+        active_mode == PoolConnectionMode::User,
+    )?;
+    let (dev_client, dev_telemetry) = connect_pool_session(
+        &dev_connection,
+        Arc::clone(&shutdown),
+        &mut tui,
+        active_mode == PoolConnectionMode::Dev,
+    )?;
+    let mut user_session = PoolSession {
+        connection: user_connection,
+        client: user_client,
+        telemetry: user_telemetry,
+        latest_job: None,
+        connected: false,
+    };
+    let mut dev_session = PoolSession {
+        connection: dev_connection,
+        client: dev_client,
+        telemetry: dev_telemetry,
+        latest_job: None,
+        connected: false,
+    };
 
     let mut active_job: Option<ActivePoolJob> = None;
     let mut pending_nvidia_logged = false;
@@ -261,18 +302,39 @@ pub(super) fn run_pool_mining_loop(
                 notify_dev_fee_mode(next_is_dev_round);
                 set_tui_dev_fee_active(&mut tui, next_is_dev_round);
 
-                let next_connection = if next_is_dev_round {
-                    dev_connection.clone()
+                let next_mode = if next_is_dev_round {
+                    PoolConnectionMode::Dev
                 } else {
-                    user_connection.clone()
+                    PoolConnectionMode::User
                 };
-                if next_connection != active_connection {
+                if next_mode != active_mode {
+                    if next_mode == PoolConnectionMode::Dev {
+                        for event in dev_session.client.drain_events() {
+                            handle_inactive_pool_event(
+                                event,
+                                PoolConnectionMode::Dev,
+                                &mut dev_session.latest_job,
+                                &mut dev_session.connected,
+                                &stats,
+                            );
+                        }
+                    } else {
+                        for event in user_session.client.drain_events() {
+                            handle_inactive_pool_event(
+                                event,
+                                PoolConnectionMode::User,
+                                &mut user_session.latest_job,
+                                &mut user_session.connected,
+                                &stats,
+                            );
+                        }
+                    }
                     info(
                         "CONN",
                         format!(
                             "switching pool session: {} -> {}",
-                            active_connection.mode.as_str(),
-                            next_connection.mode.as_str()
+                            active_mode.as_str(),
+                            next_mode.as_str()
                         ),
                     );
                     if let Err(err) =
@@ -289,21 +351,73 @@ pub(super) fn run_pool_mining_loop(
                         backend_executor,
                     );
                     active_job = None;
+                    active_mode = next_mode;
 
-                    let (next_client, next_telemetry) =
-                        connect_pool_session(&next_connection, Arc::clone(&shutdown), &mut tui)?;
-                    pool_client = next_client;
-                    pool_ui_telemetry = next_telemetry;
-                    active_connection = next_connection;
+                    let (active_address, cached_job) = if active_mode == PoolConnectionMode::Dev {
+                        (
+                            dev_session.connection.address.clone(),
+                            if dev_session.connected {
+                                dev_session.latest_job.clone()
+                            } else {
+                                None
+                            },
+                        )
+                    } else {
+                        (
+                            user_session.connection.address.clone(),
+                            if user_session.connected {
+                                user_session.latest_job.clone()
+                            } else {
+                                None
+                            },
+                        )
+                    };
+                    set_tui_wallet_overview(&mut tui, &active_address, "---", "---");
+
+                    if let Some(job) = cached_job {
+                        let active_client = if active_mode == PoolConnectionMode::Dev {
+                            &dev_session.client
+                        } else {
+                            &user_session.client
+                        };
+                        assign_pool_job(
+                            cfg,
+                            active_client,
+                            job,
+                            false,
+                            &mut work_id_cursor,
+                            &mut epoch,
+                            backends,
+                            backend_executor,
+                            &mut backend_weights,
+                            &mut active_job,
+                            &stats,
+                            &mut tui,
+                        )?;
+                    } else {
+                        set_tui_state_label(&mut tui, "waiting-pool-job");
+                        render_tui_now(&mut tui);
+                    }
+
                     pool_network_hashrate = "unknown".to_string();
                     next_pool_telemetry_refresh = Instant::now();
                     pool_telemetry_warning_logged = false;
-                    continue;
                 }
             }
         }
 
-        if let Some(telemetry) = pool_ui_telemetry.as_ref() {
+        let (active_address, active_telemetry) = if active_mode == PoolConnectionMode::Dev {
+            (
+                dev_session.connection.address.as_str(),
+                dev_session.telemetry.as_ref(),
+            )
+        } else {
+            (
+                user_session.connection.address.as_str(),
+                user_session.telemetry.as_ref(),
+            )
+        };
+        if let Some(telemetry) = active_telemetry {
             if Instant::now() >= next_pool_telemetry_refresh {
                 let mut errors = Vec::new();
                 match telemetry.fetch_pool_hashrate() {
@@ -316,12 +430,7 @@ pub(super) fn run_pool_mining_loop(
                 }
                 match telemetry.fetch_pool_balances() {
                     Ok((pending, paid)) => {
-                        set_tui_wallet_overview(
-                            &mut tui,
-                            &active_connection.address,
-                            &pending,
-                            &paid,
-                        );
+                        set_tui_wallet_overview(&mut tui, active_address, &pending, &paid);
                     }
                     Err(err) => {
                         errors.push(format!("balance: {err:#}"));
@@ -382,37 +491,98 @@ pub(super) fn run_pool_mining_loop(
         }
 
         let mut processed_pool_event = false;
-        for event in pool_client.drain_events() {
-            processed_pool_event = true;
-            handle_pool_event(
-                event,
-                cfg,
-                &pool_client,
-                &mut work_id_cursor,
-                &mut epoch,
-                backends,
-                backend_executor,
-                &mut backend_weights,
-                &mut active_job,
-                &stats,
-                &mut tui,
-            )?;
-        }
-
-        if active_job.is_none() && !processed_pool_event {
-            set_tui_state_label(&mut tui, "waiting-pool-job");
-            render_tui_now(&mut tui);
-            if let Some(event) = pool_client.recv_event_timeout(POOL_WAIT_POLL) {
-                handle_pool_event(
+        for event in user_session.client.drain_events() {
+            if active_mode == PoolConnectionMode::User {
+                processed_pool_event = true;
+                handle_active_pool_event(
                     event,
                     cfg,
-                    &pool_client,
+                    &user_session.client,
                     &mut work_id_cursor,
                     &mut epoch,
                     backends,
                     backend_executor,
                     &mut backend_weights,
                     &mut active_job,
+                    &mut user_session.latest_job,
+                    &mut user_session.connected,
+                    &stats,
+                    &mut tui,
+                )?;
+            } else {
+                handle_inactive_pool_event(
+                    event,
+                    PoolConnectionMode::User,
+                    &mut user_session.latest_job,
+                    &mut user_session.connected,
+                    &stats,
+                );
+            }
+        }
+        for event in dev_session.client.drain_events() {
+            if active_mode == PoolConnectionMode::Dev {
+                processed_pool_event = true;
+                handle_active_pool_event(
+                    event,
+                    cfg,
+                    &dev_session.client,
+                    &mut work_id_cursor,
+                    &mut epoch,
+                    backends,
+                    backend_executor,
+                    &mut backend_weights,
+                    &mut active_job,
+                    &mut dev_session.latest_job,
+                    &mut dev_session.connected,
+                    &stats,
+                    &mut tui,
+                )?;
+            } else {
+                handle_inactive_pool_event(
+                    event,
+                    PoolConnectionMode::Dev,
+                    &mut dev_session.latest_job,
+                    &mut dev_session.connected,
+                    &stats,
+                );
+            }
+        }
+
+        if active_job.is_none() && !processed_pool_event {
+            set_tui_state_label(&mut tui, "waiting-pool-job");
+            render_tui_now(&mut tui);
+            if active_mode == PoolConnectionMode::User {
+                if let Some(event) = user_session.client.recv_event_timeout(POOL_WAIT_POLL) {
+                    handle_active_pool_event(
+                        event,
+                        cfg,
+                        &user_session.client,
+                        &mut work_id_cursor,
+                        &mut epoch,
+                        backends,
+                        backend_executor,
+                        &mut backend_weights,
+                        &mut active_job,
+                        &mut user_session.latest_job,
+                        &mut user_session.connected,
+                        &stats,
+                        &mut tui,
+                    )?;
+                    continue;
+                }
+            } else if let Some(event) = dev_session.client.recv_event_timeout(POOL_WAIT_POLL) {
+                handle_active_pool_event(
+                    event,
+                    cfg,
+                    &dev_session.client,
+                    &mut work_id_cursor,
+                    &mut epoch,
+                    backends,
+                    backend_executor,
+                    &mut backend_weights,
+                    &mut active_job,
+                    &mut dev_session.latest_job,
+                    &mut dev_session.connected,
                     &stats,
                     &mut tui,
                 )?;
@@ -438,8 +608,13 @@ pub(super) fn run_pool_mining_loop(
                         );
                     }
                     if let Some(solution) = maybe_solution {
+                        let active_client = if active_mode == PoolConnectionMode::Dev {
+                            &dev_session.client
+                        } else {
+                            &user_session.client
+                        };
                         let submit_outcome =
-                            submit_pool_solution(&pool_client, &mut active_job, &solution, &stats);
+                            submit_pool_solution(active_client, &mut active_job, &solution, &stats);
                         if matches!(
                             submit_outcome,
                             PoolShareSubmitOutcome::Submitted
@@ -525,7 +700,7 @@ pub(super) fn run_pool_mining_loop(
     Ok(())
 }
 
-fn handle_pool_event(
+fn handle_active_pool_event(
     event: PoolEvent,
     cfg: &Config,
     pool_client: &PoolClient,
@@ -535,16 +710,34 @@ fn handle_pool_event(
     backend_executor: &super::backend_executor::BackendExecutor,
     backend_weights: &mut BTreeMap<u64, f64>,
     active_job: &mut Option<ActivePoolJob>,
+    latest_job: &mut Option<PoolJob>,
+    connected: &mut bool,
     stats: &Stats,
     tui: &mut Option<TuiDisplay>,
 ) -> Result<()> {
     match event {
         PoolEvent::Connected => {
+            *connected = true;
             success("CONN", "connected");
             set_tui_state_label(tui, "pool-connected");
         }
         PoolEvent::Disconnected(message) => {
             warn("CONN", message);
+            *latest_job = None;
+            *connected = false;
+            if active_job.is_some() {
+                if let Err(err) =
+                    super::cancel_backend_slots(backends, RuntimeMode::Mining, backend_executor)
+                {
+                    warn(
+                        "BACKEND",
+                        format!("pool cancel failed after disconnect: {err:#}"),
+                    );
+                }
+                let _ =
+                    super::quiesce_backend_slots(backends, RuntimeMode::Mining, backend_executor);
+                *active_job = None;
+            }
             set_tui_state_label(tui, "pool-disconnected");
             std::thread::sleep(TEMPLATE_RETRY_DELAY);
         }
@@ -565,6 +758,21 @@ fn handle_pool_event(
         }
         PoolEvent::LoginRejected(message) => {
             error("AUTH", format!("login rejected: {message}"));
+            *latest_job = None;
+            *connected = false;
+            if active_job.is_some() {
+                if let Err(err) =
+                    super::cancel_backend_slots(backends, RuntimeMode::Mining, backend_executor)
+                {
+                    warn(
+                        "BACKEND",
+                        format!("pool cancel failed after login reject: {err:#}"),
+                    );
+                }
+                let _ =
+                    super::quiesce_backend_slots(backends, RuntimeMode::Mining, backend_executor);
+                *active_job = None;
+            }
             set_tui_state_label(tui, "pool-login-rejected");
         }
         PoolEvent::SubmitAck(ack) => {
@@ -600,10 +808,12 @@ fn handle_pool_event(
             }
         }
         PoolEvent::Job(job) => {
+            *latest_job = Some(job.clone());
             assign_pool_job(
                 cfg,
                 pool_client,
                 job,
+                true,
                 work_id_cursor,
                 epoch_cursor,
                 backends,
@@ -616,6 +826,66 @@ fn handle_pool_event(
         }
     }
     Ok(())
+}
+
+fn handle_inactive_pool_event(
+    event: PoolEvent,
+    mode: PoolConnectionMode,
+    latest_job: &mut Option<PoolJob>,
+    connected: &mut bool,
+    stats: &Stats,
+) {
+    match event {
+        PoolEvent::Connected => {
+            if !*connected {
+                info("CONN", format!("{} session connected", mode.as_str()));
+            }
+            *connected = true;
+        }
+        PoolEvent::Disconnected(message) => {
+            *latest_job = None;
+            if *connected {
+                warn("CONN", format!("{} session {message}", mode.as_str()));
+            }
+            *connected = false;
+        }
+        PoolEvent::LoginAccepted(ack) => {
+            let required = if ack.required_capabilities.is_empty() {
+                "none".to_string()
+            } else {
+                ack.required_capabilities.join(",")
+            };
+            success(
+                "AUTH",
+                format!(
+                    "{} session login accepted (protocol v{}, required={required})",
+                    mode.as_str(),
+                    ack.protocol_version
+                ),
+            );
+        }
+        PoolEvent::LoginRejected(message) => {
+            *latest_job = None;
+            *connected = false;
+            error(
+                "AUTH",
+                format!("{} session login rejected: {message}", mode.as_str()),
+            );
+        }
+        PoolEvent::SubmitAck(ack) => {
+            if ack.accepted {
+                stats.bump_accepted();
+                success("SHARE", format!("accepted ({})", mode.as_str()));
+            } else {
+                stats.bump_stale_shares();
+                let reason = ack.error.as_deref().unwrap_or("unknown");
+                warn("SHARE", format!("rejected ({reason}) ({})", mode.as_str()));
+            }
+        }
+        PoolEvent::Job(job) => {
+            *latest_job = Some(job);
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -669,6 +939,7 @@ fn assign_pool_job(
     cfg: &Config,
     _pool_client: &PoolClient,
     job: PoolJob,
+    cancel_prior_work: bool,
     work_id_cursor: &mut u64,
     epoch_cursor: &mut u64,
     backends: &mut Vec<BackendSlot>,
@@ -699,11 +970,15 @@ fn assign_pool_job(
         }
     };
 
-    if let Err(err) = super::cancel_backend_slots(backends, RuntimeMode::Mining, backend_executor) {
-        warn(
-            "BACKEND",
-            format!("failed cancelling prior pool work: {err:#}"),
-        );
+    if cancel_prior_work {
+        if let Err(err) =
+            super::cancel_backend_slots(backends, RuntimeMode::Mining, backend_executor)
+        {
+            warn(
+                "BACKEND",
+                format!("failed cancelling prior pool work: {err:#}"),
+            );
+        }
     }
 
     stats.bump_templates();
