@@ -3,7 +3,7 @@ use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
 use crossbeam_channel::{bounded, Receiver, RecvTimeoutError, Sender, TryRecvError};
@@ -15,6 +15,7 @@ const RECONNECT_DELAY: Duration = Duration::from_secs(2);
 const SOCKET_IO_TIMEOUT: Duration = Duration::from_millis(250);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const CHANNEL_CAPACITY: usize = 4096;
+const LOCAL_POOL_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
 const STRATUM_PROTOCOL_VERSION: u32 = 2;
 const STRATUM_CAPABILITY_LOGIN_NEGOTIATION: &str = "login_negotiation";
 const STRATUM_CAPABILITY_VALIDATION_STATUS: &str = "share_validation_status";
@@ -233,6 +234,7 @@ fn run_pool_client_thread(
     shutdown: Arc<AtomicBool>,
 ) {
     let mut next_request_id = LOGIN_REQUEST_ID + 1;
+    let enable_idle_keepalive = is_local_pool_endpoint(&endpoint);
     while !should_shutdown(process_shutdown.as_ref(), shutdown.as_ref()) {
         match connect_pool_stream(&endpoint) {
             Ok((mut stream, mut reader)) => {
@@ -254,6 +256,7 @@ fn run_pool_client_thread(
                 let mut pending_submits = HashMap::<u64, PoolSubmit>::new();
                 let mut login_confirmed = false;
                 let mut submit_claimed_hash_enabled = true;
+                let mut last_outbound = Instant::now();
 
                 loop {
                     if should_shutdown(process_shutdown.as_ref(), shutdown.as_ref()) {
@@ -262,6 +265,39 @@ fn run_pool_client_thread(
 
                     let mut reconnect_requested = false;
                     if login_confirmed {
+                        if enable_idle_keepalive
+                            && pending_submits.is_empty()
+                            && last_outbound.elapsed() >= LOCAL_POOL_KEEPALIVE_INTERVAL
+                        {
+                            if send_keepalive(&mut stream).is_err() {
+                                reject_pending_submits(
+                                    &event_tx,
+                                    &mut pending_submits,
+                                    SUBMIT_REJECT_REASON_SEND_FAILED,
+                                );
+                                reject_queued_submits(
+                                    &event_tx,
+                                    &submit_rx,
+                                    SUBMIT_REJECT_REASON_SEND_FAILED,
+                                );
+                                let _ = event_tx.try_send(PoolEvent::Disconnected(format!(
+                                    "{}",
+                                    friendly_pool_disconnect_message(&endpoint)
+                                )));
+                                reconnect_requested = true;
+                            } else {
+                                last_outbound = Instant::now();
+                            }
+                        }
+                        if reconnect_requested {
+                            sleep_with_shutdown(
+                                process_shutdown.as_ref(),
+                                shutdown.as_ref(),
+                                RECONNECT_DELAY,
+                            );
+                            break;
+                        }
+
                         while let Ok(submit) = submit_rx.try_recv() {
                             let request_id = next_request_id;
                             next_request_id =
@@ -292,6 +328,7 @@ fn run_pool_client_thread(
                                 reconnect_requested = true;
                                 break;
                             }
+                            last_outbound = Instant::now();
                             pending_submits.insert(request_id, submit);
                         }
                     }
@@ -524,6 +561,12 @@ fn send_submit(
         },
     };
     send_json_line(stream, &request)
+}
+
+fn send_keepalive(stream: &mut TcpStream) -> Result<()> {
+    stream
+        .write_all(b"\n")
+        .context("failed writing pool keepalive")
 }
 
 fn send_json_line<T: Serialize>(stream: &mut TcpStream, payload: &T) -> Result<()> {

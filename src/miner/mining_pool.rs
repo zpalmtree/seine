@@ -173,17 +173,22 @@ fn connect_pool_session(
         connection.worker.clone(),
         shutdown,
     )?;
-    let compact_address = compact_pool_address_for_log(&connection.address);
-    info(
-        "CONN",
-        format!(
-            "connecting ({}) to {} as {}.{}",
-            connection.mode.as_str(),
-            connection.pool_url,
-            compact_address,
-            connection.worker
-        ),
-    );
+    match connection.mode {
+        PoolConnectionMode::Dev => info("CONN", "connecting (dev session)"),
+        PoolConnectionMode::User => {
+            let compact_address = compact_pool_address_for_log(&connection.address);
+            info(
+                "CONN",
+                format!(
+                    "connecting ({}) to {} as {}.{}",
+                    connection.mode.as_str(),
+                    connection.pool_url,
+                    compact_address,
+                    connection.worker
+                ),
+            );
+        }
+    }
     let telemetry = PoolUiTelemetryClient::new(&connection.pool_url, &connection.address);
     if telemetry.is_none() {
         warn(
@@ -218,13 +223,7 @@ pub(super) fn run_pool_mining_loop(
     };
 
     let (user_connection, dev_connection) = build_pool_connection_configs(cfg)?;
-    info(
-        "DEV FEE",
-        format!(
-            "dev pool endpoint fixed to {} ({})",
-            dev_connection.pool_url, dev_connection.worker
-        ),
-    );
+    info("DEV FEE", "dev fee session configured");
 
     let stats = Stats::new();
     let mut last_stats_print = Instant::now();
@@ -496,6 +495,7 @@ pub(super) fn run_pool_mining_loop(
                 processed_pool_event = true;
                 handle_active_pool_event(
                     event,
+                    PoolConnectionMode::User,
                     cfg,
                     &user_session.client,
                     &mut work_id_cursor,
@@ -524,6 +524,7 @@ pub(super) fn run_pool_mining_loop(
                 processed_pool_event = true;
                 handle_active_pool_event(
                     event,
+                    PoolConnectionMode::Dev,
                     cfg,
                     &dev_session.client,
                     &mut work_id_cursor,
@@ -555,6 +556,7 @@ pub(super) fn run_pool_mining_loop(
                 if let Some(event) = user_session.client.recv_event_timeout(POOL_WAIT_POLL) {
                     handle_active_pool_event(
                         event,
+                        PoolConnectionMode::User,
                         cfg,
                         &user_session.client,
                         &mut work_id_cursor,
@@ -573,6 +575,7 @@ pub(super) fn run_pool_mining_loop(
             } else if let Some(event) = dev_session.client.recv_event_timeout(POOL_WAIT_POLL) {
                 handle_active_pool_event(
                     event,
+                    PoolConnectionMode::Dev,
                     cfg,
                     &dev_session.client,
                     &mut work_id_cursor,
@@ -702,6 +705,7 @@ pub(super) fn run_pool_mining_loop(
 
 fn handle_active_pool_event(
     event: PoolEvent,
+    mode: PoolConnectionMode,
     cfg: &Config,
     pool_client: &PoolClient,
     work_id_cursor: &mut u64,
@@ -718,11 +722,19 @@ fn handle_active_pool_event(
     match event {
         PoolEvent::Connected => {
             *connected = true;
-            success("CONN", "connected");
+            if mode == PoolConnectionMode::Dev {
+                success("CONN", "dev session connected");
+            } else {
+                success("CONN", "connected");
+            }
             set_tui_state_label(tui, "pool-connected");
         }
         PoolEvent::Disconnected(message) => {
-            warn("CONN", message);
+            if mode == PoolConnectionMode::Dev {
+                warn("CONN", "dev session disconnected");
+            } else {
+                warn("CONN", message);
+            }
             *latest_job = None;
             *connected = false;
             if active_job.is_some() {
@@ -742,22 +754,30 @@ fn handle_active_pool_event(
             std::thread::sleep(TEMPLATE_RETRY_DELAY);
         }
         PoolEvent::LoginAccepted(ack) => {
-            let required = if ack.required_capabilities.is_empty() {
-                "none".to_string()
+            if mode == PoolConnectionMode::Dev {
+                success("AUTH", "dev session login accepted");
             } else {
-                ack.required_capabilities.join(",")
-            };
-            success(
-                "AUTH",
-                format!(
-                    "login accepted (protocol v{}, required={required})",
-                    ack.protocol_version
-                ),
-            );
+                let required = if ack.required_capabilities.is_empty() {
+                    "none".to_string()
+                } else {
+                    ack.required_capabilities.join(",")
+                };
+                success(
+                    "AUTH",
+                    format!(
+                        "login accepted (protocol v{}, required={required})",
+                        ack.protocol_version
+                    ),
+                );
+            }
             set_tui_state_label(tui, "pool-authenticated");
         }
         PoolEvent::LoginRejected(message) => {
-            error("AUTH", format!("login rejected: {message}"));
+            if mode == PoolConnectionMode::Dev {
+                error("AUTH", "dev session login rejected");
+            } else {
+                error("AUTH", format!("login rejected: {message}"));
+            }
             *latest_job = None;
             *connected = false;
             if active_job.is_some() {
@@ -845,32 +865,44 @@ fn handle_inactive_pool_event(
         PoolEvent::Disconnected(message) => {
             *latest_job = None;
             if *connected {
-                warn("CONN", format!("{} session {message}", mode.as_str()));
+                if mode == PoolConnectionMode::Dev {
+                    warn("CONN", "dev session disconnected");
+                } else {
+                    warn("CONN", format!("{} session {message}", mode.as_str()));
+                }
             }
             *connected = false;
         }
         PoolEvent::LoginAccepted(ack) => {
-            let required = if ack.required_capabilities.is_empty() {
-                "none".to_string()
+            if mode == PoolConnectionMode::Dev {
+                success("AUTH", "dev session login accepted");
             } else {
-                ack.required_capabilities.join(",")
-            };
-            success(
-                "AUTH",
-                format!(
-                    "{} session login accepted (protocol v{}, required={required})",
-                    mode.as_str(),
-                    ack.protocol_version
-                ),
-            );
+                let required = if ack.required_capabilities.is_empty() {
+                    "none".to_string()
+                } else {
+                    ack.required_capabilities.join(",")
+                };
+                success(
+                    "AUTH",
+                    format!(
+                        "{} session login accepted (protocol v{}, required={required})",
+                        mode.as_str(),
+                        ack.protocol_version
+                    ),
+                );
+            }
         }
         PoolEvent::LoginRejected(message) => {
             *latest_job = None;
             *connected = false;
-            error(
-                "AUTH",
-                format!("{} session login rejected: {message}", mode.as_str()),
-            );
+            if mode == PoolConnectionMode::Dev {
+                error("AUTH", "dev session login rejected");
+            } else {
+                error(
+                    "AUTH",
+                    format!("{} session login rejected: {message}", mode.as_str()),
+                );
+            }
         }
         PoolEvent::SubmitAck(ack) => {
             if ack.accepted {
