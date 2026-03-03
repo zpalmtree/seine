@@ -12,9 +12,9 @@ use metal::{
 };
 
 use crate::backend::{
-    AssignmentSemantics, BackendCapabilities, BackendEvent, BackendExecutionModel,
-    BackendInstanceId, BackendTelemetry, BenchBackend, DeadlineSupport, MiningSolution, PowBackend,
-    PreemptionGranularity, WorkAssignment, pow_hash_from_last_block_words,
+    pow_hash_from_last_block_words, AssignmentSemantics, BackendCapabilities, BackendEvent,
+    BackendExecutionModel, BackendInstanceId, BackendTelemetry, BenchBackend, DeadlineSupport,
+    MiningSolution, PowBackend, PreemptionGranularity, WorkAssignment,
 };
 
 const BACKEND_NAME: &str = "metal";
@@ -450,15 +450,15 @@ impl MetalArgon2Engine {
 
         let (solved_nonce, solved_hash) =
             if found_index_one_based != u32::MAX && found_index_one_based > 0 {
-            let idx = (found_index_one_based - 1) as usize;
-            if idx < nonces.len() {
-                (Some(nonces[idx]), Some(self.read_last_block_hash(idx)?))
+                let idx = (found_index_one_based - 1) as usize;
+                if idx < nonces.len() {
+                    (Some(nonces[idx]), Some(self.read_last_block_hash(idx)?))
+                } else {
+                    (None, None)
+                }
             } else {
                 (None, None)
-            }
-        } else {
-            (None, None)
-        };
+            };
 
         Ok(FillBatchResult {
             hashes_done,

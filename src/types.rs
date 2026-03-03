@@ -65,6 +65,30 @@ pub fn parse_target(target_hex: &str) -> Result<[u8; 32]> {
     Ok(target)
 }
 
+pub fn difficulty_to_target(difficulty: u64) -> [u8; 32] {
+    if difficulty == 0 {
+        return [0u8; 32];
+    }
+
+    let numerator = [u64::MAX; 4];
+    let mut quotient = [0u64; 4];
+    let mut rem = 0u64;
+
+    for (i, limb) in numerator.into_iter().enumerate() {
+        let high = rem as u128;
+        let low = limb as u128;
+        let dividend = (high << 64) | low;
+        quotient[i] = (dividend / difficulty as u128) as u64;
+        rem = (dividend % difficulty as u128) as u64;
+    }
+
+    let mut target = [0u8; 32];
+    for (i, word) in quotient.into_iter().enumerate() {
+        target[i * 8..(i + 1) * 8].copy_from_slice(&word.to_be_bytes());
+    }
+    target
+}
+
 pub fn hash_meets_target(hash: &[u8; 32], target: &[u8; 32]) -> bool {
     hash <= target
 }
@@ -132,6 +156,16 @@ mod tests {
     fn parse_target_requires_32_bytes() {
         let err = parse_target("00ff").expect_err("short target should fail");
         assert!(format!("{err:#}").contains("target must be 32 bytes"));
+    }
+
+    #[test]
+    fn difficulty_to_target_orders_monotonically() {
+        let t1 = difficulty_to_target(1);
+        let t2 = difficulty_to_target(2);
+        let t4 = difficulty_to_target(4);
+
+        assert!(t1 > t2);
+        assert!(t2 > t4);
     }
 
     #[test]

@@ -9,7 +9,7 @@ use crossbeam_channel::Receiver;
 use crate::backend::MiningSolution;
 use crate::config::{Config, WorkAllocation};
 use crate::pool::{PoolClient, PoolEvent, PoolJob};
-use crate::types::{decode_hex, parse_target};
+use crate::types::{decode_hex, difficulty_to_target, parse_target};
 
 use super::mining::MiningRuntimeBackends;
 use super::mining_tui::{
@@ -29,11 +29,13 @@ use super::{
 const POOL_WAIT_POLL: Duration = Duration::from_millis(200);
 const POOL_EVENT_IDLE_SLEEP: Duration = Duration::from_millis(5);
 const POOL_JOB_STOP_AT_HORIZON: Duration = Duration::from_secs(365 * 24 * 60 * 60);
+const POOL_MAX_PENDING_SUBMITS: usize = 1;
 
 struct ActivePoolJob {
     job: PoolJob,
     header_base: Arc<[u8]>,
     target: [u8; 32],
+    share_difficulty: Option<u64>,
     next_nonce: u64,
     epoch: u64,
     height: String,
@@ -42,6 +44,7 @@ struct ActivePoolJob {
     round_backend_hashes: BTreeMap<u64, u64>,
     round_backend_telemetry: BTreeMap<u64, BackendRoundTelemetry>,
     submitted_nonces: HashSet<u64>,
+    pending_submit_nonces: HashSet<u64>,
 }
 
 impl ActivePoolJob {
@@ -51,6 +54,7 @@ impl ActivePoolJob {
             height: job.height.to_string(),
             header_base,
             target,
+            share_difficulty: None,
             next_nonce,
             job,
             epoch,
@@ -59,12 +63,14 @@ impl ActivePoolJob {
             round_backend_hashes: BTreeMap::new(),
             round_backend_telemetry: BTreeMap::new(),
             submitted_nonces: HashSet::new(),
+            pending_submit_nonces: HashSet::new(),
         }
     }
 }
 
 enum PoolShareSubmitOutcome {
     Submitted,
+    Backpressured,
     Duplicate,
     StaleEpoch,
     QueueFailed,
@@ -231,7 +237,11 @@ pub(super) fn run_pool_mining_loop(
                     if let Some(solution) = maybe_solution {
                         let submit_outcome =
                             submit_pool_solution(&pool_client, &mut active_job, &solution, &stats);
-                        if matches!(submit_outcome, PoolShareSubmitOutcome::Submitted) {
+                        if matches!(
+                            submit_outcome,
+                            PoolShareSubmitOutcome::Submitted
+                                | PoolShareSubmitOutcome::Backpressured
+                        ) {
                             if let Some(job) = active_job.as_mut() {
                                 if job.next_nonce <= job.job.nonce_end {
                                     if let Err(err) = assign_pool_continuation(
@@ -355,9 +365,11 @@ fn handle_pool_event(
             set_tui_state_label(tui, "pool-login-rejected");
         }
         PoolEvent::SubmitAck(ack) => {
-            if let Some(job) = active_job.as_ref() {
-                if ack.job_id != job.job.job_id {
-                    return Ok(());
+            let current_job_id = active_job.as_ref().map(|job| job.job.job_id.as_str());
+            let ack_for_current_job = current_job_id.is_some_and(|job_id| job_id == ack.job_id);
+            if ack_for_current_job {
+                if let Some(job) = active_job.as_mut() {
+                    job.pending_submit_nonces.remove(&ack.nonce);
                 }
             }
             if ack.accepted {
@@ -365,14 +377,23 @@ fn handle_pool_event(
                 success("POOL", format!("share accepted nonce={}", ack.nonce));
             } else {
                 stats.bump_stale_shares();
+                let reason = ack.error.as_deref().unwrap_or("unknown");
                 warn(
                     "POOL",
-                    format!(
-                        "share rejected nonce={} ({})",
-                        ack.nonce,
-                        ack.error.unwrap_or_else(|| "unknown".to_string())
-                    ),
+                    format!("share rejected nonce={} ({reason})", ack.nonce),
                 );
+            }
+            if let Some(difficulty) = ack.difficulty {
+                apply_submit_ack_difficulty(
+                    cfg,
+                    work_id_cursor,
+                    epoch_cursor,
+                    backends,
+                    backend_executor,
+                    backend_weights,
+                    active_job,
+                    difficulty,
+                )?;
             }
         }
         PoolEvent::Job(job) => {
@@ -392,6 +413,52 @@ fn handle_pool_event(
         }
     }
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_submit_ack_difficulty(
+    cfg: &Config,
+    work_id_cursor: &mut u64,
+    epoch_cursor: &mut u64,
+    backends: &mut Vec<BackendSlot>,
+    backend_executor: &super::backend_executor::BackendExecutor,
+    backend_weights: &mut BTreeMap<u64, f64>,
+    active_job: &mut Option<ActivePoolJob>,
+    difficulty: u64,
+) -> Result<()> {
+    let Some(job) = active_job.as_mut() else {
+        return Ok(());
+    };
+    let difficulty = difficulty.max(1);
+    if job.share_difficulty == Some(difficulty) {
+        return Ok(());
+    }
+
+    let new_target = difficulty_to_target(difficulty);
+    let old_difficulty = job.share_difficulty;
+    job.share_difficulty = Some(difficulty);
+    if new_target == job.target {
+        return Ok(());
+    }
+    job.target = new_target;
+    let old_label = old_difficulty
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    info(
+        "POOL",
+        format!(
+            "applied vardiff update difficulty {old_label} -> {difficulty}; refreshing active work"
+        ),
+    );
+    assign_pool_continuation(
+        cfg,
+        work_id_cursor,
+        epoch_cursor,
+        backends,
+        backend_executor,
+        backend_weights,
+        job,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -537,6 +604,10 @@ fn submit_pool_solution(
     if solution.epoch != job.epoch {
         return PoolShareSubmitOutcome::StaleEpoch;
     }
+    if job.pending_submit_nonces.len() >= POOL_MAX_PENDING_SUBMITS {
+        job.next_nonce = job.next_nonce.max(solution.nonce.saturating_add(1));
+        return PoolShareSubmitOutcome::Backpressured;
+    }
     if !job.submitted_nonces.insert(solution.nonce) {
         return PoolShareSubmitOutcome::Duplicate;
     }
@@ -547,6 +618,7 @@ fn submit_pool_solution(
     {
         stats.bump_submitted();
         info("POOL", format!("share submitted nonce={}", solution.nonce));
+        job.pending_submit_nonces.insert(solution.nonce);
         job.next_nonce = job.next_nonce.max(solution.nonce.saturating_add(1));
         PoolShareSubmitOutcome::Submitted
     } else {

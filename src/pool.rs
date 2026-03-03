@@ -52,6 +52,7 @@ pub struct PoolSubmitAck {
     pub job_id: String,
     pub nonce: u64,
     pub accepted: bool,
+    pub difficulty: Option<u64>,
     pub error: Option<String>,
 }
 
@@ -214,7 +215,8 @@ fn run_pool_client_thread(
                 let _ = event_tx.try_send(PoolEvent::Connected);
                 if let Err(err) = send_login(&mut stream, &address, &worker) {
                     let _ = event_tx.try_send(PoolEvent::Disconnected(format!(
-                        "failed to send login request: {err:#}"
+                        "lost connection while sending pool login; retrying in {}s ({err:#})",
+                        RECONNECT_DELAY.as_secs()
                     )));
                     sleep_with_shutdown(&shutdown, RECONNECT_DELAY);
                     continue;
@@ -240,9 +242,10 @@ fn run_pool_client_thread(
                         )
                         .is_err()
                         {
-                            let _ = event_tx.try_send(PoolEvent::Disconnected(
-                                "failed to send submit request".to_string(),
-                            ));
+                            let _ = event_tx.try_send(PoolEvent::Disconnected(format!(
+                                "lost connection while sending share; reconnecting in {}s",
+                                RECONNECT_DELAY.as_secs()
+                            )));
                             pending_submits.clear();
                             reconnect_requested = true;
                             break;
@@ -257,9 +260,10 @@ fn run_pool_client_thread(
                     let mut line = String::new();
                     match reader.read_line(&mut line) {
                         Ok(0) => {
-                            let _ = event_tx.try_send(PoolEvent::Disconnected(
-                                "pool connection closed".to_string(),
-                            ));
+                            let _ = event_tx.try_send(PoolEvent::Disconnected(format!(
+                                "pool connection closed; reconnecting in {}s",
+                                RECONNECT_DELAY.as_secs()
+                            )));
                             break;
                         }
                         Ok(_) => {
@@ -287,7 +291,8 @@ fn run_pool_client_thread(
                             ) => {}
                         Err(err) => {
                             let _ = event_tx.try_send(PoolEvent::Disconnected(format!(
-                                "pool read error: {err}"
+                                "pool connection lost; reconnecting in {}s ({err})",
+                                RECONNECT_DELAY.as_secs()
                             )));
                             break;
                         }
@@ -295,13 +300,56 @@ fn run_pool_client_thread(
                 }
             }
             Err(err) => {
+                let detail = format!("{err:#}");
                 let _ = event_tx.try_send(PoolEvent::Disconnected(format!(
-                    "pool connect error: {err:#}"
+                    "{} ({detail})",
+                    friendly_pool_connect_error(&endpoint, &detail)
                 )));
                 sleep_with_shutdown(&shutdown, RECONNECT_DELAY);
             }
         }
     }
+}
+
+fn friendly_pool_connect_error(endpoint: &str, detail: &str) -> String {
+    let lower = detail.to_ascii_lowercase();
+    if lower.contains("connection refused") {
+        if is_local_pool_endpoint(endpoint) {
+            return format!(
+                "no local pool found at {endpoint}; start the pool and the miner will retry automatically in {}s",
+                RECONNECT_DELAY.as_secs()
+            );
+        }
+        return format!(
+            "pool at {endpoint} refused the connection; verify host/port and that the pool is running (retrying in {}s)",
+            RECONNECT_DELAY.as_secs()
+        );
+    }
+    if lower.contains("timed out") {
+        return format!(
+            "pool connection to {endpoint} timed out; check host/port or firewall (retrying in {}s)",
+            RECONNECT_DELAY.as_secs()
+        );
+    }
+    if lower.contains("failed to resolve")
+        || lower.contains("resolved to no addresses")
+        || lower.contains("name or service not known")
+    {
+        return format!(
+            "cannot resolve pool endpoint {endpoint}; check the configured pool address (retrying in {}s)",
+            RECONNECT_DELAY.as_secs()
+        );
+    }
+    format!(
+        "unable to connect to pool at {endpoint}; retrying in {}s",
+        RECONNECT_DELAY.as_secs()
+    )
+}
+
+fn is_local_pool_endpoint(endpoint: &str) -> bool {
+    endpoint.starts_with("127.0.0.1:")
+        || endpoint.starts_with("localhost:")
+        || endpoint.starts_with("[::1]:")
 }
 
 fn connect_pool_stream(endpoint: &str) -> Result<(TcpStream, BufReader<TcpStream>)> {
@@ -431,9 +479,10 @@ fn decode_pool_message(
     }
 
     let submit = pending_submits.remove(&id)?;
+    let result = msg.result.as_ref();
     let accepted = if msg.error.is_some() {
         false
-    } else if let Some(result) = msg.result.as_ref() {
+    } else if let Some(result) = result {
         result
             .get("accepted")
             .and_then(Value::as_bool)
@@ -444,11 +493,19 @@ fn decode_pool_message(
             .map(|status| status.eq_ignore_ascii_case("ok"))
             .unwrap_or(true)
     };
+    let difficulty = result
+        .and_then(|value| value.get("difficulty"))
+        .and_then(Value::as_u64);
     let error = if accepted {
         None
     } else {
+        let result_status = result
+            .and_then(|value| value.get("status"))
+            .and_then(Value::as_str)
+            .map(str::to_string);
         Some(
             msg.error
+                .or(result_status)
                 .or_else(|| msg.status)
                 .unwrap_or_else(|| "pool rejected share".to_string()),
         )
@@ -458,6 +515,7 @@ fn decode_pool_message(
         job_id: submit.job_id,
         nonce: submit.nonce,
         accepted,
+        difficulty,
         error,
     }))
 }
@@ -752,5 +810,32 @@ mod tests {
             required_capabilities: Vec::new(),
         };
         assert!(should_send_claimed_hash(&negotiated_with_claimed_hash));
+    }
+
+    #[test]
+    fn decode_submit_ack_extracts_difficulty() {
+        let mut login_confirmed = true;
+        let mut pending_submits = HashMap::<u64, PoolSubmit>::new();
+        pending_submits.insert(
+            42,
+            PoolSubmit {
+                job_id: "job-123".to_string(),
+                nonce: 17,
+                claimed_hash: None,
+            },
+        );
+        let raw = r#"{"id":42,"status":"ok","result":{"accepted":true,"difficulty":128}}"#;
+
+        let event = decode_pool_message(raw, &mut login_confirmed, &mut pending_submits)
+            .expect("submit response should decode");
+        match event {
+            PoolEvent::SubmitAck(ack) => {
+                assert!(ack.accepted);
+                assert_eq!(ack.job_id, "job-123");
+                assert_eq!(ack.nonce, 17);
+                assert_eq!(ack.difficulty, Some(128));
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
     }
 }

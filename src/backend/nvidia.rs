@@ -25,10 +25,10 @@ use serde::{Deserialize, Serialize};
 #[cfg(test)]
 use crate::backend::NonceChunk;
 use crate::backend::{
-    AssignmentSemantics, BackendCallStatus, BackendCapabilities, BackendEvent,
-    BackendExecutionModel, BackendInstanceId, BackendTelemetry, BenchBackend, DeadlineSupport,
-    KernelBenchSample, MiningSolution, PowBackend, PreemptionGranularity, WorkAssignment,
-    WorkTemplate, pow_hash_from_last_block_words,
+    pow_hash_from_last_block_words, AssignmentSemantics, BackendCallStatus, BackendCapabilities,
+    BackendEvent, BackendExecutionModel, BackendInstanceId, BackendTelemetry, BenchBackend,
+    DeadlineSupport, KernelBenchSample, MiningSolution, PowBackend, PreemptionGranularity,
+    WorkAssignment, WorkTemplate,
 };
 const BACKEND_NAME: &str = "nvidia";
 const CUDA_KERNEL_SRC: &str = include_str!("nvidia_kernel.cu");
