@@ -191,13 +191,7 @@ pub(super) fn run_pool_mining_loop(
                         pool_telemetry_warning_logged = false;
                     }
                 } else if !pool_telemetry_warning_logged {
-                    warn(
-                        "STATS",
-                        format!(
-                            "pool telemetry unavailable; continuing without live pool stats ({})",
-                            errors.join("; ")
-                        ),
-                    );
+                    warn("STATS", "failed to fetch pool stats");
                     pool_telemetry_warning_logged = true;
                 }
 
