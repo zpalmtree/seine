@@ -31,6 +31,8 @@ pub struct PoolJob {
     pub job_id: String,
     pub header_base: String,
     pub target: String,
+    #[serde(default)]
+    pub difficulty: Option<u64>,
     pub height: u64,
     pub nonce_start: u64,
     pub nonce_end: u64,

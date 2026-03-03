@@ -50,11 +50,12 @@ struct ActivePoolJob {
 impl ActivePoolJob {
     fn new(job: PoolJob, epoch: u64, header_base: Arc<[u8]>, target: [u8; 32]) -> Self {
         let next_nonce = job.nonce_start;
+        let share_difficulty = job.difficulty;
         Self {
             height: job.height.to_string(),
             header_base,
             target,
-            share_difficulty: None,
+            share_difficulty,
             next_nonce,
             job,
             epoch,
@@ -374,14 +375,11 @@ fn handle_pool_event(
             }
             if ack.accepted {
                 stats.bump_accepted();
-                success("POOL", format!("share accepted nonce={}", ack.nonce));
+                success("POOL", "share accepted");
             } else {
                 stats.bump_stale_shares();
                 let reason = ack.error.as_deref().unwrap_or("unknown");
-                warn(
-                    "POOL",
-                    format!("share rejected nonce={} ({reason})", ack.nonce),
-                );
+                warn("POOL", format!("share rejected ({reason})"));
             }
             if let Some(difficulty) = ack.difficulty {
                 apply_submit_ack_difficulty(
@@ -446,9 +444,7 @@ fn apply_submit_ack_difficulty(
         .unwrap_or_else(|| "unknown".to_string());
     info(
         "POOL",
-        format!(
-            "applied vardiff update difficulty {old_label} -> {difficulty}; refreshing active work"
-        ),
+        format!("share difficulty adjusted {old_label} -> {difficulty}"),
     );
     assign_pool_continuation(
         cfg,
@@ -505,12 +501,15 @@ fn assign_pool_job(
 
     stats.bump_templates();
     let height = job.height;
-    let job_id = job.job_id.clone();
+    let difficulty_label = job
+        .difficulty
+        .map(|difficulty| difficulty.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
     *active_job = Some(ActivePoolJob::new(job, 0, header_base, target));
 
     info(
         "POOL",
-        format!("new job {job_id} height={height} nonce_count={nonce_count}"),
+        format!("new job height={height} difficulty={difficulty_label}"),
     );
     if let Some(job) = active_job.as_mut() {
         assign_pool_continuation(
@@ -617,16 +616,13 @@ fn submit_pool_solution(
         .is_ok()
     {
         stats.bump_submitted();
-        info("POOL", format!("share submitted nonce={}", solution.nonce));
+        info("POOL", "share submitted");
         job.pending_submit_nonces.insert(solution.nonce);
         job.next_nonce = job.next_nonce.max(solution.nonce.saturating_add(1));
         PoolShareSubmitOutcome::Submitted
     } else {
         job.submitted_nonces.remove(&solution.nonce);
-        warn(
-            "POOL",
-            format!("failed to queue pool submit for nonce={}", solution.nonce),
-        );
+        warn("POOL", "failed to queue pool submit");
         PoolShareSubmitOutcome::QueueFailed
     }
 }
