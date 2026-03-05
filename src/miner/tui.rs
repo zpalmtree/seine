@@ -16,6 +16,7 @@ use ratatui::Terminal;
 
 const LOG_CAPACITY: usize = 200;
 const BLOCK_MARKER_CAPACITY: usize = 4096;
+const CONFIG_TWO_COLUMN_MIN_WIDTH: u16 = 148;
 
 #[derive(Clone)]
 pub struct LogEntry {
@@ -264,6 +265,7 @@ const BLOCK_MARKER_GLYPH: &str = "♦";
 
 fn draw_dashboard(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
     let wide = area.width >= 80;
+    let config_two_columns = config_uses_two_columns(area.width);
 
     let stats_height: u16 = if wide { 5 } else { 14 };
     let active_device_count = state.device_hashrates.len() as u16;
@@ -276,7 +278,7 @@ fn draw_dashboard(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner)
     // Pending devices are always 1-per-line (not paired in wide mode)
     let device_rows = active_rows + pending_count;
     let devices_height: u16 = if device_rows > 0 { 2 + device_rows } else { 0 };
-    let config_height: u16 = if wide { 4 } else { 8 };
+    let config_height: u16 = if config_two_columns { 4 } else { 8 };
     let header_height: u16 = 4;
 
     let chunks = Layout::default()
@@ -670,7 +672,7 @@ fn draw_devices(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner, w
 }
 
 fn draw_config(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
-    if area.width >= 90 {
+    if config_uses_two_columns(area.width) {
         let cols = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
@@ -686,6 +688,10 @@ fn draw_config(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
         .split(area);
     draw_config_runtime_panel(frame, rows[0], state);
     draw_config_wallet_panel(frame, rows[1], state);
+}
+
+fn config_uses_two_columns(width: u16) -> bool {
+    width >= CONFIG_TWO_COLUMN_MIN_WIDTH
 }
 
 fn draw_config_runtime_panel(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
@@ -1037,6 +1043,12 @@ mod tests {
         }
         assert_eq!(state.block_found_ticks.len(), BLOCK_MARKER_CAPACITY);
         assert_eq!(state.block_found_ticks.front().copied(), Some(32));
+    }
+
+    #[test]
+    fn config_layout_uses_two_columns_only_when_wide_enough() {
+        assert!(!config_uses_two_columns(CONFIG_TWO_COLUMN_MIN_WIDTH - 1));
+        assert!(config_uses_two_columns(CONFIG_TWO_COLUMN_MIN_WIDTH));
     }
 
     #[test]

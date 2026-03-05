@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -33,6 +33,8 @@ const POOL_WAIT_POLL: Duration = Duration::from_millis(200);
 const POOL_EVENT_IDLE_SLEEP: Duration = Duration::from_millis(5);
 const POOL_JOB_STOP_AT_HORIZON: Duration = Duration::from_secs(365 * 24 * 60 * 60);
 const POOL_MAX_INFLIGHT_SUBMITS: usize = 16;
+const POOL_MAX_DEFERRED_SUBMITS: usize = 4096;
+const POOL_SUBMIT_ACK_TIMEOUT: Duration = Duration::from_secs(30);
 const POOL_TELEMETRY_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 const POOL_TELEMETRY_TIMEOUT: Duration = Duration::from_millis(750);
 const POOL_API_DEFAULT_PORT: u16 = 24783;
@@ -111,7 +113,14 @@ struct ActivePoolJob {
     round_backend_hashes: BTreeMap<u64, u64>,
     round_backend_telemetry: BTreeMap<u64, BackendRoundTelemetry>,
     submitted_nonces: HashSet<u64>,
-    pending_submit_nonces: HashSet<u64>,
+    pending_submit_nonces: HashMap<u64, Instant>,
+    deferred_submits: VecDeque<DeferredPoolSubmit>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DeferredPoolSubmit {
+    nonce: u64,
+    claimed_hash: Option<[u8; 32]>,
 }
 
 impl ActivePoolJob {
@@ -131,14 +140,15 @@ impl ActivePoolJob {
             round_backend_hashes: BTreeMap::new(),
             round_backend_telemetry: BTreeMap::new(),
             submitted_nonces: HashSet::new(),
-            pending_submit_nonces: HashSet::new(),
+            pending_submit_nonces: HashMap::new(),
+            deferred_submits: VecDeque::new(),
         }
     }
 }
 
 enum PoolShareSubmitOutcome {
     Submitted,
-    Backpressured,
+    Deferred,
     Duplicate,
     StaleEpoch,
     QueueFailed,
@@ -340,6 +350,7 @@ pub(super) fn run_pool_mining_loop(
                             handle_inactive_pool_event(
                                 event,
                                 PoolConnectionMode::Dev,
+                                &dev_session.client,
                                 &mut dev_session.latest_job,
                                 &mut dev_session.connected,
                                 &mut dev_session.resume_job,
@@ -351,6 +362,7 @@ pub(super) fn run_pool_mining_loop(
                             handle_inactive_pool_event(
                                 event,
                                 PoolConnectionMode::User,
+                                &user_session.client,
                                 &mut user_session.latest_job,
                                 &mut user_session.connected,
                                 &mut user_session.resume_job,
@@ -622,6 +634,7 @@ pub(super) fn run_pool_mining_loop(
                 handle_inactive_pool_event(
                     event,
                     PoolConnectionMode::User,
+                    &user_session.client,
                     &mut user_session.latest_job,
                     &mut user_session.connected,
                     &mut user_session.resume_job,
@@ -652,6 +665,7 @@ pub(super) fn run_pool_mining_loop(
                 handle_inactive_pool_event(
                     event,
                     PoolConnectionMode::Dev,
+                    &dev_session.client,
                     &mut dev_session.latest_job,
                     &mut dev_session.connected,
                     &mut dev_session.resume_job,
@@ -725,43 +739,40 @@ pub(super) fn run_pool_mining_loop(
                         } else {
                             &user_session.client
                         };
-                        let submit_outcome = submit_pool_solution(
+                        let _submit_outcome = submit_pool_solution(
                             active_mode,
                             active_client,
                             &mut active_job,
                             &solution,
                             &stats,
                         );
-                        if matches!(
-                            submit_outcome,
-                            PoolShareSubmitOutcome::Submitted
-                                | PoolShareSubmitOutcome::Backpressured
-                        ) {
-                            if let Some(job) = active_job.as_mut() {
-                                if job.next_nonce <= job.job.nonce_end {
-                                    if let Err(err) = assign_pool_continuation(
-                                        cfg,
-                                        &mut work_id_cursor,
-                                        &mut epoch,
-                                        backends,
-                                        backend_executor,
-                                        &mut backend_weights,
-                                        job,
-                                    ) {
-                                        warn(
-                                            "JOB",
-                                            format!("failed to continue job after share: {err:#}"),
-                                        );
-                                    }
-                                }
-                            }
-                        }
                     }
                 }
                 Err(crossbeam_channel::TryRecvError::Empty) => break,
                 Err(crossbeam_channel::TryRecvError::Disconnected) => break,
             }
         }
+
+        if let Some(job) = active_job.as_mut() {
+            let active_client = if active_mode == PoolConnectionMode::Dev {
+                &dev_session.client
+            } else {
+                &user_session.client
+            };
+            service_pool_submit_backlog(active_mode, active_client, job, &stats);
+        }
+        if let Some(job) = user_session.resume_job.as_mut() {
+            service_pool_submit_backlog(
+                PoolConnectionMode::User,
+                &user_session.client,
+                job,
+                &stats,
+            );
+        }
+        if let Some(job) = dev_session.resume_job.as_mut() {
+            service_pool_submit_backlog(PoolConnectionMode::Dev, &dev_session.client, job, &stats);
+        }
+
         if topology_changed {
             maybe_hot_rebalance_active_pool_job(
                 cfg,
@@ -949,6 +960,11 @@ fn handle_active_pool_event(
                     difficulty,
                 )?;
             }
+            if ack_for_current_job {
+                if let Some(job) = active_job.as_mut() {
+                    service_pool_submit_backlog(mode, pool_client, job, stats);
+                }
+            }
         }
         PoolEvent::Job(job) => {
             *latest_job = Some(job.clone());
@@ -975,6 +991,7 @@ fn handle_active_pool_event(
 fn handle_inactive_pool_event(
     event: PoolEvent,
     mode: PoolConnectionMode,
+    pool_client: &PoolClient,
     latest_job: &mut Option<PoolJob>,
     connected: &mut bool,
     inactive_job: &mut Option<ActivePoolJob>,
@@ -1051,6 +1068,7 @@ fn handle_inactive_pool_event(
                         job.share_difficulty = Some(difficulty);
                         job.target = difficulty_to_target(difficulty);
                     }
+                    service_pool_submit_backlog(mode, pool_client, job, stats);
                 }
             }
         }
@@ -1326,6 +1344,119 @@ fn maybe_hot_rebalance_active_pool_job(
     Ok(())
 }
 
+fn service_pool_submit_backlog(
+    mode: PoolConnectionMode,
+    pool_client: &PoolClient,
+    job: &mut ActivePoolJob,
+    stats: &Stats,
+) {
+    let job_id = job.job.job_id.clone();
+    service_pool_submit_backlog_with_submitter(mode, job, stats, |nonce, claimed_hash| {
+        pool_client.submit_share(job_id.clone(), nonce, claimed_hash)
+    });
+}
+
+fn service_pool_submit_backlog_with_submitter<F>(
+    mode: PoolConnectionMode,
+    job: &mut ActivePoolJob,
+    stats: &Stats,
+    mut submitter: F,
+) where
+    F: FnMut(u64, Option<[u8; 32]>) -> Result<()>,
+{
+    let now = Instant::now();
+    let timed_out = reap_timed_out_pending_submits(job, now);
+    if timed_out > 0 && mode.is_user() {
+        warn(
+            "SHARE",
+            format!(
+                "{timed_out} pending submit acknowledgement(s) timed out; keeping dedupe state and releasing inflight slots"
+            ),
+        );
+    }
+
+    let (flushed, submit_failed) = flush_deferred_pool_submits(job, stats, &mut submitter);
+    if flushed > 0 && mode.is_user() {
+        info("SHARE", format!("submitted {flushed} deferred share(s)"));
+    }
+    if submit_failed && mode.is_user() {
+        warn("SHARE", "failed to queue deferred submit");
+    }
+}
+
+fn reap_timed_out_pending_submits(job: &mut ActivePoolJob, now: Instant) -> usize {
+    let mut timed_out = Vec::new();
+    for (&nonce, &submitted_at) in &job.pending_submit_nonces {
+        if now.saturating_duration_since(submitted_at) >= POOL_SUBMIT_ACK_TIMEOUT {
+            timed_out.push(nonce);
+        }
+    }
+    for nonce in &timed_out {
+        job.pending_submit_nonces.remove(nonce);
+    }
+    timed_out.len()
+}
+
+fn enqueue_deferred_pool_submit(
+    mode: PoolConnectionMode,
+    job: &mut ActivePoolJob,
+    nonce: u64,
+    claimed_hash: Option<[u8; 32]>,
+    stats: &Stats,
+) -> bool {
+    if job.deferred_submits.len() >= POOL_MAX_DEFERRED_SUBMITS {
+        stats.add_dropped(1);
+        if mode.is_user() {
+            warn(
+                "SHARE",
+                format!(
+                    "deferred submit queue full ({}); dropping share nonce={nonce}",
+                    POOL_MAX_DEFERRED_SUBMITS
+                ),
+            );
+        }
+        return false;
+    }
+
+    job.deferred_submits.push_back(DeferredPoolSubmit {
+        nonce,
+        claimed_hash,
+    });
+    stats.add_deferred(1);
+    true
+}
+
+fn flush_deferred_pool_submits<F>(
+    job: &mut ActivePoolJob,
+    stats: &Stats,
+    mut submitter: F,
+) -> (u64, bool)
+where
+    F: FnMut(u64, Option<[u8; 32]>) -> Result<()>,
+{
+    let mut flushed = 0u64;
+    let mut submit_failed = false;
+    while job.pending_submit_nonces.len() < POOL_MAX_INFLIGHT_SUBMITS {
+        let Some(deferred) = job.deferred_submits.pop_front() else {
+            break;
+        };
+        match submitter(deferred.nonce, deferred.claimed_hash) {
+            Ok(()) => {
+                job.pending_submit_nonces
+                    .insert(deferred.nonce, Instant::now());
+                stats.bump_submitted();
+                flushed = flushed.saturating_add(1);
+            }
+            Err(_) => {
+                job.deferred_submits.push_front(deferred);
+                submit_failed = true;
+                break;
+            }
+        }
+    }
+    (flushed, submit_failed)
+}
+
 fn submit_pool_solution(
     mode: PoolConnectionMode,
     pool_client: &PoolClient,
@@ -1333,30 +1464,56 @@ fn submit_pool_solution(
     solution: &MiningSolution,
     stats: &Stats,
 ) -> PoolShareSubmitOutcome {
+    submit_pool_solution_with_submitter(
+        mode,
+        active_job,
+        solution,
+        stats,
+        |job_id, nonce, claimed_hash| {
+            pool_client.submit_share(job_id.to_string(), nonce, claimed_hash)
+        },
+    )
+}
+
+fn submit_pool_solution_with_submitter<F>(
+    mode: PoolConnectionMode,
+    active_job: &mut Option<ActivePoolJob>,
+    solution: &MiningSolution,
+    stats: &Stats,
+    mut submitter: F,
+) -> PoolShareSubmitOutcome
+where
+    F: FnMut(&str, u64, Option<[u8; 32]>) -> Result<()>,
+{
     let Some(job) = active_job.as_mut() else {
         return PoolShareSubmitOutcome::StaleEpoch;
     };
     if solution.epoch != job.epoch {
         return PoolShareSubmitOutcome::StaleEpoch;
     }
-    if job.pending_submit_nonces.len() >= POOL_MAX_INFLIGHT_SUBMITS {
-        job.next_nonce = job.next_nonce.max(solution.nonce.saturating_add(1));
-        return PoolShareSubmitOutcome::Backpressured;
-    }
+
+    let job_id = job.job.job_id.clone();
+    service_pool_submit_backlog_with_submitter(mode, job, stats, |nonce, claimed_hash| {
+        submitter(job_id.as_str(), nonce, claimed_hash)
+    });
     if !job.submitted_nonces.insert(solution.nonce) {
         return PoolShareSubmitOutcome::Duplicate;
     }
 
-    if pool_client
-        .submit_share(job.job.job_id.clone(), solution.nonce, solution.hash)
-        .is_ok()
-    {
+    if job.pending_submit_nonces.len() >= POOL_MAX_INFLIGHT_SUBMITS {
+        if !enqueue_deferred_pool_submit(mode, job, solution.nonce, solution.hash, stats) {
+            // Keep dedupe marker even when dropped to prevent duplicate share spam.
+        }
+        return PoolShareSubmitOutcome::Deferred;
+    }
+
+    if submitter(job.job.job_id.as_str(), solution.nonce, solution.hash).is_ok() {
         stats.bump_submitted();
         if mode.is_user() {
             info("SHARE", "submitted");
         }
-        job.pending_submit_nonces.insert(solution.nonce);
-        job.next_nonce = job.next_nonce.max(solution.nonce.saturating_add(1));
+        job.pending_submit_nonces
+            .insert(solution.nonce, Instant::now());
         PoolShareSubmitOutcome::Submitted
     } else {
         job.submitted_nonces.remove(&solution.nonce);
@@ -1588,7 +1745,46 @@ fn compact_pool_address_for_log(address: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{compact_pool_address_for_log, pool_api_base_urls_from_pool_url};
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    use crate::backend::MiningSolution;
+    use crate::miner::stats::Stats;
+
+    use super::{
+        compact_pool_address_for_log, pool_api_base_urls_from_pool_url,
+        service_pool_submit_backlog_with_submitter, submit_pool_solution_with_submitter,
+        ActivePoolJob, PoolConnectionMode, PoolJob, PoolShareSubmitOutcome,
+        POOL_MAX_INFLIGHT_SUBMITS, POOL_SUBMIT_ACK_TIMEOUT,
+    };
+
+    fn test_active_job(epoch: u64) -> ActivePoolJob {
+        ActivePoolJob::new(
+            PoolJob {
+                job_id: "job-1".to_string(),
+                header_base: "00".to_string(),
+                target: "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                    .to_string(),
+                difficulty: Some(1),
+                height: 1,
+                nonce_start: 0,
+                nonce_end: 1_000,
+            },
+            epoch,
+            Arc::<[u8]>::from(vec![0u8; 1]),
+            [0xFF; 32],
+        )
+    }
+
+    fn test_solution(epoch: u64, nonce: u64) -> MiningSolution {
+        MiningSolution {
+            epoch,
+            nonce,
+            hash: Some([0xAA; 32]),
+            backend_id: 1,
+            backend: "cpu",
+        }
+    }
 
     #[test]
     fn telemetry_base_urls_include_fallbacks_for_stratum_endpoint() {
@@ -1627,5 +1823,116 @@ mod tests {
     fn compact_pool_address_keeps_short_values_as_is() {
         let input = "短地址";
         assert_eq!(compact_pool_address_for_log(input), input);
+    }
+
+    #[test]
+    fn submit_pool_solution_defers_when_inflight_limit_is_saturated() {
+        let stats = Stats::new();
+        let mut active_job = Some(test_active_job(7));
+        {
+            let now = Instant::now();
+            let job = active_job.as_mut().expect("active job should exist");
+            for nonce in 0..POOL_MAX_INFLIGHT_SUBMITS as u64 {
+                job.pending_submit_nonces.insert(nonce, now);
+            }
+        }
+
+        let mut submit_calls = 0u64;
+        let outcome = submit_pool_solution_with_submitter(
+            PoolConnectionMode::Dev,
+            &mut active_job,
+            &test_solution(7, 99),
+            &stats,
+            |_job_id, _nonce, _hash| {
+                submit_calls = submit_calls.saturating_add(1);
+                Ok(())
+            },
+        );
+
+        assert!(matches!(outcome, PoolShareSubmitOutcome::Deferred));
+        assert_eq!(submit_calls, 0);
+        let job = active_job.expect("active job should remain available");
+        assert!(job.submitted_nonces.contains(&99));
+        assert_eq!(job.deferred_submits.len(), 1);
+        assert_eq!(job.pending_submit_nonces.len(), POOL_MAX_INFLIGHT_SUBMITS);
+    }
+
+    #[test]
+    fn submit_pool_solution_deduplicates_nonce_and_keeps_cursor_stable() {
+        let stats = Stats::new();
+        let mut active_job = Some(test_active_job(9));
+        let initial_next_nonce = active_job
+            .as_ref()
+            .expect("active job should exist")
+            .next_nonce;
+        let mut submitted_nonces = Vec::new();
+
+        let first = submit_pool_solution_with_submitter(
+            PoolConnectionMode::Dev,
+            &mut active_job,
+            &test_solution(9, 42),
+            &stats,
+            |_job_id, nonce, _hash| {
+                submitted_nonces.push(nonce);
+                Ok(())
+            },
+        );
+        let second = submit_pool_solution_with_submitter(
+            PoolConnectionMode::Dev,
+            &mut active_job,
+            &test_solution(9, 42),
+            &stats,
+            |_job_id, nonce, _hash| {
+                submitted_nonces.push(nonce);
+                Ok(())
+            },
+        );
+
+        assert!(matches!(first, PoolShareSubmitOutcome::Submitted));
+        assert!(matches!(second, PoolShareSubmitOutcome::Duplicate));
+        assert_eq!(submitted_nonces, vec![42]);
+        let job = active_job.expect("active job should remain available");
+        assert_eq!(job.next_nonce, initial_next_nonce);
+        assert!(job.pending_submit_nonces.contains_key(&42));
+    }
+
+    #[test]
+    fn timed_out_pending_submit_releases_slot_without_clearing_dedupe() {
+        let stats = Stats::new();
+        let mut job = test_active_job(11);
+        let now = Instant::now();
+        let timed_out_nonce = 7u64;
+        let healthy_nonce = 8u64;
+        let deferred_nonce = 77u64;
+
+        job.submitted_nonces.insert(timed_out_nonce);
+        job.submitted_nonces.insert(healthy_nonce);
+        job.submitted_nonces.insert(deferred_nonce);
+        job.pending_submit_nonces.insert(
+            timed_out_nonce,
+            now - (POOL_SUBMIT_ACK_TIMEOUT + Duration::from_secs(1)),
+        );
+        job.pending_submit_nonces.insert(healthy_nonce, now);
+        job.deferred_submits.push_back(super::DeferredPoolSubmit {
+            nonce: deferred_nonce,
+            claimed_hash: Some([0xAB; 32]),
+        });
+
+        let mut submitted = Vec::new();
+        service_pool_submit_backlog_with_submitter(
+            PoolConnectionMode::Dev,
+            &mut job,
+            &stats,
+            |nonce, _hash| {
+                submitted.push(nonce);
+                Ok(())
+            },
+        );
+
+        assert_eq!(submitted, vec![deferred_nonce]);
+        assert!(!job.pending_submit_nonces.contains_key(&timed_out_nonce));
+        assert!(job.pending_submit_nonces.contains_key(&healthy_nonce));
+        assert!(job.pending_submit_nonces.contains_key(&deferred_nonce));
+        assert!(job.submitted_nonces.contains(&timed_out_nonce));
     }
 }
