@@ -11,7 +11,10 @@ use serde_json::Value;
 use crate::backend::MiningSolution;
 use crate::config::{Config, WorkAllocation};
 use crate::dev_fee::{effective_pool_dev_fee_percent, DevFeeTracker, DEV_ADDRESS, DEV_FEE_PERCENT};
-use crate::pool::{PoolClient, PoolEvent, PoolJob};
+use crate::pool::{
+    PoolClient, PoolEvent, PoolJob, POOL_NOTIFICATION_MINER_BLOCK_FOUND,
+    POOL_NOTIFICATION_POOL_BLOCK_SOLVED,
+};
 use crate::types::{decode_hex, difficulty_to_target, parse_target};
 
 use super::mining::MiningRuntimeBackends;
@@ -930,6 +933,24 @@ fn handle_active_pool_event(
             }
             set_tui_state_label(tui, "pool-login-rejected");
         }
+        PoolEvent::Notification(notification) => {
+            if mode.is_user() {
+                match notification.kind.as_str() {
+                    POOL_NOTIFICATION_POOL_BLOCK_SOLVED => {
+                        success("POOL", notification.message);
+                    }
+                    POOL_NOTIFICATION_MINER_BLOCK_FOUND => {
+                        success("ACCEPT", notification.message);
+                        if let Some(display) = tui.as_mut() {
+                            display.mark_block_found();
+                        }
+                    }
+                    _ => {
+                        info("POOL", notification.message);
+                    }
+                }
+            }
+        }
         PoolEvent::SubmitAck(ack) => {
             let current_job_id = active_job.as_ref().map(|job| job.job.job_id.as_str());
             let ack_for_current_job = current_job_id.is_some_and(|job_id| job_id == ack.job_id);
@@ -1044,6 +1065,21 @@ fn handle_inactive_pool_event(
                     "AUTH",
                     format!("{} session login rejected: {message}", mode.as_str()),
                 );
+            }
+        }
+        PoolEvent::Notification(notification) => {
+            if mode.is_user() {
+                match notification.kind.as_str() {
+                    POOL_NOTIFICATION_POOL_BLOCK_SOLVED => {
+                        success("POOL", notification.message);
+                    }
+                    POOL_NOTIFICATION_MINER_BLOCK_FOUND => {
+                        success("ACCEPT", notification.message);
+                    }
+                    _ => {
+                        info("POOL", notification.message);
+                    }
+                }
             }
         }
         PoolEvent::SubmitAck(ack) => {

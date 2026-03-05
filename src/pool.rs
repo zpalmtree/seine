@@ -21,9 +21,13 @@ const STRATUM_CAPABILITY_LOGIN_NEGOTIATION: &str = "login_negotiation";
 const STRATUM_CAPABILITY_VALIDATION_STATUS: &str = "share_validation_status";
 const STRATUM_CAPABILITY_SUBMIT_CLAIMED_HASH: &str = "submit_claimed_hash";
 const STRATUM_CAPABILITY_DIFFICULTY_HINT: &str = "difficulty_hint";
+const STRATUM_METHOD_NOTIFICATION: &str = "notification";
 const SUBMIT_REJECT_REASON_DISCONNECTED: &str = "pool disconnected";
 const SUBMIT_REJECT_REASON_LOGIN_REJECTED: &str = "pool login rejected";
 const SUBMIT_REJECT_REASON_SEND_FAILED: &str = "submit interrupted during reconnect";
+
+pub const POOL_NOTIFICATION_POOL_BLOCK_SOLVED: &str = "pool_block_solved";
+pub const POOL_NOTIFICATION_MINER_BLOCK_FOUND: &str = "miner_block_found";
 
 const CLIENT_CAPABILITIES: &[&str] = &[
     STRATUM_CAPABILITY_LOGIN_NEGOTIATION,
@@ -79,6 +83,12 @@ impl PoolLoginAck {
 }
 
 #[derive(Debug, Clone)]
+pub struct PoolNotification {
+    pub kind: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone)]
 pub enum PoolEvent {
     Connected,
     Disconnected(String),
@@ -86,6 +96,7 @@ pub enum PoolEvent {
     LoginRejected(String),
     Job(PoolJob),
     SubmitAck(PoolSubmitAck),
+    Notification(PoolNotification),
 }
 
 #[derive(Debug, Clone)]
@@ -412,6 +423,7 @@ fn run_pool_client_thread(
                                             login_difficulty_hint = Some(difficulty.max(1));
                                         }
                                     }
+                                    PoolEvent::Notification(_) => {}
                                     PoolEvent::LoginRejected(_) => {
                                         allow_login_difficulty_hint = false;
                                     }
@@ -636,6 +648,10 @@ fn decode_pool_message(
             let job: PoolJob = serde_json::from_value(params).ok()?;
             return Some(PoolEvent::Job(job));
         }
+        if method == STRATUM_METHOD_NOTIFICATION {
+            let notification = parse_pool_notification(msg.params)?;
+            return Some(PoolEvent::Notification(notification));
+        }
     }
 
     let id = msg.id?;
@@ -702,6 +718,35 @@ fn decode_pool_message(
         difficulty,
         error,
     }))
+}
+
+fn parse_pool_notification(params: Option<Value>) -> Option<PoolNotification> {
+    let params = params?;
+    if let Some(message) = params.as_str() {
+        let message = message.trim();
+        if message.is_empty() {
+            return None;
+        }
+        return Some(PoolNotification {
+            kind: "pool_notice".to_string(),
+            message: message.to_string(),
+        });
+    }
+    let object = params.as_object()?;
+    let message = object.get("message")?.as_str()?.trim();
+    if message.is_empty() {
+        return None;
+    }
+    let kind = object
+        .get("kind")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("pool_notice");
+    Some(PoolNotification {
+        kind: kind.to_string(),
+        message: message.to_string(),
+    })
 }
 
 fn parse_login_result(result: Option<Value>) -> PoolLoginAck {
@@ -1099,6 +1144,40 @@ mod tests {
                 assert_eq!(ack.job_id, "job-123");
                 assert_eq!(ack.nonce, 17);
                 assert_eq!(ack.difficulty, Some(128));
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decode_notification_event() {
+        let mut login_confirmed = true;
+        let mut pending_submits = HashMap::<u64, PoolSubmit>::new();
+        let raw = r#"{"method":"notification","params":{"kind":"pool_block_solved","message":"pool solved a block"}}"#;
+
+        let event = decode_pool_message(raw, &mut login_confirmed, &mut pending_submits)
+            .expect("notification should decode");
+        match event {
+            PoolEvent::Notification(notification) => {
+                assert_eq!(notification.kind, "pool_block_solved");
+                assert_eq!(notification.message, "pool solved a block");
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decode_notification_string_payload_uses_default_kind() {
+        let mut login_confirmed = true;
+        let mut pending_submits = HashMap::<u64, PoolSubmit>::new();
+        let raw = r#"{"method":"notification","params":"great success"}"#;
+
+        let event = decode_pool_message(raw, &mut login_confirmed, &mut pending_submits)
+            .expect("notification should decode");
+        match event {
+            PoolEvent::Notification(notification) => {
+                assert_eq!(notification.kind, "pool_notice");
+                assert_eq!(notification.message, "great success");
             }
             other => panic!("unexpected event: {other:?}"),
         }
