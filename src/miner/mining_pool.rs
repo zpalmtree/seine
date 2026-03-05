@@ -86,6 +86,7 @@ struct PoolSession {
     telemetry: Option<PoolUiTelemetryClient>,
     latest_job: Option<PoolJob>,
     connected: bool,
+    resume_job: Option<ActivePoolJob>,
 }
 
 struct ActivePoolJob {
@@ -274,6 +275,7 @@ pub(super) fn run_pool_mining_loop(
         telemetry: user_telemetry,
         latest_job: None,
         connected: false,
+        resume_job: None,
     };
     let mut dev_session = PoolSession {
         connection: dev_connection,
@@ -281,6 +283,7 @@ pub(super) fn run_pool_mining_loop(
         telemetry: dev_telemetry,
         latest_job: None,
         connected: false,
+        resume_job: None,
     };
 
     let mut active_job: Option<ActivePoolJob> = None;
@@ -317,6 +320,7 @@ pub(super) fn run_pool_mining_loop(
                                 PoolConnectionMode::Dev,
                                 &mut dev_session.latest_job,
                                 &mut dev_session.connected,
+                                &mut dev_session.resume_job,
                                 &stats,
                             );
                         }
@@ -327,9 +331,15 @@ pub(super) fn run_pool_mining_loop(
                                 PoolConnectionMode::User,
                                 &mut user_session.latest_job,
                                 &mut user_session.connected,
+                                &mut user_session.resume_job,
                                 &stats,
                             );
                         }
+                    }
+                    if active_mode == PoolConnectionMode::Dev {
+                        dev_session.resume_job = active_job.take();
+                    } else {
+                        user_session.resume_job = active_job.take();
                     }
                     if let Err(err) =
                         super::cancel_backend_slots(backends, RuntimeMode::Mining, backend_executor)
@@ -344,54 +354,95 @@ pub(super) fn run_pool_mining_loop(
                         RuntimeMode::Mining,
                         backend_executor,
                     );
-                    active_job = None;
                     active_mode = next_mode;
 
-                    let (active_address, cached_job) = if active_mode == PoolConnectionMode::Dev {
-                        (
-                            dev_session.connection.address.clone(),
-                            if dev_session.connected {
-                                dev_session.latest_job.clone()
-                            } else {
-                                None
-                            },
-                        )
-                    } else {
-                        (
-                            user_session.connection.address.clone(),
-                            if user_session.connected {
-                                user_session.latest_job.clone()
-                            } else {
-                                None
-                            },
-                        )
-                    };
+                    let (active_address, cached_job, mut resumed_job) =
+                        if active_mode == PoolConnectionMode::Dev {
+                            (
+                                dev_session.connection.address.clone(),
+                                if dev_session.connected {
+                                    dev_session.latest_job.clone()
+                                } else {
+                                    None
+                                },
+                                if dev_session.connected {
+                                    dev_session.resume_job.take()
+                                } else {
+                                    None
+                                },
+                            )
+                        } else {
+                            (
+                                user_session.connection.address.clone(),
+                                if user_session.connected {
+                                    user_session.latest_job.clone()
+                                } else {
+                                    None
+                                },
+                                if user_session.connected {
+                                    user_session.resume_job.take()
+                                } else {
+                                    None
+                                },
+                            )
+                        };
                     set_tui_wallet_overview(&mut tui, &active_address, "---", "---");
 
-                    if let Some(job) = cached_job {
-                        let active_client = if active_mode == PoolConnectionMode::Dev {
-                            &dev_session.client
+                    if let Some(resume) = resumed_job.take() {
+                        if cached_job
+                            .as_ref()
+                            .is_some_and(|cached| cached.job_id == resume.job.job_id)
+                        {
+                            active_job = Some(resume);
+                            if let Some(job) = active_job.as_mut() {
+                                assign_pool_continuation(
+                                    cfg,
+                                    &mut work_id_cursor,
+                                    &mut epoch,
+                                    backends,
+                                    backend_executor,
+                                    &mut backend_weights,
+                                    job,
+                                )?;
+                                info(
+                                    "JOB",
+                                    format!(
+                                        "resumed active {} session job from cached progress",
+                                        active_mode.as_str()
+                                    ),
+                                );
+                            }
+                            set_tui_state_label(&mut tui, "working");
+                            render_tui_now(&mut tui);
+                        }
+                    }
+
+                    if active_job.is_none() {
+                        if let Some(job) = cached_job {
+                            let active_client = if active_mode == PoolConnectionMode::Dev {
+                                &dev_session.client
+                            } else {
+                                &user_session.client
+                            };
+                            assign_pool_job(
+                                active_mode,
+                                cfg,
+                                active_client,
+                                job,
+                                false,
+                                &mut work_id_cursor,
+                                &mut epoch,
+                                backends,
+                                backend_executor,
+                                &mut backend_weights,
+                                &mut active_job,
+                                &stats,
+                                &mut tui,
+                            )?;
                         } else {
-                            &user_session.client
-                        };
-                        assign_pool_job(
-                            active_mode,
-                            cfg,
-                            active_client,
-                            job,
-                            false,
-                            &mut work_id_cursor,
-                            &mut epoch,
-                            backends,
-                            backend_executor,
-                            &mut backend_weights,
-                            &mut active_job,
-                            &stats,
-                            &mut tui,
-                        )?;
-                    } else {
-                        set_tui_state_label(&mut tui, "waiting-pool-job");
-                        render_tui_now(&mut tui);
+                            set_tui_state_label(&mut tui, "waiting-pool-job");
+                            render_tui_now(&mut tui);
+                        }
                     }
 
                     pool_network_hashrate = "unknown".to_string();
@@ -522,6 +573,7 @@ pub(super) fn run_pool_mining_loop(
                     PoolConnectionMode::User,
                     &mut user_session.latest_job,
                     &mut user_session.connected,
+                    &mut user_session.resume_job,
                     &stats,
                 );
             }
@@ -551,6 +603,7 @@ pub(super) fn run_pool_mining_loop(
                     PoolConnectionMode::Dev,
                     &mut dev_session.latest_job,
                     &mut dev_session.connected,
+                    &mut dev_session.resume_job,
                     &stats,
                 );
             }
@@ -873,6 +926,7 @@ fn handle_inactive_pool_event(
     mode: PoolConnectionMode,
     latest_job: &mut Option<PoolJob>,
     connected: &mut bool,
+    inactive_job: &mut Option<ActivePoolJob>,
     stats: &Stats,
 ) {
     match event {
@@ -888,6 +942,7 @@ fn handle_inactive_pool_event(
                 warn("CONN", format!("{} session {message}", mode.as_str()));
             }
             *connected = false;
+            *inactive_job = None;
         }
         PoolEvent::LoginAccepted(ack) => {
             if mode.is_user() {
@@ -909,6 +964,7 @@ fn handle_inactive_pool_event(
         PoolEvent::LoginRejected(message) => {
             *latest_job = None;
             *connected = false;
+            *inactive_job = None;
             if mode.is_user() {
                 error(
                     "AUTH",
@@ -917,6 +973,14 @@ fn handle_inactive_pool_event(
             }
         }
         PoolEvent::SubmitAck(ack) => {
+            let ack_for_current_job = inactive_job
+                .as_ref()
+                .is_some_and(|job| job.job.job_id == ack.job_id);
+            if ack_for_current_job {
+                if let Some(job) = inactive_job.as_mut() {
+                    job.pending_submit_nonces.remove(&ack.nonce);
+                }
+            }
             if ack.accepted {
                 stats.bump_accepted();
                 if mode.is_user() {
@@ -929,8 +993,23 @@ fn handle_inactive_pool_event(
                     warn("SHARE", format!("rejected ({reason}) ({})", mode.as_str()));
                 }
             }
+            if ack_for_current_job {
+                if let Some(job) = inactive_job.as_mut() {
+                    if let Some(difficulty) = ack.difficulty {
+                        let difficulty = difficulty.max(1);
+                        job.share_difficulty = Some(difficulty);
+                        job.target = difficulty_to_target(difficulty);
+                    }
+                }
+            }
         }
         PoolEvent::Job(job) => {
+            if inactive_job
+                .as_ref()
+                .is_some_and(|active| active.job.job_id != job.job_id)
+            {
+                *inactive_job = None;
+            }
             *latest_job = Some(job);
         }
     }
