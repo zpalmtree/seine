@@ -416,13 +416,6 @@ pub(super) fn run_pool_mining_loop(
                                     &mut backend_weights,
                                     job,
                                 )?;
-                                info(
-                                    "JOB",
-                                    format!(
-                                        "resumed active {} session job from cached progress",
-                                        active_mode.as_str()
-                                    ),
-                                );
                             }
                             set_tui_state_label(&mut tui, "working");
                             render_tui_now(&mut tui);
