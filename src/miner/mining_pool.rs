@@ -166,6 +166,14 @@ fn should_attempt_pool_continuation(
         && active_job.is_some_and(|job| job.next_nonce <= job.job.nonce_end)
 }
 
+fn advance_pool_nonce_cursor(job: &mut ActivePoolJob, solved_nonce: u64) {
+    let window_end_exclusive = job.job.nonce_end.saturating_add(1);
+    let next_nonce = solved_nonce.saturating_add(1).min(window_end_exclusive);
+    if next_nonce > job.next_nonce {
+        job.next_nonce = next_nonce;
+    }
+}
+
 fn build_pool_connection_configs(
     cfg: &Config,
 ) -> Result<(PoolConnectionConfig, PoolConnectionConfig)> {
@@ -1521,6 +1529,7 @@ where
     if solution.epoch != job.epoch {
         return PoolShareSubmitOutcome::StaleEpoch;
     }
+    advance_pool_nonce_cursor(job, solution.nonce);
 
     let job_id = job.job.job_id.clone();
     service_pool_submit_backlog_with_submitter(mode, job, stats, |nonce, claimed_hash| {
@@ -1782,7 +1791,7 @@ mod tests {
     use crate::miner::stats::Stats;
 
     use super::{
-        compact_pool_address_for_log, pool_api_base_urls_from_pool_url,
+        advance_pool_nonce_cursor, compact_pool_address_for_log, pool_api_base_urls_from_pool_url,
         service_pool_submit_backlog_with_submitter, should_attempt_pool_continuation,
         should_continue_pool_job_after_solution, submit_pool_solution_with_submitter,
         ActivePoolJob, PoolConnectionMode, PoolJob, PoolShareSubmitOutcome,
@@ -1903,6 +1912,23 @@ mod tests {
     }
 
     #[test]
+    fn nonce_cursor_advances_to_solution_nonce_plus_one() {
+        let mut job = test_active_job(21);
+        job.next_nonce = 10;
+        advance_pool_nonce_cursor(&mut job, 42);
+        assert_eq!(job.next_nonce, 43);
+
+        // Cursor should never move backward.
+        advance_pool_nonce_cursor(&mut job, 11);
+        assert_eq!(job.next_nonce, 43);
+
+        // Cap at assigned nonce range end + 1.
+        job.job.nonce_end = 50;
+        advance_pool_nonce_cursor(&mut job, 99);
+        assert_eq!(job.next_nonce, 51);
+    }
+
+    #[test]
     fn submit_pool_solution_defers_when_inflight_limit_is_saturated() {
         let stats = Stats::new();
         let mut active_job = Some(test_active_job(7));
@@ -1935,7 +1961,7 @@ mod tests {
     }
 
     #[test]
-    fn submit_pool_solution_deduplicates_nonce_and_keeps_cursor_stable() {
+    fn submit_pool_solution_deduplicates_nonce_and_keeps_cursor_progress() {
         let stats = Stats::new();
         let mut active_job = Some(test_active_job(9));
         let initial_next_nonce = active_job
@@ -1969,7 +1995,11 @@ mod tests {
         assert!(matches!(second, PoolShareSubmitOutcome::Duplicate));
         assert_eq!(submitted_nonces, vec![42]);
         let job = active_job.expect("active job should remain available");
-        assert_eq!(job.next_nonce, initial_next_nonce);
+        assert_eq!(
+            job.next_nonce,
+            initial_next_nonce.max(43),
+            "cursor should advance once and remain stable on duplicate"
+        );
         assert!(job.pending_submit_nonces.contains_key(&42));
     }
 
