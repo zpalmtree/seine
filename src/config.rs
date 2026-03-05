@@ -95,7 +95,7 @@ const DEFAULT_NVIDIA_HASHES_PER_LAUNCH_PER_LANE: u32 = 2;
 const DEFAULT_NVIDIA_AUTOTUNE_CONFIG_FILE: &str = "seine.nvidia-autotune.json";
 const DEFAULT_METAL_HASHES_PER_LAUNCH_PER_LANE: u32 = 2;
 const DEFAULT_API_URL: &str = "http://127.0.0.1:8332";
-const DEFAULT_POOL_URL: &str = "stratum+tcp://127.0.0.1:3333";
+const DEFAULT_POOL_URL: &str = "stratum+tcp://bntpool.com:3333";
 const DEFAULT_USER_CONFIG_FILE: &str = "seine.config.json";
 const DEFAULT_DEV_FEE_POOL_WORKER_PREFIX: &str = "seine-devfee";
 
@@ -1478,7 +1478,7 @@ fn resolve_first_run_pool_inputs(cli: &mut Cli, user_config_path: &Path) -> Resu
             );
         }
         let pool_url = prompt_required_value(
-            "Enter pool URL [default: stratum+tcp://127.0.0.1:3333]: ",
+            "Enter pool URL [default: stratum+tcp://bntpool.com:3333]: ",
             Some(DEFAULT_POOL_URL),
         )?;
         cli.pool_url = Some(pool_url);

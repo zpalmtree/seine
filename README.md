@@ -49,7 +49,7 @@ Default mode is **pool**.
 
 First startup behavior:
 - prompts for your Blocknet address
-- prompts for pool URL (defaults to `stratum+tcp://127.0.0.1:3333`)
+- prompts for pool URL (defaults to `stratum+tcp://bntpool.com:3333`)
 - mining backends (CPU + NVIDIA when available)
 - CPU thread count from available cores and RAM
 
