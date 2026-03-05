@@ -79,7 +79,6 @@ struct PoolUiTelemetryClient {
 #[derive(Debug)]
 struct PoolTelemetryRefreshResult {
     request_id: u64,
-    mode: PoolConnectionMode,
     hashrate: Option<String>,
     balances: Option<(String, String)>,
     errors: Vec<String>,
@@ -299,25 +298,12 @@ pub(super) fn run_pool_mining_loop(
     if tui.is_some() {
         super::maybe_warn_linux_hugepages_setup(cfg, RuntimeMode::Mining);
         set_tui_dev_fee_active(&mut tui, active_mode == PoolConnectionMode::Dev);
-        let active_address = if active_mode == PoolConnectionMode::Dev {
-            dev_connection.address.as_str()
-        } else {
-            user_connection.address.as_str()
-        };
-        set_tui_wallet_overview(&mut tui, active_address, "---", "---");
+        set_tui_wallet_overview(&mut tui, &user_connection.address, "---", "---");
     }
-    let (user_client, user_telemetry) = connect_pool_session(
-        &user_connection,
-        Arc::clone(&shutdown),
-        &mut tui,
-        active_mode == PoolConnectionMode::User,
-    )?;
-    let (dev_client, dev_telemetry) = connect_pool_session(
-        &dev_connection,
-        Arc::clone(&shutdown),
-        &mut tui,
-        active_mode == PoolConnectionMode::Dev,
-    )?;
+    let (user_client, user_telemetry) =
+        connect_pool_session(&user_connection, Arc::clone(&shutdown), &mut tui, false)?;
+    let (dev_client, dev_telemetry) =
+        connect_pool_session(&dev_connection, Arc::clone(&shutdown), &mut tui, false)?;
     let mut user_session = PoolSession {
         connection: user_connection,
         client: user_client,
@@ -410,37 +396,33 @@ pub(super) fn run_pool_mining_loop(
                     );
                     active_mode = next_mode;
 
-                    let (active_address, cached_job, mut resumed_job) =
-                        if active_mode == PoolConnectionMode::Dev {
-                            (
-                                dev_session.connection.address.clone(),
-                                if dev_session.connected {
-                                    dev_session.latest_job.clone()
-                                } else {
-                                    None
-                                },
-                                if dev_session.connected {
-                                    dev_session.resume_job.take()
-                                } else {
-                                    None
-                                },
-                            )
-                        } else {
-                            (
-                                user_session.connection.address.clone(),
-                                if user_session.connected {
-                                    user_session.latest_job.clone()
-                                } else {
-                                    None
-                                },
-                                if user_session.connected {
-                                    user_session.resume_job.take()
-                                } else {
-                                    None
-                                },
-                            )
-                        };
-                    set_tui_wallet_overview(&mut tui, &active_address, "---", "---");
+                    let (cached_job, mut resumed_job) = if active_mode == PoolConnectionMode::Dev {
+                        (
+                            if dev_session.connected {
+                                dev_session.latest_job.clone()
+                            } else {
+                                None
+                            },
+                            if dev_session.connected {
+                                dev_session.resume_job.take()
+                            } else {
+                                None
+                            },
+                        )
+                    } else {
+                        (
+                            if user_session.connected {
+                                user_session.latest_job.clone()
+                            } else {
+                                None
+                            },
+                            if user_session.connected {
+                                user_session.resume_job.take()
+                            } else {
+                                None
+                            },
+                        )
+                    };
 
                     if let Some(resume) = resumed_job.take() {
                         if cached_job
@@ -500,29 +482,17 @@ pub(super) fn run_pool_mining_loop(
             }
         }
 
-        let (active_address, active_telemetry) = if active_mode == PoolConnectionMode::Dev {
-            (
-                dev_session.connection.address.as_str(),
-                dev_session.telemetry.as_ref(),
-            )
-        } else {
-            (
-                user_session.connection.address.as_str(),
-                user_session.telemetry.as_ref(),
-            )
-        };
+        let user_address = user_session.connection.address.as_str();
+        let user_telemetry = user_session.telemetry.as_ref();
         while let Ok(result) = telemetry_result_rx.try_recv() {
             if telemetry_inflight_request_id == Some(result.request_id) {
                 telemetry_inflight_request_id = None;
-            }
-            if result.mode != active_mode {
-                continue;
             }
             if let Some(hashrate) = result.hashrate {
                 pool_network_hashrate = hashrate;
             }
             if let Some((pending, paid)) = result.balances {
-                set_tui_wallet_overview(&mut tui, active_address, &pending, &paid);
+                set_tui_wallet_overview(&mut tui, user_address, &pending, &paid);
             }
 
             if result.errors.is_empty() {
@@ -535,17 +505,16 @@ pub(super) fn run_pool_mining_loop(
                 pool_telemetry_warning_logged = true;
             }
         }
-        if let Some(telemetry) = active_telemetry {
+        if let Some(telemetry) = user_telemetry {
             if Instant::now() >= next_pool_telemetry_refresh
                 && telemetry_inflight_request_id.is_none()
             {
                 telemetry_next_request_id = telemetry_next_request_id.wrapping_add(1).max(1);
                 let request_id = telemetry_next_request_id;
-                let mode = active_mode;
                 let telemetry = telemetry.clone();
                 let tx = telemetry_result_tx.clone();
                 let spawn_result = std::thread::Builder::new()
-                    .name(format!("pool-telemetry-{}", mode.as_str()))
+                    .name("pool-telemetry-user".to_string())
                     .spawn(move || {
                         let mut errors = Vec::new();
                         let hashrate = match telemetry.fetch_pool_hashrate() {
@@ -564,7 +533,6 @@ pub(super) fn run_pool_mining_loop(
                         };
                         let _ = tx.send(PoolTelemetryRefreshResult {
                             request_id,
-                            mode,
                             hashrate,
                             balances,
                             errors,
