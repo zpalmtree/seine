@@ -154,6 +154,18 @@ enum PoolShareSubmitOutcome {
     QueueFailed,
 }
 
+fn should_continue_pool_job_after_solution(outcome: PoolShareSubmitOutcome) -> bool {
+    !matches!(outcome, PoolShareSubmitOutcome::StaleEpoch)
+}
+
+fn should_attempt_pool_continuation(
+    active_job: Option<&ActivePoolJob>,
+    outcome: PoolShareSubmitOutcome,
+) -> bool {
+    should_continue_pool_job_after_solution(outcome)
+        && active_job.is_some_and(|job| job.next_nonce <= job.job.nonce_end)
+}
+
 fn build_pool_connection_configs(
     cfg: &Config,
 ) -> Result<(PoolConnectionConfig, PoolConnectionConfig)> {
@@ -739,13 +751,31 @@ pub(super) fn run_pool_mining_loop(
                         } else {
                             &user_session.client
                         };
-                        let _submit_outcome = submit_pool_solution(
+                        let submit_outcome = submit_pool_solution(
                             active_mode,
                             active_client,
                             &mut active_job,
                             &solution,
                             &stats,
                         );
+                        if should_attempt_pool_continuation(active_job.as_ref(), submit_outcome) {
+                            if let Some(job) = active_job.as_mut() {
+                                if let Err(err) = assign_pool_continuation(
+                                    cfg,
+                                    &mut work_id_cursor,
+                                    &mut epoch,
+                                    backends,
+                                    backend_executor,
+                                    &mut backend_weights,
+                                    job,
+                                ) {
+                                    warn(
+                                        "JOB",
+                                        format!("failed to continue job after share: {err:#}"),
+                                    );
+                                }
+                            }
+                        }
                     }
                 }
                 Err(crossbeam_channel::TryRecvError::Empty) => break,
@@ -1753,7 +1783,8 @@ mod tests {
 
     use super::{
         compact_pool_address_for_log, pool_api_base_urls_from_pool_url,
-        service_pool_submit_backlog_with_submitter, submit_pool_solution_with_submitter,
+        service_pool_submit_backlog_with_submitter, should_attempt_pool_continuation,
+        should_continue_pool_job_after_solution, submit_pool_solution_with_submitter,
         ActivePoolJob, PoolConnectionMode, PoolJob, PoolShareSubmitOutcome,
         POOL_MAX_INFLIGHT_SUBMITS, POOL_SUBMIT_ACK_TIMEOUT,
     };
@@ -1823,6 +1854,52 @@ mod tests {
     fn compact_pool_address_keeps_short_values_as_is() {
         let input = "短地址";
         assert_eq!(compact_pool_address_for_log(input), input);
+    }
+
+    #[test]
+    fn continuation_policy_skips_only_stale_epoch_outcomes() {
+        assert!(should_continue_pool_job_after_solution(
+            PoolShareSubmitOutcome::Submitted
+        ));
+        assert!(should_continue_pool_job_after_solution(
+            PoolShareSubmitOutcome::Deferred
+        ));
+        assert!(should_continue_pool_job_after_solution(
+            PoolShareSubmitOutcome::Duplicate
+        ));
+        assert!(should_continue_pool_job_after_solution(
+            PoolShareSubmitOutcome::QueueFailed
+        ));
+        assert!(!should_continue_pool_job_after_solution(
+            PoolShareSubmitOutcome::StaleEpoch
+        ));
+    }
+
+    #[test]
+    fn continuation_attempt_requires_live_nonce_window_and_non_stale_outcome() {
+        let mut job = test_active_job(13);
+        assert!(should_attempt_pool_continuation(
+            Some(&job),
+            PoolShareSubmitOutcome::Submitted
+        ));
+        assert!(should_attempt_pool_continuation(
+            Some(&job),
+            PoolShareSubmitOutcome::QueueFailed
+        ));
+        assert!(!should_attempt_pool_continuation(
+            Some(&job),
+            PoolShareSubmitOutcome::StaleEpoch
+        ));
+        assert!(!should_attempt_pool_continuation(
+            None,
+            PoolShareSubmitOutcome::Submitted
+        ));
+
+        job.next_nonce = job.job.nonce_end.saturating_add(1);
+        assert!(!should_attempt_pool_continuation(
+            Some(&job),
+            PoolShareSubmitOutcome::Submitted
+        ));
     }
 
     #[test]
