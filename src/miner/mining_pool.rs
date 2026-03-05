@@ -258,10 +258,6 @@ pub(super) fn run_pool_mining_loop(
         );
     }
     let mut dev_fee_tracker = DevFeeTracker::with_percent(dev_fee_percent);
-    info(
-        "POOL",
-        format!("effective dev fee: {:.1}%", dev_fee_tracker.fee_percent()),
-    );
     let mut dev_fee_round_started = Instant::now();
     let _ = dev_fee_tracker.begin_round();
     let mut active_mode = if dev_fee_tracker.is_dev_round() {

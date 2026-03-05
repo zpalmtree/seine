@@ -34,10 +34,6 @@ impl DevFeeTracker {
         }
     }
 
-    pub fn fee_percent(&self) -> f64 {
-        self.fee_fraction * 100.0
-    }
-
     /// Returns true when dev fee mining is owed.
     /// Dev time owed is computed only from elapsed time after the grace period,
     /// so the miner runs purely for the user during early startup.

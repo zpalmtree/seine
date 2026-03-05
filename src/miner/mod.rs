@@ -3825,7 +3825,7 @@ mod tests {
     }
 
     #[test]
-    fn nonce_counts_static_respect_backend_preferred_iters() {
+    fn nonce_counts_static_cap_backend_preferred_iters_to_lane_budget() {
         let state_a = Arc::new(MockState::default());
         let state_b = Arc::new(MockState::default());
         let backends = vec![
@@ -3848,7 +3848,7 @@ mod tests {
         ];
 
         let counts = compute_backend_nonce_counts(&backends, 10, None);
-        assert_eq!(counts, vec![8, 16]);
+        assert_eq!(counts, vec![8, 10]);
     }
 
     #[test]
