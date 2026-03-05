@@ -20,6 +20,7 @@ const STRATUM_PROTOCOL_VERSION: u32 = 2;
 const STRATUM_CAPABILITY_LOGIN_NEGOTIATION: &str = "login_negotiation";
 const STRATUM_CAPABILITY_VALIDATION_STATUS: &str = "share_validation_status";
 const STRATUM_CAPABILITY_SUBMIT_CLAIMED_HASH: &str = "submit_claimed_hash";
+const STRATUM_CAPABILITY_DIFFICULTY_HINT: &str = "difficulty_hint";
 const SUBMIT_REJECT_REASON_DISCONNECTED: &str = "pool disconnected";
 const SUBMIT_REJECT_REASON_LOGIN_REJECTED: &str = "pool login rejected";
 const SUBMIT_REJECT_REASON_SEND_FAILED: &str = "submit interrupted during reconnect";
@@ -28,6 +29,7 @@ const CLIENT_CAPABILITIES: &[&str] = &[
     STRATUM_CAPABILITY_LOGIN_NEGOTIATION,
     STRATUM_CAPABILITY_VALIDATION_STATUS,
     STRATUM_CAPABILITY_SUBMIT_CLAIMED_HASH,
+    STRATUM_CAPABILITY_DIFFICULTY_HINT,
 ];
 
 #[derive(Debug, Clone, Deserialize)]
@@ -188,6 +190,8 @@ struct LoginParams<'a> {
     worker: &'a str,
     protocol_version: u32,
     capabilities: &'static [&'static str],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    difficulty_hint: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -234,13 +238,20 @@ fn run_pool_client_thread(
     shutdown: Arc<AtomicBool>,
 ) {
     let mut next_request_id = LOGIN_REQUEST_ID + 1;
-    let enable_idle_keepalive = is_local_pool_endpoint(&endpoint);
+    let enable_idle_keepalive = should_enable_idle_keepalive(&endpoint);
+    let mut allow_login_difficulty_hint = false;
+    let mut login_difficulty_hint: Option<u64> = None;
     while !should_shutdown(process_shutdown.as_ref(), shutdown.as_ref()) {
         match connect_pool_stream(&endpoint) {
             Ok((mut stream, mut reader)) => {
                 reject_queued_submits(&event_tx, &submit_rx, SUBMIT_REJECT_REASON_DISCONNECTED);
                 let _ = event_tx.try_send(PoolEvent::Connected);
-                if let Err(_err) = send_login(&mut stream, &address, &worker) {
+                let login_hint = if allow_login_difficulty_hint {
+                    login_difficulty_hint
+                } else {
+                    None
+                };
+                if let Err(_err) = send_login(&mut stream, &address, &worker, login_hint) {
                     reject_queued_submits(&event_tx, &submit_rx, SUBMIT_REJECT_REASON_DISCONNECTED);
                     let _ = event_tx.try_send(PoolEvent::Disconnected(format!(
                         "{}",
@@ -374,12 +385,37 @@ fn run_pool_client_thread(
                                     match evaluate_login_ack(ack) {
                                         Ok(include_claimed_hash) => {
                                             submit_claimed_hash_enabled = include_claimed_hash;
+                                            allow_login_difficulty_hint = ack
+                                                .supports(STRATUM_CAPABILITY_DIFFICULTY_HINT)
+                                                || ack.required_capabilities.iter().any(
+                                                    |capability| {
+                                                        capability
+                                                            == STRATUM_CAPABILITY_DIFFICULTY_HINT
+                                                    },
+                                                );
                                         }
                                         Err(message) => {
                                             login_confirmed = false;
+                                            allow_login_difficulty_hint = false;
                                             event = PoolEvent::LoginRejected(message);
                                         }
                                     }
+                                }
+                                match &event {
+                                    PoolEvent::Job(job) => {
+                                        if let Some(difficulty) = job.difficulty {
+                                            login_difficulty_hint = Some(difficulty.max(1));
+                                        }
+                                    }
+                                    PoolEvent::SubmitAck(ack) => {
+                                        if let Some(difficulty) = ack.difficulty {
+                                            login_difficulty_hint = Some(difficulty.max(1));
+                                        }
+                                    }
+                                    PoolEvent::LoginRejected(_) => {
+                                        allow_login_difficulty_hint = false;
+                                    }
+                                    _ => {}
                                 }
                                 let login_rejected = matches!(&event, PoolEvent::LoginRejected(_));
                                 let _ = event_tx.try_send(event);
@@ -474,6 +510,10 @@ fn friendly_pool_disconnect_message(endpoint: &str) -> String {
     format!("pool offline at {endpoint}")
 }
 
+fn should_enable_idle_keepalive(endpoint: &str) -> bool {
+    !endpoint.trim().is_empty()
+}
+
 fn is_local_pool_endpoint(endpoint: &str) -> bool {
     endpoint.starts_with("127.0.0.1:")
         || endpoint.starts_with("localhost:")
@@ -526,7 +566,12 @@ fn connect_pool_stream(endpoint: &str) -> Result<(TcpStream, BufReader<TcpStream
     Ok((stream, reader))
 }
 
-fn send_login(stream: &mut TcpStream, address: &str, worker: &str) -> Result<()> {
+fn send_login(
+    stream: &mut TcpStream,
+    address: &str,
+    worker: &str,
+    difficulty_hint: Option<u64>,
+) -> Result<()> {
     let request = StratumRequest {
         id: LOGIN_REQUEST_ID,
         method: "login",
@@ -535,6 +580,7 @@ fn send_login(stream: &mut TcpStream, address: &str, worker: &str) -> Result<()>
             worker,
             protocol_version: STRATUM_PROTOCOL_VERSION,
             capabilities: CLIENT_CAPABILITIES,
+            difficulty_hint,
         },
     };
     send_json_line(stream, &request)
@@ -825,9 +871,10 @@ mod tests {
         serde_json::from_str(raw.trim()).expect("submit payload should decode as valid json")
     }
 
-    fn capture_login_payload(address: &str, worker: &str) -> Value {
+    fn capture_login_payload(address: &str, worker: &str, difficulty_hint: Option<u64>) -> Value {
         capture_payload(|stream| {
-            send_login(stream, address, worker).expect("login payload should serialize");
+            send_login(stream, address, worker, difficulty_hint)
+                .expect("login payload should serialize");
         })
     }
 
@@ -844,7 +891,7 @@ mod tests {
 
     #[test]
     fn send_login_includes_protocol_negotiation_fields() {
-        let payload = capture_login_payload("XbTestAddress", "rig01");
+        let payload = capture_login_payload("XbTestAddress", "rig01", None);
 
         assert_eq!(
             payload.get("id").and_then(Value::as_u64),
@@ -868,6 +915,25 @@ mod tests {
                 .iter()
                 .any(|entry| entry.as_str() == Some(STRATUM_CAPABILITY_SUBMIT_CLAIMED_HASH)),
             "client should advertise claimed hash support"
+        );
+        assert!(
+            payload
+                .get("params")
+                .and_then(|params| params.get("difficulty_hint"))
+                .is_none(),
+            "difficulty hint should be omitted when unknown"
+        );
+    }
+
+    #[test]
+    fn send_login_includes_difficulty_hint_when_available() {
+        let payload = capture_login_payload("XbTestAddress", "rig01", Some(321));
+        assert_eq!(
+            payload
+                .get("params")
+                .and_then(|params| params.get("difficulty_hint"))
+                .and_then(Value::as_u64),
+            Some(321)
         );
     }
 
@@ -1361,5 +1427,156 @@ mod tests {
         server.join().expect("server thread should finish");
         shutdown.store(true, Ordering::Relaxed);
         assert!(saw_rejected_submit, "expected rejected submit ack event");
+    }
+
+    #[test]
+    fn idle_keepalive_is_enabled_for_remote_endpoints() {
+        assert!(should_enable_idle_keepalive("127.0.0.1:3333"));
+        assert!(should_enable_idle_keepalive("pool.example.com:3333"));
+        assert!(!should_enable_idle_keepalive("   "));
+    }
+
+    #[test]
+    fn pool_client_reuses_difficulty_hint_after_reconnect() {
+        let listener =
+            TcpListener::bind("127.0.0.1:0").expect("test listener should bind to loopback");
+        listener
+            .set_nonblocking(true)
+            .expect("listener should allow nonblocking accept");
+        let addr = listener
+            .local_addr()
+            .expect("listener should expose local address");
+
+        let server = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(12);
+            let accept_next = || loop {
+                match listener.accept() {
+                    Ok((socket, _)) => break socket,
+                    Err(err) if err.kind() == ErrorKind::WouldBlock => {
+                        assert!(
+                            Instant::now() < deadline,
+                            "timed out waiting for client connection"
+                        );
+                        thread::sleep(Duration::from_millis(20));
+                    }
+                    Err(err) => panic!("accept failed: {err}"),
+                }
+            };
+
+            let mut first = accept_next();
+            let mut first_reader = BufReader::new(
+                first
+                    .try_clone()
+                    .expect("first socket clone should succeed"),
+            );
+            first_reader
+                .get_mut()
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .expect("set read timeout");
+            let mut first_login = String::new();
+            first_reader
+                .read_line(&mut first_login)
+                .expect("server should read first login");
+            let first_login_value: Value =
+                serde_json::from_str(first_login.trim()).expect("first login should decode");
+            assert_eq!(
+                first_login_value
+                    .pointer("/params/difficulty_hint")
+                    .and_then(Value::as_u64),
+                None
+            );
+
+            let first_ack = serde_json::json!({
+                "id": LOGIN_REQUEST_ID,
+                "status": "ok",
+                "result": {
+                    "protocol_version": 2,
+                    "capabilities": [
+                        STRATUM_CAPABILITY_SUBMIT_CLAIMED_HASH,
+                        STRATUM_CAPABILITY_DIFFICULTY_HINT
+                    ],
+                    "required_capabilities": []
+                }
+            });
+            let mut first_ack_bytes =
+                serde_json::to_vec(&first_ack).expect("serialize login ack should succeed");
+            first_ack_bytes.push(b'\n');
+            first
+                .write_all(&first_ack_bytes)
+                .expect("server should write first login ack");
+
+            let job_notify = serde_json::json!({
+                "method": "job",
+                "params": {
+                    "job_id": "job-1",
+                    "header_base": "00",
+                    "target": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                    "difficulty": 321,
+                    "height": 1,
+                    "nonce_start": 0,
+                    "nonce_end": 10
+                }
+            });
+            let mut job_notify_bytes =
+                serde_json::to_vec(&job_notify).expect("serialize job should succeed");
+            job_notify_bytes.push(b'\n');
+            first
+                .write_all(&job_notify_bytes)
+                .expect("server should send job notify");
+            thread::sleep(Duration::from_millis(250));
+            drop(first_reader);
+            drop(first);
+
+            let mut second = accept_next();
+            let mut second_reader = BufReader::new(
+                second
+                    .try_clone()
+                    .expect("second socket clone should succeed"),
+            );
+            second_reader
+                .get_mut()
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .expect("set read timeout");
+            let mut second_login = String::new();
+            second_reader
+                .read_line(&mut second_login)
+                .expect("server should read reconnect login");
+            let second_login_value: Value =
+                serde_json::from_str(second_login.trim()).expect("second login should decode");
+            assert_eq!(
+                second_login_value
+                    .pointer("/params/difficulty_hint")
+                    .and_then(Value::as_u64),
+                Some(321)
+            );
+
+            let second_ack = serde_json::json!({
+                "id": LOGIN_REQUEST_ID,
+                "status": "ok",
+                "result": {
+                    "protocol_version": 2,
+                    "capabilities": [STRATUM_CAPABILITY_SUBMIT_CLAIMED_HASH],
+                    "required_capabilities": []
+                }
+            });
+            let mut second_ack_bytes =
+                serde_json::to_vec(&second_ack).expect("serialize login ack should succeed");
+            second_ack_bytes.push(b'\n');
+            second
+                .write_all(&second_ack_bytes)
+                .expect("server should write second login ack");
+        });
+
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let _client = PoolClient::connect(
+            &format!("127.0.0.1:{}", addr.port()),
+            "BTestAddress".to_string(),
+            "rig01".to_string(),
+            Arc::clone(&shutdown),
+        )
+        .expect("pool client should connect");
+
+        server.join().expect("server thread should finish");
+        shutdown.store(true, Ordering::Relaxed);
     }
 }
