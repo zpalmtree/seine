@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Result};
-use crossbeam_channel::Receiver;
+use crossbeam_channel::{unbounded, Receiver};
 use reqwest::blocking::Client as HttpClient;
 use serde_json::Value;
 
@@ -32,14 +32,14 @@ use super::{
 const POOL_WAIT_POLL: Duration = Duration::from_millis(200);
 const POOL_EVENT_IDLE_SLEEP: Duration = Duration::from_millis(5);
 const POOL_JOB_STOP_AT_HORIZON: Duration = Duration::from_secs(365 * 24 * 60 * 60);
-const POOL_MAX_PENDING_SUBMITS: usize = 1;
+const POOL_MAX_INFLIGHT_SUBMITS: usize = 16;
 const POOL_TELEMETRY_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 const POOL_TELEMETRY_TIMEOUT: Duration = Duration::from_millis(750);
 const POOL_API_DEFAULT_PORT: u16 = 24783;
 const ATOMIC_UNITS_PER_BNT: u64 = 100_000_000;
 const BNT_DISPLAY_DECIMALS: usize = 4;
 const BNT_DISPLAY_SCALE_ATOMIC_UNITS: u64 = 10_000;
-const DEV_POOL_URL: &str = "stratum+tcp://localhost:3333";
+const DEV_POOL_URL: &str = "stratum+tcp://bntpool.com:3333";
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum PoolConnectionMode {
@@ -68,10 +68,19 @@ struct PoolConnectionConfig {
     worker: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct PoolUiTelemetryClient {
     endpoints: Vec<PoolTelemetryEndpoint>,
     http: HttpClient,
+}
+
+#[derive(Debug)]
+struct PoolTelemetryRefreshResult {
+    request_id: u64,
+    mode: PoolConnectionMode,
+    hashrate: Option<String>,
+    balances: Option<(String, String)>,
+    errors: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -291,6 +300,9 @@ pub(super) fn run_pool_mining_loop(
     let mut pool_network_hashrate = "unknown".to_string();
     let mut next_pool_telemetry_refresh = Instant::now();
     let mut pool_telemetry_warning_logged = false;
+    let (telemetry_result_tx, telemetry_result_rx) = unbounded::<PoolTelemetryRefreshResult>();
+    let mut telemetry_next_request_id = 0u64;
+    let mut telemetry_inflight_request_id: Option<u64> = None;
 
     while !shutdown.load(Ordering::Relaxed) {
         if backends.is_empty() {
@@ -448,6 +460,7 @@ pub(super) fn run_pool_mining_loop(
                     pool_network_hashrate = "unknown".to_string();
                     next_pool_telemetry_refresh = Instant::now();
                     pool_telemetry_warning_logged = false;
+                    telemetry_inflight_request_id = None;
                 }
             }
         }
@@ -463,36 +476,71 @@ pub(super) fn run_pool_mining_loop(
                 user_session.telemetry.as_ref(),
             )
         };
-        if let Some(telemetry) = active_telemetry {
-            if Instant::now() >= next_pool_telemetry_refresh {
-                let mut errors = Vec::new();
-                match telemetry.fetch_pool_hashrate() {
-                    Ok(hashrate) => {
-                        pool_network_hashrate = hashrate;
-                    }
-                    Err(err) => {
-                        errors.push(format!("global hashrate: {err:#}"));
-                    }
-                }
-                match telemetry.fetch_pool_balances() {
-                    Ok((pending, paid)) => {
-                        set_tui_wallet_overview(&mut tui, active_address, &pending, &paid);
-                    }
-                    Err(err) => {
-                        errors.push(format!("balance: {err:#}"));
-                    }
-                }
+        while let Ok(result) = telemetry_result_rx.try_recv() {
+            if telemetry_inflight_request_id == Some(result.request_id) {
+                telemetry_inflight_request_id = None;
+            }
+            if result.mode != active_mode {
+                continue;
+            }
+            if let Some(hashrate) = result.hashrate {
+                pool_network_hashrate = hashrate;
+            }
+            if let Some((pending, paid)) = result.balances {
+                set_tui_wallet_overview(&mut tui, active_address, &pending, &paid);
+            }
 
-                if errors.is_empty() {
-                    if pool_telemetry_warning_logged {
-                        info("STATS", "pool telemetry recovered");
-                        pool_telemetry_warning_logged = false;
-                    }
+            if result.errors.is_empty() {
+                if pool_telemetry_warning_logged {
+                    info("STATS", "pool telemetry recovered");
+                    pool_telemetry_warning_logged = false;
+                }
+            } else if !pool_telemetry_warning_logged {
+                warn("STATS", "failed to fetch pool stats");
+                pool_telemetry_warning_logged = true;
+            }
+        }
+        if let Some(telemetry) = active_telemetry {
+            if Instant::now() >= next_pool_telemetry_refresh
+                && telemetry_inflight_request_id.is_none()
+            {
+                telemetry_next_request_id = telemetry_next_request_id.wrapping_add(1).max(1);
+                let request_id = telemetry_next_request_id;
+                let mode = active_mode;
+                let telemetry = telemetry.clone();
+                let tx = telemetry_result_tx.clone();
+                let spawn_result = std::thread::Builder::new()
+                    .name(format!("pool-telemetry-{}", mode.as_str()))
+                    .spawn(move || {
+                        let mut errors = Vec::new();
+                        let hashrate = match telemetry.fetch_pool_hashrate() {
+                            Ok(value) => Some(value),
+                            Err(err) => {
+                                errors.push(format!("global hashrate: {err:#}"));
+                                None
+                            }
+                        };
+                        let balances = match telemetry.fetch_pool_balances() {
+                            Ok(value) => Some(value),
+                            Err(err) => {
+                                errors.push(format!("balance: {err:#}"));
+                                None
+                            }
+                        };
+                        let _ = tx.send(PoolTelemetryRefreshResult {
+                            request_id,
+                            mode,
+                            hashrate,
+                            balances,
+                            errors,
+                        });
+                    });
+                if spawn_result.is_ok() {
+                    telemetry_inflight_request_id = Some(request_id);
                 } else if !pool_telemetry_warning_logged {
-                    warn("STATS", "failed to fetch pool stats");
+                    warn("STATS", "failed to start pool telemetry refresh");
                     pool_telemetry_warning_logged = true;
                 }
-
                 next_pool_telemetry_refresh = Instant::now() + POOL_TELEMETRY_REFRESH_INTERVAL;
             }
         }
@@ -1287,7 +1335,7 @@ fn submit_pool_solution(
     if solution.epoch != job.epoch {
         return PoolShareSubmitOutcome::StaleEpoch;
     }
-    if job.pending_submit_nonces.len() >= POOL_MAX_PENDING_SUBMITS {
+    if job.pending_submit_nonces.len() >= POOL_MAX_INFLIGHT_SUBMITS {
         job.next_nonce = job.next_nonce.max(solution.nonce.saturating_add(1));
         return PoolShareSubmitOutcome::Backpressured;
     }
@@ -1522,19 +1570,21 @@ fn value_as_f64(value: &Value) -> Option<f64> {
 fn compact_pool_address_for_log(address: &str) -> String {
     let trimmed = address.trim();
     const KEEP: usize = 6;
-    if trimmed.len() <= KEEP * 2 + 3 {
+    let chars = trimmed.chars().collect::<Vec<_>>();
+    if chars.len() <= KEEP * 2 + 3 {
         return trimmed.to_string();
     }
-    format!(
-        "{}...{}",
-        &trimmed[..KEEP],
-        &trimmed[trimmed.len() - KEEP..]
-    )
+    let head = chars.iter().take(KEEP).collect::<String>();
+    let tail = chars
+        .iter()
+        .skip(chars.len().saturating_sub(KEEP))
+        .collect::<String>();
+    format!("{head}...{tail}")
 }
 
 #[cfg(test)]
 mod tests {
-    use super::pool_api_base_urls_from_pool_url;
+    use super::{compact_pool_address_for_log, pool_api_base_urls_from_pool_url};
 
     #[test]
     fn telemetry_base_urls_include_fallbacks_for_stratum_endpoint() {
@@ -1559,5 +1609,19 @@ mod tests {
                 "https://example.com:8443".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn compact_pool_address_handles_unicode_without_panicking() {
+        let input = "矿工地址测试1234567890abcdef";
+        let compacted = compact_pool_address_for_log(input);
+        assert!(compacted.contains("..."));
+        assert!(compacted.starts_with("矿工地址测"));
+    }
+
+    #[test]
+    fn compact_pool_address_keeps_short_values_as_is() {
+        let input = "短地址";
+        assert_eq!(compact_pool_address_for_log(input), input);
     }
 }
