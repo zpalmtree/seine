@@ -1592,6 +1592,26 @@ unsafe fn neon_blamka(
     out
 }
 
+/// XOR-and-rotate: `rotr(a ^ b, N)`.  Uses the single-instruction XAR when the
+/// target supports SHA3 (Apple Silicon), otherwise falls back to EOR+SHR+SHL+ORR.
+#[cfg(target_arch = "aarch64")]
+macro_rules! neon_rotr_xor {
+    ($a:expr, $b:expr, $n:literal) => {{
+        #[cfg(target_feature = "sha3")]
+        {
+            std::arch::aarch64::vxarq_u64::<$n>($a, $b)
+        }
+        #[cfg(not(target_feature = "sha3"))]
+        {
+            let x = std::arch::aarch64::veorq_u64($a, $b);
+            std::arch::aarch64::vorrq_u64(
+                std::arch::aarch64::vshrq_n_u64::<$n>(x),
+                std::arch::aarch64::vshlq_n_u64::<{ 64 - $n }>(x),
+            )
+        }
+    }};
+}
+
 /// Full BLAMKA round on 16 u64 elements packed as 4 lo/hi NEON register pairs.
 ///
 /// Performs both the column step and the diagonal step, matching the scalar
@@ -1609,7 +1629,7 @@ unsafe fn neon_round(
     d_lo: &mut std::arch::aarch64::uint64x2_t,
     d_hi: &mut std::arch::aarch64::uint64x2_t,
 ) {
-    use std::arch::aarch64::{vextq_u64, vxarq_u64};
+    use std::arch::aarch64::vextq_u64;
 
     // Column step: explicitly interleave lo and hi half-rounds so the OOO
     // core sees both independent chains early in the decode window, rather
@@ -1619,23 +1639,23 @@ unsafe fn neon_round(
     // G step 1: a = a + b + 2*lo32(a)*lo32(b);  d = rotr32(d ^ a)
     *a_lo = neon_blamka(*a_lo, *b_lo);
     *a_hi = neon_blamka(*a_hi, *b_hi);
-    *d_lo = vxarq_u64::<32>(*d_lo, *a_lo);
-    *d_hi = vxarq_u64::<32>(*d_hi, *a_hi);
+    *d_lo = neon_rotr_xor!(*d_lo, *a_lo, 32);
+    *d_hi = neon_rotr_xor!(*d_hi, *a_hi, 32);
     // G step 2: c = c + d + 2*lo32(c)*lo32(d);  b = rotr24(b ^ c)
     *c_lo = neon_blamka(*c_lo, *d_lo);
     *c_hi = neon_blamka(*c_hi, *d_hi);
-    *b_lo = vxarq_u64::<24>(*b_lo, *c_lo);
-    *b_hi = vxarq_u64::<24>(*b_hi, *c_hi);
+    *b_lo = neon_rotr_xor!(*b_lo, *c_lo, 24);
+    *b_hi = neon_rotr_xor!(*b_hi, *c_hi, 24);
     // G step 3: a = a + b + 2*lo32(a)*lo32(b);  d = rotr16(d ^ a)
     *a_lo = neon_blamka(*a_lo, *b_lo);
     *a_hi = neon_blamka(*a_hi, *b_hi);
-    *d_lo = vxarq_u64::<16>(*d_lo, *a_lo);
-    *d_hi = vxarq_u64::<16>(*d_hi, *a_hi);
+    *d_lo = neon_rotr_xor!(*d_lo, *a_lo, 16);
+    *d_hi = neon_rotr_xor!(*d_hi, *a_hi, 16);
     // G step 4: c = c + d + 2*lo32(c)*lo32(d);  b = rotr63(b ^ c)
     *c_lo = neon_blamka(*c_lo, *d_lo);
     *c_hi = neon_blamka(*c_hi, *d_hi);
-    *b_lo = vxarq_u64::<63>(*b_lo, *c_lo);
-    *b_hi = vxarq_u64::<63>(*b_hi, *c_hi);
+    *b_lo = neon_rotr_xor!(*b_lo, *c_lo, 63);
+    *b_hi = neon_rotr_xor!(*b_hi, *c_hi, 63);
 
     // Diagonal step: rotate b by 1, c by 2, d by 3 across the 4-wide logical
     // vector, then run the half-rounds interleaved, then un-rotate.
@@ -1649,23 +1669,23 @@ unsafe fn neon_round(
     // G step 1
     *a_lo = neon_blamka(*a_lo, bb_lo);
     *a_hi = neon_blamka(*a_hi, bb_hi);
-    dd_lo = vxarq_u64::<32>(dd_lo, *a_lo);
-    dd_hi = vxarq_u64::<32>(dd_hi, *a_hi);
+    dd_lo = neon_rotr_xor!(dd_lo, *a_lo, 32);
+    dd_hi = neon_rotr_xor!(dd_hi, *a_hi, 32);
     // G step 2
     cc_lo = neon_blamka(cc_lo, dd_lo);
     cc_hi = neon_blamka(cc_hi, dd_hi);
-    bb_lo = vxarq_u64::<24>(bb_lo, cc_lo);
-    bb_hi = vxarq_u64::<24>(bb_hi, cc_hi);
+    bb_lo = neon_rotr_xor!(bb_lo, cc_lo, 24);
+    bb_hi = neon_rotr_xor!(bb_hi, cc_hi, 24);
     // G step 3
     *a_lo = neon_blamka(*a_lo, bb_lo);
     *a_hi = neon_blamka(*a_hi, bb_hi);
-    dd_lo = vxarq_u64::<16>(dd_lo, *a_lo);
-    dd_hi = vxarq_u64::<16>(dd_hi, *a_hi);
+    dd_lo = neon_rotr_xor!(dd_lo, *a_lo, 16);
+    dd_hi = neon_rotr_xor!(dd_hi, *a_hi, 16);
     // G step 4
     cc_lo = neon_blamka(cc_lo, dd_lo);
     cc_hi = neon_blamka(cc_hi, dd_hi);
-    bb_lo = vxarq_u64::<63>(bb_lo, cc_lo);
-    bb_hi = vxarq_u64::<63>(bb_hi, cc_hi);
+    bb_lo = neon_rotr_xor!(bb_lo, cc_lo, 63);
+    bb_hi = neon_rotr_xor!(bb_hi, cc_hi, 63);
 
     // Un-rotate.
     *b_lo = vextq_u64::<1>(bb_hi, bb_lo);
@@ -1703,7 +1723,7 @@ unsafe fn neon_round_pair(
     d2_lo: &mut std::arch::aarch64::uint64x2_t,
     d2_hi: &mut std::arch::aarch64::uint64x2_t,
 ) {
-    use std::arch::aarch64::{vextq_u64, vxarq_u64};
+    use std::arch::aarch64::vextq_u64;
 
     // ---- Column step: interleave both columns at the G-step level ----
 
@@ -1712,37 +1732,37 @@ unsafe fn neon_round_pair(
     *a2_lo = neon_blamka(*a2_lo, *b2_lo);
     *a1_hi = neon_blamka(*a1_hi, *b1_hi);
     *a2_hi = neon_blamka(*a2_hi, *b2_hi);
-    *d1_lo = vxarq_u64::<32>(*d1_lo, *a1_lo);
-    *d2_lo = vxarq_u64::<32>(*d2_lo, *a2_lo);
-    *d1_hi = vxarq_u64::<32>(*d1_hi, *a1_hi);
-    *d2_hi = vxarq_u64::<32>(*d2_hi, *a2_hi);
+    *d1_lo = neon_rotr_xor!(*d1_lo, *a1_lo, 32);
+    *d2_lo = neon_rotr_xor!(*d2_lo, *a2_lo, 32);
+    *d1_hi = neon_rotr_xor!(*d1_hi, *a1_hi, 32);
+    *d2_hi = neon_rotr_xor!(*d2_hi, *a2_hi, 32);
     // G step 2: c = c + d + 2*lo32(c)*lo32(d);  b = rotr24(b ^ c)
     *c1_lo = neon_blamka(*c1_lo, *d1_lo);
     *c2_lo = neon_blamka(*c2_lo, *d2_lo);
     *c1_hi = neon_blamka(*c1_hi, *d1_hi);
     *c2_hi = neon_blamka(*c2_hi, *d2_hi);
-    *b1_lo = vxarq_u64::<24>(*b1_lo, *c1_lo);
-    *b2_lo = vxarq_u64::<24>(*b2_lo, *c2_lo);
-    *b1_hi = vxarq_u64::<24>(*b1_hi, *c1_hi);
-    *b2_hi = vxarq_u64::<24>(*b2_hi, *c2_hi);
+    *b1_lo = neon_rotr_xor!(*b1_lo, *c1_lo, 24);
+    *b2_lo = neon_rotr_xor!(*b2_lo, *c2_lo, 24);
+    *b1_hi = neon_rotr_xor!(*b1_hi, *c1_hi, 24);
+    *b2_hi = neon_rotr_xor!(*b2_hi, *c2_hi, 24);
     // G step 3: a = a + b + 2*lo32(a)*lo32(b);  d = rotr16(d ^ a)
     *a1_lo = neon_blamka(*a1_lo, *b1_lo);
     *a2_lo = neon_blamka(*a2_lo, *b2_lo);
     *a1_hi = neon_blamka(*a1_hi, *b1_hi);
     *a2_hi = neon_blamka(*a2_hi, *b2_hi);
-    *d1_lo = vxarq_u64::<16>(*d1_lo, *a1_lo);
-    *d2_lo = vxarq_u64::<16>(*d2_lo, *a2_lo);
-    *d1_hi = vxarq_u64::<16>(*d1_hi, *a1_hi);
-    *d2_hi = vxarq_u64::<16>(*d2_hi, *a2_hi);
+    *d1_lo = neon_rotr_xor!(*d1_lo, *a1_lo, 16);
+    *d2_lo = neon_rotr_xor!(*d2_lo, *a2_lo, 16);
+    *d1_hi = neon_rotr_xor!(*d1_hi, *a1_hi, 16);
+    *d2_hi = neon_rotr_xor!(*d2_hi, *a2_hi, 16);
     // G step 4: c = c + d + 2*lo32(c)*lo32(d);  b = rotr63(b ^ c)
     *c1_lo = neon_blamka(*c1_lo, *d1_lo);
     *c2_lo = neon_blamka(*c2_lo, *d2_lo);
     *c1_hi = neon_blamka(*c1_hi, *d1_hi);
     *c2_hi = neon_blamka(*c2_hi, *d2_hi);
-    *b1_lo = vxarq_u64::<63>(*b1_lo, *c1_lo);
-    *b2_lo = vxarq_u64::<63>(*b2_lo, *c2_lo);
-    *b1_hi = vxarq_u64::<63>(*b1_hi, *c1_hi);
-    *b2_hi = vxarq_u64::<63>(*b2_hi, *c2_hi);
+    *b1_lo = neon_rotr_xor!(*b1_lo, *c1_lo, 63);
+    *b2_lo = neon_rotr_xor!(*b2_lo, *c2_lo, 63);
+    *b1_hi = neon_rotr_xor!(*b1_hi, *c1_hi, 63);
+    *b2_hi = neon_rotr_xor!(*b2_hi, *c2_hi, 63);
 
     // ---- Diagonal step: rotate, interleaved round, un-rotate ----
 
@@ -1765,37 +1785,37 @@ unsafe fn neon_round_pair(
     *a2_lo = neon_blamka(*a2_lo, bb2_lo);
     *a1_hi = neon_blamka(*a1_hi, bb1_hi);
     *a2_hi = neon_blamka(*a2_hi, bb2_hi);
-    dd1_lo = vxarq_u64::<32>(dd1_lo, *a1_lo);
-    dd2_lo = vxarq_u64::<32>(dd2_lo, *a2_lo);
-    dd1_hi = vxarq_u64::<32>(dd1_hi, *a1_hi);
-    dd2_hi = vxarq_u64::<32>(dd2_hi, *a2_hi);
+    dd1_lo = neon_rotr_xor!(dd1_lo, *a1_lo, 32);
+    dd2_lo = neon_rotr_xor!(dd2_lo, *a2_lo, 32);
+    dd1_hi = neon_rotr_xor!(dd1_hi, *a1_hi, 32);
+    dd2_hi = neon_rotr_xor!(dd2_hi, *a2_hi, 32);
     // G step 2
     cc1_lo = neon_blamka(cc1_lo, dd1_lo);
     cc2_lo = neon_blamka(cc2_lo, dd2_lo);
     cc1_hi = neon_blamka(cc1_hi, dd1_hi);
     cc2_hi = neon_blamka(cc2_hi, dd2_hi);
-    bb1_lo = vxarq_u64::<24>(bb1_lo, cc1_lo);
-    bb2_lo = vxarq_u64::<24>(bb2_lo, cc2_lo);
-    bb1_hi = vxarq_u64::<24>(bb1_hi, cc1_hi);
-    bb2_hi = vxarq_u64::<24>(bb2_hi, cc2_hi);
+    bb1_lo = neon_rotr_xor!(bb1_lo, cc1_lo, 24);
+    bb2_lo = neon_rotr_xor!(bb2_lo, cc2_lo, 24);
+    bb1_hi = neon_rotr_xor!(bb1_hi, cc1_hi, 24);
+    bb2_hi = neon_rotr_xor!(bb2_hi, cc2_hi, 24);
     // G step 3
     *a1_lo = neon_blamka(*a1_lo, bb1_lo);
     *a2_lo = neon_blamka(*a2_lo, bb2_lo);
     *a1_hi = neon_blamka(*a1_hi, bb1_hi);
     *a2_hi = neon_blamka(*a2_hi, bb2_hi);
-    dd1_lo = vxarq_u64::<16>(dd1_lo, *a1_lo);
-    dd2_lo = vxarq_u64::<16>(dd2_lo, *a2_lo);
-    dd1_hi = vxarq_u64::<16>(dd1_hi, *a1_hi);
-    dd2_hi = vxarq_u64::<16>(dd2_hi, *a2_hi);
+    dd1_lo = neon_rotr_xor!(dd1_lo, *a1_lo, 16);
+    dd2_lo = neon_rotr_xor!(dd2_lo, *a2_lo, 16);
+    dd1_hi = neon_rotr_xor!(dd1_hi, *a1_hi, 16);
+    dd2_hi = neon_rotr_xor!(dd2_hi, *a2_hi, 16);
     // G step 4
     cc1_lo = neon_blamka(cc1_lo, dd1_lo);
     cc2_lo = neon_blamka(cc2_lo, dd2_lo);
     cc1_hi = neon_blamka(cc1_hi, dd1_hi);
     cc2_hi = neon_blamka(cc2_hi, dd2_hi);
-    bb1_lo = vxarq_u64::<63>(bb1_lo, cc1_lo);
-    bb2_lo = vxarq_u64::<63>(bb2_lo, cc2_lo);
-    bb1_hi = vxarq_u64::<63>(bb1_hi, cc1_hi);
-    bb2_hi = vxarq_u64::<63>(bb2_hi, cc2_hi);
+    bb1_lo = neon_rotr_xor!(bb1_lo, cc1_lo, 63);
+    bb2_lo = neon_rotr_xor!(bb2_lo, cc2_lo, 63);
+    bb1_hi = neon_rotr_xor!(bb1_hi, cc1_hi, 63);
+    bb2_hi = neon_rotr_xor!(bb2_hi, cc2_hi, 63);
 
     // Un-rotate column 1.
     *b1_lo = vextq_u64::<1>(bb1_hi, bb1_lo);
