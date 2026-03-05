@@ -447,6 +447,7 @@ pub(super) fn run_pool_mining_loop(
         }
 
         if let Some(ref deferred) = deferred_rx {
+            let mut deferred_backend_activated = false;
             loop {
                 match deferred.try_recv() {
                     Ok(slot) => {
@@ -461,9 +462,7 @@ pub(super) fn run_pool_mining_loop(
                         );
                         backend_weights.insert(slot.id, slot.lanes.max(1) as f64);
                         backends.push(slot);
-                        if active_job.is_some() {
-                            warn("JOB", "new backend will start on the next pool job update");
-                        }
+                        deferred_backend_activated = true;
                     }
                     Err(crossbeam_channel::TryRecvError::Empty) => break,
                     Err(crossbeam_channel::TryRecvError::Disconnected) => {
@@ -483,6 +482,18 @@ pub(super) fn run_pool_mining_loop(
                 pending_nvidia_logged = false;
             }
             set_tui_pending_nvidia(&mut tui, deferred_remaining);
+            if deferred_backend_activated {
+                maybe_hot_rebalance_active_pool_job(
+                    cfg,
+                    &mut work_id_cursor,
+                    &mut epoch,
+                    backends,
+                    backend_executor,
+                    &mut backend_weights,
+                    &mut active_job,
+                    "deferred backend activated",
+                )?;
+            }
         }
 
         let mut processed_pool_event = false;
@@ -589,6 +600,7 @@ pub(super) fn run_pool_mining_loop(
             }
         }
 
+        let mut topology_changed = false;
         loop {
             match backend_events.try_recv() {
                 Ok(event) => {
@@ -601,10 +613,7 @@ pub(super) fn run_pool_mining_loop(
                         backend_executor,
                     )?;
                     if action == super::RuntimeBackendEventAction::TopologyChanged {
-                        warn(
-                            "BACKEND",
-                            "backend topology changed; rebalancing on next pool job",
-                        );
+                        topology_changed = true;
                     }
                     if let Some(solution) = maybe_solution {
                         let active_client = if active_mode == PoolConnectionMode::Dev {
@@ -648,6 +657,18 @@ pub(super) fn run_pool_mining_loop(
                 Err(crossbeam_channel::TryRecvError::Empty) => break,
                 Err(crossbeam_channel::TryRecvError::Disconnected) => break,
             }
+        }
+        if topology_changed {
+            maybe_hot_rebalance_active_pool_job(
+                cfg,
+                &mut work_id_cursor,
+                &mut epoch,
+                backends,
+                backend_executor,
+                &mut backend_weights,
+                &mut active_job,
+                "backend topology changed",
+            )?;
         }
 
         if last_hash_poll.elapsed() >= cfg.hash_poll_interval {
@@ -1108,6 +1129,66 @@ fn assign_pool_continuation(
             info("JOB", message);
         } else {
             warn("JOB", message);
+        }
+    }
+
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn maybe_hot_rebalance_active_pool_job(
+    cfg: &Config,
+    work_id_cursor: &mut u64,
+    epoch_cursor: &mut u64,
+    backends: &mut Vec<BackendSlot>,
+    backend_executor: &super::backend_executor::BackendExecutor,
+    backend_weights: &mut BTreeMap<u64, f64>,
+    active_job: &mut Option<ActivePoolJob>,
+    reason: &str,
+) -> Result<()> {
+    let Some(job) = active_job.as_ref() else {
+        return Ok(());
+    };
+    if job.next_nonce > job.job.nonce_end || backends.is_empty() {
+        return Ok(());
+    }
+
+    if super::backends_have_append_assignment_semantics(backends) {
+        if let Err(err) =
+            super::cancel_backend_slots(backends, RuntimeMode::Mining, backend_executor)
+        {
+            warn(
+                "BACKEND",
+                format!("failed to cancel append-assignment backends for hot rebalance: {err:#}"),
+            );
+            return Ok(());
+        }
+        if let Err(err) =
+            super::quiesce_backend_slots(backends, RuntimeMode::Mining, backend_executor)
+        {
+            warn(
+                "BACKEND",
+                format!("failed to quiesce append-assignment backends for hot rebalance: {err:#}"),
+            );
+            return Ok(());
+        }
+        if backends.is_empty() {
+            return Ok(());
+        }
+    }
+
+    if let Some(job) = active_job.as_mut() {
+        if job.next_nonce <= job.job.nonce_end {
+            assign_pool_continuation(
+                cfg,
+                work_id_cursor,
+                epoch_cursor,
+                backends,
+                backend_executor,
+                backend_weights,
+                job,
+            )?;
+            info("JOB", format!("{reason}; hot-rebalanced current pool job"));
         }
     }
 
