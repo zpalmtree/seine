@@ -28,8 +28,8 @@ use super::stats::{format_hashrate_ui, Stats};
 use super::tui::TuiState;
 use super::ui::{error, info, notify_dev_fee_mode, success, warn};
 use super::{
-    collect_backend_hashes, distribute_work, next_work_id, total_lanes, BackendRoundTelemetry,
-    BackendSlot, DistributeWorkOptions, RuntimeMode, TEMPLATE_RETRY_DELAY,
+    distribute_work, next_work_id, total_lanes, BackendRoundTelemetry, BackendSlot,
+    DistributeWorkOptions, RuntimeMode, TEMPLATE_RETRY_DELAY,
 };
 
 const POOL_WAIT_POLL: Duration = Duration::from_millis(200);
@@ -39,7 +39,7 @@ const POOL_MAX_INFLIGHT_SUBMITS: usize = 16;
 const POOL_MAX_DEFERRED_SUBMITS: usize = 4096;
 const POOL_SUBMIT_ACK_TIMEOUT: Duration = Duration::from_secs(30);
 const POOL_TELEMETRY_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
-const POOL_TELEMETRY_TIMEOUT: Duration = Duration::from_millis(750);
+const POOL_TELEMETRY_TIMEOUT: Duration = Duration::from_secs(2);
 const POOL_API_DEFAULT_PORT: u16 = 24783;
 const ATOMIC_UNITS_PER_BNT: u64 = 100_000_000;
 const BNT_DISPLAY_DECIMALS: usize = 4;
@@ -108,6 +108,7 @@ struct ActivePoolJob {
     target: [u8; 32],
     share_difficulty: Option<u64>,
     next_nonce: u64,
+    dispatch_nonce: u64,
     epoch: u64,
     height: String,
     round_start: Instant,
@@ -128,6 +129,7 @@ struct DeferredPoolSubmit {
 impl ActivePoolJob {
     fn new(job: PoolJob, epoch: u64, header_base: Arc<[u8]>, target: [u8; 32]) -> Self {
         let next_nonce = job.nonce_start;
+        let dispatch_nonce = next_nonce;
         let share_difficulty = job.difficulty;
         Self {
             height: job.height.to_string(),
@@ -135,6 +137,7 @@ impl ActivePoolJob {
             target,
             share_difficulty,
             next_nonce,
+            dispatch_nonce,
             job,
             epoch,
             round_start: Instant::now(),
@@ -156,16 +159,8 @@ enum PoolShareSubmitOutcome {
     QueueFailed,
 }
 
-fn should_continue_pool_job_after_solution(outcome: PoolShareSubmitOutcome) -> bool {
-    !matches!(outcome, PoolShareSubmitOutcome::StaleEpoch)
-}
-
-fn should_attempt_pool_continuation(
-    active_job: Option<&ActivePoolJob>,
-    outcome: PoolShareSubmitOutcome,
-) -> bool {
-    should_continue_pool_job_after_solution(outcome)
-        && active_job.is_some_and(|job| job.next_nonce <= job.job.nonce_end)
+fn should_extend_pool_assignment(job: &ActivePoolJob, has_pending_work: bool) -> bool {
+    !has_pending_work && job.dispatch_nonce <= job.job.nonce_end
 }
 
 fn advance_pool_nonce_cursor(job: &mut ActivePoolJob, solved_nonce: u64) {
@@ -434,7 +429,7 @@ pub(super) fn run_pool_mining_loop(
                         {
                             active_job = Some(resume);
                             if let Some(job) = active_job.as_mut() {
-                                assign_pool_continuation(
+                                restart_pool_assignment(
                                     cfg,
                                     &mut work_id_cursor,
                                     &mut epoch,
@@ -737,23 +732,8 @@ pub(super) fn run_pool_mining_loop(
                             &solution,
                             &stats,
                         );
-                        if should_attempt_pool_continuation(active_job.as_ref(), submit_outcome) {
-                            if let Some(job) = active_job.as_mut() {
-                                if let Err(err) = assign_pool_continuation(
-                                    cfg,
-                                    &mut work_id_cursor,
-                                    &mut epoch,
-                                    backends,
-                                    backend_executor,
-                                    &mut backend_weights,
-                                    job,
-                                ) {
-                                    warn(
-                                        "JOB",
-                                        format!("failed to continue job after share: {err:#}"),
-                                    );
-                                }
-                            }
+                        if matches!(submit_outcome, PoolShareSubmitOutcome::StaleEpoch) {
+                            continue;
                         }
                     }
                 }
@@ -795,16 +775,13 @@ pub(super) fn run_pool_mining_loop(
             )?;
         }
 
+        let mut should_extend_assignment = false;
         if last_hash_poll.elapsed() >= cfg.hash_poll_interval {
             if let Some(active_job) = active_job.as_mut() {
-                collect_backend_hashes(
-                    backends,
-                    backend_executor,
-                    Some(&stats),
-                    &mut active_job.round_hashes,
-                    Some(&mut active_job.round_backend_hashes),
-                    Some(&mut active_job.round_backend_telemetry),
-                );
+                let has_pending_work =
+                    collect_pool_backend_samples(backends, backend_executor, &stats, active_job);
+                should_extend_assignment =
+                    should_extend_pool_assignment(active_job, has_pending_work);
                 update_tui(
                     &mut tui,
                     &stats,
@@ -820,6 +797,19 @@ pub(super) fn run_pool_mining_loop(
                 );
             }
             last_hash_poll = Instant::now();
+        }
+        if should_extend_assignment {
+            if let Some(job) = active_job.as_mut() {
+                assign_pool_continuation(
+                    cfg,
+                    &mut work_id_cursor,
+                    &mut epoch,
+                    backends,
+                    backend_executor,
+                    &mut backend_weights,
+                    job,
+                )?;
+            }
         }
 
         maybe_print_stats(
@@ -847,6 +837,49 @@ pub(super) fn run_pool_mining_loop(
     stats.print();
     info("MINER", "stopped");
     Ok(())
+}
+
+fn collect_pool_backend_samples(
+    backends: &[BackendSlot],
+    backend_executor: &super::backend_executor::BackendExecutor,
+    stats: &Stats,
+    active_job: &mut ActivePoolJob,
+) -> bool {
+    let runtime_telemetry = backend_executor.take_backend_telemetry_ordered(backends.iter());
+    let mut collected = 0u64;
+    let mut has_pending_work = false;
+
+    for (slot, runtime) in backends.iter().zip(runtime_telemetry.into_iter()) {
+        let backend_id = slot.id;
+        let hashes = slot.backend.take_hashes();
+        let telemetry = slot.backend.take_telemetry();
+        has_pending_work |= telemetry.pending_work > 0 || telemetry.active_lanes > 0;
+        super::merge_backend_telemetry(
+            &mut active_job.round_backend_telemetry,
+            backend_id,
+            telemetry,
+        );
+        super::merge_backend_telemetry(
+            &mut active_job.round_backend_telemetry,
+            backend_id,
+            runtime,
+        );
+        if hashes > 0 {
+            collected = collected.saturating_add(hashes);
+            let entry = active_job
+                .round_backend_hashes
+                .entry(backend_id)
+                .or_insert(0);
+            *entry = entry.saturating_add(hashes);
+        }
+    }
+
+    if collected > 0 {
+        stats.add_hashes(collected);
+        active_job.round_hashes = active_job.round_hashes.saturating_add(collected);
+    }
+
+    has_pending_work
 }
 
 fn handle_active_pool_event(
@@ -1164,7 +1197,7 @@ fn apply_submit_ack_difficulty(
             info("VARDIFF", format!("difficulty set to {difficulty}"));
         }
     }
-    assign_pool_continuation(
+    restart_pool_assignment(
         cfg,
         work_id_cursor,
         epoch_cursor,
@@ -1244,7 +1277,7 @@ fn assign_pool_job(
         );
     }
     if let Some(job) = active_job.as_mut() {
-        assign_pool_continuation(
+        restart_pool_assignment(
             cfg,
             work_id_cursor,
             epoch_cursor,
@@ -1261,6 +1294,28 @@ fn assign_pool_job(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn restart_pool_assignment(
+    cfg: &Config,
+    work_id_cursor: &mut u64,
+    epoch_cursor: &mut u64,
+    backends: &mut Vec<BackendSlot>,
+    backend_executor: &super::backend_executor::BackendExecutor,
+    backend_weights: &mut BTreeMap<u64, f64>,
+    active_job: &mut ActivePoolJob,
+) -> Result<()> {
+    active_job.dispatch_nonce = active_job.next_nonce;
+    assign_pool_continuation(
+        cfg,
+        work_id_cursor,
+        epoch_cursor,
+        backends,
+        backend_executor,
+        backend_weights,
+        active_job,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
 fn assign_pool_continuation(
     cfg: &Config,
     work_id_cursor: &mut u64,
@@ -1270,7 +1325,7 @@ fn assign_pool_continuation(
     backend_weights: &mut BTreeMap<u64, f64>,
     active_job: &mut ActivePoolJob,
 ) -> Result<()> {
-    if active_job.next_nonce > active_job.job.nonce_end {
+    if active_job.dispatch_nonce > active_job.job.nonce_end {
         return Ok(());
     }
 
@@ -1282,17 +1337,17 @@ fn assign_pool_continuation(
     let remaining_span = active_job
         .job
         .nonce_end
-        .saturating_sub(active_job.next_nonce)
+        .saturating_sub(active_job.dispatch_nonce)
         .saturating_add(1);
     let lanes = total_lanes(backends).max(1);
     let max_iters_per_lane = div_ceil_u64(remaining_span, lanes).max(1);
     let reservation = NonceReservation {
-        start_nonce: active_job.next_nonce,
+        start_nonce: active_job.dispatch_nonce,
         max_iters_per_lane,
         reserved_span: remaining_span,
     };
     let stop_at = Instant::now() + POOL_JOB_STOP_AT_HORIZON;
-    let additional_span = distribute_work(
+    let distribution = distribute_work(
         backends,
         DistributeWorkOptions {
             epoch,
@@ -1311,12 +1366,15 @@ fn assign_pool_continuation(
         },
         backend_executor,
     )?;
-    if additional_span > 0 {
+    active_job.dispatch_nonce = active_job
+        .dispatch_nonce
+        .saturating_add(distribution.consumed_span);
+    if distribution.additional_span_consumed > 0 {
         let message = format!(
             "pool assignment consumed extra nonce span outside reserved window ({} nonces)",
-            additional_span
+            distribution.additional_span_consumed
         );
-        if additional_span < lanes {
+        if distribution.additional_span_consumed < lanes {
             info("JOB", message);
         } else {
             warn("JOB", message);
@@ -1370,7 +1428,7 @@ fn maybe_hot_rebalance_active_pool_job(
 
     if let Some(job) = active_job.as_mut() {
         if job.next_nonce <= job.job.nonce_end {
-            assign_pool_continuation(
+            restart_pool_assignment(
                 cfg,
                 work_id_cursor,
                 epoch_cursor,
@@ -1796,10 +1854,9 @@ mod tests {
 
     use super::{
         advance_pool_nonce_cursor, compact_pool_address_for_log, pool_api_base_urls_from_pool_url,
-        service_pool_submit_backlog_with_submitter, should_attempt_pool_continuation,
-        should_continue_pool_job_after_solution, submit_pool_solution_with_submitter,
-        ActivePoolJob, PoolConnectionMode, PoolJob, PoolShareSubmitOutcome,
-        POOL_MAX_INFLIGHT_SUBMITS, POOL_SUBMIT_ACK_TIMEOUT,
+        service_pool_submit_backlog_with_submitter, should_extend_pool_assignment,
+        submit_pool_solution_with_submitter, ActivePoolJob, PoolConnectionMode, PoolJob,
+        PoolShareSubmitOutcome, POOL_MAX_INFLIGHT_SUBMITS, POOL_SUBMIT_ACK_TIMEOUT,
     };
 
     fn test_active_job(epoch: u64) -> ActivePoolJob {
@@ -1870,66 +1927,34 @@ mod tests {
     }
 
     #[test]
-    fn continuation_policy_skips_only_stale_epoch_outcomes() {
-        assert!(should_continue_pool_job_after_solution(
-            PoolShareSubmitOutcome::Submitted
-        ));
-        assert!(should_continue_pool_job_after_solution(
-            PoolShareSubmitOutcome::Deferred
-        ));
-        assert!(should_continue_pool_job_after_solution(
-            PoolShareSubmitOutcome::Duplicate
-        ));
-        assert!(should_continue_pool_job_after_solution(
-            PoolShareSubmitOutcome::QueueFailed
-        ));
-        assert!(!should_continue_pool_job_after_solution(
-            PoolShareSubmitOutcome::StaleEpoch
-        ));
-    }
-
-    #[test]
-    fn continuation_attempt_requires_live_nonce_window_and_non_stale_outcome() {
+    fn pool_assignment_extension_waits_for_idle_dispatch_cursor() {
         let mut job = test_active_job(13);
-        assert!(should_attempt_pool_continuation(
-            Some(&job),
-            PoolShareSubmitOutcome::Submitted
-        ));
-        assert!(should_attempt_pool_continuation(
-            Some(&job),
-            PoolShareSubmitOutcome::QueueFailed
-        ));
-        assert!(!should_attempt_pool_continuation(
-            Some(&job),
-            PoolShareSubmitOutcome::StaleEpoch
-        ));
-        assert!(!should_attempt_pool_continuation(
-            None,
-            PoolShareSubmitOutcome::Submitted
-        ));
+        assert!(should_extend_pool_assignment(&job, false));
+        assert!(!should_extend_pool_assignment(&job, true));
 
-        job.next_nonce = job.job.nonce_end.saturating_add(1);
-        assert!(!should_attempt_pool_continuation(
-            Some(&job),
-            PoolShareSubmitOutcome::Submitted
-        ));
+        job.dispatch_nonce = job.job.nonce_end.saturating_add(1);
+        assert!(!should_extend_pool_assignment(&job, false));
     }
 
     #[test]
     fn nonce_cursor_advances_to_solution_nonce_plus_one() {
         let mut job = test_active_job(21);
         job.next_nonce = 10;
+        job.dispatch_nonce = 99;
         advance_pool_nonce_cursor(&mut job, 42);
         assert_eq!(job.next_nonce, 43);
+        assert_eq!(job.dispatch_nonce, 99);
 
         // Cursor should never move backward.
         advance_pool_nonce_cursor(&mut job, 11);
         assert_eq!(job.next_nonce, 43);
+        assert_eq!(job.dispatch_nonce, 99);
 
         // Cap at assigned nonce range end + 1.
         job.job.nonce_end = 50;
         advance_pool_nonce_cursor(&mut job, 99);
         assert_eq!(job.next_nonce, 51);
+        assert_eq!(job.dispatch_nonce, 99);
     }
 
     #[test]
@@ -2003,6 +2028,10 @@ mod tests {
             job.next_nonce,
             initial_next_nonce.max(43),
             "cursor should advance once and remain stable on duplicate"
+        );
+        assert_eq!(
+            job.dispatch_nonce, initial_next_nonce,
+            "share submission must not rewind or advance the dispatch cursor"
         );
         assert!(job.pending_submit_nonces.contains_key(&42));
     }

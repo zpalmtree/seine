@@ -690,7 +690,7 @@ fn run_worker_benchmark_inner(
         let header_base = benchmark_header_base(round);
         let reservation = scheduler.reserve(total_lanes(backends));
 
-        let additional_span = distribute_work(
+        let distribution = distribute_work(
             backends,
             super::DistributeWorkOptions {
                 epoch,
@@ -704,7 +704,7 @@ fn run_worker_benchmark_inner(
             },
             backend_executor,
         )?;
-        scheduler.consume_additional_span(additional_span);
+        scheduler.consume_additional_span(distribution.additional_span_consumed);
 
         let mut round_hashes = 0u64;
         let mut round_backend_hashes = BTreeMap::new();

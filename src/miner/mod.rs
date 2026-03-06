@@ -108,6 +108,12 @@ struct DistributeWorkOptions<'a> {
     strict_reservation: bool,
 }
 
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
+struct WorkDistributionOutcome {
+    consumed_span: u64,
+    additional_span_consumed: u64,
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub(super) struct BackendRoundTelemetry {
     dropped_events: u64,
@@ -2060,7 +2066,7 @@ fn distribute_work(
     backends: &mut Vec<BackendSlot>,
     options: DistributeWorkOptions<'_>,
     backend_executor: &backend_executor::BackendExecutor,
-) -> Result<u64> {
+) -> Result<WorkDistributionOutcome> {
     work_allocator::distribute_work(backends, options, backend_executor)
 }
 
@@ -3321,7 +3327,7 @@ mod tests {
                 Arc::new(MockBackend::new("nvidia", 1, Arc::clone(&third_state))),
             ),
         ];
-        let additional_span = distribute_work(
+        let distribution = distribute_work(
             &mut backends,
             DistributeWorkOptions {
                 epoch: 1,
@@ -3340,7 +3346,7 @@ mod tests {
             &backend_executor,
         )
         .expect("distribution should continue after quarantining failing backend");
-        assert_eq!(additional_span, 30);
+        assert_eq!(distribution.additional_span_consumed, 30);
 
         assert_eq!(backends.len(), 2);
         assert_eq!(backends[0].id, 1);
@@ -3383,7 +3389,7 @@ mod tests {
             ),
         )];
 
-        let additional_span = distribute_work(
+        let distribution = distribute_work(
             &mut backends,
             DistributeWorkOptions {
                 epoch: 1,
@@ -3403,7 +3409,7 @@ mod tests {
         )
         .expect("distribution should succeed");
 
-        assert_eq!(additional_span, 0);
+        assert_eq!(distribution.additional_span_consumed, 0);
         assert_eq!(state.assign_batch_calls.load(Ordering::Relaxed), 1);
         assert_eq!(state.last_batch_len.load(Ordering::Relaxed), 4);
 
@@ -3436,7 +3442,7 @@ mod tests {
             ),
         )];
 
-        let additional_span = distribute_work(
+        let distribution = distribute_work(
             &mut backends,
             DistributeWorkOptions {
                 epoch: 1,
@@ -3457,8 +3463,10 @@ mod tests {
         .expect("distribution should succeed");
 
         assert!(
-            additional_span > 0 && additional_span <= 13,
-            "expected lane-rounding overflow in non-strict mode, got {additional_span}"
+            distribution.additional_span_consumed > 0
+                && distribution.additional_span_consumed <= 13,
+            "expected lane-rounding overflow in non-strict mode, got {}",
+            distribution.additional_span_consumed
         );
     }
 
@@ -3475,7 +3483,7 @@ mod tests {
             ),
         )];
 
-        let additional_span = distribute_work(
+        let distribution = distribute_work(
             &mut backends,
             DistributeWorkOptions {
                 epoch: 1,
@@ -3496,7 +3504,7 @@ mod tests {
         .expect("distribution should succeed");
 
         assert_eq!(
-            additional_span, 0,
+            distribution.additional_span_consumed, 0,
             "strict reservation must not consume nonce span outside the assignment window"
         );
         let chunk = state
@@ -3560,7 +3568,7 @@ mod tests {
             &backend_executor,
         )
         .expect("first timeout window should keep backend active");
-        assert!(first_round >= 1);
+        assert!(first_round.additional_span_consumed >= 1);
 
         std::thread::sleep(Duration::from_millis(60));
 
@@ -3605,7 +3613,7 @@ mod tests {
         )];
         backends[0].runtime_policy.assignment_timeout = Duration::from_millis(5);
 
-        let additional_span = distribute_work(
+        let distribution = distribute_work(
             &mut backends,
             DistributeWorkOptions {
                 epoch: 1,
@@ -3625,7 +3633,7 @@ mod tests {
         )
         .expect("non-quarantined timeout should keep backend active");
 
-        assert!(additional_span >= 1);
+        assert!(distribution.additional_span_consumed >= 1);
         assert_eq!(backends.len(), 1);
         std::thread::sleep(Duration::from_millis(120));
         assert!(
@@ -3702,7 +3710,7 @@ mod tests {
             ),
         ];
 
-        let additional_span = distribute_work(
+        let distribution = distribute_work(
             &mut backends,
             DistributeWorkOptions {
                 epoch: 1,
@@ -3722,7 +3730,7 @@ mod tests {
         )
         .expect("distribution should continue after quarantining panicing backend");
 
-        assert_eq!(additional_span, 30);
+        assert_eq!(distribution.additional_span_consumed, 30);
         assert_eq!(backends.len(), 2);
         assert_eq!(backends[0].id, 1);
         assert_eq!(backends[1].id, 3);

@@ -840,7 +840,7 @@ fn dispatch_round_assignments(
     nonce_scheduler: &mut NonceScheduler,
     backend_executor: &super::backend_executor::BackendExecutor,
 ) -> Result<()> {
-    let additional_span = distribute_work(
+    let distribution = distribute_work(
         backends,
         super::DistributeWorkOptions {
             epoch: inputs.epoch,
@@ -857,7 +857,7 @@ fn dispatch_round_assignments(
         },
         backend_executor,
     )?;
-    nonce_scheduler.consume_additional_span(additional_span);
+    nonce_scheduler.consume_additional_span(distribution.additional_span_consumed);
     Ok(())
 }
 

@@ -12,7 +12,10 @@ use super::backend_executor::{
     self, BackendTask, BackendTaskDispatchResult, BackendTaskKind, BackendTaskTimeoutKind,
 };
 use super::ui::warn;
-use super::{backend_capabilities, backend_names, total_lanes, BackendSlot, DistributeWorkOptions};
+use super::{
+    backend_capabilities, backend_names, total_lanes, BackendSlot, DistributeWorkOptions,
+    WorkDistributionOutcome,
+};
 
 const ADAPTIVE_WEIGHT_FLOOR_PER_LANE_FRAC: f64 = 0.01;
 const ADAPTIVE_NEW_BACKEND_BOOST_PER_LANE_FRAC: f64 = 0.10;
@@ -46,8 +49,9 @@ pub(super) fn distribute_work(
     backends: &mut Vec<BackendSlot>,
     options: DistributeWorkOptions<'_>,
     backend_executor: &backend_executor::BackendExecutor,
-) -> Result<u64> {
+) -> Result<WorkDistributionOutcome> {
     let mut attempt_start_nonce = options.reservation.start_nonce;
+    let mut consumed_span = 0u64;
     let mut additional_span_consumed = 0u64;
     let mut remaining_reserved_span = options.reservation.reserved_span;
     let mut non_quarantined_retry_attempts = 0u32;
@@ -65,7 +69,10 @@ pub(super) fn distribute_work(
             bail!("all mining backends are unavailable");
         }
         if std::time::Instant::now() >= options.stop_at {
-            return Ok(additional_span_consumed);
+            return Ok(WorkDistributionOutcome {
+                consumed_span,
+                additional_span_consumed,
+            });
         }
 
         let mut nonce_counts = compute_backend_nonce_counts(
@@ -128,7 +135,10 @@ pub(super) fn distribute_work(
         }
         if dispatch_tasks.is_empty() {
             *backends = slots_by_idx.into_iter().flatten().collect();
-            return Ok(additional_span_consumed);
+            return Ok(WorkDistributionOutcome {
+                consumed_span,
+                additional_span_consumed,
+            });
         }
 
         let (survivors, failures, attempt_consumed_span) =
@@ -136,13 +146,17 @@ pub(super) fn distribute_work(
         *backends = survivors;
         backend_executor.prune(backends);
 
+        consumed_span = consumed_span.saturating_add(attempt_consumed_span);
         let covered_by_reserved = remaining_reserved_span.min(attempt_consumed_span);
         remaining_reserved_span = remaining_reserved_span.saturating_sub(covered_by_reserved);
         additional_span_consumed = additional_span_consumed
             .saturating_add(attempt_consumed_span.saturating_sub(covered_by_reserved));
 
         if failures.is_empty() {
-            return Ok(additional_span_consumed);
+            return Ok(WorkDistributionOutcome {
+                consumed_span,
+                additional_span_consumed,
+            });
         }
 
         let has_non_quarantined_failures = failures.iter().any(|failure| !failure.quarantined);
@@ -198,7 +212,10 @@ pub(super) fn distribute_work(
                         NON_QUARANTINED_ASSIGNMENT_RETRY_LIMIT
                     ),
                 );
-                return Ok(additional_span_consumed);
+                return Ok(WorkDistributionOutcome {
+                    consumed_span,
+                    additional_span_consumed,
+                });
             }
 
             non_quarantined_retry_attempts = non_quarantined_retry_attempts.saturating_add(1);

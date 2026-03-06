@@ -61,7 +61,7 @@ pub(super) fn redistribute_for_topology_change(
         WorkAllocation::Static => None,
         WorkAllocation::Adaptive => options.backend_weights,
     };
-    let additional_span = distribute_work(
+    let distribution = distribute_work(
         backends,
         DistributeWorkOptions {
             epoch: options.epoch,
@@ -77,6 +77,6 @@ pub(super) fn redistribute_for_topology_change(
     )?;
     options
         .nonce_scheduler
-        .consume_additional_span(additional_span);
+        .consume_additional_span(distribution.additional_span_consumed);
     Ok(())
 }
