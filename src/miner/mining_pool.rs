@@ -39,7 +39,7 @@ const POOL_MAX_INFLIGHT_SUBMITS: usize = 16;
 const POOL_MAX_DEFERRED_SUBMITS: usize = 4096;
 const POOL_SUBMIT_ACK_TIMEOUT: Duration = Duration::from_secs(30);
 const POOL_TELEMETRY_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
-const POOL_TELEMETRY_TIMEOUT: Duration = Duration::from_secs(2);
+const POOL_TELEMETRY_TIMEOUT: Duration = Duration::from_secs(3);
 const POOL_API_DEFAULT_PORT: u16 = 24783;
 const ATOMIC_UNITS_PER_BNT: u64 = 100_000_000;
 const BNT_DISPLAY_DECIMALS: usize = 4;
@@ -90,6 +90,7 @@ struct PoolTelemetryRefreshResult {
 #[derive(Debug, Clone)]
 struct PoolTelemetryEndpoint {
     stats_url: String,
+    miner_balance_url: String,
     miner_url: String,
 }
 
@@ -159,8 +160,8 @@ enum PoolShareSubmitOutcome {
     QueueFailed,
 }
 
-fn should_extend_pool_assignment(job: &ActivePoolJob, has_pending_work: bool) -> bool {
-    !has_pending_work && job.dispatch_nonce <= job.job.nonce_end
+fn should_resume_pool_assignment(job: &ActivePoolJob, has_pending_work: bool) -> bool {
+    !has_pending_work && job.next_nonce <= job.job.nonce_end
 }
 
 fn advance_pool_nonce_cursor(job: &mut ActivePoolJob, solved_nonce: u64) {
@@ -499,7 +500,12 @@ pub(super) fn run_pool_mining_loop(
                     pool_telemetry_warning_logged = false;
                 }
             } else if !pool_telemetry_warning_logged {
-                warn("STATS", "failed to fetch pool stats");
+                let detail = result
+                    .errors
+                    .first()
+                    .map(String::as_str)
+                    .unwrap_or("unknown telemetry error");
+                warn("STATS", format!("failed to fetch pool stats: {detail}"));
                 pool_telemetry_warning_logged = true;
             }
         }
@@ -775,13 +781,13 @@ pub(super) fn run_pool_mining_loop(
             )?;
         }
 
-        let mut should_extend_assignment = false;
+        let mut should_resume_assignment = false;
         if last_hash_poll.elapsed() >= cfg.hash_poll_interval {
             if let Some(active_job) = active_job.as_mut() {
                 let has_pending_work =
                     collect_pool_backend_samples(backends, backend_executor, &stats, active_job);
-                should_extend_assignment =
-                    should_extend_pool_assignment(active_job, has_pending_work);
+                should_resume_assignment =
+                    should_resume_pool_assignment(active_job, has_pending_work);
                 update_tui(
                     &mut tui,
                     &stats,
@@ -798,9 +804,9 @@ pub(super) fn run_pool_mining_loop(
             }
             last_hash_poll = Instant::now();
         }
-        if should_extend_assignment {
+        if should_resume_assignment {
             if let Some(job) = active_job.as_mut() {
-                assign_pool_continuation(
+                restart_pool_assignment(
                     cfg,
                     &mut work_id_cursor,
                     &mut epoch,
@@ -1639,6 +1645,7 @@ impl PoolUiTelemetryClient {
             .into_iter()
             .map(|base_url| PoolTelemetryEndpoint {
                 stats_url: format!("{base_url}/api/stats"),
+                miner_balance_url: format!("{base_url}/api/miner/{address}/balance"),
                 miner_url: format!("{base_url}/api/miner/{address}"),
             })
             .collect::<Vec<_>>();
@@ -1689,32 +1696,37 @@ impl PoolUiTelemetryClient {
     fn fetch_pool_balances(&self) -> Result<(String, String)> {
         let mut errors = Vec::new();
         for endpoint in &self.endpoints {
-            let body: Value = match self
-                .http
-                .get(&endpoint.miner_url)
-                .send()
-                .and_then(|resp| resp.json())
-            {
-                Ok(body) => body,
-                Err(err) => {
-                    errors.push(format!("GET {} failed: {err}", endpoint.miner_url));
-                    continue;
-                }
-            };
+            match self.fetch_balance_from_url(&endpoint.miner_balance_url) {
+                Ok(value) => return Ok(value),
+                Err(err) => errors.push(format!(
+                    "GET {} failed: {err:#}",
+                    endpoint.miner_balance_url
+                )),
+            }
 
-            let pending = body.pointer("/balance/pending").and_then(Value::as_u64);
-            let paid = body.pointer("/balance/paid").and_then(Value::as_u64);
-            let (Some(pending), Some(paid)) = (pending, paid) else {
-                errors.push(format!("GET {} missing balance fields", endpoint.miner_url));
-                continue;
-            };
-            return Ok((
-                format_atomic_units_bnt(pending),
-                format_atomic_units_bnt(paid),
-            ));
+            match self.fetch_balance_from_url(&endpoint.miner_url) {
+                Ok(value) => return Ok(value),
+                Err(err) => errors.push(format!("GET {} failed: {err:#}", endpoint.miner_url)),
+            }
         }
 
         bail!("pool balance telemetry unavailable: {}", errors.join("; "))
+    }
+
+    fn fetch_balance_from_url(&self, url: &str) -> Result<(String, String)> {
+        let body: Value = self.http.get(url).send().and_then(|resp| resp.json())?;
+        let pending = body
+            .pointer("/balance/pending_confirmed")
+            .and_then(Value::as_u64)
+            .or_else(|| body.pointer("/balance/pending").and_then(Value::as_u64));
+        let paid = body.pointer("/balance/paid").and_then(Value::as_u64);
+        let (Some(pending), Some(paid)) = (pending, paid) else {
+            bail!("missing balance fields");
+        };
+        Ok((
+            format_atomic_units_bnt(pending),
+            format_atomic_units_bnt(paid),
+        ))
     }
 }
 
@@ -1854,7 +1866,7 @@ mod tests {
 
     use super::{
         advance_pool_nonce_cursor, compact_pool_address_for_log, pool_api_base_urls_from_pool_url,
-        service_pool_submit_backlog_with_submitter, should_extend_pool_assignment,
+        service_pool_submit_backlog_with_submitter, should_resume_pool_assignment,
         submit_pool_solution_with_submitter, ActivePoolJob, PoolConnectionMode, PoolJob,
         PoolShareSubmitOutcome, POOL_MAX_INFLIGHT_SUBMITS, POOL_SUBMIT_ACK_TIMEOUT,
     };
@@ -1927,13 +1939,19 @@ mod tests {
     }
 
     #[test]
-    fn pool_assignment_extension_waits_for_idle_dispatch_cursor() {
+    fn pool_assignment_resume_waits_for_idle_and_remaining_nonce_range() {
         let mut job = test_active_job(13);
-        assert!(should_extend_pool_assignment(&job, false));
-        assert!(!should_extend_pool_assignment(&job, true));
+        assert!(should_resume_pool_assignment(&job, false));
+        assert!(!should_resume_pool_assignment(&job, true));
 
         job.dispatch_nonce = job.job.nonce_end.saturating_add(1);
-        assert!(!should_extend_pool_assignment(&job, false));
+        assert!(
+            should_resume_pool_assignment(&job, false),
+            "resume must key off next_nonce because dispatch_nonce can already cover the full window"
+        );
+
+        job.next_nonce = job.job.nonce_end.saturating_add(1);
+        assert!(!should_resume_pool_assignment(&job, false));
     }
 
     #[test]
