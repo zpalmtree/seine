@@ -144,6 +144,7 @@ struct MiningControlPlane<'a> {
     submit_backlog_last_saturation_log: Option<Instant>,
     next_submit_request_id: u64,
     dev_fee_address: Option<&'static str>,
+    dev_fee_disabled: bool,
     next_wallet_tui_refresh_at: Instant,
     wallet_address_logged: bool,
     network_hashrate_cache: Option<NetworkHashrateCache>,
@@ -162,6 +163,12 @@ struct PreparedTemplate {
     target: [u8; 32],
     height: String,
     network_hashrate: String,
+}
+
+enum ResolveTemplateOutcome {
+    Template(BlockTemplateResponse),
+    DisableDevFee,
+    Stopped,
 }
 
 #[derive(Clone)]
@@ -213,6 +220,17 @@ fn compact_log_address(address: &str) -> String {
         .rev()
         .collect();
     format!("{head}...{tail}")
+}
+
+fn sync_disabled_dev_fee(
+    control_plane: &mut MiningControlPlane<'_>,
+    dev_fee_tracker: &mut DevFeeTracker,
+) {
+    if !control_plane.dev_fee_disabled() {
+        return;
+    }
+    dev_fee_tracker.disable();
+    control_plane.set_dev_fee_address(dev_fee_tracker.address());
 }
 
 fn should_use_daemon_wallet_stats_for_override(
@@ -323,6 +341,7 @@ impl<'a> MiningControlPlane<'a> {
             tip_signal,
             current_tip_height,
             dev_fee_address: None,
+            dev_fee_disabled: false,
             next_wallet_tui_refresh_at: Instant::now(),
             wallet_address_logged: false,
             network_hashrate_cache: None,
@@ -540,24 +559,68 @@ impl<'a> MiningControlPlane<'a> {
         &mut self,
         tui: &mut Option<TuiDisplay>,
     ) -> Option<BlockTemplateResponse> {
-        let address = self.blocktemplate_address().map(str::to_string);
-        resolve_next_template(
-            &mut self.prefetch,
-            self.client,
-            self.cfg,
-            &self.shutdown,
-            self.tip_signal,
-            tui,
-            address.as_deref(),
-        )
+        loop {
+            let address = self.blocktemplate_address().map(str::to_string);
+            let dev_fee_round = self.dev_fee_round_active();
+            match resolve_next_template_request(
+                &mut self.prefetch,
+                self.client,
+                self.cfg,
+                &self.shutdown,
+                self.tip_signal,
+                tui,
+                address.as_deref(),
+                dev_fee_round,
+            ) {
+                ResolveTemplateOutcome::Template(template) => return Some(template),
+                ResolveTemplateOutcome::DisableDevFee => {
+                    self.disable_dev_fee_for_session(tui);
+                }
+                ResolveTemplateOutcome::Stopped => return None,
+            }
+        }
     }
 
     fn set_dev_fee_address(&mut self, address: Option<&'static str>) {
         self.dev_fee_address = address;
     }
 
+    fn dev_fee_disabled(&self) -> bool {
+        self.dev_fee_disabled
+    }
+
+    fn dev_fee_round_active(&self) -> bool {
+        self.active_dev_fee_address().is_some()
+    }
+
+    fn active_dev_fee_address(&self) -> Option<&'static str> {
+        if self.dev_fee_disabled {
+            None
+        } else {
+            self.dev_fee_address
+        }
+    }
+
     fn blocktemplate_address(&self) -> Option<&str> {
-        resolve_blocktemplate_address(self.cfg.mining_address.as_deref(), self.dev_fee_address)
+        resolve_blocktemplate_address(
+            self.cfg.mining_address.as_deref(),
+            self.active_dev_fee_address(),
+        )
+    }
+
+    fn disable_dev_fee_for_session(&mut self, tui: &mut Option<TuiDisplay>) {
+        if self.dev_fee_disabled {
+            return;
+        }
+        self.dev_fee_disabled = true;
+        self.dev_fee_address = None;
+        warn(
+            "DEV FEE",
+            "daemon rejected dev fee reward address; disabling dev fee for this run",
+        );
+        notify_dev_fee_mode(false);
+        set_tui_dev_fee_active(tui, false);
+        render_tui_now(tui);
     }
 
     fn maybe_refresh_tui_wallet_overview(&mut self, tui: &mut Option<TuiDisplay>, force: bool) {
@@ -1212,6 +1275,7 @@ pub(super) fn run_mining_loop(
             return Ok(());
         }
     };
+    sync_disabled_dev_fee(&mut control_plane, &mut dev_fee_tracker);
     control_plane.maybe_refresh_tui_wallet_overview(&mut tui, true);
     success("MINER", "connected and mining");
     info(
@@ -1290,15 +1354,16 @@ pub(super) fn run_mining_loop(
 
         let mode_changed = dev_fee_tracker.begin_round();
         control_plane.set_dev_fee_address(dev_fee_tracker.address());
-        let is_dev_round = dev_fee_tracker.is_dev_round();
         if mode_changed {
-            set_tui_dev_fee_active(&mut tui, is_dev_round);
-            notify_dev_fee_mode(is_dev_round);
+            let next_is_dev_round = dev_fee_tracker.is_dev_round();
+            set_tui_dev_fee_active(&mut tui, next_is_dev_round);
+            notify_dev_fee_mode(next_is_dev_round);
             // Discard any prefetched template (fetched with wrong address) and get fresh one
             let Some(fresh) = control_plane.resolve_next_template(&mut tui) else {
                 break;
             };
             template = fresh;
+            sync_disabled_dev_fee(&mut control_plane, &mut dev_fee_tracker);
         }
 
         process_submit_results(
@@ -1320,6 +1385,8 @@ pub(super) fn run_mining_loop(
         ) else {
             break;
         };
+        sync_disabled_dev_fee(&mut control_plane, &mut dev_fee_tracker);
+        let is_dev_round = control_plane.dev_fee_round_active();
         let PreparedTemplate {
             header_base,
             target,
@@ -1402,6 +1469,7 @@ pub(super) fn run_mining_loop(
             recent_template_cache_size,
             recent_template_cache_max_bytes,
         );
+        sync_disabled_dev_fee(&mut control_plane, &mut dev_fee_tracker);
         template = next_template;
     }
 
@@ -2030,7 +2098,7 @@ impl<'a> RoundRuntime<'a> {
     }
 }
 
-fn resolve_next_template(
+fn resolve_next_template_request(
     prefetch: &mut Option<TemplatePrefetch>,
     client: &ApiClient,
     cfg: &Config,
@@ -2038,12 +2106,13 @@ fn resolve_next_template(
     tip_signal: Option<&TipSignal>,
     tui: &mut Option<TuiDisplay>,
     address: Option<&str>,
-) -> Option<BlockTemplateResponse> {
+    dev_fee_round: bool,
+) -> ResolveTemplateOutcome {
     if shutdown.load(Ordering::Relaxed) {
         if let Some(task) = prefetch.take() {
             task.detach();
         }
-        return None;
+        return ResolveTemplateOutcome::Stopped;
     }
 
     if prefetch.is_none() {
@@ -2069,7 +2138,9 @@ fn resolve_next_template(
         let latest_tip_sequence = current_tip_sequence(tip_signal);
         let wait = cfg.prefetch_wait.max(Duration::from_millis(1));
         let (prefetch_result, prefetch_closed) = {
-            let task = prefetch.as_mut()?;
+            let Some(task) = prefetch.as_mut() else {
+                return ResolveTemplateOutcome::Stopped;
+            };
             task.request_if_idle(latest_tip_sequence, address);
             let result = task.wait_for_result(wait);
             let closed = task.is_closed();
@@ -2104,7 +2175,7 @@ fn resolve_next_template(
                 network_retry.note_recovered("NETWORK", "blocktemplate fetch recovered");
                 auth_retry.note_recovered("AUTH", "auth refreshed from cookie");
                 render_tui_now(tui);
-                return Some(*template);
+                return ResolveTemplateOutcome::Template(*template);
             }
             PrefetchOutcome::NoWalletLoaded => {
                 set_tui_blocktemplate_retrying(tui, false);
@@ -2122,7 +2193,7 @@ fn resolve_next_template(
                             "unable to auto-load wallet; use --wallet-password, --wallet-password-file, SEINE_WALLET_PASSWORD, or interactive prompt",
                         );
                         render_tui_now(tui);
-                        return None;
+                        return ResolveTemplateOutcome::Stopped;
                     }
                     Err(load_err) => {
                         error(
@@ -2130,7 +2201,7 @@ fn resolve_next_template(
                             format!("automatic wallet load failed: {load_err:#}"),
                         );
                         render_tui_now(tui);
-                        return None;
+                        return ResolveTemplateOutcome::Stopped;
                     }
                 }
             }
@@ -2153,11 +2224,20 @@ fn resolve_next_template(
                 }
                 render_tui_now(tui);
                 if !sleep_with_shutdown(shutdown.as_ref(), TEMPLATE_RETRY_DELAY) {
-                    return None;
+                    return ResolveTemplateOutcome::Stopped;
                 }
             }
             PrefetchOutcome::InvalidAddress => {
                 set_tui_blocktemplate_retrying(tui, false);
+                if dev_fee_round {
+                    warn(
+                        "WALLET",
+                        invalid_reward_address_message(address, cfg.mining_address.as_deref()),
+                    );
+                    render_tui_now(tui);
+                    return ResolveTemplateOutcome::DisableDevFee;
+                }
+
                 set_tui_state_label(tui, "invalid-address");
                 error(
                     "WALLET",
@@ -2169,7 +2249,7 @@ fn resolve_next_template(
                 );
                 render_tui_now(tui);
                 wait_invalid_address_halt(shutdown.as_ref(), tui);
-                return None;
+                return ResolveTemplateOutcome::Stopped;
             }
             PrefetchOutcome::Unavailable => {
                 set_tui_blocktemplate_retrying(tui, true);
@@ -2182,13 +2262,13 @@ fn resolve_next_template(
                 );
                 render_tui_now(tui);
                 if !sleep_with_shutdown(shutdown.as_ref(), TEMPLATE_RETRY_DELAY) {
-                    return None;
+                    return ResolveTemplateOutcome::Stopped;
                 }
             }
         }
     }
 
-    None
+    ResolveTemplateOutcome::Stopped
 }
 struct DeferredQueueState<'a> {
     deferred_solutions: &'a mut VecDeque<MiningSolution>,
@@ -2626,6 +2706,99 @@ mod tests {
         .expect("submit test client should be created")
     }
 
+    fn test_config(server: &MockServer) -> Config {
+        Config {
+            mode: crate::config::MiningMode::Daemon,
+            pool_url: None,
+            pool_worker: None,
+            dev_fee_pool_worker: "seine-devfee-test".to_string(),
+            api_url: server.url("").trim_end_matches('/').to_string(),
+            token: Some("test-token".to_string()),
+            token_cookie_path: None,
+            wallet_password: None,
+            wallet_password_file: None,
+            mining_address: None,
+            backend_specs: vec![crate::config::BackendSpec {
+                kind: crate::config::BackendKind::Cpu,
+                device_index: None,
+                cpu_threads: Some(1),
+                cpu_affinity: Some(crate::config::CpuAffinityMode::Off),
+                assign_timeout_override: None,
+                control_timeout_override: None,
+                assign_timeout_strikes_override: None,
+            }],
+            threads: 1,
+            cpu_auto_threads_cap: 1,
+            cpu_affinity: crate::config::CpuAffinityMode::Off,
+            cpu_profile: crate::config::CpuPerformanceProfile::Balanced,
+            refresh_interval: Duration::from_secs(20),
+            request_timeout: Duration::from_secs(10),
+            events_stream_timeout: Duration::from_secs(10),
+            events_idle_timeout: Duration::from_secs(90),
+            stats_interval: Duration::from_secs(10),
+            backend_event_capacity: 1024,
+            hash_poll_interval: Duration::from_millis(200),
+            cpu_hash_batch_size: 64,
+            cpu_control_check_interval_hashes: 1,
+            cpu_hash_flush_interval: Duration::from_millis(50),
+            cpu_event_dispatch_capacity: 256,
+            cpu_autotune_threads: false,
+            cpu_autotune_min_threads: 1,
+            cpu_autotune_max_threads: None,
+            cpu_autotune_secs: 2,
+            cpu_autotune_config_path: std::path::PathBuf::from("./data/seine.cpu-autotune.json"),
+            nvidia_autotune_secs: 2,
+            nvidia_autotune_samples: 2,
+            nvidia_autotune_config_path: std::path::PathBuf::from(
+                "./data/seine.nvidia-autotune.json",
+            ),
+            nvidia_max_rregcount: None,
+            nvidia_max_lanes: None,
+            nvidia_dispatch_iters_per_lane: None,
+            nvidia_allocation_iters_per_lane: None,
+            nvidia_hashes_per_launch_per_lane: 2,
+            nvidia_fused_target_check: false,
+            nvidia_adaptive_launch_depth: true,
+            nvidia_enforce_template_stop: false,
+            metal_max_lanes: None,
+            metal_hashes_per_launch_per_lane: 2,
+            backend_assign_timeout: Duration::from_millis(1_000),
+            backend_assign_timeout_strikes: 3,
+            backend_control_timeout: Duration::from_millis(60_000),
+            allow_best_effort_deadlines: false,
+            prefetch_wait: Duration::from_millis(250),
+            tip_listener_join_wait: Duration::from_millis(250),
+            submit_join_wait: Duration::from_millis(2_000),
+            strict_round_accounting: false,
+            start_nonce: 0,
+            nonce_iters_per_lane: 1 << 20,
+            work_allocation: WorkAllocation::Adaptive,
+            sub_round_rebalance_interval: None,
+            sse_enabled: true,
+            refresh_on_same_height: false,
+            ui_mode: crate::config::UiMode::Plain,
+            data_dir: std::path::PathBuf::from("./data"),
+            user_config_path: std::path::PathBuf::from("./data/seine.config.json"),
+            user_config_created: false,
+            api_server_enabled: false,
+            service_mode: false,
+            api_bind: "127.0.0.1:9977".to_string(),
+            api_allow_unsafe_bind: false,
+            api_cors: "*".to_string(),
+            allow_wallet_prompt: true,
+            bench: false,
+            bench_kind: crate::config::BenchKind::Backend,
+            bench_secs: 20,
+            bench_rounds: 3,
+            bench_warmup_rounds: 0,
+            bench_output: None,
+            bench_baseline: None,
+            bench_fail_below_pct: None,
+            bench_baseline_policy: crate::config::BenchBaselinePolicy::Strict,
+            nvidia_hint: None,
+        }
+    }
+
     fn mock_block_timestamp(server: &MockServer, height: u64, timestamp: i64) {
         let path = format!("/api/block/{height}");
         let _ = server.mock(move |when, then| {
@@ -2738,6 +2911,82 @@ mod tests {
         let address = "PpkFTCpDTBpjwaHcjWEXJwoT5MHrFpoi9cTuftzNLN7bNoBJjCSJEH5ZGXwNcUauhjgoV2ocF9RJWm8Ui2k1QAkAYrwMgG8Wk";
         let message = invalid_reward_address_message(Some(address), Some(address));
         assert!(message.contains("invalid --address value: PpkFTCpD...rwMgG8Wk"));
+    }
+
+    #[test]
+    fn invalid_dev_fee_address_disables_fee_and_retries_without_override() {
+        let server = MockServer::start();
+        let user_address = "user-address";
+        let dev_fee_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/api/mining/blocktemplate")
+                .query_param("address", crate::dev_fee::DEV_ADDRESS)
+                .header("authorization", "Bearer test-token");
+            then.status(400)
+                .header("content-type", "application/json")
+                .json_body(json!({"error": "invalid address"}));
+        });
+        let user_retry_mock = server.mock(move |when, then| {
+            when.method(GET)
+                .path("/api/mining/blocktemplate")
+                .query_param("address", user_address)
+                .header("authorization", "Bearer test-token");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "block": {
+                        "header": {"nonce": 0u64},
+                        "txns": []
+                    },
+                    "target": "00",
+                    "header_base": "11",
+                    "template_id": "tmpl-user"
+                }));
+        });
+
+        let client = submit_test_client(&server);
+        let mut cfg = test_config(&server);
+        cfg.mining_address = Some(user_address.to_string());
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let mut control_plane = MiningControlPlane::new(&client, &cfg, shutdown, None);
+        control_plane.set_dev_fee_address(Some(crate::dev_fee::DEV_ADDRESS));
+
+        let mut tui = None;
+        let template = control_plane
+            .resolve_next_template(&mut tui)
+            .expect("dev fee fallback should retry with user template");
+
+        assert_eq!(template.template_id.as_deref(), Some("tmpl-user"));
+        assert!(control_plane.dev_fee_disabled());
+        assert_eq!(control_plane.blocktemplate_address(), Some(user_address));
+        dev_fee_mock.assert_hits(1);
+        user_retry_mock.assert_hits(1);
+    }
+
+    #[test]
+    fn invalid_user_address_still_halts_without_disabling_dev_fee() {
+        let server = MockServer::start();
+        let user_address = "bad-user-address";
+        let invalid_mock = server.mock(move |when, then| {
+            when.method(GET)
+                .path("/api/mining/blocktemplate")
+                .query_param("address", user_address)
+                .header("authorization", "Bearer test-token");
+            then.status(400)
+                .header("content-type", "application/json")
+                .json_body(json!({"error": "invalid address"}));
+        });
+
+        let client = submit_test_client(&server);
+        let mut cfg = test_config(&server);
+        cfg.mining_address = Some(user_address.to_string());
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let mut control_plane = MiningControlPlane::new(&client, &cfg, shutdown, None);
+
+        let mut tui = None;
+        assert!(control_plane.resolve_next_template(&mut tui).is_none());
+        assert!(!control_plane.dev_fee_disabled());
+        invalid_mock.assert_hits(1);
     }
 
     #[test]

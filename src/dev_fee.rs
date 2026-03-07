@@ -57,6 +57,11 @@ impl DevFeeTracker {
         self.is_dev_round != was_dev
     }
 
+    pub fn disable(&mut self) {
+        self.fee_fraction = 0.0;
+        self.is_dev_round = false;
+    }
+
     /// Call at the end of each round to accumulate elapsed time.
     pub fn end_round(&mut self, elapsed: Duration) {
         self.total_elapsed += elapsed;
@@ -204,6 +209,22 @@ mod tests {
         tracker.end_round(GRACE_PERIOD + Duration::from_secs(20));
         tracker.begin_round();
         assert_eq!(tracker.address(), Some(DEV_ADDRESS));
+    }
+
+    #[test]
+    fn disable_turns_off_current_and_future_dev_rounds() {
+        let mut tracker = DevFeeTracker::new();
+        tracker.end_round(GRACE_PERIOD + Duration::from_secs(20));
+        tracker.begin_round();
+        assert!(tracker.is_dev_round());
+
+        tracker.disable();
+        assert!(!tracker.is_dev_round());
+        assert!(tracker.address().is_none());
+
+        let changed = tracker.begin_round();
+        assert!(!changed);
+        assert!(!tracker.is_dev_round());
     }
 
     #[test]
