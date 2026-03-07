@@ -65,6 +65,10 @@ impl PoolConnectionMode {
     }
 }
 
+fn should_apply_submit_ack_difficulty_immediately(mode: PoolConnectionMode) -> bool {
+    mode.is_user()
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct PoolConnectionConfig {
     mode: PoolConnectionMode,
@@ -1014,17 +1018,19 @@ fn handle_active_pool_event(
                 }
             }
             if let Some(difficulty) = ack.difficulty {
-                apply_submit_ack_difficulty(
-                    mode,
-                    cfg,
-                    work_id_cursor,
-                    epoch_cursor,
-                    backends,
-                    backend_executor,
-                    backend_weights,
-                    active_job,
-                    difficulty,
-                )?;
+                if should_apply_submit_ack_difficulty_immediately(mode) {
+                    apply_submit_ack_difficulty(
+                        mode,
+                        cfg,
+                        work_id_cursor,
+                        epoch_cursor,
+                        backends,
+                        backend_executor,
+                        backend_weights,
+                        active_job,
+                        difficulty,
+                    )?;
+                }
             }
             if ack_for_current_job {
                 if let Some(job) = active_job.as_mut() {
@@ -1145,9 +1151,11 @@ fn handle_inactive_pool_event(
             if ack_for_current_job {
                 if let Some(job) = inactive_job.as_mut() {
                     if let Some(difficulty) = ack.difficulty {
-                        let difficulty = difficulty.max(1);
-                        job.share_difficulty = Some(difficulty);
-                        job.target = difficulty_to_target(difficulty);
+                        if should_apply_submit_ack_difficulty_immediately(mode) {
+                            let difficulty = difficulty.max(1);
+                            job.share_difficulty = Some(difficulty);
+                            job.target = difficulty_to_target(difficulty);
+                        }
                     }
                     service_pool_submit_backlog(mode, pool_client, job, stats);
                 }
@@ -1866,9 +1874,10 @@ mod tests {
 
     use super::{
         advance_pool_nonce_cursor, compact_pool_address_for_log, pool_api_base_urls_from_pool_url,
-        service_pool_submit_backlog_with_submitter, should_resume_pool_assignment,
-        submit_pool_solution_with_submitter, ActivePoolJob, PoolConnectionMode, PoolJob,
-        PoolShareSubmitOutcome, POOL_MAX_INFLIGHT_SUBMITS, POOL_SUBMIT_ACK_TIMEOUT,
+        service_pool_submit_backlog_with_submitter, should_apply_submit_ack_difficulty_immediately,
+        should_resume_pool_assignment, submit_pool_solution_with_submitter, ActivePoolJob,
+        PoolConnectionMode, PoolJob, PoolShareSubmitOutcome, POOL_MAX_INFLIGHT_SUBMITS,
+        POOL_SUBMIT_ACK_TIMEOUT,
     };
 
     fn test_active_job(epoch: u64) -> ActivePoolJob {
@@ -2092,5 +2101,15 @@ mod tests {
         assert!(job.pending_submit_nonces.contains_key(&healthy_nonce));
         assert!(job.pending_submit_nonces.contains_key(&deferred_nonce));
         assert!(job.submitted_nonces.contains(&timed_out_nonce));
+    }
+
+    #[test]
+    fn submit_ack_difficulty_is_deferred_for_dev_sessions() {
+        assert!(!should_apply_submit_ack_difficulty_immediately(
+            PoolConnectionMode::Dev
+        ));
+        assert!(should_apply_submit_ack_difficulty_immediately(
+            PoolConnectionMode::User
+        ));
     }
 }
