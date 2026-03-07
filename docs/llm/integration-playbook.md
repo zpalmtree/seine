@@ -36,6 +36,8 @@ If starting in daemon mode and daemon auth is not preconfigured, include one of:
 - `token` in `POST /v1/miner/start`
 - `cookie_path` in `POST /v1/miner/start`
 
+In pool mode, those same fields remain optional and enable local daemon wallet balance when a local daemon is available.
+
 ## 3. Observe Live Progress
 
 ```bash

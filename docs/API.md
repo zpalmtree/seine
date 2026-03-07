@@ -46,6 +46,7 @@ Behavior:
 
 - Pool mode (`mode=pool`) requires `mining_address`, `pool_url`, and `pool_worker`.
 - Daemon mode (`mode=daemon`) requires daemon auth token.
+- Pool mode may also include daemon auth to enable local daemon wallet balance alongside pool stats when a local daemon is available.
 
 Daemon auth can be provided via:
 
@@ -93,6 +94,7 @@ See schema files:
 High-impact groups:
 
 - Mode/connectivity/auth: `mode`, `api_url`, `token`, `cookie_path`, `mining_address`, `pool_url`, `pool_worker`
+  Optional in pool mode: `token` or `cookie_path` lets Seine read local daemon wallet balance alongside pool stats without switching out of pool mining.
 - Backend topology: `backend_specs`, `threads`, `cpu_affinity`, `cpu_profile`
 - Runtime timing: `refresh_secs`, `request_timeout_secs`, `stats_secs`
 - CPU/NVIDIA/Metal tuning knobs (same names as runtime config fields)

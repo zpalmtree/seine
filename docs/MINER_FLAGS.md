@@ -15,13 +15,13 @@ For the raw CLI output, run:
 | `--mode` | `pool` or `daemon`, default `pool` | Selects mining mode. |
 | `--pool-url` | `host:port` or `stratum+tcp://host:port` | Stratum pool endpoint used in pool mode. |
 | `--pool-worker` | string | Worker name sent during pool login. |
-| `--api-url` | URL, default auto-detected then `http://127.0.0.1:8332` | Blocknet daemon API base URL (daemon mode). |
-| `--token` | string | Explicit daemon API bearer token (daemon mode). |
+| `--api-url` | URL, default auto-detected then `http://127.0.0.1:8332` | Blocknet daemon API base URL. Required for daemon mode; optional in pool mode for local daemon wallet balance. |
+| `--token` | string | Explicit daemon API bearer token. Required in daemon mode; optional in pool mode for local daemon wallet balance. |
 | `--wallet-password` | string | Wallet password for automatic wallet load when needed. |
 | `--wallet-password-file` | path | File containing the wallet password. |
 | `--address` | string | Pool login address in pool mode, or payout-address override for daemon templates. In daemon mode, if it matches daemon wallet address, TUI wallet stats remain available; otherwise pending/unlocked display as `---`. |
-| `--cookie` | path | Explicit `api.cookie` path used to read daemon API token (daemon mode). |
-| `--daemon-dir` | path, default `./blocknet-data-mainnet` | Daemon data dir used to find `api.cookie` when `--cookie` is not set (daemon mode). |
+| `--cookie` | path | Explicit `api.cookie` path used to read daemon API token. Required or equivalent in daemon mode; optional in pool mode for local daemon wallet balance. |
+| `--daemon-dir` | path, default `./blocknet-data-mainnet` | Daemon data dir used to find `api.cookie` when `--cookie` is not set. Also used by pool mode when probing for a local daemon wallet. |
 | `--data-dir` | path, default `./seine-data` | Seine data dir for persisted state (`seine.config.json`, autotune caches, etc). |
 
 ## Backend Selection and Topology
@@ -153,6 +153,7 @@ For the raw CLI output, run:
 - `--cpu-autotune-threads` and `--disable-cpu-autotune-threads` are mutually exclusive.
 - In API start/patch payloads, `token` and `cookie_path` are mutually exclusive.
 - In pool mode, `address` and `pool_url` are required.
+- In pool mode, daemon auth is optional; when available, Seine will keep pool balance stats in the TUI and also show the local daemon wallet balance.
 - In daemon mode, daemon API auth (`token` or `cookie`) is required.
 - Per-instance lists must match expanded backend instance count (or CPU instance count for CPU-specific lists).
 - Numeric knobs documented as `>=1` are rejected when passed as `0`.

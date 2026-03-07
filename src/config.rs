@@ -912,7 +912,7 @@ impl Config {
         )?;
 
         let mode = cli.mode.unwrap_or(MiningMode::Pool);
-        let daemon_context = if cli.bench || mode == MiningMode::Pool {
+        let daemon_context = if cli.bench {
             None
         } else {
             detect_daemon_context(cli.testnet.then_some(DaemonNetwork::Testnet))
@@ -925,22 +925,12 @@ impl Config {
             );
         }
 
-        let (token, token_cookie_path) = if cli.bench || mode == MiningMode::Pool {
+        let (token, token_cookie_path) = if cli.bench {
             (None, None)
-        } else if cli.service {
-            resolve_service_token_with_source(&cli, daemon_context.as_ref())?
         } else {
-            let (token, cookie_path) = resolve_token_with_source(&cli, daemon_context.as_ref())?;
-            (Some(token), cookie_path)
+            resolve_runtime_token_with_source(&cli, mode, daemon_context.as_ref())?
         };
-        let api_url = if mode == MiningMode::Daemon {
-            resolve_api_url(cli.api_url.as_deref(), daemon_context.as_ref())
-        } else {
-            cli.api_url
-                .as_deref()
-                .map(normalize_api_url)
-                .unwrap_or_else(|| DEFAULT_API_URL.to_string())
-        };
+        let api_url = resolve_api_url(cli.api_url.as_deref(), daemon_context.as_ref());
         let strict_round_accounting = cli.strict_round_accounting && !cli.relaxed_accounting;
         let nvidia_enforce_template_stop = match cli.nvidia_template_stop_policy {
             NvidiaTemplateStopPolicy::Auto => strict_round_accounting,
@@ -1221,6 +1211,19 @@ fn resolve_service_token_with_source(
     }
 
     Ok((None, None))
+}
+
+fn resolve_runtime_token_with_source(
+    cli: &Cli,
+    mode: MiningMode,
+    daemon_context: Option<&DaemonContext>,
+) -> Result<(Option<String>, Option<PathBuf>)> {
+    if mode == MiningMode::Daemon && !cli.service {
+        let (token, cookie_path) = resolve_token_with_source(cli, daemon_context)?;
+        Ok((Some(token), cookie_path))
+    } else {
+        resolve_service_token_with_source(cli, daemon_context)
+    }
 }
 
 fn resolved_cli_daemon_dir(cli: &Cli) -> PathBuf {
@@ -2446,6 +2449,41 @@ HugePages_Rsvd:          0
 
         let (token, source) =
             resolve_service_token_with_source(&cli, None).expect("missing token is allowed");
+        assert!(token.is_none());
+        assert!(source.is_none());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn resolve_runtime_token_reads_cookie_in_pool_mode_when_present() {
+        let dir = unique_temp_dir();
+        fs::create_dir_all(&dir).expect("temp dir should be created");
+        let cookie = dir.join("api.cookie");
+        fs::write(&cookie, "deadbeef\n").expect("cookie should be written");
+
+        let mut cli = sample_cli();
+        cli.mode = Some(MiningMode::Pool);
+        cli.daemon_dir = Some(dir.clone());
+
+        let (token, source) = resolve_runtime_token_with_source(&cli, MiningMode::Pool, None)
+            .expect("pool mode should read optional cookie");
+        assert_eq!(token.as_deref(), Some("deadbeef"));
+        assert_eq!(source.as_deref(), Some(cookie.as_path()));
+        let _ = fs::remove_file(cookie);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn resolve_runtime_token_allows_missing_cookie_in_pool_mode() {
+        let dir = unique_temp_dir();
+        fs::create_dir_all(&dir).expect("temp dir should be created");
+
+        let mut cli = sample_cli();
+        cli.mode = Some(MiningMode::Pool);
+        cli.daemon_dir = Some(dir.clone());
+
+        let (token, source) = resolve_runtime_token_with_source(&cli, MiningMode::Pool, None)
+            .expect("pool mode should allow missing daemon auth");
         assert!(token.is_none());
         assert!(source.is_none());
         let _ = fs::remove_dir_all(dir);

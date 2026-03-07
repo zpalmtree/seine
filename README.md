@@ -161,6 +161,8 @@ All miner flags are documented in [`docs/MINER_FLAGS.md`](docs/MINER_FLAGS.md).
 
 Note: in daemon mode, when `--address` matches the daemon wallet address, Seine keeps wallet pending/unlocked stats in the TUI. If it differs, TUI balance fields show `---` for the override address.
 
+In pool mode, Seine now also checks for a local daemon when daemon auth is available. If one responds, the TUI wallet panel keeps the pool balance and also shows the local daemon wallet balance.
+
 ## Control API
 
 Seine now supports a local control API for alternative frontends.
@@ -191,7 +193,7 @@ curl -s -X POST http://127.0.0.1:9977/v1/miner/start \
 ./seine --api-server --api-bind 127.0.0.1:9977
 ```
 
-`/v1/miner/start` accepts mode-specific fields (`mode`, `pool_url`, `pool_worker`, `mining_address`) plus daemon auth fields (`token` or `cookie_path`) when running in daemon mode.
+`/v1/miner/start` accepts mode-specific fields (`mode`, `pool_url`, `pool_worker`, `mining_address`) plus optional daemon auth fields (`token` or `cookie_path`). In pool mode, daemon auth enables local daemon wallet balance alongside pool figures when a daemon is available.
 
 Key endpoints:
 - `GET /v1/runtime/state`

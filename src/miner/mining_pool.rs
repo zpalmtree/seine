@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -10,6 +11,7 @@ use serde_json::Value;
 
 use crate::backend::MiningSolution;
 use crate::config::{Config, WorkAllocation};
+use crate::daemon_api::{is_unauthorized_error, ApiClient};
 use crate::dev_fee::{effective_pool_dev_fee_percent, DevFeeTracker, DEV_ADDRESS, DEV_FEE_PERCENT};
 use crate::pool::{
     PoolClient, PoolEvent, PoolJob, POOL_NOTIFICATION_MINER_BLOCK_FOUND,
@@ -17,10 +19,12 @@ use crate::pool::{
 };
 use crate::types::{decode_hex, difficulty_to_target, parse_target};
 
+use super::auth::{refresh_api_token_from_cookie, TokenRefreshOutcome};
 use super::mining::MiningRuntimeBackends;
 use super::mining_tui::{
     init_tui_display, render_tui_now, set_tui_dev_fee_active, set_tui_pending_nvidia,
-    set_tui_state_label, set_tui_wallet_overview, update_tui, RoundUiView, TuiDisplay,
+    set_tui_pool_balance_overview, set_tui_state_label, set_tui_wallet_overview, update_tui,
+    RoundUiView, TuiDisplay,
 };
 use super::runtime::{maybe_print_stats, seed_backend_weights, work_distribution_weights};
 use super::scheduler::NonceReservation;
@@ -88,6 +92,7 @@ struct PoolTelemetryRefreshResult {
     request_id: u64,
     hashrate: Option<String>,
     balances: Option<(String, String)>,
+    local_wallet: Option<LocalDaemonWalletSnapshot>,
     errors: Vec<String>,
 }
 
@@ -96,6 +101,13 @@ struct PoolTelemetryEndpoint {
     stats_url: String,
     miner_balance_url: String,
     miner_url: String,
+}
+
+#[derive(Debug, Clone)]
+struct LocalDaemonWalletSnapshot {
+    address: String,
+    pending: String,
+    unlocked: String,
 }
 
 struct PoolSession {
@@ -248,7 +260,7 @@ fn connect_pool_session(
         );
     }
     if update_ui {
-        set_tui_wallet_overview(tui, &connection.address, "---", "---");
+        set_tui_pool_balance_overview(tui, &connection.address, "---", "---");
     }
     Ok((pool_client, telemetry))
 }
@@ -257,6 +269,7 @@ pub(super) fn run_pool_mining_loop(
     cfg: &Config,
     shutdown: Arc<AtomicBool>,
     runtime_backends: MiningRuntimeBackends<'_>,
+    local_daemon_client: Option<ApiClient>,
     tui_state: Option<TuiState>,
     deferred_backends: Option<(Receiver<super::BackendSlot>, u64)>,
 ) -> Result<()> {
@@ -301,7 +314,7 @@ pub(super) fn run_pool_mining_loop(
     if tui.is_some() {
         super::maybe_warn_linux_hugepages_setup(cfg, RuntimeMode::Mining);
         set_tui_dev_fee_active(&mut tui, active_mode == PoolConnectionMode::Dev);
-        set_tui_wallet_overview(&mut tui, &user_connection.address, "---", "---");
+        set_tui_pool_balance_overview(&mut tui, &user_connection.address, "---", "---");
     }
     let (user_client, user_telemetry) =
         connect_pool_session(&user_connection, Arc::clone(&shutdown), &mut tui, false)?;
@@ -332,6 +345,8 @@ pub(super) fn run_pool_mining_loop(
     let (telemetry_result_tx, telemetry_result_rx) = unbounded::<PoolTelemetryRefreshResult>();
     let mut telemetry_next_request_id = 0u64;
     let mut telemetry_inflight_request_id: Option<u64> = None;
+    let mut local_wallet_address_logged: Option<String> = None;
+    let mut local_wallet_mismatch_logged = false;
 
     while !shutdown.load(Ordering::Relaxed) {
         if backends.is_empty() {
@@ -494,8 +509,30 @@ pub(super) fn run_pool_mining_loop(
             if let Some(hashrate) = result.hashrate {
                 pool_network_hashrate = hashrate;
             }
-            if let Some((pending, paid)) = result.balances {
-                set_tui_wallet_overview(&mut tui, user_address, &pending, &paid);
+            if let Some(snapshot) = result.local_wallet {
+                set_tui_wallet_overview(
+                    &mut tui,
+                    &snapshot.address,
+                    &snapshot.pending,
+                    &snapshot.unlocked,
+                );
+                if local_wallet_address_logged.as_deref() != Some(snapshot.address.as_str()) {
+                    info(
+                        "WALLET",
+                        format!("using local daemon wallet balance: {}", snapshot.address),
+                    );
+                    local_wallet_address_logged = Some(snapshot.address.clone());
+                    local_wallet_mismatch_logged = false;
+                }
+                if snapshot.address != user_address && !local_wallet_mismatch_logged {
+                    warn(
+                        "WALLET",
+                        "local daemon wallet differs from pool payout address; wallet panel shows the local daemon wallet",
+                    );
+                    local_wallet_mismatch_logged = true;
+                }
+            } else if let Some((pending, paid)) = result.balances {
+                set_tui_pool_balance_overview(&mut tui, user_address, &pending, &paid);
             }
 
             if result.errors.is_empty() {
@@ -513,36 +550,54 @@ pub(super) fn run_pool_mining_loop(
                 pool_telemetry_warning_logged = true;
             }
         }
-        if let Some(telemetry) = user_telemetry {
+        if user_telemetry.is_some() || local_daemon_client.is_some() {
             if Instant::now() >= next_pool_telemetry_refresh
                 && telemetry_inflight_request_id.is_none()
             {
                 telemetry_next_request_id = telemetry_next_request_id.wrapping_add(1).max(1);
                 let request_id = telemetry_next_request_id;
-                let telemetry = telemetry.clone();
+                let telemetry = user_telemetry.cloned();
+                let local_daemon_client = local_daemon_client.clone();
+                let local_daemon_cookie_path = cfg.token_cookie_path.clone();
                 let tx = telemetry_result_tx.clone();
                 let spawn_result = std::thread::Builder::new()
                     .name("pool-telemetry-user".to_string())
                     .spawn(move || {
                         let mut errors = Vec::new();
-                        let hashrate = match telemetry.fetch_pool_hashrate() {
-                            Ok(value) => Some(value),
-                            Err(err) => {
-                                errors.push(format!("global hashrate: {err:#}"));
-                                None
+                        let hashrate = if let Some(telemetry) = telemetry.as_ref() {
+                            match telemetry.fetch_pool_hashrate() {
+                                Ok(value) => Some(value),
+                                Err(err) => {
+                                    errors.push(format!("global hashrate: {err:#}"));
+                                    None
+                                }
                             }
+                        } else {
+                            None
                         };
-                        let balances = match telemetry.fetch_pool_balances() {
-                            Ok(value) => Some(value),
-                            Err(err) => {
-                                errors.push(format!("balance: {err:#}"));
-                                None
+                        let balances = if let Some(telemetry) = telemetry.as_ref() {
+                            match telemetry.fetch_pool_balances() {
+                                Ok(value) => Some(value),
+                                Err(err) => {
+                                    errors.push(format!("balance: {err:#}"));
+                                    None
+                                }
                             }
+                        } else {
+                            None
                         };
+                        let local_wallet = local_daemon_client.as_ref().and_then(|client| {
+                            fetch_local_daemon_wallet_snapshot(
+                                client,
+                                local_daemon_cookie_path.as_ref(),
+                            )
+                            .ok()
+                        });
                         let _ = tx.send(PoolTelemetryRefreshResult {
                             request_id,
                             hashrate,
                             balances,
+                            local_wallet,
                             errors,
                         });
                     });
@@ -1738,6 +1793,39 @@ impl PoolUiTelemetryClient {
     }
 }
 
+fn fetch_local_daemon_wallet_snapshot(
+    client: &ApiClient,
+    cookie_path: Option<&PathBuf>,
+) -> Result<LocalDaemonWalletSnapshot> {
+    match fetch_local_daemon_wallet_snapshot_once(client) {
+        Ok(snapshot) => Ok(snapshot),
+        Err(err) if is_unauthorized_error(&err) => {
+            match refresh_api_token_from_cookie(client, cookie_path.map(PathBuf::as_path)) {
+                TokenRefreshOutcome::Refreshed | TokenRefreshOutcome::Unchanged => {
+                    fetch_local_daemon_wallet_snapshot_once(client)
+                }
+                TokenRefreshOutcome::Unavailable => Err(err),
+                TokenRefreshOutcome::Failed(message) => {
+                    bail!("failed to refresh local daemon auth from cookie: {message}");
+                }
+            }
+        }
+        Err(err) => Err(err),
+    }
+}
+
+fn fetch_local_daemon_wallet_snapshot_once(
+    client: &ApiClient,
+) -> Result<LocalDaemonWalletSnapshot> {
+    let address = client.get_wallet_address()?.address;
+    let balance = client.get_wallet_balance()?;
+    Ok(LocalDaemonWalletSnapshot {
+        address,
+        pending: format_atomic_units_bnt(balance.pending),
+        unlocked: format_atomic_units_bnt(balance.spendable),
+    })
+}
+
 fn div_ceil_u64(value: u64, divisor: u64) -> u64 {
     let divisor = divisor.max(1);
     (value.saturating_add(divisor - 1)) / divisor
@@ -1866,19 +1954,44 @@ fn compact_pool_address_for_log(address: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::path::PathBuf;
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
     use crate::backend::MiningSolution;
+    use crate::daemon_api::ApiClient;
     use crate::miner::stats::Stats;
+    use httpmock::prelude::*;
+    use serde_json::json;
 
     use super::{
-        advance_pool_nonce_cursor, compact_pool_address_for_log, pool_api_base_urls_from_pool_url,
+        advance_pool_nonce_cursor, compact_pool_address_for_log,
+        fetch_local_daemon_wallet_snapshot, pool_api_base_urls_from_pool_url,
         service_pool_submit_backlog_with_submitter, should_apply_submit_ack_difficulty_immediately,
         should_resume_pool_assignment, submit_pool_solution_with_submitter, ActivePoolJob,
         PoolConnectionMode, PoolJob, PoolShareSubmitOutcome, POOL_MAX_INFLIGHT_SUBMITS,
         POOL_SUBMIT_ACK_TIMEOUT,
     };
+
+    fn test_daemon_client(server: &MockServer, token: &str) -> ApiClient {
+        ApiClient::new(
+            server.url("").trim_end_matches('/').to_string(),
+            token.to_string(),
+            Duration::from_secs(5),
+            Duration::from_secs(5),
+            Duration::from_secs(30),
+        )
+        .expect("test daemon client should be created")
+    }
+
+    fn unique_temp_dir() -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time should be after unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("seine-pool-test-{nanos}"))
+    }
 
     fn test_active_job(epoch: u64) -> ActivePoolJob {
         ActivePoolJob::new(
@@ -1931,6 +2044,84 @@ mod tests {
                 "https://example.com:8443".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn local_daemon_wallet_snapshot_reads_address_and_balance() {
+        let server = MockServer::start();
+        let addr_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/api/wallet/address")
+                .header("authorization", "Bearer testtoken");
+            then.status(200)
+                .json_body(json!({ "address": "Pwallet123" }));
+        });
+        let balance_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/api/wallet/balance")
+                .header("authorization", "Bearer testtoken");
+            then.status(200).json_body(json!({
+                "pending": 450_000_000u64,
+                "spendable": 123_000_000u64
+            }));
+        });
+
+        let client = test_daemon_client(&server, "testtoken");
+        let snapshot =
+            fetch_local_daemon_wallet_snapshot(&client, None).expect("wallet snapshot expected");
+
+        assert_eq!(snapshot.address, "Pwallet123");
+        assert_eq!(snapshot.pending, "4.5 BNT");
+        assert_eq!(snapshot.unlocked, "1.23 BNT");
+        addr_mock.assert_hits(1);
+        balance_mock.assert_hits(1);
+    }
+
+    #[test]
+    fn local_daemon_wallet_snapshot_refreshes_cookie_after_unauthorized() {
+        let server = MockServer::start();
+        let stale_addr = server.mock(|when, then| {
+            when.method(GET)
+                .path("/api/wallet/address")
+                .header("authorization", "Bearer stale-token");
+            then.status(401)
+                .json_body(json!({ "error": "unauthorized" }));
+        });
+        let fresh_addr = server.mock(|when, then| {
+            when.method(GET)
+                .path("/api/wallet/address")
+                .header("authorization", "Bearer fresh-token");
+            then.status(200)
+                .json_body(json!({ "address": "Pwallet456" }));
+        });
+        let fresh_balance = server.mock(|when, then| {
+            when.method(GET)
+                .path("/api/wallet/balance")
+                .header("authorization", "Bearer fresh-token");
+            then.status(200).json_body(json!({
+                "pending": 10_000u64,
+                "spendable": 250_000_000u64
+            }));
+        });
+
+        let dir = unique_temp_dir();
+        fs::create_dir_all(&dir).expect("temp dir should be created");
+        let cookie_path = dir.join("api.cookie");
+        fs::write(&cookie_path, "fresh-token\n").expect("cookie should be written");
+
+        let client = test_daemon_client(&server, "stale-token");
+        let snapshot = fetch_local_daemon_wallet_snapshot(&client, Some(&cookie_path))
+            .expect("wallet snapshot should refresh auth");
+
+        assert_eq!(snapshot.address, "Pwallet456");
+        assert_eq!(snapshot.pending, "0.0001 BNT");
+        assert_eq!(snapshot.unlocked, "2.5 BNT");
+        stale_addr.assert_hits(1);
+        fresh_addr.assert_hits(1);
+        fresh_balance.assert_hits(1);
+
+        let _ = fs::remove_file(cookie_path);
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

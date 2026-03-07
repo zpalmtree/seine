@@ -100,6 +100,10 @@ pub struct TuiStateInner {
     pub submitted: u64,
     pub stale_shares: u64,
     pub accepted: u64,
+    pub pool_address: String,
+    pub pool_pending: String,
+    pub pool_paid: String,
+    pub wallet_visible: bool,
     pub wallet_address: String,
     pub wallet_pending: String,
     pub wallet_unlocked: String,
@@ -145,6 +149,10 @@ impl TuiStateInner {
             submitted: 0,
             stale_shares: 0,
             accepted: 0,
+            pool_address: "---".to_string(),
+            pool_pending: "---".to_string(),
+            pool_paid: "---".to_string(),
+            wallet_visible: false,
             wallet_address: "---".to_string(),
             wallet_pending: "---".to_string(),
             wallet_unlocked: "---".to_string(),
@@ -278,7 +286,13 @@ fn draw_dashboard(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner)
     // Pending devices are always 1-per-line (not paired in wide mode)
     let device_rows = active_rows + pending_count;
     let devices_height: u16 = if device_rows > 0 { 2 + device_rows } else { 0 };
-    let config_height: u16 = if config_two_columns { 4 } else { 8 };
+    let runtime_panel_height: u16 = 4;
+    let wallet_panel_height = wallet_panel_height(state);
+    let config_height: u16 = if config_two_columns {
+        runtime_panel_height.max(wallet_panel_height)
+    } else {
+        runtime_panel_height + wallet_panel_height
+    };
     let header_height: u16 = 4;
 
     let chunks = Layout::default()
@@ -672,6 +686,7 @@ fn draw_devices(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner, w
 }
 
 fn draw_config(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
+    let wallet_height = wallet_panel_height(state);
     if config_uses_two_columns(area.width) {
         let cols = Layout::default()
             .direction(Direction::Horizontal)
@@ -684,7 +699,7 @@ fn draw_config(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
 
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(4), Constraint::Min(4)])
+        .constraints([Constraint::Length(4), Constraint::Length(wallet_height)])
         .split(area);
     draw_config_runtime_panel(frame, rows[0], state);
     draw_config_wallet_panel(frame, rows[1], state);
@@ -692,6 +707,14 @@ fn draw_config(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
 
 fn config_uses_two_columns(width: u16) -> bool {
     width >= CONFIG_TWO_COLUMN_MIN_WIDTH
+}
+
+fn wallet_panel_height(state: &TuiStateInner) -> u16 {
+    if state.mode == "pool" && state.wallet_visible {
+        6
+    } else {
+        4
+    }
 }
 
 fn draw_config_runtime_panel(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
@@ -716,26 +739,60 @@ fn draw_config_runtime_panel(frame: &mut ratatui::Frame, area: Rect, state: &Tui
 }
 
 fn draw_config_wallet_panel(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
-    let address_str = compact_wallet_address(&state.wallet_address);
     let inner_width = area.width.saturating_sub(2) as usize;
-    let is_pool_mode = state.mode == "pool";
-    let title = if is_pool_mode {
-        " POOL BALANCE "
+    let pool_address = compact_wallet_address(&state.pool_address);
+    let wallet_address = compact_wallet_address(&state.wallet_address);
+    let (title, wallet_lines) = if state.mode == "pool" && state.wallet_visible {
+        (
+            " BALANCES ",
+            vec![
+                wallet_line_with_right(
+                    "P.Pending",
+                    &state.pool_pending,
+                    "Miner",
+                    &pool_address,
+                    inner_width,
+                ),
+                kv_line("P.Paid", &state.pool_paid),
+                wallet_line_with_right(
+                    "W.Pending",
+                    &state.wallet_pending,
+                    "Address",
+                    &wallet_address,
+                    inner_width,
+                ),
+                kv_line("Unlocked", &state.wallet_unlocked),
+            ],
+        )
+    } else if state.mode == "pool" {
+        (
+            " POOL BALANCE ",
+            vec![
+                wallet_line_with_right(
+                    "Pending",
+                    &state.pool_pending,
+                    "Miner",
+                    &pool_address,
+                    inner_width,
+                ),
+                kv_line("Paid", &state.pool_paid),
+            ],
+        )
     } else {
-        " WALLET "
+        (
+            " WALLET ",
+            vec![
+                wallet_line_with_right(
+                    "Pending",
+                    &state.wallet_pending,
+                    "Address",
+                    &wallet_address,
+                    inner_width,
+                ),
+                kv_line("Unlocked", &state.wallet_unlocked),
+            ],
+        )
     };
-    let right_label = if is_pool_mode { "Miner" } else { "Address" };
-    let second_label = if is_pool_mode { "Paid" } else { "Unlocked" };
-    let wallet_lines = vec![
-        wallet_line_with_right(
-            "Pending",
-            &state.wallet_pending,
-            right_label,
-            &address_str,
-            inner_width,
-        ),
-        kv_line(second_label, &state.wallet_unlocked),
-    ];
     let wallet_block = Block::default()
         .title(Span::styled(title, TITLE_STYLE))
         .borders(Borders::ALL)

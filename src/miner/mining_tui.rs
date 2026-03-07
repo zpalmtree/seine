@@ -274,6 +274,22 @@ pub(super) fn set_tui_pending_nvidia(tui: &mut Option<TuiDisplay>, count: u64) {
     }
 }
 
+pub(super) fn set_tui_pool_balance_overview(
+    tui: &mut Option<TuiDisplay>,
+    address: &str,
+    pending: &str,
+    paid: &str,
+) {
+    if let Some(display) = tui.as_mut() {
+        if let Ok(mut s) = display.state.lock() {
+            s.pool_address = address.to_string();
+            s.pool_pending = pending.to_string();
+            s.pool_paid = paid.to_string();
+        }
+        display.request_render();
+    }
+}
+
 pub(super) fn set_tui_wallet_overview(
     tui: &mut Option<TuiDisplay>,
     address: &str,
@@ -282,6 +298,7 @@ pub(super) fn set_tui_wallet_overview(
 ) {
     if let Some(display) = tui.as_mut() {
         if let Ok(mut s) = display.state.lock() {
+            s.wallet_visible = true;
             s.wallet_address = address.to_string();
             s.wallet_pending = pending.to_string();
             s.wallet_unlocked = unlocked.to_string();

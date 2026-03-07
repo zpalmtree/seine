@@ -401,11 +401,7 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
     let cfg = &runtime_cfg;
 
     let backend_executor = backend_executor::BackendExecutor::new();
-    let daemon_client = if cfg.mode == MiningMode::Daemon {
-        let token = cfg
-            .token
-            .clone()
-            .ok_or_else(|| anyhow!("missing API token in daemon mining mode"))?;
+    let daemon_client = if let Some(token) = cfg.token.clone() {
         Some(ApiClient::new(
             cfg.api_url.clone(),
             token,
@@ -416,6 +412,9 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
     } else {
         None
     };
+    if cfg.mode == MiningMode::Daemon && daemon_client.is_none() {
+        bail!("missing API token in daemon mining mode");
+    }
 
     // Phase 3: Build and activate non-NVIDIA backends synchronously.
     // CPU/Metal start is fast. Non-NVIDIA get IDs 1..M, NVIDIA get IDs M+1..M+N.
@@ -775,6 +774,7 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
                 backend_events: &backend_events,
                 backend_executor: &backend_executor,
             },
+            daemon_client.clone(),
             tui_state,
             deferred_backends,
         ),
@@ -825,6 +825,7 @@ fn build_tui_state(cfg: &Config, backends: &[BackendSlot]) -> TuiState {
             MiningMode::Pool => "pool".to_string(),
             MiningMode::Daemon => "daemon".to_string(),
         };
+        s.wallet_visible = cfg.mode == MiningMode::Daemon;
         s.api_url = match cfg.mode {
             MiningMode::Daemon => cfg.api_url.clone(),
             MiningMode::Pool => cfg.pool_url.clone().unwrap_or_else(|| "---".to_string()),
