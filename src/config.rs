@@ -94,10 +94,27 @@ const DEFAULT_NVIDIA_AUTOTUNE_SAMPLES: u32 = 2;
 const DEFAULT_NVIDIA_HASHES_PER_LAUNCH_PER_LANE: u32 = 2;
 const DEFAULT_NVIDIA_AUTOTUNE_CONFIG_FILE: &str = "seine.nvidia-autotune.json";
 const DEFAULT_METAL_HASHES_PER_LAUNCH_PER_LANE: u32 = 2;
+const DEFAULT_DAEMON_DIR_MAINNET: &str = "./blocknet-data-mainnet";
+const DEFAULT_DAEMON_DIR_TESTNET: &str = "./blocknet-data-testnet";
 const DEFAULT_API_URL: &str = "http://127.0.0.1:8332";
 const DEFAULT_POOL_URL: &str = "stratum+tcp://bntpool.com:3333";
 const DEFAULT_USER_CONFIG_FILE: &str = "seine.config.json";
 const DEFAULT_DEV_FEE_POOL_WORKER_PREFIX: &str = "seine-devfee";
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum DaemonNetwork {
+    Mainnet,
+    Testnet,
+}
+
+impl DaemonNetwork {
+    fn default_data_dir(self) -> PathBuf {
+        match self {
+            Self::Mainnet => PathBuf::from(DEFAULT_DAEMON_DIR_MAINNET),
+            Self::Testnet => PathBuf::from(DEFAULT_DAEMON_DIR_TESTNET),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 struct DaemonContext {
@@ -170,6 +187,10 @@ struct Cli {
     #[arg(long, value_enum)]
     mode: Option<MiningMode>,
 
+    /// Use Blocknet testnet defaults for daemon discovery in daemon mode.
+    #[arg(long, default_value_t = false)]
+    testnet: bool,
+
     /// Stratum pool endpoint for pool mode.
     /// Accepts host:port or stratum+tcp://host:port.
     #[arg(long = "pool-url")]
@@ -206,8 +227,9 @@ struct Cli {
     cookie: Option<PathBuf>,
 
     /// Daemon data directory (used to locate api.cookie when --cookie is unset).
-    #[arg(long, default_value = "./blocknet-data-mainnet")]
-    daemon_dir: PathBuf,
+    /// Defaults to ./blocknet-data-mainnet, or ./blocknet-data-testnet with --testnet.
+    #[arg(long)]
+    daemon_dir: Option<PathBuf>,
 
     /// Seine's own data directory for persisted configs (e.g. autotune results).
     #[arg(long, default_value = "./seine-data")]
@@ -893,7 +915,7 @@ impl Config {
         let daemon_context = if cli.bench || mode == MiningMode::Pool {
             None
         } else {
-            detect_daemon_context()
+            detect_daemon_context(cli.testnet.then_some(DaemonNetwork::Testnet))
         };
         let api_server_enabled = cli.api_server || cli.service;
         if api_server_enabled && !cli.api_allow_unsafe_bind && !is_loopback_bind(&cli.api_bind) {
@@ -1125,7 +1147,7 @@ fn resolve_token_with_source(
     }
 
     // Build candidate cookie paths in priority order.
-    let mut candidates: Vec<PathBuf> = vec![cli.daemon_dir.join("api.cookie")];
+    let mut candidates: Vec<PathBuf> = vec![resolved_cli_daemon_dir(cli).join("api.cookie")];
 
     // Try to discover the daemon's data directory from a running process.
     if let Some(context) = daemon_context {
@@ -1184,7 +1206,7 @@ fn resolve_service_token_with_source(
         return Ok((Some(token), Some(cookie.clone())));
     }
 
-    let mut candidates: Vec<PathBuf> = vec![cli.daemon_dir.join("api.cookie")];
+    let mut candidates: Vec<PathBuf> = vec![resolved_cli_daemon_dir(cli).join("api.cookie")];
     if let Some(context) = daemon_context {
         let daemon_cookie = context.data_dir.join("api.cookie");
         if !candidates.contains(&daemon_cookie) {
@@ -1201,8 +1223,22 @@ fn resolve_service_token_with_source(
     Ok((None, None))
 }
 
+fn resolved_cli_daemon_dir(cli: &Cli) -> PathBuf {
+    cli.daemon_dir
+        .clone()
+        .unwrap_or_else(|| cli_requested_daemon_network(cli).default_data_dir())
+}
+
+fn cli_requested_daemon_network(cli: &Cli) -> DaemonNetwork {
+    if cli.testnet {
+        DaemonNetwork::Testnet
+    } else {
+        DaemonNetwork::Mainnet
+    }
+}
+
 /// Inspect running processes to find a `blocknet` daemon and resolve runtime context.
-fn detect_daemon_context() -> Option<DaemonContext> {
+fn detect_daemon_context(preferred_network: Option<DaemonNetwork>) -> Option<DaemonContext> {
     use std::ffi::OsStr;
     use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
@@ -1221,8 +1257,12 @@ fn detect_daemon_context() -> Option<DaemonContext> {
             .filter_map(|s| s.to_str().map(String::from))
             .collect();
 
-        let data_dir = daemon_data_dir_from_cmdline(&cmd)
-            .unwrap_or_else(|| PathBuf::from("blocknet-data-mainnet"));
+        let network = daemon_network_from_cmdline(&cmd);
+        if preferred_network.is_some_and(|preferred| preferred != network) {
+            continue;
+        }
+
+        let data_dir = daemon_resolved_data_dir_from_cmdline(&cmd);
 
         // If the data dir is relative, resolve it against the daemon's cwd.
         if data_dir.is_relative() {
@@ -1241,6 +1281,19 @@ fn detect_daemon_context() -> Option<DaemonContext> {
     }
 
     None
+}
+
+fn daemon_network_from_cmdline(cmd: &[String]) -> DaemonNetwork {
+    if cmd_bool_flag_is_truthy(cmd, &["--testnet", "-testnet"]) {
+        DaemonNetwork::Testnet
+    } else {
+        DaemonNetwork::Mainnet
+    }
+}
+
+fn daemon_resolved_data_dir_from_cmdline(cmd: &[String]) -> PathBuf {
+    daemon_data_dir_from_cmdline(cmd)
+        .unwrap_or_else(|| daemon_network_from_cmdline(cmd).default_data_dir())
 }
 
 fn daemon_data_dir_from_cmdline(cmd: &[String]) -> Option<PathBuf> {
@@ -1269,6 +1322,25 @@ fn cmd_arg_value(cmd: &[String], flags: &[&str]) -> Option<String> {
         }
     }
     None
+}
+
+fn cmd_bool_flag_is_truthy(cmd: &[String], flags: &[&str]) -> bool {
+    for arg in cmd {
+        for flag in flags {
+            if arg == flag {
+                return true;
+            }
+
+            if let Some(value) = arg.strip_prefix(&format!("{flag}=")) {
+                let normalized = value.trim().to_ascii_lowercase();
+                if matches!(normalized.as_str(), "1" | "true" | "t" | "yes" | "y" | "on") {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
 }
 
 pub fn read_token_from_cookie_file(cookie_path: &Path) -> Result<String> {
@@ -2062,6 +2134,7 @@ mod tests {
     fn sample_cli() -> Cli {
         Cli {
             mode: Some(MiningMode::Daemon),
+            testnet: false,
             pool_url: None,
             pool_worker: None,
             api_url: None,
@@ -2070,7 +2143,7 @@ mod tests {
             wallet_password_file: None,
             mining_address: None,
             cookie: None,
-            daemon_dir: PathBuf::from("./blocknet-data-mainnet"),
+            daemon_dir: None,
             data_dir: PathBuf::from("./seine-data"),
             backends: vec![BackendKind::Cpu],
             nvidia_devices: Vec::new(),
@@ -2184,6 +2257,40 @@ HugePages_Rsvd:          0
     }
 
     #[test]
+    fn resolved_cli_daemon_dir_defaults_to_mainnet() {
+        let cli = sample_cli();
+        assert_eq!(
+            resolved_cli_daemon_dir(&cli),
+            PathBuf::from(DEFAULT_DAEMON_DIR_MAINNET)
+        );
+    }
+
+    #[test]
+    fn resolved_cli_daemon_dir_uses_testnet_default_when_requested() {
+        let mut cli = sample_cli();
+        cli.testnet = true;
+        assert_eq!(
+            resolved_cli_daemon_dir(&cli),
+            PathBuf::from(DEFAULT_DAEMON_DIR_TESTNET)
+        );
+    }
+
+    #[test]
+    fn daemon_resolved_data_dir_uses_testnet_default_when_flag_present() {
+        let cmd = vec!["blocknet".to_string(), "--testnet".to_string()];
+        assert_eq!(
+            daemon_resolved_data_dir_from_cmdline(&cmd),
+            PathBuf::from(DEFAULT_DAEMON_DIR_TESTNET)
+        );
+    }
+
+    #[test]
+    fn daemon_network_from_cmdline_ignores_false_testnet_value() {
+        let cmd = vec!["blocknet".to_string(), "--testnet=false".to_string()];
+        assert_eq!(daemon_network_from_cmdline(&cmd), DaemonNetwork::Mainnet);
+    }
+
+    #[test]
     fn resolve_api_url_prefers_explicit_cli_value() {
         let daemon = DaemonContext {
             data_dir: PathBuf::from("/tmp/blocknet"),
@@ -2268,9 +2375,30 @@ HugePages_Rsvd:          0
 
         let mut cli = sample_cli();
         cli.cookie = Some(cookie.clone());
-        cli.daemon_dir = dir.clone();
+        cli.daemon_dir = Some(dir.clone());
 
         let (token, source) = resolve_token_with_source(&cli, None).expect("cookie should be read");
+        assert_eq!(token, "deadbeef");
+        assert_eq!(source.as_deref(), Some(cookie.as_path()));
+        let _ = fs::remove_file(cookie);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn resolve_token_reads_detected_testnet_cookie_without_flag() {
+        let dir = unique_temp_dir();
+        fs::create_dir_all(&dir).expect("temp dir should be created");
+        let cookie = dir.join("api.cookie");
+        fs::write(&cookie, "deadbeef\n").expect("cookie should be written");
+
+        let cli = sample_cli();
+        let daemon = DaemonContext {
+            data_dir: dir.clone(),
+            api_addr: Some("127.0.0.1:8332".to_string()),
+        };
+
+        let (token, source) =
+            resolve_token_with_source(&cli, Some(&daemon)).expect("cookie should be read");
         assert_eq!(token, "deadbeef");
         assert_eq!(source.as_deref(), Some(cookie.as_path()));
         let _ = fs::remove_file(cookie);
@@ -2298,7 +2426,7 @@ HugePages_Rsvd:          0
 
         let mut cli = sample_cli();
         cli.service = true;
-        cli.daemon_dir = dir.clone();
+        cli.daemon_dir = Some(dir.clone());
 
         let (token, source) =
             resolve_service_token_with_source(&cli, None).expect("cookie should be read");
@@ -2314,7 +2442,7 @@ HugePages_Rsvd:          0
         fs::create_dir_all(&dir).expect("temp dir should be created");
         let mut cli = sample_cli();
         cli.service = true;
-        cli.daemon_dir = dir.clone();
+        cli.daemon_dir = Some(dir.clone());
 
         let (token, source) =
             resolve_service_token_with_source(&cli, None).expect("missing token is allowed");
