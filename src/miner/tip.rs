@@ -1,5 +1,4 @@
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -9,6 +8,7 @@ use anyhow::{bail, Context, Result};
 use crossbeam_channel::{bounded, Receiver, RecvTimeoutError};
 use serde_json::Value;
 
+use crate::config::Config;
 use crate::daemon_api::{is_unauthorized_error, ApiClient};
 
 use super::auth::{refresh_api_token_from_cookie, TokenRefreshOutcome};
@@ -202,7 +202,7 @@ pub(super) fn spawn_tip_listener(
     client: ApiClient,
     shutdown: Arc<AtomicBool>,
     refresh_on_same_height: bool,
-    token_cookie_path: Option<PathBuf>,
+    cfg: Config,
 ) -> TipListener {
     let tip_signal = TipSignal::new(refresh_on_same_height);
     let signal = tip_signal.clone();
@@ -232,17 +232,19 @@ pub(super) fn spawn_tip_listener(
                         if is_unauthorized_error(&err) {
                             match refresh_api_token_from_cookie(
                                 &client,
-                                token_cookie_path.as_deref(),
+                                cfg.token_cookie_path.as_deref(),
                             ) {
                                 TokenRefreshOutcome::Refreshed => {
                                     success("AUTH", "auth refreshed from cookie");
                                     continue;
                                 }
                                 TokenRefreshOutcome::Unchanged => {
+                                    let first = cfg.daemon_auth_wait_message(false);
+                                    let repeat = cfg.daemon_auth_wait_message(true);
                                     retry.note_failure(
                                         "AUTH",
-                                        "auth expired; waiting for new cookie token",
-                                        "auth still expired; waiting for new cookie token",
+                                        &first,
+                                        &repeat,
                                         true,
                                     );
                                 }
@@ -255,10 +257,12 @@ pub(super) fn spawn_tip_listener(
                                     );
                                 }
                                 TokenRefreshOutcome::Failed(msg) => {
+                                    let message =
+                                        cfg.daemon_cookie_refresh_failure_message(&msg);
                                     retry.note_failure(
                                         "AUTH",
-                                        &msg,
-                                        "failed to refresh auth token from cookie",
+                                        &message,
+                                        &message,
                                         true,
                                     );
                                 }

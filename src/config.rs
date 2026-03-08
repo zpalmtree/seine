@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
@@ -94,8 +94,8 @@ const DEFAULT_NVIDIA_AUTOTUNE_SAMPLES: u32 = 2;
 const DEFAULT_NVIDIA_HASHES_PER_LAUNCH_PER_LANE: u32 = 2;
 const DEFAULT_NVIDIA_AUTOTUNE_CONFIG_FILE: &str = "seine.nvidia-autotune.json";
 const DEFAULT_METAL_HASHES_PER_LAUNCH_PER_LANE: u32 = 2;
-const DEFAULT_DAEMON_DIR_MAINNET: &str = "./blocknet-data-mainnet";
-const DEFAULT_DAEMON_DIR_TESTNET: &str = "./blocknet-data-testnet";
+const LEGACY_DEFAULT_DAEMON_DIR_MAINNET: &str = "./blocknet-data-mainnet";
+const LEGACY_DEFAULT_DAEMON_DIR_TESTNET: &str = "./blocknet-data-testnet";
 const DEFAULT_API_URL: &str = "http://127.0.0.1:8332";
 const DEFAULT_POOL_URL: &str = "stratum+tcp://bntpool.com:3333";
 const DEFAULT_USER_CONFIG_FILE: &str = "seine.config.json";
@@ -108,18 +108,104 @@ enum DaemonNetwork {
 }
 
 impl DaemonNetwork {
-    fn default_data_dir(self) -> PathBuf {
+    fn as_str(self) -> &'static str {
         match self {
-            Self::Mainnet => PathBuf::from(DEFAULT_DAEMON_DIR_MAINNET),
-            Self::Testnet => PathBuf::from(DEFAULT_DAEMON_DIR_TESTNET),
+            Self::Mainnet => "mainnet",
+            Self::Testnet => "testnet",
+        }
+    }
+
+    fn default_data_dir(self) -> PathBuf {
+        default_managed_data_dir(self).unwrap_or_else(|| legacy_default_data_dir(self))
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum DaemonContextSource {
+    WrapperConfig,
+    WrapperPidfile,
+    ProcessScan,
+}
+
+impl DaemonContextSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::WrapperConfig => "wrapper-config",
+            Self::WrapperPidfile => "wrapper-pidfile",
+            Self::ProcessScan => "process-scan",
         }
     }
 }
 
 #[derive(Debug, Clone)]
 struct DaemonContext {
+    network: DaemonNetwork,
     data_dir: PathBuf,
     api_addr: Option<String>,
+    source: DaemonContextSource,
+    running: bool,
+    manager_config_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone)]
+struct BntConfigContext {
+    config_dir: PathBuf,
+    config_path: PathBuf,
+    config: BntConfigFile,
+}
+
+impl BntConfigContext {
+    fn data_dir_for(&self, network: DaemonNetwork) -> PathBuf {
+        self.config
+            .cores
+            .get(network.as_str())
+            .and_then(|core| {
+                let data_dir = core.data_dir.trim();
+                (!data_dir.is_empty()).then(|| PathBuf::from(data_dir))
+            })
+            .unwrap_or_else(|| self.config_dir.join("data").join(network.as_str()))
+    }
+
+    fn api_addr_for(&self, network: DaemonNetwork) -> Option<String> {
+        self.config.cores.get(network.as_str()).and_then(|core| {
+            let api_addr = core.api_addr.trim();
+            (!api_addr.is_empty()).then(|| api_addr.to_string())
+        })
+    }
+
+    fn enabled_networks(&self) -> Vec<DaemonNetwork> {
+        let mut out = Vec::new();
+        for network in [DaemonNetwork::Mainnet, DaemonNetwork::Testnet] {
+            if self
+                .config
+                .cores
+                .get(network.as_str())
+                .is_some_and(|core| core.enabled)
+            {
+                out.push(network);
+            }
+        }
+        if out.is_empty() {
+            out.push(DaemonNetwork::Mainnet);
+        }
+        out
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+struct BntConfigFile {
+    #[serde(default)]
+    cores: HashMap<String, BntCoreConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+struct BntCoreConfig {
+    #[serde(default)]
+    enabled: bool,
+    #[serde(default)]
+    data_dir: String,
+    #[serde(default)]
+    api_addr: String,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -201,7 +287,7 @@ struct Cli {
     pool_worker: Option<String>,
 
     /// API base URL for the blocknet daemon.
-    /// When omitted, Seine auto-detects from a running daemon and falls back to 127.0.0.1:8332.
+    /// When omitted, Seine prefers Blocknet wrapper config/pidfiles/processes and then falls back to 127.0.0.1:8332.
     #[arg(long = "api-url")]
     api_url: Option<String>,
 
@@ -222,12 +308,13 @@ struct Cli {
     #[arg(long = "address")]
     mining_address: Option<String>,
 
-    /// Path to api.cookie file (defaults to <daemon-dir>/api.cookie).
+    /// Path to api.cookie file.
+    /// When omitted, Seine auto-detects the managed cookie from Blocknet wrapper config or --daemon-dir.
     #[arg(long)]
     cookie: Option<PathBuf>,
 
     /// Daemon data directory (used to locate api.cookie when --cookie is unset).
-    /// Defaults to ./blocknet-data-mainnet, or ./blocknet-data-testnet with --testnet.
+    /// Defaults to the Blocknet wrapper-managed data dir under ~/.config/bnt/data/{mainnet,testnet}.
     #[arg(long)]
     daemon_dir: Option<PathBuf>,
 
@@ -575,6 +662,10 @@ pub struct Config {
     pub api_url: String,
     pub token: Option<String>,
     pub token_cookie_path: Option<PathBuf>,
+    pub daemon_discovery_source: Option<String>,
+    pub daemon_manager_config_path: Option<PathBuf>,
+    pub daemon_resolved_data_dir: Option<PathBuf>,
+    pub daemon_expected_cookie_path: Option<PathBuf>,
     pub wallet_password: Option<String>,
     pub wallet_password_file: Option<PathBuf>,
     pub mining_address: Option<String>,
@@ -923,10 +1014,11 @@ impl Config {
         )?;
 
         let mode = cli.mode.unwrap_or(MiningMode::Pool);
+        let requested_network = cli_requested_daemon_network(&cli);
         let daemon_context = if cli.bench {
             None
         } else {
-            detect_daemon_context(cli.testnet.then_some(DaemonNetwork::Testnet))
+            detect_daemon_context(Some(requested_network))
         };
         let api_server_enabled = cli.api_server || cli.service;
         if api_server_enabled && !cli.api_allow_unsafe_bind && !is_loopback_bind(&cli.api_bind) {
@@ -942,6 +1034,22 @@ impl Config {
             resolve_runtime_token_with_source(&cli, mode, daemon_context.as_ref())?
         };
         let api_url = resolve_api_url(cli.api_url.as_deref(), daemon_context.as_ref());
+        let daemon_resolved_data_dir = if cli.bench {
+            None
+        } else {
+            Some(resolve_effective_daemon_data_dir(&cli, daemon_context.as_ref()))
+        };
+        let daemon_expected_cookie_path = daemon_resolved_data_dir
+            .as_ref()
+            .map(|data_dir| data_dir.join("api.cookie"));
+        let daemon_discovery_source = if cli.bench {
+            None
+        } else {
+            resolve_daemon_discovery_source(&cli, mode, daemon_context.as_ref())
+        };
+        let daemon_manager_config_path = daemon_context
+            .as_ref()
+            .and_then(|context| context.manager_config_path.clone());
         let strict_round_accounting = cli.strict_round_accounting && !cli.relaxed_accounting;
         let nvidia_enforce_template_stop = match cli.nvidia_template_stop_policy {
             NvidiaTemplateStopPolicy::Auto => strict_round_accounting,
@@ -960,6 +1068,10 @@ impl Config {
             api_url,
             token,
             token_cookie_path,
+            daemon_discovery_source,
+            daemon_manager_config_path,
+            daemon_resolved_data_dir,
+            daemon_expected_cookie_path,
             wallet_password: cli.wallet_password,
             wallet_password_file: cli.wallet_password_file,
             mining_address: cli.mining_address.map(|address| address.trim().to_string()),
@@ -1041,6 +1153,93 @@ impl Config {
             bench_baseline_policy: cli.bench_baseline_policy,
             nvidia_hint,
         })
+    }
+}
+
+impl Config {
+    pub fn daemon_connection_summary(&self) -> Option<String> {
+        if self.mode != MiningMode::Daemon
+            && self.token.is_none()
+            && self.token_cookie_path.is_none()
+        {
+            return None;
+        }
+        let data_dir = self.daemon_resolved_data_dir.as_ref()?;
+        let mut parts = Vec::new();
+        if let Some(source) = self.daemon_discovery_source.as_deref() {
+            parts.push(format!("source={source}"));
+        }
+        parts.push(format!("api={}", self.api_url));
+        parts.push(format!("data={}", data_dir.display()));
+        if let Some(cookie) = self.token_cookie_path.as_ref() {
+            parts.push(format!("cookie={}", cookie.display()));
+        } else if let Some(cookie) = self.daemon_expected_cookie_path.as_ref() {
+            parts.push(format!("cookie={}", cookie.display()));
+        }
+        if let Some(config_path) = self.daemon_manager_config_path.as_ref() {
+            parts.push(format!("config={}", config_path.display()));
+        }
+        Some(parts.join(" "))
+    }
+
+    pub fn daemon_auth_wait_message(&self, repeated: bool) -> String {
+        if let Some(cookie_path) = self.token_cookie_path.as_ref() {
+            let mismatch_hint = self.daemon_cookie_mismatch_hint();
+            if repeated {
+                if let Some(hint) = mismatch_hint {
+                    return format!(
+                        "daemon auth still failing; watching {}. {}",
+                        cookie_path.display(),
+                        hint
+                    );
+                }
+                return format!(
+                    "daemon auth still failing; watching {} for a new cookie token",
+                    cookie_path.display()
+                );
+            }
+            if let Some(hint) = mismatch_hint {
+                return format!(
+                    "daemon auth failed with cookie {}; {}",
+                    cookie_path.display(),
+                    hint
+                );
+            }
+            return format!(
+                "daemon auth failed; watching {} for a new cookie token",
+                cookie_path.display()
+            );
+        }
+
+        "auth failed; static --token cannot auto-refresh".to_string()
+    }
+
+    pub fn daemon_cookie_refresh_failure_message(&self, reason: &str) -> String {
+        if let Some(cookie_path) = self.token_cookie_path.as_ref() {
+            let mismatch_hint = self.daemon_cookie_mismatch_hint();
+            if let Some(hint) = mismatch_hint {
+                return format!("{reason}; watched cookie {}. {}", cookie_path.display(), hint);
+            }
+            return format!("{reason}; watched cookie {}", cookie_path.display());
+        }
+        reason.to_string()
+    }
+
+    fn daemon_cookie_mismatch_hint(&self) -> Option<String> {
+        let watched = self.token_cookie_path.as_ref()?;
+        let expected = self.daemon_expected_cookie_path.as_ref()?;
+        if watched == expected {
+            return None;
+        }
+
+        let mut hint = format!(
+            "provided cookie path looks stale; expected managed cookie at {}",
+            expected.display()
+        );
+        if let Some(config_path) = self.daemon_manager_config_path.as_ref() {
+            hint.push_str(&format!(" (from {})", config_path.display()));
+        }
+        Some(hint)
     }
 }
 
@@ -1142,22 +1341,12 @@ fn resolve_token_with_source(
         return Ok((trimmed.to_string(), None));
     }
 
-    // Explicit --cookie: use that path only.
     if let Some(cookie) = &cli.cookie {
         let token = read_token_from_cookie_file(cookie)?;
         return Ok((token, Some(cookie.clone())));
     }
 
-    // Build candidate cookie paths in priority order.
-    let mut candidates: Vec<PathBuf> = vec![resolved_cli_daemon_dir(cli).join("api.cookie")];
-
-    // Try to discover the daemon's data directory from a running process.
-    if let Some(context) = daemon_context {
-        let daemon_cookie = context.data_dir.join("api.cookie");
-        if !candidates.contains(&daemon_cookie) {
-            candidates.push(daemon_cookie);
-        }
-    }
+    let candidates = cookie_candidates(cli, daemon_context);
 
     for path in &candidates {
         if let Ok(token) = read_token_from_cookie_file(path) {
@@ -1165,29 +1354,63 @@ fn resolve_token_with_source(
         }
     }
 
-    let searched = candidates
-        .iter()
-        .map(|p| format!("  - {}", p.display()))
-        .collect::<Vec<_>>()
-        .join("\n");
+    let searched = format_cookie_search_list(&candidates);
+    if let Some(context) = daemon_context {
+        let expected_cookie = context.data_dir.join("api.cookie");
+        let detected_api = resolve_api_url(cli.api_url.as_deref(), Some(context));
+        let config_hint = context
+            .manager_config_path
+            .as_ref()
+            .map(|path| format!("Managed config: {}\n", path.display()))
+            .unwrap_or_default();
+        if context.running {
+            bail!(
+                "detected a Blocknet daemon, but Seine could not read a usable API cookie\n\n\
+                 Source: {}\n\
+                 API: {}\n\
+                 Data dir: {}\n\
+                 Expected cookie: {}\n\
+                 {config_hint}Searched:\n{searched}\n\n\
+                 If you started Blocknet with the wrapper, use:\n  \
+                 blocknet install latest\n  \
+                 blocknet start {}\n\n\
+                 For custom layouts, override manually with:\n  \
+                 seine --mode daemon --cookie /path/to/api.cookie",
+                context.source.as_str(),
+                detected_api,
+                context.data_dir.display(),
+                expected_cookie.display(),
+                context.network.as_str(),
+            );
+        }
 
-    if daemon_context.is_some() {
         bail!(
-            "found a running blocknet daemon but could not read its api.cookie\n\n\
-             searched:\n{searched}\n\n\
-             Make sure the daemon was started with the --api flag, e.g.:\n  \
-             blocknet --daemon --api 127.0.0.1:8332"
+            "managed Blocknet config was detected, but the daemon cookie is not available yet\n\n\
+             Source: {}\n\
+             API: {}\n\
+             Data dir: {}\n\
+             Expected cookie: {}\n\
+             {config_hint}Searched:\n{searched}\n\n\
+             Start the daemon with:\n  \
+             blocknet install latest\n  \
+             blocknet start {}",
+            context.source.as_str(),
+            detected_api,
+            context.data_dir.display(),
+            expected_cookie.display(),
+            context.network.as_str(),
         );
     }
 
     bail!(
-        "the blocknet daemon does not appear to be running\n\n\
-         Start it with the API enabled, then run seine:\n  \
-         blocknet --daemon --api 127.0.0.1:8332\n\n\
-         If the daemon is already running, seine could not find its api.cookie.\n\
+        "no running Blocknet daemon was detected and Seine could not find a usable API cookie\n\n\
+         Start the daemon with the wrapper-managed flow:\n  \
+         blocknet install latest\n  \
+         blocknet start {}\n\n\
          Searched:\n{searched}\n\n\
-         You can point to it manually with:\n  \
-         seine --cookie /path/to/api.cookie"
+         For custom layouts, override manually with:\n  \
+         seine --mode daemon --cookie /path/to/api.cookie",
+        cli_requested_daemon_network(cli).as_str(),
     );
 }
 
@@ -1208,13 +1431,7 @@ fn resolve_service_token_with_source(
         return Ok((Some(token), Some(cookie.clone())));
     }
 
-    let mut candidates: Vec<PathBuf> = vec![resolved_cli_daemon_dir(cli).join("api.cookie")];
-    if let Some(context) = daemon_context {
-        let daemon_cookie = context.data_dir.join("api.cookie");
-        if !candidates.contains(&daemon_cookie) {
-            candidates.push(daemon_cookie);
-        }
-    }
+    let candidates = cookie_candidates(cli, daemon_context);
 
     for path in &candidates {
         if let Ok(token) = read_token_from_cookie_file(path) {
@@ -1252,11 +1469,12 @@ fn cli_requested_daemon_network(cli: &Cli) -> DaemonNetwork {
     }
 }
 
-/// Inspect running processes to find a `blocknet` daemon and resolve runtime context.
 fn detect_daemon_context(preferred_network: Option<DaemonNetwork>) -> Option<DaemonContext> {
-    use std::ffi::OsStr;
     use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
+    let preferred_network = preferred_network.unwrap_or(DaemonNetwork::Mainnet);
+    let managed_config = load_bnt_config_context();
+    let managed_dir = managed_config.as_ref().map(|config| config.config_dir.as_path());
     let mut sys = System::new();
     sys.refresh_processes_specifics(
         ProcessesToUpdate::All,
@@ -1265,50 +1483,290 @@ fn detect_daemon_context(preferred_network: Option<DaemonNetwork>) -> Option<Dae
             .with_cwd(UpdateKind::Always),
     );
 
-    for process in sys.processes_by_name(OsStr::new("blocknet")) {
+    for process in sys.processes().values() {
+        let name = process.name().to_str();
         let cmd: Vec<String> = process
             .cmd()
             .iter()
             .filter_map(|s| s.to_str().map(String::from))
             .collect();
-
-        let network = daemon_network_from_cmdline(&cmd);
-        if preferred_network.is_some_and(|preferred| preferred != network) {
+        if !looks_like_blocknet_daemon_process(name, &cmd) {
             continue;
         }
 
-        let data_dir = daemon_resolved_data_dir_from_cmdline(&cmd);
+        let pid = process.pid().as_u32();
+        if let Some((network, _pidfile_path)) =
+            managed_dir.and_then(|config_dir| daemon_pidfile_match(config_dir, pid))
+        {
+            let data_dir = daemon_data_dir_from_cmdline(&cmd)
+                .or_else(|| managed_config.as_ref().map(|config| config.data_dir_for(network)))
+                .unwrap_or_else(|| network.default_data_dir());
+            let data_dir = resolve_relative_daemon_path(process.cwd(), &data_dir);
+            return Some(DaemonContext {
+                network,
+                data_dir,
+                api_addr: daemon_api_addr_from_cmdline(&cmd)
+                    .or_else(|| managed_config.as_ref().and_then(|config| config.api_addr_for(network))),
+                source: DaemonContextSource::WrapperPidfile,
+                running: true,
+                manager_config_path: managed_config
+                    .as_ref()
+                    .map(|config| config.config_path.clone()),
+            });
+        }
 
-        // If the data dir is relative, resolve it against the daemon's cwd.
-        if data_dir.is_relative() {
-            if let Some(cwd) = process.cwd() {
-                return Some(DaemonContext {
-                    data_dir: cwd.join(&data_dir),
-                    api_addr: daemon_api_addr_from_cmdline(&cmd),
-                });
-            }
+        let network = daemon_network_from_cmdline(&cmd).unwrap_or(preferred_network);
+        if network != preferred_network {
+            continue;
         }
 
         return Some(DaemonContext {
-            data_dir,
-            api_addr: daemon_api_addr_from_cmdline(&cmd),
+            network,
+            data_dir: resolve_relative_daemon_path(
+                process.cwd(),
+                &daemon_data_dir_from_cmdline(&cmd)
+                    .or_else(|| managed_config.as_ref().map(|config| config.data_dir_for(network)))
+                    .unwrap_or_else(|| network.default_data_dir()),
+            ),
+            api_addr: daemon_api_addr_from_cmdline(&cmd)
+                .or_else(|| managed_config.as_ref().and_then(|config| config.api_addr_for(network))),
+            source: DaemonContextSource::ProcessScan,
+            running: true,
+            manager_config_path: managed_config
+                .as_ref()
+                .map(|config| config.config_path.clone()),
         });
     }
 
-    None
+    managed_config.as_ref().map(|config| {
+        let network = if config.enabled_networks().contains(&preferred_network) {
+            preferred_network
+        } else {
+            config.enabled_networks()[0]
+        };
+        DaemonContext {
+            network,
+            data_dir: config.data_dir_for(network),
+            api_addr: config.api_addr_for(network),
+            source: DaemonContextSource::WrapperConfig,
+            running: false,
+            manager_config_path: Some(config.config_path.clone()),
+        }
+    })
 }
 
-fn daemon_network_from_cmdline(cmd: &[String]) -> DaemonNetwork {
-    if cmd_bool_flag_is_truthy(cmd, &["--testnet", "-testnet"]) {
-        DaemonNetwork::Testnet
-    } else {
-        DaemonNetwork::Mainnet
+fn cookie_candidates(cli: &Cli, daemon_context: Option<&DaemonContext>) -> Vec<PathBuf> {
+    let requested_network = cli_requested_daemon_network(cli);
+    let managed_config = load_bnt_config_context();
+    let mut candidates = Vec::<PathBuf>::new();
+
+    if let Some(daemon_dir) = &cli.daemon_dir {
+        push_cookie_candidate(&mut candidates, daemon_dir.join("api.cookie"));
+    }
+
+    if let Some(context) = daemon_context {
+        push_cookie_candidate(&mut candidates, context.data_dir.join("api.cookie"));
+    }
+
+    if let Some(config) = managed_config.as_ref() {
+        for network in ordered_networks(requested_network) {
+            let pidfile = managed_pidfile_path(&config.config_dir, network);
+            if pidfile.exists() {
+                push_cookie_candidate(&mut candidates, config.data_dir_for(network).join("api.cookie"));
+            }
+        }
+        for network in ordered_networks(requested_network) {
+            push_cookie_candidate(&mut candidates, config.data_dir_for(network).join("api.cookie"));
+        }
+    } else if let Some(config_dir) = default_managed_config_dir() {
+        for network in ordered_networks(requested_network) {
+            push_cookie_candidate(
+                &mut candidates,
+                config_dir.join("data").join(network.as_str()).join("api.cookie"),
+            );
+        }
+    }
+
+    push_cookie_candidate(
+        &mut candidates,
+        legacy_default_data_dir(requested_network).join("api.cookie"),
+    );
+    candidates
+}
+
+fn ordered_networks(requested: DaemonNetwork) -> [DaemonNetwork; 2] {
+    match requested {
+        DaemonNetwork::Mainnet => [DaemonNetwork::Mainnet, DaemonNetwork::Testnet],
+        DaemonNetwork::Testnet => [DaemonNetwork::Testnet, DaemonNetwork::Mainnet],
     }
 }
 
-fn daemon_resolved_data_dir_from_cmdline(cmd: &[String]) -> PathBuf {
-    daemon_data_dir_from_cmdline(cmd)
-        .unwrap_or_else(|| daemon_network_from_cmdline(cmd).default_data_dir())
+fn push_cookie_candidate(out: &mut Vec<PathBuf>, candidate: PathBuf) {
+    if !out.contains(&candidate) {
+        out.push(candidate);
+    }
+}
+
+fn format_cookie_search_list(candidates: &[PathBuf]) -> String {
+    candidates
+        .iter()
+        .map(|path| format!("  - {}", path.display()))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn resolve_effective_daemon_data_dir(
+    cli: &Cli,
+    daemon_context: Option<&DaemonContext>,
+) -> PathBuf {
+    cli.daemon_dir
+        .clone()
+        .or_else(|| daemon_context.map(|context| context.data_dir.clone()))
+        .unwrap_or_else(|| resolved_cli_daemon_dir(cli))
+}
+
+fn resolve_daemon_discovery_source(
+    cli: &Cli,
+    mode: MiningMode,
+    daemon_context: Option<&DaemonContext>,
+) -> Option<String> {
+    if cli.token.is_some() {
+        return Some("explicit-token".to_string());
+    }
+    if cli.cookie.is_some() {
+        return Some("explicit-cookie".to_string());
+    }
+    if cli.daemon_dir.is_some() {
+        return Some("explicit-daemon-dir".to_string());
+    }
+    if let Some(context) = daemon_context {
+        return Some(context.source.as_str().to_string());
+    }
+    if mode == MiningMode::Daemon || cli.service {
+        return Some(if default_managed_config_dir().is_some() {
+            "managed-default".to_string()
+        } else {
+            "legacy-default".to_string()
+        });
+    }
+    None
+}
+
+fn default_managed_config_dir() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("BNT_CONFIG_DIR").filter(|value| !value.is_empty()) {
+        return Some(PathBuf::from(dir));
+    }
+    let home = std::env::var_os("HOME")?;
+    Some(PathBuf::from(home).join(".config").join("bnt"))
+}
+
+fn default_managed_data_dir(network: DaemonNetwork) -> Option<PathBuf> {
+    default_managed_config_dir().map(|config_dir| config_dir.join("data").join(network.as_str()))
+}
+
+fn legacy_default_data_dir(network: DaemonNetwork) -> PathBuf {
+    match network {
+        DaemonNetwork::Mainnet => PathBuf::from(LEGACY_DEFAULT_DAEMON_DIR_MAINNET),
+        DaemonNetwork::Testnet => PathBuf::from(LEGACY_DEFAULT_DAEMON_DIR_TESTNET),
+    }
+}
+
+fn load_bnt_config_context() -> Option<BntConfigContext> {
+    let config_dir = default_managed_config_dir()?;
+    let config_path = config_dir.join("config.json");
+    let data = fs::read(&config_path).ok()?;
+    let stripped = strip_json_comments(&data);
+    let config = serde_json::from_slice::<BntConfigFile>(&stripped).ok()?;
+    Some(BntConfigContext {
+        config_dir,
+        config_path,
+        config,
+    })
+}
+
+fn strip_json_comments(src: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(src.len());
+    let mut idx = 0;
+    while idx < src.len() {
+        let ch = src[idx];
+        if ch == b'"' {
+            out.push(ch);
+            idx += 1;
+            while idx < src.len() {
+                let next = src[idx];
+                out.push(next);
+                idx += 1;
+                if next == b'\\' && idx < src.len() {
+                    out.push(src[idx]);
+                    idx += 1;
+                } else if next == b'"' {
+                    break;
+                }
+            }
+            continue;
+        }
+        if ch == b'/' && idx + 1 < src.len() && src[idx + 1] == b'/' {
+            while idx < src.len() && src[idx] != b'\n' {
+                idx += 1;
+            }
+            continue;
+        }
+        if ch == b'#' {
+            while idx < src.len() && src[idx] != b'\n' {
+                idx += 1;
+            }
+            continue;
+        }
+        out.push(ch);
+        idx += 1;
+    }
+    out
+}
+
+fn resolve_relative_daemon_path(cwd: Option<&Path>, data_dir: &Path) -> PathBuf {
+    if data_dir.is_relative() {
+        cwd.map(|dir| dir.join(data_dir))
+            .unwrap_or_else(|| data_dir.to_path_buf())
+    } else {
+        data_dir.to_path_buf()
+    }
+}
+
+fn daemon_network_from_cmdline(cmd: &[String]) -> Option<DaemonNetwork> {
+    cmd_bool_flag_is_truthy(cmd, &["--testnet", "-testnet"]).then_some(DaemonNetwork::Testnet)
+}
+
+fn daemon_pidfile_match(config_dir: &Path, pid: u32) -> Option<(DaemonNetwork, PathBuf)> {
+    for network in [DaemonNetwork::Mainnet, DaemonNetwork::Testnet] {
+        let pidfile = managed_pidfile_path(config_dir, network);
+        let Ok(raw) = fs::read_to_string(&pidfile) else {
+            continue;
+        };
+        let Ok(found_pid) = raw.trim().parse::<u32>() else {
+            continue;
+        };
+        if found_pid == pid {
+            return Some((network, pidfile));
+        }
+    }
+    None
+}
+
+fn managed_pidfile_path(config_dir: &Path, network: DaemonNetwork) -> PathBuf {
+    config_dir.join(format!("core.{}.pid", network.as_str()))
+}
+
+fn looks_like_blocknet_daemon_process(name: Option<&str>, cmd: &[String]) -> bool {
+    name.is_some_and(binary_name_matches_blocknet)
+        || cmd
+            .first()
+            .and_then(|arg0| Path::new(arg0).file_name())
+            .and_then(|basename| basename.to_str())
+            .is_some_and(binary_name_matches_blocknet)
+}
+
+fn binary_name_matches_blocknet(name: &str) -> bool {
+    name == "blocknet" || name.starts_with("blocknet-core-")
 }
 
 fn daemon_data_dir_from_cmdline(cmd: &[String]) -> Option<PathBuf> {
@@ -2276,7 +2734,8 @@ HugePages_Rsvd:          0
         let cli = sample_cli();
         assert_eq!(
             resolved_cli_daemon_dir(&cli),
-            PathBuf::from(DEFAULT_DAEMON_DIR_MAINNET)
+            default_managed_data_dir(DaemonNetwork::Mainnet)
+                .unwrap_or_else(|| legacy_default_data_dir(DaemonNetwork::Mainnet))
         );
     }
 
@@ -2286,30 +2745,34 @@ HugePages_Rsvd:          0
         cli.testnet = true;
         assert_eq!(
             resolved_cli_daemon_dir(&cli),
-            PathBuf::from(DEFAULT_DAEMON_DIR_TESTNET)
+            default_managed_data_dir(DaemonNetwork::Testnet)
+                .unwrap_or_else(|| legacy_default_data_dir(DaemonNetwork::Testnet))
         );
     }
 
     #[test]
-    fn daemon_resolved_data_dir_uses_testnet_default_when_flag_present() {
-        let cmd = vec!["blocknet".to_string(), "--testnet".to_string()];
+    fn legacy_default_data_dir_uses_testnet_path() {
         assert_eq!(
-            daemon_resolved_data_dir_from_cmdline(&cmd),
-            PathBuf::from(DEFAULT_DAEMON_DIR_TESTNET)
+            legacy_default_data_dir(DaemonNetwork::Testnet),
+            PathBuf::from(LEGACY_DEFAULT_DAEMON_DIR_TESTNET)
         );
     }
 
     #[test]
     fn daemon_network_from_cmdline_ignores_false_testnet_value() {
         let cmd = vec!["blocknet".to_string(), "--testnet=false".to_string()];
-        assert_eq!(daemon_network_from_cmdline(&cmd), DaemonNetwork::Mainnet);
+        assert_eq!(daemon_network_from_cmdline(&cmd), None);
     }
 
     #[test]
     fn resolve_api_url_prefers_explicit_cli_value() {
         let daemon = DaemonContext {
+            network: DaemonNetwork::Mainnet,
             data_dir: PathBuf::from("/tmp/blocknet"),
             api_addr: Some("127.0.0.1:9000".to_string()),
+            source: DaemonContextSource::ProcessScan,
+            running: true,
+            manager_config_path: None,
         };
         assert_eq!(
             resolve_api_url(Some("http://10.0.0.2:8332"), Some(&daemon)),
@@ -2320,8 +2783,12 @@ HugePages_Rsvd:          0
     #[test]
     fn resolve_api_url_uses_daemon_api_when_cli_omitted() {
         let daemon = DaemonContext {
+            network: DaemonNetwork::Mainnet,
             data_dir: PathBuf::from("/tmp/blocknet"),
             api_addr: Some("192.168.1.5:9100".to_string()),
+            source: DaemonContextSource::ProcessScan,
+            running: true,
+            manager_config_path: None,
         };
         assert_eq!(
             resolve_api_url(None, Some(&daemon)),
@@ -2332,8 +2799,12 @@ HugePages_Rsvd:          0
     #[test]
     fn resolve_api_url_falls_back_when_daemon_api_is_unparseable() {
         let daemon = DaemonContext {
+            network: DaemonNetwork::Mainnet,
             data_dir: PathBuf::from("/tmp/blocknet"),
             api_addr: Some("not-an-endpoint".to_string()),
+            source: DaemonContextSource::ProcessScan,
+            running: true,
+            manager_config_path: None,
         };
         assert_eq!(resolve_api_url(None, Some(&daemon)), DEFAULT_API_URL);
     }
@@ -2408,8 +2879,12 @@ HugePages_Rsvd:          0
 
         let cli = sample_cli();
         let daemon = DaemonContext {
+            network: DaemonNetwork::Mainnet,
             data_dir: dir.clone(),
             api_addr: Some("127.0.0.1:8332".to_string()),
+            source: DaemonContextSource::ProcessScan,
+            running: true,
+            manager_config_path: None,
         };
 
         let (token, source) =

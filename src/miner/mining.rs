@@ -2208,10 +2208,12 @@ fn resolve_next_template_request(
             PrefetchOutcome::Unauthorized => {
                 set_tui_blocktemplate_retrying(tui, false);
                 if cfg.token_cookie_path.is_some() {
+                    let first = cfg.daemon_auth_wait_message(false);
+                    let repeat = cfg.daemon_auth_wait_message(true);
                     auth_retry.note_failure(
                         "AUTH",
-                        "auth expired; waiting for new cookie token",
-                        "auth still expired; waiting for new cookie token",
+                        &first,
+                        &repeat,
                         true,
                     );
                 } else {
@@ -2715,6 +2717,10 @@ mod tests {
             api_url: server.url("").trim_end_matches('/').to_string(),
             token: Some("test-token".to_string()),
             token_cookie_path: None,
+            daemon_discovery_source: None,
+            daemon_manager_config_path: None,
+            daemon_resolved_data_dir: None,
+            daemon_expected_cookie_path: None,
             wallet_password: None,
             wallet_password_file: None,
             mining_address: None,

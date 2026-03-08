@@ -6,27 +6,27 @@ External miner for Blocknet with pluggable CPU and NVIDIA GPU backends.
 
 ## Quick Start
 
-### 1. Optional: Sync the Blocknet daemon (daemon mode only)
+### 1. Optional: Install and sync Blocknet (daemon mode only)
 
-If this is your first time running the daemon, start it without any flags to create a wallet and sync the blockchain:
+If this is your first time running daemon mode, use the wrapper-managed flow:
 
 ```bash
-./blocknet
+blocknet install latest
+blocknet start mainnet
 ```
 
-You will be prompted to set a wallet password. Once the daemon starts, wait for it to fully sync — you'll see `[sync] progress` messages reach 100%:
+This creates or reuses the managed config under `~/.config/bnt`, starts the core,
+and writes the API cookie under `~/.config/bnt/data/mainnet/api.cookie` unless
+you override `data_dir` in the Blocknet config.
+
+You will be prompted to set a wallet password if needed. Once the daemon starts,
+wait for it to fully sync — you'll see `[sync] progress` messages reach 100%:
 
 ![Blocknet initial sync](screenshot-sync.png)
 
 When sync is complete, type `exit` to shut down the daemon.
 
-### 2. Optional: Restart the daemon with the API enabled (daemon mode only)
-
-```bash
-./blocknet --daemon --api 127.0.0.1:8332
-```
-
-### 3. Run the miner
+### 2. Run the miner
 
 **Option A — Pre-built binary** (from [Releases](../../releases)):
 
@@ -71,8 +71,8 @@ These values are cached in:
 - `./seine-data/seine.config.json` by default (`--data-dir` changes the base directory)
 
 ```bash
-# Force daemon mode explicitly
-./seine --mode daemon --api-url http://127.0.0.1:8332 --cookie /path/to/data/api.cookie
+# Force daemon mode explicitly; wrapper-managed installs need no daemon args
+./seine --mode daemon
 
 # Override pool endpoint and worker in pool mode
 ./seine --pool-url stratum+tcp://pool.example.com:3333 --pool-worker rig-01
@@ -152,8 +152,11 @@ All miner flags are documented in [`docs/MINER_FLAGS.md`](docs/MINER_FLAGS.md).
 ./seine --pool-url stratum+tcp://pool.example.com:3333
 ./seine --pool-worker rig-01
 
-# Force daemon mode (requires daemon API auth)
-./seine --mode daemon --cookie /path/to/api.cookie
+# Force daemon mode with wrapper-managed autodiscovery
+./seine --mode daemon
+
+# Custom direct-core layout override
+./seine --mode daemon --api-url http://127.0.0.1:8332 --cookie /path/to/api.cookie
 
 # Plain log output instead of TUI
 ./seine --ui plain

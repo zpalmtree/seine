@@ -537,6 +537,9 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
             "created first-run config file (edit this file to change defaults)",
         );
     }
+    if let Some(summary) = cfg.daemon_connection_summary() {
+        info("CONFIG", format!("daemon discovery: {summary}"));
+    }
 
     let endpoint_label = match cfg.mode {
         MiningMode::Daemon => format!("api={}", cfg.api_url),
@@ -743,7 +746,7 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
             client.clone(),
             Arc::clone(&shutdown),
             cfg.refresh_on_same_height,
-            cfg.token_cookie_path.clone(),
+            cfg.clone(),
         ))
     } else {
         None
@@ -2450,7 +2453,11 @@ fn backend_name_list(backends: &[BackendSlot]) -> Vec<String> {
 
 fn auth_source_label(cfg: &Config) -> String {
     if let Some(path) = &cfg.token_cookie_path {
-        format!("cookie:{}", path.display())
+        if let Some(source) = cfg.daemon_discovery_source.as_deref() {
+            format!("cookie:{} ({})", path.display(), source)
+        } else {
+            format!("cookie:{}", path.display())
+        }
     } else {
         "token:static".to_string()
     }
@@ -3040,6 +3047,10 @@ mod tests {
             api_url: "http://127.0.0.1:8332".to_string(),
             token: Some("test-token".to_string()),
             token_cookie_path: None,
+            daemon_discovery_source: None,
+            daemon_manager_config_path: None,
+            daemon_resolved_data_dir: None,
+            daemon_expected_cookie_path: None,
             wallet_password: None,
             wallet_password_file: None,
             mining_address: None,
