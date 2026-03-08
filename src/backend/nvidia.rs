@@ -39,6 +39,7 @@ const EVENT_SEND_WAIT: Duration = Duration::from_millis(5);
 const KERNEL_THREADS: u32 = 32;
 const SEED_KERNEL_THREADS: u32 = 64;
 const EVAL_KERNEL_THREADS: u32 = 64;
+const DEFAULT_WARPS_PER_BLOCK: u32 = 1;
 const DEFAULT_NVIDIA_MAX_RREGCOUNT: u32 = 240;
 const NVIDIA_AUTOTUNE_SCHEMA_VERSION: u32 = 9;
 const NVIDIA_CUBIN_CACHE_SCHEMA_VERSION: u32 = 1;
@@ -335,6 +336,7 @@ struct CudaArgon2Engine {
     t_cost: u32,
     max_lanes: usize,
     hashes_per_launch_per_lane: usize,
+    warps_per_block: u32,
     lane_memory: CudaSlice<u64>,
     seed_blocks: CudaSlice<u64>,
     last_blocks: CudaSlice<u64>,
@@ -391,6 +393,7 @@ impl CudaArgon2Engine {
                 "-DSEINE_CANCEL_CHECK_BLOCK_INTERVAL={}U",
                 select_cancel_check_block_interval(cc_major_u32)
             ),
+            format!("-DSEINE_WARPS_PER_BLOCK={}U", DEFAULT_WARPS_PER_BLOCK),
             format!("--maxrregcount={}", tuning.max_rregcount.max(1)),
         ];
         let nvrtc_cubin_options = {
@@ -571,6 +574,7 @@ impl CudaArgon2Engine {
             t_cost,
             max_lanes,
             hashes_per_launch_per_lane,
+            warps_per_block: DEFAULT_WARPS_PER_BLOCK,
             lane_memory,
             seed_blocks,
             last_blocks,
@@ -753,11 +757,11 @@ impl CudaArgon2Engine {
         }
 
         {
+            let wpb = self.warps_per_block;
+            let grid_x = (lanes_u32 + wpb - 1) / wpb;
             let cfg = LaunchConfig {
-                // One cooperative block per lane. Threads in the block collaborate on Argon2
-                // compression and memory transfer for that lane.
-                grid_dim: (lanes_u32, 1, 1),
-                block_dim: (KERNEL_THREADS, 1, 1),
+                grid_dim: (grid_x, 1, 1),
+                block_dim: (KERNEL_THREADS * wpb, 1, 1),
                 shared_mem_bytes: 0,
             };
 

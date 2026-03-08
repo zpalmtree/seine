@@ -22,6 +22,10 @@ constexpr unsigned int ARGON2_ALGORITHM_ID = 2U;
 #define SEINE_CANCEL_CHECK_BLOCK_INTERVAL 64U
 #endif
 constexpr unsigned int CANCEL_CHECK_BLOCK_INTERVAL = SEINE_CANCEL_CHECK_BLOCK_INTERVAL;
+#ifndef SEINE_WARPS_PER_BLOCK
+#define SEINE_WARPS_PER_BLOCK 1U
+#endif
+constexpr unsigned int WARPS_PER_BLOCK = SEINE_WARPS_PER_BLOCK;
 
 __device__ __forceinline__ void coop_sync() {
     __syncwarp(ARGON2_COOP_WARP_MASK);
@@ -745,8 +749,9 @@ __device__ __forceinline__ void argon2id_fill_kernel_impl(
     unsigned int *__restrict__ found_index_one_based,
     bool fused_target_check
 ) {
-    const unsigned int lane = blockIdx.x;
-    const unsigned int tid = threadIdx.x;
+    const unsigned int warp_id = threadIdx.x / ARGON2_COOP_THREADS;
+    const unsigned int lane = blockIdx.x * WARPS_PER_BLOCK + warp_id;
+    const unsigned int tid = threadIdx.x % ARGON2_COOP_THREADS;
     const unsigned int effective_m_blocks =
         (SEINE_FIXED_M_BLOCKS > 0U) ? SEINE_FIXED_M_BLOCKS : m_blocks;
     const unsigned int effective_t_cost =
@@ -762,21 +767,24 @@ __device__ __forceinline__ void argon2id_fill_kernel_impl(
     const unsigned int segment_length = effective_m_blocks / 4U;
     const unsigned int lane_length = effective_m_blocks;
 
-    __shared__ unsigned long long address_block[128];
-    __shared__ unsigned long long input_block[128];
-    __shared__ unsigned long long zero_block[128];
-    __shared__ unsigned long long scratch_r[128];
-    __shared__ unsigned long long scratch_q[128];
-    __shared__ unsigned int cancel_requested;
+    __shared__ unsigned long long address_block[WARPS_PER_BLOCK * 128];
+    __shared__ unsigned long long input_block[WARPS_PER_BLOCK * 128];
+    __shared__ unsigned long long zero_block[WARPS_PER_BLOCK * 128];
+    __shared__ unsigned long long scratch_r[WARPS_PER_BLOCK * 128];
+    __shared__ unsigned long long scratch_q[WARPS_PER_BLOCK * 128];
+    unsigned long long *my_address = address_block + warp_id * 128U;
+    unsigned long long *my_input = input_block + warp_id * 128U;
+    unsigned long long *my_zero = zero_block + warp_id * 128U;
+    unsigned long long *my_scratch_r = scratch_r + warp_id * 128U;
+    unsigned long long *my_scratch_q = scratch_q + warp_id * 128U;
     bool abort_requested = false;
 
     for (unsigned int iter = 0U; iter < lane_launch_iters; ++iter) {
-        if (tid == 0U) {
-            cancel_requested = cancel_flag[0];
-        }
-        coop_sync();
-        if (cancel_requested != 0U) {
-            break;
+        {
+            unsigned int cancel_val = 0U;
+            if (tid == 0U) cancel_val = cancel_flag[0];
+            cancel_val = __shfl_sync(ARGON2_COOP_WARP_MASK, cancel_val, 0);
+            if (cancel_val != 0U) break;
         }
 
         const unsigned long long global_hash_idx =
@@ -793,9 +801,9 @@ __device__ __forceinline__ void argon2id_fill_kernel_impl(
         coop_sync();
 
         for (unsigned int i = tid; i < 128U; i += ARGON2_COOP_THREADS) {
-            address_block[i] = 0ULL;
-            input_block[i] = 0ULL;
-            zero_block[i] = 0ULL;
+            my_address[i] = 0ULL;
+            my_input[i] = 0ULL;
+            my_zero[i] = 0ULL;
         }
         coop_sync();
 
@@ -804,16 +812,16 @@ __device__ __forceinline__ void argon2id_fill_kernel_impl(
                 const bool data_independent = (pass == 0U && slice < 2U);
                 if (data_independent) {
                     for (unsigned int i = tid; i < 128U; i += ARGON2_COOP_THREADS) {
-                        address_block[i] = 0ULL;
-                        input_block[i] = 0ULL;
+                        my_address[i] = 0ULL;
+                        my_input[i] = 0ULL;
                     }
                     if (tid == 0U) {
-                        input_block[0] = static_cast<unsigned long long>(pass);
-                        input_block[1] = 0ULL; // lane index (p=1)
-                        input_block[2] = static_cast<unsigned long long>(slice);
-                        input_block[3] = static_cast<unsigned long long>(effective_m_blocks);
-                        input_block[4] = static_cast<unsigned long long>(effective_t_cost);
-                        input_block[5] = 2ULL; // Argon2id
+                        my_input[0] = static_cast<unsigned long long>(pass);
+                        my_input[1] = 0ULL; // lane index (p=1)
+                        my_input[2] = static_cast<unsigned long long>(slice);
+                        my_input[3] = static_cast<unsigned long long>(effective_m_blocks);
+                        my_input[4] = static_cast<unsigned long long>(effective_t_cost);
+                        my_input[5] = 2ULL; // Argon2id
                     }
                     coop_sync();
 
@@ -821,11 +829,11 @@ __device__ __forceinline__ void argon2id_fill_kernel_impl(
                     // so indices 2..127 read initialized address words (matches CPU/reference flow).
                     if (pass == 0U && slice == 0U) {
                         update_address_block_coop(
-                            address_block,
-                            input_block,
-                            zero_block,
-                            scratch_r,
-                            scratch_q,
+                            my_address,
+                            my_input,
+                            my_zero,
+                            my_scratch_r,
+                            my_scratch_q,
                             tid
                         );
                         coop_sync();
@@ -844,11 +852,10 @@ __device__ __forceinline__ void argon2id_fill_kernel_impl(
 
                 for (unsigned int block = first_block; block < segment_length; ++block) {
                     if (((block - first_block) % CANCEL_CHECK_BLOCK_INTERVAL) == 0U) {
-                        if (tid == 0U) {
-                            cancel_requested = cancel_flag[0];
-                        }
-                        coop_sync();
-                        if (cancel_requested != 0U) {
+                        unsigned int cancel_val = 0U;
+                        if (tid == 0U) cancel_val = cancel_flag[0];
+                        cancel_val = __shfl_sync(ARGON2_COOP_WARP_MASK, cancel_val, 0);
+                        if (cancel_val != 0U) {
                             abort_requested = true;
                             break;
                         }
@@ -859,16 +866,16 @@ __device__ __forceinline__ void argon2id_fill_kernel_impl(
                         const unsigned int address_index = block & 127U;
                         if (address_index == 0U) {
                             update_address_block_coop(
-                                address_block,
-                                input_block,
-                                zero_block,
-                                scratch_r,
-                                scratch_q,
+                                my_address,
+                                my_input,
+                                my_zero,
+                                my_scratch_r,
+                                my_scratch_q,
                                 tid
                             );
                         }
                         coop_sync();
-                        rand64 = address_block[address_index];
+                        rand64 = my_address[address_index];
                     } else {
                         rand64 = memory[static_cast<unsigned long long>(prev_index) * 128ULL];
                     }
@@ -909,14 +916,53 @@ __device__ __forceinline__ void argon2id_fill_kernel_impl(
                         static_cast<unsigned long long>(prev_index) * 128ULL;
                     const unsigned long long lhs_offset =
                         static_cast<unsigned long long>(ref_index) * 128ULL;
+
+                    // Prefetch next iteration's ref_block into L2 during this
+                    // block's compression (~690 compute cycles of lead time).
+                    // Only effective for data-independent segments where we can
+                    // look up the next ref_index from the precomputed address_block.
+                    if (data_independent && block + 1U < segment_length) {
+                        const unsigned int next_addr_idx = (block + 1U) & 127U;
+                        // Skip when the address_block boundary would require an
+                        // update (next_addr_idx == 0); the update happens at the
+                        // top of the NEXT iteration instead.
+                        if (next_addr_idx != 0U && tid < 8U) {
+                            const unsigned long long next_rand = my_address[next_addr_idx];
+                            unsigned long long next_ref_area;
+                            if (slice == 0U) {
+                                next_ref_area = static_cast<unsigned long long>(block);
+                            } else {
+                                next_ref_area =
+                                    static_cast<unsigned long long>(slice) * segment_length +
+                                    static_cast<unsigned long long>(block + 1U) - 1ULL;
+                            }
+                            unsigned long long nm = next_rand & 0xFFFFFFFFULL;
+                            nm = (nm * nm) >> 32;
+                            const unsigned long long nrel =
+                                next_ref_area - 1ULL - ((next_ref_area * nm) >> 32);
+                            const unsigned int nref =
+                                static_cast<unsigned int>(
+                                    (static_cast<unsigned long long>(start_position) + nrel) %
+                                    static_cast<unsigned long long>(lane_length)
+                                );
+                            const unsigned long long pf_base =
+                                static_cast<unsigned long long>(nref) * 128ULL;
+                            // 8 threads prefetch 8 cache lines = 1 KiB ref_block.
+                            asm volatile(
+                                "prefetch.global.L2 [%0];"
+                                :: "l"(memory + pf_base + tid * 16ULL)
+                            );
+                        }
+                    }
+
                     if (pass == 0U) {
                         compress_block_coop(
                             memory + rhs_offset,
                             memory + lhs_offset,
                             memory + dst_offset,
                             false,
-                            scratch_r,
-                            scratch_q,
+                            my_scratch_r,
+                            my_scratch_q,
                             tid
                         );
                     } else {
@@ -925,8 +971,8 @@ __device__ __forceinline__ void argon2id_fill_kernel_impl(
                             memory + lhs_offset,
                             memory + dst_offset,
                             true,
-                            scratch_r,
-                            scratch_q,
+                            my_scratch_r,
+                            my_scratch_q,
                             tid
                         );
                     }
