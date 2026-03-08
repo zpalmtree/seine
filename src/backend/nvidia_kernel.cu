@@ -479,97 +479,64 @@ __device__ __forceinline__ void compress_block_coop(
     scratch_r[tid + 96U] = r3;  scratch_q[tid + 96U] = r3;
     coop_sync();
 
-    // G-rounds with arithmetic index computation (A81).
-    // Row round columns: i_k = base + k*4 + lane
-    {
-        const unsigned int state = tid >> 2;
-        const unsigned int lane = tid & 3U;
-        const unsigned int base = state * 16U;
-        const unsigned int i0 = base + lane;
-        const unsigned int i1 = base + 4U + lane;
-        const unsigned int i2 = base + 8U + lane;
-        const unsigned int i3 = base + 12U + lane;
+    // G-rounds with warp-shuffle fusion (A82).
+    // Fuse row-columns → row-diagonals and col-columns → col-diagonals
+    // by passing values between lanes via __shfl_sync instead of shared
+    // memory round-trips. Saves 2 coop_sync + 16 smem accesses.
+    const unsigned int state = tid >> 2;
+    const unsigned int lane = tid & 3U;
+    const unsigned int shfl_base = state * 4U; // absolute lane base for shuffles
 
-        unsigned long long a = scratch_q[i0];
-        unsigned long long b = scratch_q[i1];
-        unsigned long long c = scratch_q[i2];
-        unsigned long long d = scratch_q[i3];
+    // --- Fused row rounds (columns + diagonals) ---
+    {
+        const unsigned int base = state * 16U;
+        // Row columns: load from shared, permute
+        unsigned long long a = scratch_q[base + lane];
+        unsigned long long b = scratch_q[base + 4U + lane];
+        unsigned long long c = scratch_q[base + 8U + lane];
+        unsigned long long d = scratch_q[base + 12U + lane];
         permute_step(a, b, c, d);
-        scratch_q[i0] = a;
-        scratch_q[i1] = b;
-        scratch_q[i2] = c;
-        scratch_q[i3] = d;
+        // Row diagonals: shuffle outputs instead of shared-memory round-trip.
+        // Thread lane l needs: a from self, b from (l+1)&3, c from (l+2)&3, d from (l+3)&3
+        unsigned long long a2 = a; // same thread, same position
+        unsigned long long b2 = __shfl_sync(ARGON2_COOP_WARP_MASK, b, shfl_base + ((lane + 1U) & 3U));
+        unsigned long long c2 = __shfl_sync(ARGON2_COOP_WARP_MASK, c, shfl_base + ((lane + 2U) & 3U));
+        unsigned long long d2 = __shfl_sync(ARGON2_COOP_WARP_MASK, d, shfl_base + ((lane + 3U) & 3U));
+        permute_step(a2, b2, c2, d2);
+        // Store diagonal results to shared memory for column rounds.
+        // Diagonal indices: base + lane, base + 4 + (lane+1)&3, base + 8 + (lane+2)&3, base + 12 + (lane+3)&3
+        scratch_q[base + lane] = a2;
+        scratch_q[base + 4U + ((lane + 1U) & 3U)] = b2;
+        scratch_q[base + 8U + ((lane + 2U) & 3U)] = c2;
+        scratch_q[base + 12U + ((lane + 3U) & 3U)] = d2;
     }
     coop_sync();
 
-    // Row round diagonals: i_k = base + k*4 + (lane + k) & 3
+    // --- Fused column rounds (columns + diagonals) ---
     {
-        const unsigned int state = tid >> 2;
-        const unsigned int lane = tid & 3U;
-        const unsigned int base = state * 16U;
-        const unsigned int i0 = base + lane;
-        const unsigned int i1 = base + 4U + ((lane + 1U) & 3U);
-        const unsigned int i2 = base + 8U + ((lane + 2U) & 3U);
-        const unsigned int i3 = base + 12U + ((lane + 3U) & 3U);
-
-        unsigned long long a = scratch_q[i0];
-        unsigned long long b = scratch_q[i1];
-        unsigned long long c = scratch_q[i2];
-        unsigned long long d = scratch_q[i3];
-        permute_step(a, b, c, d);
-        scratch_q[i0] = a;
-        scratch_q[i1] = b;
-        scratch_q[i2] = c;
-        scratch_q[i3] = d;
-    }
-    coop_sync();
-
-    // Column round columns: i_k = b + k*32 + (lane>>1)*16 + (lane&1)
-    {
-        const unsigned int state = tid >> 2;
-        const unsigned int lane = tid & 3U;
         const unsigned int b = state * 2U;
         const unsigned int col_sub = (lane >> 1) * 16U + (lane & 1U);
-        const unsigned int i0 = b + col_sub;
-        const unsigned int i1 = b + 32U + col_sub;
-        const unsigned int i2 = b + 64U + col_sub;
-        const unsigned int i3 = b + 96U + col_sub;
-
-        unsigned long long a = scratch_q[i0];
-        unsigned long long c = scratch_q[i1];
-        unsigned long long d = scratch_q[i2];
-        unsigned long long e = scratch_q[i3];
+        // Column columns: load from shared, permute
+        unsigned long long a = scratch_q[b + col_sub];
+        unsigned long long c = scratch_q[b + 32U + col_sub];
+        unsigned long long d = scratch_q[b + 64U + col_sub];
+        unsigned long long e = scratch_q[b + 96U + col_sub];
         permute_step(a, c, d, e);
-        scratch_q[i0] = a;
-        scratch_q[i1] = c;
-        scratch_q[i2] = d;
-        scratch_q[i3] = e;
-    }
-    coop_sync();
-
-    // Column round diagonals: i_k = b + k*32 + ((lane+k)&3 >> 1)*16 + ((lane+k)&1)
-    {
-        const unsigned int state = tid >> 2;
-        const unsigned int lane = tid & 3U;
-        const unsigned int b = state * 2U;
+        // Column diagonals: shuffle instead of shared-memory round-trip.
+        unsigned long long a2 = a;
+        unsigned long long c2 = __shfl_sync(ARGON2_COOP_WARP_MASK, c, shfl_base + ((lane + 1U) & 3U));
+        unsigned long long d2 = __shfl_sync(ARGON2_COOP_WARP_MASK, d, shfl_base + ((lane + 2U) & 3U));
+        unsigned long long e2 = __shfl_sync(ARGON2_COOP_WARP_MASK, e, shfl_base + ((lane + 3U) & 3U));
+        permute_step(a2, c2, d2, e2);
+        // Store diagonal results back.
         const unsigned int p0 = lane;
         const unsigned int p1 = (lane + 1U) & 3U;
         const unsigned int p2 = (lane + 2U) & 3U;
         const unsigned int p3 = (lane + 3U) & 3U;
-        const unsigned int i0 = b + (p0 >> 1) * 16U + (p0 & 1U);
-        const unsigned int i1 = b + 32U + (p1 >> 1) * 16U + (p1 & 1U);
-        const unsigned int i2 = b + 64U + (p2 >> 1) * 16U + (p2 & 1U);
-        const unsigned int i3 = b + 96U + (p3 >> 1) * 16U + (p3 & 1U);
-
-        unsigned long long a = scratch_q[i0];
-        unsigned long long c = scratch_q[i1];
-        unsigned long long d = scratch_q[i2];
-        unsigned long long e = scratch_q[i3];
-        permute_step(a, c, d, e);
-        scratch_q[i0] = a;
-        scratch_q[i1] = c;
-        scratch_q[i2] = d;
-        scratch_q[i3] = e;
+        scratch_q[b + (p0 >> 1) * 16U + (p0 & 1U)] = a2;
+        scratch_q[b + 32U + (p1 >> 1) * 16U + (p1 & 1U)] = c2;
+        scratch_q[b + 64U + (p2 >> 1) * 16U + (p2 & 1U)] = d2;
+        scratch_q[b + 96U + (p3 >> 1) * 16U + (p3 & 1U)] = e2;
     }
     coop_sync();
 
