@@ -467,11 +467,16 @@ __device__ __forceinline__ void compress_block_coop(
     unsigned long long *__restrict__ scratch_q,
     unsigned int tid
 ) {
-    for (unsigned int i = tid; i < 128U; i += ARGON2_COOP_THREADS) {
-        const unsigned long long r = rhs[i] ^ lhs[i];
-        scratch_r[i] = r;
-        scratch_q[i] = r;
-    }
+    // Issue all global loads into registers first to maximize
+    // memory-level parallelism (multiple loads in flight at once).
+    const unsigned long long r0 = rhs[tid]       ^ lhs[tid];
+    const unsigned long long r1 = rhs[tid + 32U]  ^ lhs[tid + 32U];
+    const unsigned long long r2 = rhs[tid + 64U]  ^ lhs[tid + 64U];
+    const unsigned long long r3 = rhs[tid + 96U]  ^ lhs[tid + 96U];
+    scratch_r[tid]       = r0;  scratch_q[tid]       = r0;
+    scratch_r[tid + 32U] = r1;  scratch_q[tid + 32U] = r1;
+    scratch_r[tid + 64U] = r2;  scratch_q[tid + 64U] = r2;
+    scratch_r[tid + 96U] = r3;  scratch_q[tid + 96U] = r3;
     coop_sync();
 
     // Use all 32 threads: 8 independent states x 4 threads/state.
@@ -920,11 +925,9 @@ __device__ __forceinline__ void argon2id_fill_kernel_impl(
                     // Codegen hint: the prefetch.global.L2 instruction is dropped
                     // by PTXAS on sm_120+ (Blackwell), but the address-computation
                     // arithmetic changes NVRTC's instruction scheduling for the
-                    // surrounding compression loop, yielding +25% kernel throughput.
-                    // Both this block AND the multi-warp my_* pointer indirection
-                    // (WARPS_PER_BLOCK infrastructure) are required together;
-                    // removing either drops back to baseline. See A73 in
-                    // NVIDIA_OPTIMIZATION_LOG.md for full codegen analysis.
+                    // surrounding compression loop, adding +8.5% on top of the
+                    // unrolled-load optimization in compress_block_coop (A77).
+                    // See A73/A77 in NVIDIA_OPTIMIZATION_LOG.md.
                     if (data_independent && block + 1U < segment_length) {
                         const unsigned int next_addr_idx = (block + 1U) & 127U;
                         // Skip when the address_block boundary would require an
