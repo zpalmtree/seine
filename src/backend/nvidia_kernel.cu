@@ -673,12 +673,23 @@ __device__ __forceinline__ void compress_block_coop(
     }
     coop_sync();
 
-    for (unsigned int i = tid; i < 128U; i += ARGON2_COOP_THREADS) {
-        const unsigned long long mixed = scratch_q[i] ^ scratch_r[i];
+    // Unrolled final store: read all shared-memory values into registers
+    // first, then issue all global stores to maximize MLP (A78).
+    {
+        const unsigned long long m0 = scratch_q[tid]       ^ scratch_r[tid];
+        const unsigned long long m1 = scratch_q[tid + 32U] ^ scratch_r[tid + 32U];
+        const unsigned long long m2 = scratch_q[tid + 64U] ^ scratch_r[tid + 64U];
+        const unsigned long long m3 = scratch_q[tid + 96U] ^ scratch_r[tid + 96U];
         if (xor_out) {
-            out[i] ^= mixed;
+            out[tid]       ^= m0;
+            out[tid + 32U] ^= m1;
+            out[tid + 64U] ^= m2;
+            out[tid + 96U] ^= m3;
         } else {
-            out[i] = mixed;
+            out[tid]       = m0;
+            out[tid + 32U] = m1;
+            out[tid + 64U] = m2;
+            out[tid + 96U] = m3;
         }
     }
 }
@@ -997,8 +1008,15 @@ __device__ __forceinline__ void argon2id_fill_kernel_impl(
         const unsigned long long *last =
             memory + (static_cast<unsigned long long>(lane_length) - 1ULL) * 128ULL;
         unsigned long long *out = out_last_blocks + global_hash_idx * 128ULL;
-        for (unsigned int i = tid; i < 128U; i += ARGON2_COOP_THREADS) {
-            out[i] = last[i];
+        {
+            const unsigned long long v0 = last[tid];
+            const unsigned long long v1 = last[tid + 32U];
+            const unsigned long long v2 = last[tid + 64U];
+            const unsigned long long v3 = last[tid + 96U];
+            out[tid]       = v0;
+            out[tid + 32U] = v1;
+            out[tid + 64U] = v2;
+            out[tid + 96U] = v3;
         }
         coop_sync();
         if (fused_target_check && tid == 0U) {
