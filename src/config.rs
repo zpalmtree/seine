@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use blocknet_pow_spec::CPU_LANE_MEMORY_BYTES;
-use clap::{ArgAction, Parser, ValueEnum};
+use clap::{ArgAction, CommandFactory, FromArgMatches, Parser, ValueEnum};
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "nvidia")]
@@ -381,6 +381,10 @@ struct Cli {
     nvidia_allocation_iters_per_lane: Option<u64>,
 
     /// Maximum hashes each lane executes per CUDA launch (higher = fewer launches, coarser preemption).
+    /// When left unset, Blackwell GPUs treat depth-1 as the preferred frontier:
+    /// cached/default depth-2 records clamp to depth-1 at runtime, and fresh autotune
+    /// jointly re-probes regcap+depth with Blackwell-only tie-breaks toward shallower full-lane profiles.
+    /// Explicit overrides keep the requested depth.
     #[arg(
         long,
         default_value_t = DEFAULT_NVIDIA_HASHES_PER_LAUNCH_PER_LANE
@@ -603,6 +607,7 @@ pub struct Config {
     pub nvidia_dispatch_iters_per_lane: Option<u64>,
     pub nvidia_allocation_iters_per_lane: Option<u64>,
     pub nvidia_hashes_per_launch_per_lane: u32,
+    pub nvidia_hashes_per_launch_per_lane_was_set: bool,
     pub nvidia_fused_target_check: bool,
     pub nvidia_adaptive_launch_depth: bool,
     pub nvidia_enforce_template_stop: bool,
@@ -647,7 +652,13 @@ pub struct Config {
 
 impl Config {
     pub fn parse() -> Result<Self> {
-        let mut cli = Cli::parse();
+        let matches = Cli::command().get_matches();
+        let nvidia_hashes_per_launch_per_lane_was_set = matches!(
+            matches.value_source("nvidia_hashes_per_launch_per_lane"),
+            Some(clap::parser::ValueSource::CommandLine)
+        );
+        let mut cli =
+            Cli::from_arg_matches(&matches).expect("clap matches should deserialize into Cli");
         let user_config_path = cli.data_dir.join(DEFAULT_USER_CONFIG_FILE);
         let user_cfg = read_user_config(&user_config_path)?;
         let user_config_exists = user_cfg.is_some();
@@ -983,6 +994,7 @@ impl Config {
                 .nvidia_allocation_iters_per_lane
                 .filter(|v| *v > 0),
             nvidia_hashes_per_launch_per_lane: cli.nvidia_hashes_per_launch_per_lane.max(1),
+            nvidia_hashes_per_launch_per_lane_was_set,
             nvidia_fused_target_check: cli.nvidia_fused_target_check,
             nvidia_adaptive_launch_depth: !cli.nvidia_no_adaptive_launch_depth,
             nvidia_enforce_template_stop,

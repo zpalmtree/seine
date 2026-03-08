@@ -55,6 +55,9 @@ const NVIDIA_AUTOTUNE_MEMORY_BUCKET_MIB: u64 = 512;
 const DEFAULT_DISPATCH_ITERS_PER_LANE: u64 = 1 << 21;
 const DEFAULT_ALLOCATION_ITERS_PER_LANE: u64 = 1 << 21;
 const DEFAULT_HASHES_PER_LAUNCH_PER_LANE: u32 = 2;
+const BLACKWELL_DEFAULT_HASHES_PER_LAUNCH_PER_LANE: u32 = 1;
+const BLACKWELL_AUTOTUNE_SCORE_TIE_FRAC: f64 = 0.02;
+const BLACKWELL_AUTOTUNE_PREFERRED_RREGCOUNT: u32 = 208;
 const DEFAULT_CANCEL_CHECK_BLOCK_INTERVAL: u32 = 64;
 const AMPERE_PLUS_CANCEL_CHECK_BLOCK_INTERVAL: u32 = 160;
 const ADAPTIVE_DEPTH_PRESSURE_CONTROL_BONUS: u32 = 2;
@@ -72,6 +75,22 @@ const CUDA_TRANSIENT_RETRY_DELAYS: [Duration; 3] = [
 
 fn default_hashes_per_launch_per_lane() -> u32 {
     DEFAULT_HASHES_PER_LAUNCH_PER_LANE
+}
+
+fn effective_hashes_per_launch_per_lane_cap(
+    requested_cap: u32,
+    user_override: bool,
+    compute_cap_major: u32,
+) -> u32 {
+    let requested_cap = requested_cap.max(1);
+    if !user_override
+        && requested_cap == DEFAULT_HASHES_PER_LAUNCH_PER_LANE
+        && compute_cap_major >= 12
+    {
+        BLACKWELL_DEFAULT_HASHES_PER_LAUNCH_PER_LANE
+    } else {
+        requested_cap
+    }
 }
 
 fn select_cancel_check_block_interval(cc_major: u32) -> u32 {
@@ -172,6 +191,7 @@ pub struct NvidiaBackendTuningOptions {
     pub dispatch_iters_per_lane: Option<u64>,
     pub allocation_iters_per_lane: Option<u64>,
     pub hashes_per_launch_per_lane: u32,
+    pub hashes_per_launch_per_lane_was_set: bool,
     pub fused_target_check: bool,
     pub adaptive_launch_depth: bool,
     pub enforce_template_stop: bool,
@@ -186,6 +206,7 @@ impl Default for NvidiaBackendTuningOptions {
             dispatch_iters_per_lane: None,
             allocation_iters_per_lane: None,
             hashes_per_launch_per_lane: DEFAULT_HASHES_PER_LAUNCH_PER_LANE,
+            hashes_per_launch_per_lane_was_set: false,
             fused_target_check: false,
             adaptive_launch_depth: true,
             enforce_template_stop: false,
@@ -929,6 +950,8 @@ impl NvidiaBackend {
                     .allocation_iters_per_lane
                     .filter(|v| *v > 0),
                 hashes_per_launch_per_lane: tuning_options.hashes_per_launch_per_lane.max(1),
+                hashes_per_launch_per_lane_was_set: tuning_options
+                    .hashes_per_launch_per_lane_was_set,
                 fused_target_check: tuning_options.fused_target_check,
                 adaptive_launch_depth: tuning_options.adaptive_launch_depth,
                 enforce_template_stop: tuning_options.enforce_template_stop,
@@ -1112,25 +1135,33 @@ impl NvidiaBackend {
             }
         }
 
+        let requested_hashes_per_launch_per_lane =
+            self.tuning_options.hashes_per_launch_per_lane.max(1);
+        let cached_hashes_per_launch_per_lane_cap =
+            self.effective_hashes_per_launch_per_lane_cap(selected);
+
         if let Some(forced_rregcount) = self.tuning_options.max_rregcount_override {
-            let forced = self.apply_runtime_tuning_overrides(NvidiaKernelTuning {
-                max_rregcount: forced_rregcount.max(1),
-                block_loop_unroll: false,
-                hashes_per_launch_per_lane: self.tuning_options.hashes_per_launch_per_lane.max(1),
-                max_lanes_hint: self.resolve_max_lanes_override(),
-            });
+            let forced = self.apply_runtime_tuning_overrides(
+                NvidiaKernelTuning {
+                    max_rregcount: forced_rregcount.max(1),
+                    block_loop_unroll: false,
+                    hashes_per_launch_per_lane: requested_hashes_per_launch_per_lane,
+                    max_lanes_hint: self.resolve_max_lanes_override(),
+                },
+                requested_hashes_per_launch_per_lane,
+            );
             if let Ok(mut slot) = self.kernel_tuning.write() {
                 *slot = Some(forced);
             }
             return forced;
         }
 
-        let key = build_nvidia_autotune_key(
-            selected,
-            self.tuning_options.hashes_per_launch_per_lane.max(1),
-        );
+        let key = build_nvidia_autotune_key(selected, requested_hashes_per_launch_per_lane);
         if let Some(cached) = load_nvidia_cached_tuning(&self.autotune_config_path, &key) {
-            let cached = self.apply_runtime_tuning_overrides(cached);
+            // Keep Blackwell's first-run autotune behavior unchanged. Only clamp cached
+            // depth-2 defaults to depth-1 when the operator left the launch-depth flag unset.
+            let cached =
+                self.apply_runtime_tuning_overrides(cached, cached_hashes_per_launch_per_lane_cap);
             if let Ok(mut slot) = self.kernel_tuning.write() {
                 *slot = Some(cached);
             }
@@ -1144,9 +1175,13 @@ impl NvidiaBackend {
                 self.autotune_secs,
                 self.tuning_options.autotune_samples,
                 self.resolve_max_lanes_override(),
-                self.tuning_options.hashes_per_launch_per_lane,
+                requested_hashes_per_launch_per_lane,
             )
-            .unwrap_or_else(|_| NvidiaKernelTuning::default()),
+            .unwrap_or_else(|_| NvidiaKernelTuning {
+                hashes_per_launch_per_lane: requested_hashes_per_launch_per_lane,
+                ..NvidiaKernelTuning::default()
+            }),
+            requested_hashes_per_launch_per_lane,
         );
         if let Ok(mut slot) = self.kernel_tuning.write() {
             *slot = Some(tuned);
@@ -1154,12 +1189,26 @@ impl NvidiaBackend {
         tuned
     }
 
-    fn apply_runtime_tuning_overrides(&self, mut tuning: NvidiaKernelTuning) -> NvidiaKernelTuning {
+    fn effective_hashes_per_launch_per_lane_cap(&self, selected: &NvidiaDeviceInfo) -> u32 {
+        let (compute_cap_major, _) =
+            query_cuda_compute_capability(selected.index).unwrap_or((0, 0));
+        effective_hashes_per_launch_per_lane_cap(
+            self.tuning_options.hashes_per_launch_per_lane,
+            self.tuning_options.hashes_per_launch_per_lane_was_set,
+            compute_cap_major,
+        )
+    }
+
+    fn apply_runtime_tuning_overrides(
+        &self,
+        mut tuning: NvidiaKernelTuning,
+        hashes_per_launch_per_lane_cap: u32,
+    ) -> NvidiaKernelTuning {
         tuning.max_rregcount = tuning.max_rregcount.max(1);
         tuning.hashes_per_launch_per_lane = tuning
             .hashes_per_launch_per_lane
             .max(1)
-            .min(self.tuning_options.hashes_per_launch_per_lane.max(1));
+            .min(hashes_per_launch_per_lane_cap.max(1));
         if let Some(forced) = self.tuning_options.max_lanes_override {
             tuning.max_lanes_hint = Some(forced.max(1));
         } else if tuning.max_lanes_hint.is_none() {
@@ -2947,6 +2996,15 @@ struct NvidiaAutotuneSampleScore {
     counted_hps: f64,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct NvidiaAutotuneCandidateScore {
+    tuning: NvidiaKernelTuning,
+    counted_median: f64,
+    counted_mean: f64,
+    throughput_median: f64,
+    throughput_mean: f64,
+}
+
 fn median_from_sorted(values: &[f64]) -> f64 {
     if values.is_empty() {
         return 0.0;
@@ -3019,6 +3077,75 @@ fn measure_nvidia_kernel_tuning_hps(
         throughput_hps: total_hashes as f64 / elapsed,
         counted_hps: counted_hashes / elapsed,
     })
+}
+
+fn blackwell_lane_preference(max_lanes_hint: Option<usize>) -> usize {
+    max_lanes_hint.unwrap_or(usize::MAX)
+}
+
+fn blackwell_regcap_distance(max_rregcount: u32) -> u32 {
+    max_rregcount.abs_diff(BLACKWELL_AUTOTUNE_PREFERRED_RREGCOUNT)
+}
+
+fn strict_nvidia_autotune_candidate_beats(
+    candidate: &NvidiaAutotuneCandidateScore,
+    best: &NvidiaAutotuneCandidateScore,
+) -> bool {
+    const EPS: f64 = 1e-9;
+    if candidate.counted_median > best.counted_median + EPS {
+        true
+    } else if (candidate.counted_median - best.counted_median).abs() <= EPS {
+        if candidate.counted_mean > best.counted_mean + EPS {
+            true
+        } else if (candidate.counted_mean - best.counted_mean).abs() <= EPS {
+            if candidate.throughput_median > best.throughput_median + EPS {
+                true
+            } else if (candidate.throughput_median - best.throughput_median).abs() <= EPS {
+                candidate.throughput_mean > best.throughput_mean + EPS
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    } else {
+        false
+    }
+}
+
+fn nvidia_autotune_candidate_beats(
+    candidate: &NvidiaAutotuneCandidateScore,
+    best: &NvidiaAutotuneCandidateScore,
+    compute_cap_major: u32,
+) -> bool {
+    if compute_cap_major >= 12 {
+        let tie_margin = candidate
+            .counted_median
+            .abs()
+            .max(best.counted_median.abs())
+            .mul_add(BLACKWELL_AUTOTUNE_SCORE_TIE_FRAC, 1e-9);
+        if candidate.counted_median > best.counted_median + tie_margin {
+            return true;
+        }
+        if best.counted_median > candidate.counted_median + tie_margin {
+            return false;
+        }
+        if candidate.tuning.hashes_per_launch_per_lane != best.tuning.hashes_per_launch_per_lane {
+            return candidate.tuning.hashes_per_launch_per_lane
+                < best.tuning.hashes_per_launch_per_lane;
+        }
+        let candidate_lanes = blackwell_lane_preference(candidate.tuning.max_lanes_hint);
+        let best_lanes = blackwell_lane_preference(best.tuning.max_lanes_hint);
+        if candidate_lanes != best_lanes {
+            return candidate_lanes > best_lanes;
+        }
+        let candidate_regcap_distance = blackwell_regcap_distance(candidate.tuning.max_rregcount);
+        let best_regcap_distance = blackwell_regcap_distance(best.tuning.max_rregcount);
+        if candidate_regcap_distance != best_regcap_distance {
+            return candidate_regcap_distance < best_regcap_distance;
+        }
+    }
+    strict_nvidia_autotune_candidate_beats(candidate, best)
 }
 
 fn estimated_lane_capacity(selected: &NvidiaDeviceInfo, m_cost_kib: u32) -> usize {
@@ -3117,10 +3244,10 @@ fn autotune_nvidia_kernel_tuning(
 
     // Stage 1: sweep regcap with default hash depth and lane hint.
     let default_depth = hashes_per_launch_per_lane.max(1);
-    let mut best: Option<(NvidiaKernelTuning, f64, f64, f64, f64)> = None;
+    let mut best: Option<NvidiaAutotuneCandidateScore> = None;
 
     let evaluate_candidate = |candidate: NvidiaKernelTuning,
-                              best: &mut Option<(NvidiaKernelTuning, f64, f64, f64, f64)>|
+                              best: &mut Option<NvidiaAutotuneCandidateScore>|
      -> bool {
         let mut counted_samples = Vec::with_capacity(sample_count as usize);
         let mut throughput_samples = Vec::with_capacity(sample_count as usize);
@@ -3149,78 +3276,78 @@ fn autotune_nvidia_kernel_tuning(
         let throughput_median = median_from_sorted(&throughput_samples);
         let throughput_mean =
             throughput_samples.iter().sum::<f64>() / throughput_samples.len() as f64;
-        const EPS: f64 = 1e-9;
+        let candidate_score = NvidiaAutotuneCandidateScore {
+            tuning: candidate,
+            counted_median,
+            counted_mean,
+            throughput_median,
+            throughput_mean,
+        };
         let should_replace = match best {
             None => true,
-            Some((_, best_cm, best_cme, best_tm, best_tme)) => {
-                if counted_median > *best_cm + EPS {
-                    true
-                } else if (counted_median - *best_cm).abs() <= EPS {
-                    if counted_mean > *best_cme + EPS {
-                        true
-                    } else if (counted_mean - *best_cme).abs() <= EPS {
-                        if throughput_median > *best_tm + EPS {
-                            true
-                        } else if (throughput_median - *best_tm).abs() <= EPS {
-                            throughput_mean > *best_tme + EPS
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                }
+            Some(best_score) => {
+                nvidia_autotune_candidate_beats(&candidate_score, best_score, compute_cap_major)
             }
         };
         if should_replace {
-            *best = Some((
-                candidate,
-                counted_median,
-                counted_mean,
-                throughput_median,
-                throughput_mean,
-            ));
+            *best = Some(candidate_score);
             true
         } else {
             false
         }
     };
 
-    // Stage 1: find best regcap
-    for &max_rregcount in regcap_candidates {
-        let candidate = NvidiaKernelTuning {
-            max_rregcount,
-            block_loop_unroll: false,
-            hashes_per_launch_per_lane: default_depth,
-            max_lanes_hint: None,
-        };
-        evaluate_candidate(candidate, &mut best);
+    if compute_cap_major >= 12 {
+        for depth in hash_depth_candidates.iter().copied() {
+            for &max_rregcount in regcap_candidates {
+                let candidate = NvidiaKernelTuning {
+                    max_rregcount,
+                    block_loop_unroll: false,
+                    hashes_per_launch_per_lane: depth,
+                    max_lanes_hint: None,
+                };
+                evaluate_candidate(candidate, &mut best);
+            }
+        }
+    } else {
+        // Stage 1: find best regcap
+        for &max_rregcount in regcap_candidates {
+            let candidate = NvidiaKernelTuning {
+                max_rregcount,
+                block_loop_unroll: false,
+                hashes_per_launch_per_lane: default_depth,
+                max_lanes_hint: None,
+            };
+            evaluate_candidate(candidate, &mut best);
+        }
+
+        let best_regcap = best
+            .as_ref()
+            .map(|score| score.tuning.max_rregcount)
+            .unwrap_or(DEFAULT_NVIDIA_MAX_RREGCOUNT);
+
+        // Stage 2: find best hash depth using best regcap
+        for depth in hash_depth_candidates.iter().copied() {
+            if depth == default_depth {
+                continue; // already tested in stage 1
+            }
+            let candidate = NvidiaKernelTuning {
+                max_rregcount: best_regcap,
+                block_loop_unroll: false,
+                hashes_per_launch_per_lane: depth,
+                max_lanes_hint: None,
+            };
+            evaluate_candidate(candidate, &mut best);
+        }
     }
 
     let best_regcap = best
         .as_ref()
-        .map(|(t, ..)| t.max_rregcount)
+        .map(|score| score.tuning.max_rregcount)
         .unwrap_or(DEFAULT_NVIDIA_MAX_RREGCOUNT);
-
-    // Stage 2: find best hash depth using best regcap
-    for depth in hash_depth_candidates.iter().copied() {
-        if depth == default_depth {
-            continue; // already tested in stage 1
-        }
-        let candidate = NvidiaKernelTuning {
-            max_rregcount: best_regcap,
-            block_loop_unroll: false,
-            hashes_per_launch_per_lane: depth,
-            max_lanes_hint: None,
-        };
-        evaluate_candidate(candidate, &mut best);
-    }
-
     let best_depth = best
         .as_ref()
-        .map(|(t, ..)| t.hashes_per_launch_per_lane)
+        .map(|score| score.tuning.hashes_per_launch_per_lane)
         .unwrap_or(default_depth);
 
     // Stage 3: find best lane hint using best regcap + depth
@@ -3237,20 +3364,21 @@ fn autotune_nvidia_kernel_tuning(
         evaluate_candidate(candidate, &mut best);
     }
 
-    let (selected_tuning, measured_hps, _, _, _) = best.ok_or_else(|| {
+    let selected_score = best.ok_or_else(|| {
         anyhow!(
             "NVIDIA autotune failed for device {} (index {})",
             selected.name,
             selected.index
         )
     })?;
+    let selected_tuning = selected_score.tuning;
 
     let key = build_nvidia_autotune_key(selected, hashes_per_launch_per_lane.max(1));
     let _ = persist_nvidia_autotune_record(
         cache_path,
         key,
         selected_tuning,
-        measured_hps,
+        selected_score.counted_median,
         autotune_secs,
         sample_count,
     );
@@ -3680,6 +3808,89 @@ mod tests {
             shared.dropped_events.load(Ordering::Acquire) >= 1,
             "event should be dropped when channel is full instead of blocking"
         );
+    }
+
+    #[test]
+    fn blackwell_default_launch_depth_caps_to_one_when_not_overridden() {
+        assert_eq!(effective_hashes_per_launch_per_lane_cap(2, false, 12), 1);
+        assert_eq!(effective_hashes_per_launch_per_lane_cap(2, false, 13), 1);
+    }
+
+    #[test]
+    fn explicit_launch_depth_override_is_respected_on_blackwell() {
+        assert_eq!(effective_hashes_per_launch_per_lane_cap(2, true, 12), 2);
+        assert_eq!(effective_hashes_per_launch_per_lane_cap(4, true, 12), 4);
+    }
+
+    #[test]
+    fn pre_blackwell_default_launch_depth_stays_unchanged() {
+        assert_eq!(effective_hashes_per_launch_per_lane_cap(2, false, 8), 2);
+        assert_eq!(effective_hashes_per_launch_per_lane_cap(2, false, 9), 2);
+    }
+
+    fn autotune_score(
+        max_rregcount: u32,
+        depth: u32,
+        max_lanes_hint: Option<usize>,
+        counted_median: f64,
+        counted_mean: f64,
+    ) -> NvidiaAutotuneCandidateScore {
+        NvidiaAutotuneCandidateScore {
+            tuning: NvidiaKernelTuning {
+                max_rregcount,
+                block_loop_unroll: false,
+                hashes_per_launch_per_lane: depth,
+                max_lanes_hint,
+            },
+            counted_median,
+            counted_mean,
+            throughput_median: counted_median,
+            throughput_mean: counted_mean,
+        }
+    }
+
+    #[test]
+    fn blackwell_autotune_tie_prefers_shallower_depth() {
+        let deeper = autotune_score(240, 2, None, 1.0, 1.0);
+        let shallower = autotune_score(240, 1, None, 0.99, 0.99);
+
+        assert!(nvidia_autotune_candidate_beats(&shallower, &deeper, 12));
+        assert!(!nvidia_autotune_candidate_beats(&deeper, &shallower, 12));
+    }
+
+    #[test]
+    fn blackwell_autotune_tie_prefers_regcap_closer_to_observed_frontier() {
+        let high_reg = autotune_score(240, 1, None, 1.0, 1.0);
+        let frontier_reg = autotune_score(208, 1, None, 0.99, 0.99);
+
+        assert!(nvidia_autotune_candidate_beats(
+            &frontier_reg,
+            &high_reg,
+            12
+        ));
+        assert!(!nvidia_autotune_candidate_beats(
+            &high_reg,
+            &frontier_reg,
+            12
+        ));
+    }
+
+    #[test]
+    fn blackwell_autotune_tie_prefers_uncapped_lanes() {
+        let capped = autotune_score(208, 1, Some(12), 1.0, 1.0);
+        let uncapped = autotune_score(208, 1, None, 0.99, 0.99);
+
+        assert!(nvidia_autotune_candidate_beats(&uncapped, &capped, 12));
+        assert!(!nvidia_autotune_candidate_beats(&capped, &uncapped, 12));
+    }
+
+    #[test]
+    fn pre_blackwell_autotune_keeps_strict_metric_ordering() {
+        let faster = autotune_score(240, 2, None, 1.0, 1.0);
+        let slower = autotune_score(208, 1, None, 0.99, 0.99);
+
+        assert!(nvidia_autotune_candidate_beats(&faster, &slower, 8));
+        assert!(!nvidia_autotune_candidate_beats(&slower, &faster, 8));
     }
 
     #[test]

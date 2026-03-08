@@ -254,6 +254,8 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
                         dispatch_iters_per_lane: cfg.nvidia_dispatch_iters_per_lane,
                         allocation_iters_per_lane: cfg.nvidia_allocation_iters_per_lane,
                         hashes_per_launch_per_lane: cfg.nvidia_hashes_per_launch_per_lane,
+                        hashes_per_launch_per_lane_was_set: cfg
+                            .nvidia_hashes_per_launch_per_lane_was_set,
                         fused_target_check: cfg.nvidia_fused_target_check,
                         adaptive_launch_depth: cfg.nvidia_adaptive_launch_depth,
                         enforce_template_stop: cfg.nvidia_enforce_template_stop,
@@ -1751,6 +1753,8 @@ fn build_backend_instances(cfg: &Config) -> Vec<(BackendSpec, Arc<dyn PowBackend
                         dispatch_iters_per_lane: cfg.nvidia_dispatch_iters_per_lane,
                         allocation_iters_per_lane: cfg.nvidia_allocation_iters_per_lane,
                         hashes_per_launch_per_lane: cfg.nvidia_hashes_per_launch_per_lane,
+                        hashes_per_launch_per_lane_was_set: cfg
+                            .nvidia_hashes_per_launch_per_lane_was_set,
                         fused_target_check: cfg.nvidia_fused_target_check,
                         adaptive_launch_depth: cfg.nvidia_adaptive_launch_depth,
                         enforce_template_stop: cfg.nvidia_enforce_template_stop,
@@ -3078,6 +3082,7 @@ mod tests {
             nvidia_dispatch_iters_per_lane: None,
             nvidia_allocation_iters_per_lane: None,
             nvidia_hashes_per_launch_per_lane: 2,
+            nvidia_hashes_per_launch_per_lane_was_set: false,
             nvidia_fused_target_check: false,
             nvidia_adaptive_launch_depth: true,
             nvidia_enforce_template_stop: false,

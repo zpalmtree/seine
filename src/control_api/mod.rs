@@ -1630,6 +1630,7 @@ fn apply_start_patch(cfg: &mut Config, patch: &StartRequest) -> Result<()> {
             bail!("nvidia_hashes_per_launch_per_lane must be >= 1");
         }
         cfg.nvidia_hashes_per_launch_per_lane = value;
+        cfg.nvidia_hashes_per_launch_per_lane_was_set = true;
     }
     if let Some(value) = patch.nvidia_fused_target_check {
         cfg.nvidia_fused_target_check = value;

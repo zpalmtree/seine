@@ -70,6 +70,8 @@ This file preserves the full engineering reference for AI agents doing optimizat
 - `--nvidia-max-lanes` caps active NVIDIA lanes per device instance.
 - `--nvidia-dispatch-iters-per-lane` and `--nvidia-allocation-iters-per-lane` override scheduler/allocator lane-iteration hints.
 - `--nvidia-hashes-per-launch-per-lane` (default `2`) controls CUDA launch depth per lane (`higher => fewer launches`, often higher H/s on this workload, but coarser cancel/fence preemption).
+  - On Blackwell, if the flag is left unset and a cached/default tuning record resolves to depth `2`, Seine clamps the runtime depth to `1` for finer preemption. Explicit CLI overrides keep the requested depth.
+  - Blackwell fresh autotune also re-probes regcap+depth jointly and breaks near ties toward shallower full-lane profiles, with a soft preference for the measured `rreg=208` frontier.
 - `--nvidia-no-adaptive-launch-depth` disables backend pressure/deadline-based launch-depth shaping.
 - `--nvidia-fused-target-check` enables in-fill-kernel target checking (disabled by default; can regress throughput on some GPUs).
 - `--nvidia-template-stop-policy` (`auto`, `on`, `off`) controls whether NVIDIA workers enforce template `stop_at`; `auto` follows `--strict-round-accounting`.

@@ -2757,6 +2757,7 @@ mod tests {
             nvidia_dispatch_iters_per_lane: None,
             nvidia_allocation_iters_per_lane: None,
             nvidia_hashes_per_launch_per_lane: 2,
+            nvidia_hashes_per_launch_per_lane_was_set: false,
             nvidia_fused_target_check: false,
             nvidia_adaptive_launch_depth: true,
             nvidia_enforce_template_stop: false,
