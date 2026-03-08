@@ -479,42 +479,16 @@ __device__ __forceinline__ void compress_block_coop(
     scratch_r[tid + 96U] = r3;  scratch_q[tid + 96U] = r3;
     coop_sync();
 
-    // Use all 32 threads: 8 independent states x 4 threads/state.
+    // G-rounds with arithmetic index computation (A81).
+    // Row round columns: i_k = base + k*4 + lane
     {
-        const unsigned int state = tid >> 2; // 0..7
-        const unsigned int lane = tid & 3U;  // 0..3
+        const unsigned int state = tid >> 2;
+        const unsigned int lane = tid & 3U;
         const unsigned int base = state * 16U;
-
-        unsigned int i0 = 0U;
-        unsigned int i1 = 0U;
-        unsigned int i2 = 0U;
-        unsigned int i3 = 0U;
-        switch (lane) {
-            case 0U:
-                i0 = base + 0U;
-                i1 = base + 4U;
-                i2 = base + 8U;
-                i3 = base + 12U;
-                break;
-            case 1U:
-                i0 = base + 1U;
-                i1 = base + 5U;
-                i2 = base + 9U;
-                i3 = base + 13U;
-                break;
-            case 2U:
-                i0 = base + 2U;
-                i1 = base + 6U;
-                i2 = base + 10U;
-                i3 = base + 14U;
-                break;
-            default:
-                i0 = base + 3U;
-                i1 = base + 7U;
-                i2 = base + 11U;
-                i3 = base + 15U;
-                break;
-        }
+        const unsigned int i0 = base + lane;
+        const unsigned int i1 = base + 4U + lane;
+        const unsigned int i2 = base + 8U + lane;
+        const unsigned int i3 = base + 12U + lane;
 
         unsigned long long a = scratch_q[i0];
         unsigned long long b = scratch_q[i1];
@@ -528,41 +502,15 @@ __device__ __forceinline__ void compress_block_coop(
     }
     coop_sync();
 
+    // Row round diagonals: i_k = base + k*4 + (lane + k) & 3
     {
-        const unsigned int state = tid >> 2; // 0..7
-        const unsigned int lane = tid & 3U;  // 0..3
+        const unsigned int state = tid >> 2;
+        const unsigned int lane = tid & 3U;
         const unsigned int base = state * 16U;
-
-        unsigned int i0 = 0U;
-        unsigned int i1 = 0U;
-        unsigned int i2 = 0U;
-        unsigned int i3 = 0U;
-        switch (lane) {
-            case 0U:
-                i0 = base + 0U;
-                i1 = base + 5U;
-                i2 = base + 10U;
-                i3 = base + 15U;
-                break;
-            case 1U:
-                i0 = base + 1U;
-                i1 = base + 6U;
-                i2 = base + 11U;
-                i3 = base + 12U;
-                break;
-            case 2U:
-                i0 = base + 2U;
-                i1 = base + 7U;
-                i2 = base + 8U;
-                i3 = base + 13U;
-                break;
-            default:
-                i0 = base + 3U;
-                i1 = base + 4U;
-                i2 = base + 9U;
-                i3 = base + 14U;
-                break;
-        }
+        const unsigned int i0 = base + lane;
+        const unsigned int i1 = base + 4U + ((lane + 1U) & 3U);
+        const unsigned int i2 = base + 8U + ((lane + 2U) & 3U);
+        const unsigned int i3 = base + 12U + ((lane + 3U) & 3U);
 
         unsigned long long a = scratch_q[i0];
         unsigned long long b = scratch_q[i1];
@@ -576,42 +524,16 @@ __device__ __forceinline__ void compress_block_coop(
     }
     coop_sync();
 
-    // Column round: 8 independent interleaved states x 4 threads/state.
+    // Column round columns: i_k = b + k*32 + (lane>>1)*16 + (lane&1)
     {
-        const unsigned int state = tid >> 2; // 0..7
-        const unsigned int lane = tid & 3U;  // 0..3
+        const unsigned int state = tid >> 2;
+        const unsigned int lane = tid & 3U;
         const unsigned int b = state * 2U;
-
-        unsigned int i0 = 0U;
-        unsigned int i1 = 0U;
-        unsigned int i2 = 0U;
-        unsigned int i3 = 0U;
-        switch (lane) {
-            case 0U:
-                i0 = b;
-                i1 = b + 32U;
-                i2 = b + 64U;
-                i3 = b + 96U;
-                break;
-            case 1U:
-                i0 = b + 1U;
-                i1 = b + 33U;
-                i2 = b + 65U;
-                i3 = b + 97U;
-                break;
-            case 2U:
-                i0 = b + 16U;
-                i1 = b + 48U;
-                i2 = b + 80U;
-                i3 = b + 112U;
-                break;
-            default:
-                i0 = b + 17U;
-                i1 = b + 49U;
-                i2 = b + 81U;
-                i3 = b + 113U;
-                break;
-        }
+        const unsigned int col_sub = (lane >> 1) * 16U + (lane & 1U);
+        const unsigned int i0 = b + col_sub;
+        const unsigned int i1 = b + 32U + col_sub;
+        const unsigned int i2 = b + 64U + col_sub;
+        const unsigned int i3 = b + 96U + col_sub;
 
         unsigned long long a = scratch_q[i0];
         unsigned long long c = scratch_q[i1];
@@ -625,41 +547,19 @@ __device__ __forceinline__ void compress_block_coop(
     }
     coop_sync();
 
+    // Column round diagonals: i_k = b + k*32 + ((lane+k)&3 >> 1)*16 + ((lane+k)&1)
     {
-        const unsigned int state = tid >> 2; // 0..7
-        const unsigned int lane = tid & 3U;  // 0..3
+        const unsigned int state = tid >> 2;
+        const unsigned int lane = tid & 3U;
         const unsigned int b = state * 2U;
-
-        unsigned int i0 = 0U;
-        unsigned int i1 = 0U;
-        unsigned int i2 = 0U;
-        unsigned int i3 = 0U;
-        switch (lane) {
-            case 0U:
-                i0 = b;
-                i1 = b + 33U;
-                i2 = b + 80U;
-                i3 = b + 113U;
-                break;
-            case 1U:
-                i0 = b + 1U;
-                i1 = b + 48U;
-                i2 = b + 81U;
-                i3 = b + 96U;
-                break;
-            case 2U:
-                i0 = b + 16U;
-                i1 = b + 49U;
-                i2 = b + 64U;
-                i3 = b + 97U;
-                break;
-            default:
-                i0 = b + 17U;
-                i1 = b + 32U;
-                i2 = b + 65U;
-                i3 = b + 112U;
-                break;
-        }
+        const unsigned int p0 = lane;
+        const unsigned int p1 = (lane + 1U) & 3U;
+        const unsigned int p2 = (lane + 2U) & 3U;
+        const unsigned int p3 = (lane + 3U) & 3U;
+        const unsigned int i0 = b + (p0 >> 1) * 16U + (p0 & 1U);
+        const unsigned int i1 = b + 32U + (p1 >> 1) * 16U + (p1 & 1U);
+        const unsigned int i2 = b + 64U + (p2 >> 1) * 16U + (p2 & 1U);
+        const unsigned int i3 = b + 96U + (p3 >> 1) * 16U + (p3 & 1U);
 
         unsigned long long a = scratch_q[i0];
         unsigned long long c = scratch_q[i1];
