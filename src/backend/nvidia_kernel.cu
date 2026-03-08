@@ -917,10 +917,14 @@ __device__ __forceinline__ void argon2id_fill_kernel_impl(
                     const unsigned long long lhs_offset =
                         static_cast<unsigned long long>(ref_index) * 128ULL;
 
-                    // Prefetch next iteration's ref_block into L2 during this
-                    // block's compression (~690 compute cycles of lead time).
-                    // Only effective for data-independent segments where we can
-                    // look up the next ref_index from the precomputed address_block.
+                    // Codegen hint: the prefetch.global.L2 instruction is dropped
+                    // by PTXAS on sm_120+ (Blackwell), but the address-computation
+                    // arithmetic changes NVRTC's instruction scheduling for the
+                    // surrounding compression loop, yielding +25% kernel throughput.
+                    // Both this block AND the multi-warp my_* pointer indirection
+                    // (WARPS_PER_BLOCK infrastructure) are required together;
+                    // removing either drops back to baseline. See A73 in
+                    // NVIDIA_OPTIMIZATION_LOG.md for full codegen analysis.
                     if (data_independent && block + 1U < segment_length) {
                         const unsigned int next_addr_idx = (block + 1U) & 127U;
                         // Skip when the address_block boundary would require an
@@ -947,7 +951,7 @@ __device__ __forceinline__ void argon2id_fill_kernel_impl(
                                 );
                             const unsigned long long pf_base =
                                 static_cast<unsigned long long>(nref) * 128ULL;
-                            // 8 threads prefetch 8 cache lines = 1 KiB ref_block.
+                            // Dropped on sm_120+; kept as codegen hint.
                             asm volatile(
                                 "prefetch.global.L2 [%0];"
                                 :: "l"(memory + pf_base + tid * 16ULL)
