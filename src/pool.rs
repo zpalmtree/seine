@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::io::{BufRead, BufReader, ErrorKind, Write};
+use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -15,6 +15,7 @@ const RECONNECT_DELAY: Duration = Duration::from_secs(2);
 const SOCKET_IO_TIMEOUT: Duration = Duration::from_millis(250);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const CHANNEL_CAPACITY: usize = 4096;
+const MAX_SUBMITS_PER_IO_CYCLE: usize = 32;
 const LOCAL_POOL_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
 const STRATUM_PROTOCOL_VERSION: u32 = 2;
 const STRATUM_CAPABILITY_LOGIN_NEGOTIATION: &str = "login_negotiation";
@@ -25,6 +26,7 @@ const STRATUM_METHOD_NOTIFICATION: &str = "notification";
 const SUBMIT_REJECT_REASON_DISCONNECTED: &str = "pool disconnected";
 const SUBMIT_REJECT_REASON_LOGIN_REJECTED: &str = "pool login rejected";
 const SUBMIT_REJECT_REASON_SEND_FAILED: &str = "submit interrupted during reconnect";
+const SUBMIT_REJECT_REASON_RESYNC: &str = "submit interrupted during pool resync";
 
 pub const POOL_NOTIFICATION_POOL_BLOCK_SOLVED: &str = "pool_block_solved";
 pub const POOL_NOTIFICATION_MINER_BLOCK_FOUND: &str = "miner_block_found";
@@ -110,6 +112,7 @@ struct PoolSubmit {
 pub struct PoolClient {
     submit_tx: Sender<PoolSubmit>,
     event_rx: Receiver<PoolEvent>,
+    reconnect_requested: Arc<AtomicBool>,
     shutdown: Arc<AtomicBool>,
 }
 
@@ -123,6 +126,8 @@ impl PoolClient {
         let endpoint = parse_pool_endpoint(pool_url)?;
         let (submit_tx, submit_rx) = bounded::<PoolSubmit>(CHANNEL_CAPACITY);
         let (event_tx, event_rx) = bounded::<PoolEvent>(CHANNEL_CAPACITY);
+        let reconnect_requested = Arc::new(AtomicBool::new(false));
+        let reconnect_requested_for_thread = Arc::clone(&reconnect_requested);
         let shutdown = Arc::new(AtomicBool::new(false));
         let shutdown_for_thread = Arc::clone(&shutdown);
 
@@ -136,6 +141,7 @@ impl PoolClient {
                     submit_rx,
                     event_tx,
                     process_shutdown,
+                    reconnect_requested_for_thread,
                     shutdown_for_thread,
                 )
             })
@@ -144,6 +150,7 @@ impl PoolClient {
         Ok(Self {
             submit_tx,
             event_rx,
+            reconnect_requested,
             shutdown,
         })
     }
@@ -179,6 +186,10 @@ impl PoolClient {
             }
         }
         out
+    }
+
+    pub fn request_reconnect(&self) {
+        self.reconnect_requested.store(true, Ordering::Relaxed);
     }
 }
 
@@ -246,6 +257,7 @@ fn run_pool_client_thread(
     submit_rx: Receiver<PoolSubmit>,
     event_tx: Sender<PoolEvent>,
     process_shutdown: Arc<AtomicBool>,
+    reconnect_requested: Arc<AtomicBool>,
     shutdown: Arc<AtomicBool>,
 ) {
     let mut next_request_id = LOGIN_REQUEST_ID + 1;
@@ -284,6 +296,18 @@ fn run_pool_client_thread(
                     if should_shutdown(process_shutdown.as_ref(), shutdown.as_ref()) {
                         return;
                     }
+                    if reconnect_requested.swap(false, Ordering::Relaxed) {
+                        reject_pending_submits(
+                            &event_tx,
+                            &mut pending_submits,
+                            SUBMIT_REJECT_REASON_RESYNC,
+                        );
+                        reject_queued_submits(&event_tx, &submit_rx, SUBMIT_REJECT_REASON_RESYNC);
+                        let _ = event_tx.try_send(PoolEvent::Disconnected(format!(
+                            "pool resync requested at {endpoint}"
+                        )));
+                        break;
+                    }
 
                     let mut reconnect_requested = false;
                     if login_confirmed {
@@ -320,7 +344,10 @@ fn run_pool_client_thread(
                             break;
                         }
 
-                        while let Ok(submit) = submit_rx.try_recv() {
+                        for _ in 0..MAX_SUBMITS_PER_IO_CYCLE {
+                            let Ok(submit) = submit_rx.try_recv() else {
+                                break;
+                            };
                             let request_id = next_request_id;
                             next_request_id =
                                 next_request_id.wrapping_add(1).max(LOGIN_REQUEST_ID + 1);
@@ -1657,5 +1684,125 @@ mod tests {
 
         server.join().expect("server thread should finish");
         shutdown.store(true, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn pool_client_request_reconnect_establishes_a_fresh_session() {
+        let listener =
+            TcpListener::bind("127.0.0.1:0").expect("test listener should bind to loopback");
+        listener
+            .set_nonblocking(true)
+            .expect("listener should allow nonblocking accept");
+        let addr = listener
+            .local_addr()
+            .expect("listener should expose local address");
+
+        let server = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let accept_next = || loop {
+                match listener.accept() {
+                    Ok((socket, _)) => break socket,
+                    Err(err) if err.kind() == ErrorKind::WouldBlock => {
+                        assert!(
+                            Instant::now() < deadline,
+                            "timed out waiting for client connection"
+                        );
+                        thread::sleep(Duration::from_millis(20));
+                    }
+                    Err(err) => panic!("accept failed: {err}"),
+                }
+            };
+
+            for attempt in 0..2 {
+                let mut socket = accept_next();
+                let mut reader =
+                    BufReader::new(socket.try_clone().expect("socket clone should succeed"));
+                reader
+                    .get_mut()
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .expect("set read timeout");
+                let mut login_line = String::new();
+                reader
+                    .read_line(&mut login_line)
+                    .expect("server should read login");
+                let login_value: Value =
+                    serde_json::from_str(login_line.trim()).expect("login should decode");
+                assert_eq!(
+                    login_value.get("method").and_then(Value::as_str),
+                    Some("login")
+                );
+
+                socket
+                    .write_all(br#"{"id":1,"status":"ok","result":{"protocol_version":2,"capabilities":["submit_claimed_hash"],"required_capabilities":[]}}
+"#)
+                    .expect("server should write login ack");
+
+                if attempt == 0 {
+                    reader
+                        .get_mut()
+                        .set_read_timeout(Some(Duration::from_millis(200)))
+                        .expect("set drain timeout");
+                    let disconnect_deadline = Instant::now() + Duration::from_secs(4);
+                    let mut drain = [0u8; 64];
+                    loop {
+                        match reader.get_mut().read(&mut drain) {
+                            Ok(0) => break,
+                            Ok(_) => {}
+                            Err(err)
+                                if matches!(
+                                    err.kind(),
+                                    ErrorKind::WouldBlock
+                                        | ErrorKind::TimedOut
+                                        | ErrorKind::Interrupted
+                                ) =>
+                            {
+                                assert!(
+                                    Instant::now() < disconnect_deadline,
+                                    "timed out waiting for client reconnect request"
+                                );
+                            }
+                            Err(err) => panic!("server should observe client disconnect: {err}"),
+                        }
+                    }
+                }
+            }
+        });
+
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let client = PoolClient::connect(
+            &format!("127.0.0.1:{}", addr.port()),
+            "BTestAddress".to_string(),
+            "rig01".to_string(),
+            Arc::clone(&shutdown),
+        )
+        .expect("pool client should connect");
+
+        let mut login_acks = 0usize;
+        let first_deadline = Instant::now() + Duration::from_secs(8);
+        while Instant::now() < first_deadline && login_acks < 1 {
+            if matches!(
+                client.recv_event_timeout(Duration::from_millis(200)),
+                Some(PoolEvent::LoginAccepted(_))
+            ) {
+                login_acks += 1;
+            }
+        }
+        assert_eq!(login_acks, 1, "expected initial login accepted event");
+
+        client.request_reconnect();
+
+        let second_deadline = Instant::now() + Duration::from_secs(8);
+        while Instant::now() < second_deadline && login_acks < 2 {
+            if matches!(
+                client.recv_event_timeout(Duration::from_millis(200)),
+                Some(PoolEvent::LoginAccepted(_))
+            ) {
+                login_acks += 1;
+            }
+        }
+
+        server.join().expect("server thread should finish");
+        shutdown.store(true, Ordering::Relaxed);
+        assert_eq!(login_acks, 2, "expected reconnect login accepted event");
     }
 }

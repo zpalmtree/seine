@@ -42,8 +42,15 @@ const POOL_JOB_STOP_AT_HORIZON: Duration = Duration::from_secs(365 * 24 * 60 * 6
 const POOL_MAX_INFLIGHT_SUBMITS: usize = 16;
 const POOL_MAX_DEFERRED_SUBMITS: usize = 4096;
 const POOL_SUBMIT_ACK_TIMEOUT: Duration = Duration::from_secs(30);
+const POOL_DESYNC_STALE_ACK_WINDOW: Duration = Duration::from_secs(60);
+const POOL_DESYNC_STALE_ACK_THRESHOLD: usize = 3;
+const POOL_DESYNC_STALE_FOR_THRESHOLD: Duration = Duration::from_secs(15);
 const POOL_TELEMETRY_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
-const POOL_TELEMETRY_TIMEOUT: Duration = Duration::from_secs(3);
+const POOL_TELEMETRY_TIMEOUT: Duration = Duration::from_secs(5);
+const POOL_TIMING_SLOW_CANCEL_THRESHOLD: Duration = Duration::from_secs(1);
+const POOL_TIMING_SLOW_ASSIGN_THRESHOLD: Duration = Duration::from_secs(1);
+const POOL_TIMING_SLOW_QUEUE_THRESHOLD: Duration = Duration::from_secs(3);
+const POOL_TIMING_SLOW_ACK_THRESHOLD: Duration = Duration::from_secs(3);
 const ATOMIC_UNITS_PER_BNT: u64 = 100_000_000;
 const BNT_DISPLAY_DECIMALS: usize = 4;
 const BNT_DISPLAY_SCALE_ATOMIC_UNITS: u64 = 10_000;
@@ -132,18 +139,37 @@ struct ActivePoolJob {
     round_backend_hashes: BTreeMap<u64, u64>,
     round_backend_telemetry: BTreeMap<u64, BackendRoundTelemetry>,
     submitted_nonces: HashSet<u64>,
-    pending_submit_nonces: HashMap<u64, Instant>,
+    pending_submit_nonces: HashMap<u64, PendingPoolSubmit>,
     deferred_submits: VecDeque<DeferredPoolSubmit>,
+    recent_stale_submit_acks: VecDeque<Instant>,
+    job_received_at: Instant,
+    last_assignment_timing: Option<PoolAssignmentTiming>,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct DeferredPoolSubmit {
     nonce: u64,
     claimed_hash: Option<[u8; 32]>,
+    found_at: Instant,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PendingPoolSubmit {
+    found_at: Instant,
+    submitted_at: Instant,
+}
+
+#[derive(Debug, Clone)]
+struct PoolAssignmentTiming {
+    reason: &'static str,
+    cancel_latency: Option<Duration>,
+    assign_latency: Duration,
+    completed_at: Instant,
 }
 
 impl ActivePoolJob {
     fn new(job: PoolJob, epoch: u64, header_base: Arc<[u8]>, target: [u8; 32]) -> Self {
+        let now = Instant::now();
         let next_nonce = job.nonce_start;
         let dispatch_nonce = next_nonce;
         let share_difficulty = job.difficulty;
@@ -156,13 +182,16 @@ impl ActivePoolJob {
             dispatch_nonce,
             job,
             epoch,
-            round_start: Instant::now(),
+            round_start: now,
             round_hashes: 0,
             round_backend_hashes: BTreeMap::new(),
             round_backend_telemetry: BTreeMap::new(),
             submitted_nonces: HashSet::new(),
             pending_submit_nonces: HashMap::new(),
             deferred_submits: VecDeque::new(),
+            recent_stale_submit_acks: VecDeque::new(),
+            job_received_at: now,
+            last_assignment_timing: None,
         }
     }
 }
@@ -185,6 +214,192 @@ fn advance_pool_nonce_cursor(job: &mut ActivePoolJob, solved_nonce: u64) {
     if next_nonce > job.next_nonce {
         job.next_nonce = next_nonce;
     }
+}
+
+fn parse_pool_stale_for(reason: &str) -> Option<Duration> {
+    let marker = "stale_for=";
+    let start = reason.find(marker)? + marker.len();
+    let remainder = &reason[start..];
+    let end = remainder.find('s')?;
+    let seconds = remainder[..end].parse::<f64>().ok()?;
+    if !seconds.is_finite() || seconds < 0.0 {
+        return None;
+    }
+    Some(Duration::from_secs_f64(seconds))
+}
+
+fn note_current_job_stale_submit_rejection(
+    job: &mut ActivePoolJob,
+    reason: &str,
+    now: Instant,
+) -> Option<String> {
+    let lower = reason.to_ascii_lowercase();
+    if !lower.contains("stale job") {
+        job.recent_stale_submit_acks.clear();
+        return None;
+    }
+    if lower.contains("assignment not found") {
+        return Some("pool no longer recognizes the current job assignment".to_string());
+    }
+    if let Some(stale_for) = parse_pool_stale_for(reason) {
+        if stale_for >= POOL_DESYNC_STALE_FOR_THRESHOLD {
+            return Some(format!(
+                "pool reported stale_for={:.3}s for the current job",
+                stale_for.as_secs_f64()
+            ));
+        }
+    }
+
+    let cutoff = now.checked_sub(POOL_DESYNC_STALE_ACK_WINDOW).unwrap_or(now);
+    while job
+        .recent_stale_submit_acks
+        .front()
+        .is_some_and(|entry| *entry < cutoff)
+    {
+        job.recent_stale_submit_acks.pop_front();
+    }
+    job.recent_stale_submit_acks.push_back(now);
+    if job.recent_stale_submit_acks.len() >= POOL_DESYNC_STALE_ACK_THRESHOLD {
+        return Some(format!(
+            "received {} stale submit rejections within {}s",
+            job.recent_stale_submit_acks.len(),
+            POOL_DESYNC_STALE_ACK_WINDOW.as_secs()
+        ));
+    }
+    None
+}
+
+fn format_pool_duration(duration: Duration) -> String {
+    format!("{:.3}s", duration.as_secs_f64())
+}
+
+fn record_pool_assignment_timing(
+    mode: PoolConnectionMode,
+    job: &mut ActivePoolJob,
+    reason: &'static str,
+    cancel_latency: Option<Duration>,
+    assign_latency: Duration,
+) {
+    let completed_at = Instant::now();
+    job.last_assignment_timing = Some(PoolAssignmentTiming {
+        reason,
+        cancel_latency,
+        assign_latency,
+        completed_at,
+    });
+
+    if !mode.is_user() {
+        return;
+    }
+    let slow_cancel =
+        cancel_latency.is_some_and(|value| value >= POOL_TIMING_SLOW_CANCEL_THRESHOLD);
+    let slow_assign = assign_latency >= POOL_TIMING_SLOW_ASSIGN_THRESHOLD;
+    if slow_cancel || slow_assign {
+        warn(
+            "POOL",
+            format!(
+                "timing | switch={reason} cancel={} assign={}",
+                cancel_latency
+                    .map(format_pool_duration)
+                    .unwrap_or_else(|| "-".to_string()),
+                format_pool_duration(assign_latency),
+            ),
+        );
+    }
+}
+
+fn maybe_log_pool_submit_timing(
+    mode: PoolConnectionMode,
+    status: &str,
+    nonce: u64,
+    pending_submit: Option<PendingPoolSubmit>,
+    acknowledged_at: Instant,
+) {
+    let Some(pending_submit) = pending_submit else {
+        return;
+    };
+    let queued_for = pending_submit
+        .submitted_at
+        .saturating_duration_since(pending_submit.found_at);
+    let submit_to_ack = acknowledged_at.saturating_duration_since(pending_submit.submitted_at);
+    if queued_for < POOL_TIMING_SLOW_QUEUE_THRESHOLD
+        && submit_to_ack < POOL_TIMING_SLOW_ACK_THRESHOLD
+    {
+        return;
+    }
+    let total = acknowledged_at.saturating_duration_since(pending_submit.found_at);
+    let message = format!(
+        "timing | share={status} nonce={nonce} queued={} submit_to_ack={} total={}",
+        format_pool_duration(queued_for),
+        format_pool_duration(submit_to_ack),
+        format_pool_duration(total),
+    );
+    if mode.is_user() {
+        if status == "accepted" {
+            info("POOL", message);
+        } else {
+            warn("POOL", message);
+        }
+    }
+}
+
+fn log_pool_issue_timing(
+    mode: PoolConnectionMode,
+    context: &str,
+    reason: &str,
+    active_job: Option<&ActivePoolJob>,
+    pending_submit: Option<PendingPoolSubmit>,
+    now: Instant,
+) {
+    if !mode.is_user() {
+        return;
+    }
+
+    let mut parts = Vec::new();
+    parts.push(format!("timing | context={context}"));
+    parts.push(format!("reason={reason}"));
+    if let Some(job) = active_job {
+        parts.push(format!("job_height={}", job.height));
+        parts.push(format!(
+            "job_age={}",
+            format_pool_duration(now.saturating_duration_since(job.job_received_at))
+        ));
+        parts.push(format!("pending={}", job.pending_submit_nonces.len()));
+        parts.push(format!("deferred={}", job.deferred_submits.len()));
+        if let Some(last_assignment) = &job.last_assignment_timing {
+            parts.push(format!("last_switch={}", last_assignment.reason));
+            parts.push(format!(
+                "last_cancel={}",
+                last_assignment
+                    .cancel_latency
+                    .map(format_pool_duration)
+                    .unwrap_or_else(|| "-".to_string())
+            ));
+            parts.push(format!(
+                "last_assign={}",
+                format_pool_duration(last_assignment.assign_latency)
+            ));
+            parts.push(format!(
+                "last_switch_age={}",
+                format_pool_duration(now.saturating_duration_since(last_assignment.completed_at))
+            ));
+        }
+    }
+    if let Some(pending_submit) = pending_submit {
+        let queued_for = pending_submit
+            .submitted_at
+            .saturating_duration_since(pending_submit.found_at);
+        let submit_to_ack = now.saturating_duration_since(pending_submit.submitted_at);
+        let total = now.saturating_duration_since(pending_submit.found_at);
+        parts.push(format!("share_queued={}", format_pool_duration(queued_for)));
+        parts.push(format!(
+            "share_submit_to_ack={}",
+            format_pool_duration(submit_to_ack)
+        ));
+        parts.push(format!("share_total={}", format_pool_duration(total)));
+    }
+
+    warn("POOL", parts.join(" "));
 }
 
 fn build_pool_connection_configs(
@@ -448,6 +663,7 @@ pub(super) fn run_pool_mining_loop(
                         {
                             active_job = Some(resume);
                             if let Some(job) = active_job.as_mut() {
+                                let assign_started = Instant::now();
                                 restart_pool_assignment(
                                     cfg,
                                     &mut work_id_cursor,
@@ -457,6 +673,13 @@ pub(super) fn run_pool_mining_loop(
                                     &mut backend_weights,
                                     job,
                                 )?;
+                                record_pool_assignment_timing(
+                                    active_mode,
+                                    job,
+                                    "resume",
+                                    None,
+                                    assign_started.elapsed(),
+                                );
                             }
                             set_tui_state_label(&mut tui, "working");
                             render_tui_now(&mut tui);
@@ -648,6 +871,7 @@ pub(super) fn run_pool_mining_loop(
             set_tui_pending_nvidia(&mut tui, deferred_remaining);
             if deferred_backend_activated {
                 maybe_hot_rebalance_active_pool_job(
+                    active_mode,
                     cfg,
                     &mut work_id_cursor,
                     &mut epoch,
@@ -828,6 +1052,7 @@ pub(super) fn run_pool_mining_loop(
 
         if topology_changed {
             maybe_hot_rebalance_active_pool_job(
+                active_mode,
                 cfg,
                 &mut work_id_cursor,
                 &mut epoch,
@@ -864,6 +1089,7 @@ pub(super) fn run_pool_mining_loop(
         }
         if should_resume_assignment {
             if let Some(job) = active_job.as_mut() {
+                let assign_started = Instant::now();
                 restart_pool_assignment(
                     cfg,
                     &mut work_id_cursor,
@@ -873,6 +1099,13 @@ pub(super) fn run_pool_mining_loop(
                     &mut backend_weights,
                     job,
                 )?;
+                record_pool_assignment_timing(
+                    active_mode,
+                    job,
+                    "resume-backlog",
+                    None,
+                    assign_started.elapsed(),
+                );
             }
         }
 
@@ -972,10 +1205,20 @@ fn handle_active_pool_event(
         }
         PoolEvent::Disconnected(message) => {
             if mode.is_user() {
-                warn("CONN", message);
+                warn("CONN", &message);
             }
             *latest_job = None;
             *connected = false;
+            if let Some(job) = active_job.as_ref() {
+                log_pool_issue_timing(
+                    mode,
+                    "disconnect",
+                    &message,
+                    Some(job),
+                    None,
+                    Instant::now(),
+                );
+            }
             if active_job.is_some() {
                 if let Err(err) =
                     super::cancel_backend_slots(backends, RuntimeMode::Mining, backend_executor)
@@ -1051,11 +1294,14 @@ fn handle_active_pool_event(
         PoolEvent::SubmitAck(ack) => {
             let current_job_id = active_job.as_ref().map(|job| job.job.job_id.as_str());
             let ack_for_current_job = current_job_id.is_some_and(|job_id| job_id == ack.job_id);
+            let acknowledged_at = Instant::now();
+            let mut submit_timing = None::<PendingPoolSubmit>;
             if ack_for_current_job {
                 if let Some(job) = active_job.as_mut() {
-                    job.pending_submit_nonces.remove(&ack.nonce);
+                    submit_timing = job.pending_submit_nonces.remove(&ack.nonce);
                 }
             }
+            let mut desync_reason = None::<String>;
             if ack.accepted {
                 stats.bump_accepted();
                 if mode.is_user() {
@@ -1064,12 +1310,52 @@ fn handle_active_pool_event(
                 if let Some(display) = tui.as_mut() {
                     display.mark_block_found();
                 }
+                if ack_for_current_job {
+                    if let Some(job) = active_job.as_mut() {
+                        job.recent_stale_submit_acks.clear();
+                    }
+                }
+                maybe_log_pool_submit_timing(
+                    mode,
+                    "accepted",
+                    ack.nonce,
+                    submit_timing,
+                    acknowledged_at,
+                );
             } else {
                 stats.bump_stale_shares();
                 let reason = ack.error.as_deref().unwrap_or("unknown");
                 if mode.is_user() {
                     warn("SHARE", format!("rejected ({reason})"));
                 }
+                maybe_log_pool_submit_timing(
+                    mode,
+                    "rejected",
+                    ack.nonce,
+                    submit_timing,
+                    acknowledged_at,
+                );
+                if ack_for_current_job {
+                    if let Some(job) = active_job.as_mut() {
+                        desync_reason =
+                            note_current_job_stale_submit_rejection(job, reason, acknowledged_at);
+                    }
+                }
+            }
+            if let Some(reason) = desync_reason {
+                force_pool_session_resync(
+                    mode,
+                    pool_client,
+                    latest_job,
+                    connected,
+                    backends,
+                    backend_executor,
+                    active_job,
+                    tui,
+                    &reason,
+                    submit_timing,
+                )?;
+                return Ok(());
             }
             if let Some(difficulty) = ack.difficulty {
                 if should_apply_submit_ack_difficulty_immediately(mode) {
@@ -1111,6 +1397,53 @@ fn handle_active_pool_event(
             )?;
         }
     }
+    Ok(())
+}
+
+fn force_pool_session_resync(
+    mode: PoolConnectionMode,
+    pool_client: &PoolClient,
+    latest_job: &mut Option<PoolJob>,
+    connected: &mut bool,
+    backends: &mut Vec<BackendSlot>,
+    backend_executor: &super::backend_executor::BackendExecutor,
+    active_job: &mut Option<ActivePoolJob>,
+    tui: &mut Option<TuiDisplay>,
+    reason: &str,
+    pending_submit: Option<PendingPoolSubmit>,
+) -> Result<()> {
+    let now = Instant::now();
+    if mode.is_user() {
+        warn(
+            "CONN",
+            format!("detected pool desync ({reason}); reconnecting"),
+        );
+    }
+    log_pool_issue_timing(
+        mode,
+        "resync",
+        reason,
+        active_job.as_ref(),
+        pending_submit,
+        now,
+    );
+    if active_job.is_some() {
+        if let Err(err) =
+            super::cancel_backend_slots(backends, RuntimeMode::Mining, backend_executor)
+        {
+            warn(
+                "BACKEND",
+                format!("pool cancel failed during resync: {err:#}"),
+            );
+        }
+        let _ = super::quiesce_backend_slots(backends, RuntimeMode::Mining, backend_executor);
+    }
+    *active_job = None;
+    *latest_job = None;
+    *connected = false;
+    pool_client.request_reconnect();
+    set_tui_state_label(tui, "pool-resync");
+    render_tui_now(tui);
     Ok(())
 }
 
@@ -1265,6 +1598,7 @@ fn apply_submit_ack_difficulty(
             info("VARDIFF", format!("difficulty set to {difficulty}"));
         }
     }
+    let assign_started = Instant::now();
     restart_pool_assignment(
         cfg,
         work_id_cursor,
@@ -1273,7 +1607,15 @@ fn apply_submit_ack_difficulty(
         backend_executor,
         backend_weights,
         job,
-    )
+    )?;
+    record_pool_assignment_timing(
+        mode,
+        job,
+        "difficulty-update",
+        None,
+        assign_started.elapsed(),
+    );
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1319,7 +1661,9 @@ fn assign_pool_job(
         }
     };
 
+    let mut cancel_latency = None;
     if cancel_prior_work {
+        let cancel_started = Instant::now();
         if let Err(err) =
             super::cancel_backend_slots(backends, RuntimeMode::Mining, backend_executor)
         {
@@ -1328,6 +1672,7 @@ fn assign_pool_job(
                 format!("failed cancelling prior pool work: {err:#}"),
             );
         }
+        cancel_latency = Some(cancel_started.elapsed());
     }
 
     stats.bump_templates();
@@ -1345,6 +1690,7 @@ fn assign_pool_job(
         );
     }
     if let Some(job) = active_job.as_mut() {
+        let assign_started = Instant::now();
         restart_pool_assignment(
             cfg,
             work_id_cursor,
@@ -1354,6 +1700,13 @@ fn assign_pool_job(
             backend_weights,
             job,
         )?;
+        record_pool_assignment_timing(
+            mode,
+            job,
+            "new-job",
+            cancel_latency,
+            assign_started.elapsed(),
+        );
     }
     set_tui_state_label(tui, "working");
     render_tui_now(tui);
@@ -1454,6 +1807,7 @@ fn assign_pool_continuation(
 
 #[allow(clippy::too_many_arguments)]
 fn maybe_hot_rebalance_active_pool_job(
+    mode: PoolConnectionMode,
     cfg: &Config,
     work_id_cursor: &mut u64,
     epoch_cursor: &mut u64,
@@ -1496,6 +1850,7 @@ fn maybe_hot_rebalance_active_pool_job(
 
     if let Some(job) = active_job.as_mut() {
         if job.next_nonce <= job.job.nonce_end {
+            let assign_started = Instant::now();
             restart_pool_assignment(
                 cfg,
                 work_id_cursor,
@@ -1505,6 +1860,13 @@ fn maybe_hot_rebalance_active_pool_job(
                 backend_weights,
                 job,
             )?;
+            record_pool_assignment_timing(
+                mode,
+                job,
+                "hot-rebalance",
+                None,
+                assign_started.elapsed(),
+            );
             info("JOB", format!("{reason}; hot-rebalanced current pool job"));
         }
     }
@@ -1554,8 +1916,8 @@ fn service_pool_submit_backlog_with_submitter<F>(
 
 fn reap_timed_out_pending_submits(job: &mut ActivePoolJob, now: Instant) -> usize {
     let mut timed_out = Vec::new();
-    for (&nonce, &submitted_at) in &job.pending_submit_nonces {
-        if now.saturating_duration_since(submitted_at) >= POOL_SUBMIT_ACK_TIMEOUT {
+    for (&nonce, pending_submit) in &job.pending_submit_nonces {
+        if now.saturating_duration_since(pending_submit.submitted_at) >= POOL_SUBMIT_ACK_TIMEOUT {
             timed_out.push(nonce);
         }
     }
@@ -1570,6 +1932,7 @@ fn enqueue_deferred_pool_submit(
     job: &mut ActivePoolJob,
     nonce: u64,
     claimed_hash: Option<[u8; 32]>,
+    found_at: Instant,
     stats: &Stats,
 ) -> bool {
     if job.deferred_submits.len() >= POOL_MAX_DEFERRED_SUBMITS {
@@ -1589,6 +1952,7 @@ fn enqueue_deferred_pool_submit(
     job.deferred_submits.push_back(DeferredPoolSubmit {
         nonce,
         claimed_hash,
+        found_at,
     });
     stats.add_deferred(1);
     true
@@ -1610,8 +1974,13 @@ where
         };
         match submitter(deferred.nonce, deferred.claimed_hash) {
             Ok(()) => {
-                job.pending_submit_nonces
-                    .insert(deferred.nonce, Instant::now());
+                job.pending_submit_nonces.insert(
+                    deferred.nonce,
+                    PendingPoolSubmit {
+                        found_at: deferred.found_at,
+                        submitted_at: Instant::now(),
+                    },
+                );
                 stats.bump_submitted();
                 flushed = flushed.saturating_add(1);
             }
@@ -1656,6 +2025,7 @@ where
     let Some(job) = active_job.as_mut() else {
         return PoolShareSubmitOutcome::StaleEpoch;
     };
+    let found_at = Instant::now();
     if solution.epoch != job.epoch {
         return PoolShareSubmitOutcome::StaleEpoch;
     }
@@ -1670,7 +2040,8 @@ where
     }
 
     if job.pending_submit_nonces.len() >= POOL_MAX_INFLIGHT_SUBMITS {
-        if !enqueue_deferred_pool_submit(mode, job, solution.nonce, solution.hash, stats) {
+        if !enqueue_deferred_pool_submit(mode, job, solution.nonce, solution.hash, found_at, stats)
+        {
             // Keep dedupe marker even when dropped to prevent duplicate share spam.
         }
         return PoolShareSubmitOutcome::Deferred;
@@ -1681,8 +2052,13 @@ where
         if mode.is_user() {
             info("SHARE", "submitted");
         }
-        job.pending_submit_nonces
-            .insert(solution.nonce, Instant::now());
+        job.pending_submit_nonces.insert(
+            solution.nonce,
+            PendingPoolSubmit {
+                found_at,
+                submitted_at: Instant::now(),
+            },
+        );
         PoolShareSubmitOutcome::Submitted
     } else {
         job.submitted_nonces.remove(&solution.nonce);
@@ -1710,7 +2086,7 @@ impl PoolUiTelemetryClient {
                 miner_balance_url: format!(
                     "{base_url}/api/miner/{address}/balance?include_pending_estimate=false"
                 ),
-                miner_url: format!("{base_url}/api/miner/{address}"),
+                miner_url: format!("{base_url}/api/miner/{address}?include_pending_estimate=false"),
             })
             .collect::<Vec<_>>();
         Some(Self { endpoints, http })
@@ -1878,10 +2254,16 @@ fn pool_api_base_urls_from_pool_url(pool_url: &str) -> Vec<String> {
         "http" => push_unique(&mut out, format!("http://{authority}")),
         _ => {
             push_unique(&mut out, format!("https://{host}"));
-            push_unique(&mut out, format!("http://{host}"));
+            if !telemetry_https_only_host(&host) {
+                push_unique(&mut out, format!("http://{host}"));
+            }
         }
     }
     out
+}
+
+fn telemetry_https_only_host(host: &str) -> bool {
+    host.eq_ignore_ascii_case("bntpool.com")
 }
 
 fn push_unique(values: &mut Vec<String>, value: String) {
@@ -1967,10 +2349,12 @@ mod tests {
 
     use super::{
         advance_pool_nonce_cursor, compact_pool_address_for_log,
-        fetch_local_daemon_wallet_snapshot, pool_api_base_urls_from_pool_url,
+        fetch_local_daemon_wallet_snapshot, note_current_job_stale_submit_rejection,
+        parse_pool_stale_for, pool_api_base_urls_from_pool_url,
         service_pool_submit_backlog_with_submitter, should_apply_submit_ack_difficulty_immediately,
         should_resume_pool_assignment, submit_pool_solution_with_submitter, ActivePoolJob,
-        PoolConnectionMode, PoolJob, PoolShareSubmitOutcome, PoolUiTelemetryClient,
+        PendingPoolSubmit, PoolConnectionMode, PoolJob, PoolShareSubmitOutcome,
+        PoolUiTelemetryClient, POOL_DESYNC_STALE_ACK_THRESHOLD, POOL_DESYNC_STALE_ACK_WINDOW,
         POOL_MAX_INFLIGHT_SUBMITS, POOL_SUBMIT_ACK_TIMEOUT,
     };
 
@@ -2022,13 +2406,19 @@ mod tests {
     }
 
     #[test]
-    fn telemetry_base_urls_prefer_public_http_origins_for_stratum_endpoint() {
+    fn telemetry_base_urls_use_https_only_for_known_public_pool() {
         let urls = pool_api_base_urls_from_pool_url("stratum+tcp://bntpool.com:3333");
+        assert_eq!(urls, vec!["https://bntpool.com".to_string()]);
+    }
+
+    #[test]
+    fn telemetry_base_urls_keep_http_fallback_for_generic_stratum_endpoint() {
+        let urls = pool_api_base_urls_from_pool_url("stratum+tcp://example.com:3333");
         assert_eq!(
             urls,
             vec![
-                "https://bntpool.com".to_string(),
-                "http://bntpool.com".to_string()
+                "https://example.com".to_string(),
+                "http://example.com".to_string()
             ]
         );
     }
@@ -2046,6 +2436,16 @@ mod tests {
         assert_eq!(
             client.endpoints[0].miner_balance_url,
             "https://bntpool.com/api/miner/addr/balance?include_pending_estimate=false"
+        );
+    }
+
+    #[test]
+    fn telemetry_miner_fallback_url_skips_pending_estimate_query() {
+        let client = PoolUiTelemetryClient::new("stratum+tcp://bntpool.com:3333", "addr")
+            .expect("telemetry client should be created");
+        assert_eq!(
+            client.endpoints[0].miner_url,
+            "https://bntpool.com/api/miner/addr?include_pending_estimate=false"
         );
     }
 
@@ -2186,7 +2586,13 @@ mod tests {
             let now = Instant::now();
             let job = active_job.as_mut().expect("active job should exist");
             for nonce in 0..POOL_MAX_INFLIGHT_SUBMITS as u64 {
-                job.pending_submit_nonces.insert(nonce, now);
+                job.pending_submit_nonces.insert(
+                    nonce,
+                    PendingPoolSubmit {
+                        found_at: now,
+                        submitted_at: now,
+                    },
+                );
             }
         }
 
@@ -2271,12 +2677,22 @@ mod tests {
         job.submitted_nonces.insert(deferred_nonce);
         job.pending_submit_nonces.insert(
             timed_out_nonce,
-            now - (POOL_SUBMIT_ACK_TIMEOUT + Duration::from_secs(1)),
+            PendingPoolSubmit {
+                found_at: now - (POOL_SUBMIT_ACK_TIMEOUT + Duration::from_secs(2)),
+                submitted_at: now - (POOL_SUBMIT_ACK_TIMEOUT + Duration::from_secs(1)),
+            },
         );
-        job.pending_submit_nonces.insert(healthy_nonce, now);
+        job.pending_submit_nonces.insert(
+            healthy_nonce,
+            PendingPoolSubmit {
+                found_at: now,
+                submitted_at: now,
+            },
+        );
         job.deferred_submits.push_back(super::DeferredPoolSubmit {
             nonce: deferred_nonce,
             claimed_hash: Some([0xAB; 32]),
+            found_at: now,
         });
 
         let mut submitted = Vec::new();
@@ -2305,5 +2721,67 @@ mod tests {
         assert!(should_apply_submit_ack_difficulty_immediately(
             PoolConnectionMode::User
         ));
+    }
+
+    #[test]
+    fn parse_pool_stale_for_extracts_seconds() {
+        let stale_for = parse_pool_stale_for(
+            "stale job: template abc exceeded stale grace (current=def, stale_for=42.125s, stale_grace=8.000s)",
+        )
+        .expect("stale_for should parse");
+        assert!((stale_for.as_secs_f64() - 42.125).abs() < 0.000_001);
+        assert!(parse_pool_stale_for("stale job: assignment not found").is_none());
+    }
+
+    #[test]
+    fn stale_rejection_triggers_resync_when_assignment_is_missing() {
+        let now = Instant::now();
+        let mut job = test_active_job(1);
+        let reason = note_current_job_stale_submit_rejection(
+            &mut job,
+            "stale job: assignment not found",
+            now,
+        )
+        .expect("assignment miss should trigger resync");
+        assert!(reason.contains("no longer recognizes"));
+        assert!(job.recent_stale_submit_acks.is_empty());
+    }
+
+    #[test]
+    fn stale_rejection_triggers_resync_on_large_stale_for() {
+        let now = Instant::now();
+        let mut job = test_active_job(1);
+        let reason = note_current_job_stale_submit_rejection(
+            &mut job,
+            "stale job: assignment superseded by newer difficulty (stale_for=19.500s, stale_grace=8.000s)",
+            now,
+        )
+        .expect("large stale_for should trigger resync");
+        assert!(reason.contains("stale_for=19.500s"));
+    }
+
+    #[test]
+    fn stale_rejection_triggers_resync_after_burst() {
+        let base = Instant::now();
+        let mut job = test_active_job(1);
+        let reason_text =
+            "stale job: assignment superseded by newer difficulty (stale_for=6.000s, stale_grace=8.000s)";
+
+        for idx in 0..POOL_DESYNC_STALE_ACK_THRESHOLD - 1 {
+            let reason = note_current_job_stale_submit_rejection(
+                &mut job,
+                reason_text,
+                base + Duration::from_secs(idx as u64),
+            );
+            assert!(reason.is_none(), "threshold should not trigger early");
+        }
+
+        let reason = note_current_job_stale_submit_rejection(
+            &mut job,
+            reason_text,
+            base + Duration::from_secs((POOL_DESYNC_STALE_ACK_THRESHOLD - 1) as u64),
+        )
+        .expect("burst threshold should trigger resync");
+        assert!(reason.contains(&POOL_DESYNC_STALE_ACK_WINDOW.as_secs().to_string()));
     }
 }
