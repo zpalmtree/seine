@@ -778,7 +778,7 @@ impl Config {
                     .expect("dev fee pool worker should be generated"),
             )?;
             user_config_created = true;
-        } else if cli.mode.unwrap_or(MiningMode::Pool) == MiningMode::Pool {
+        } else if should_validate_pool_mode_inputs(&cli) {
             ensure_pool_mode_inputs_available(&cli, &user_config_path)?;
             if cli
                 .pool_worker
@@ -1987,6 +1987,10 @@ fn apply_user_config_defaults(cli: &mut Cli, user_cfg: Option<&UserConfig>) {
     }
 }
 
+fn should_validate_pool_mode_inputs(cli: &Cli) -> bool {
+    !cli.bench && cli.mode.unwrap_or(MiningMode::Pool) == MiningMode::Pool
+}
+
 fn resolve_first_run_pool_inputs(cli: &mut Cli, user_config_path: &Path) -> Result<()> {
     let mode = cli.mode.unwrap_or(MiningMode::Pool);
     cli.mode = Some(mode);
@@ -2776,6 +2780,7 @@ HugePages_Rsvd:          0
             api_addr: Some("127.0.0.1:9000".to_string()),
             source: DaemonContextSource::ProcessScan,
             running: true,
+            pidfile_path: None,
             manager_config_path: None,
         };
         assert_eq!(
@@ -2792,6 +2797,7 @@ HugePages_Rsvd:          0
             api_addr: Some("192.168.1.5:9100".to_string()),
             source: DaemonContextSource::ProcessScan,
             running: true,
+            pidfile_path: None,
             manager_config_path: None,
         };
         assert_eq!(
@@ -2808,6 +2814,7 @@ HugePages_Rsvd:          0
             api_addr: Some("not-an-endpoint".to_string()),
             source: DaemonContextSource::ProcessScan,
             running: true,
+            pidfile_path: None,
             manager_config_path: None,
         };
         assert_eq!(resolve_api_url(None, Some(&daemon)), DEFAULT_API_URL);
@@ -2888,6 +2895,7 @@ HugePages_Rsvd:          0
             api_addr: Some("127.0.0.1:8332".to_string()),
             source: DaemonContextSource::ProcessScan,
             running: true,
+            pidfile_path: None,
             manager_config_path: None,
         };
 
@@ -3245,6 +3253,21 @@ HugePages_Rsvd:          0
         let (selected, hint) = resolve_backend_selection(&[], &[], true);
         assert_eq!(selected, vec![BackendKind::Cpu, BackendKind::Nvidia]);
         assert!(hint.is_none());
+    }
+
+    #[test]
+    fn bench_mode_skips_pool_mode_input_validation() {
+        let mut cli = sample_cli();
+        cli.mode = Some(MiningMode::Pool);
+        cli.bench = true;
+        assert!(!should_validate_pool_mode_inputs(&cli));
+    }
+
+    #[test]
+    fn normal_pool_mode_still_validates_inputs() {
+        let mut cli = sample_cli();
+        cli.mode = Some(MiningMode::Pool);
+        assert!(should_validate_pool_mode_inputs(&cli));
     }
 
     #[test]

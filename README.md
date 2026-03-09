@@ -215,6 +215,9 @@ Password sources (checked in order): `--wallet-password`, `--wallet-password-fil
 
 Requires CUDA driver and NVRTC libraries on the host. Seine compiles kernels at startup via NVRTC.
 
+Current Blackwell / RTX 5090 tuning notes and measured benchmark frontier:
+[`docs/NVIDIA_5090_TUNING.md`](docs/NVIDIA_5090_TUNING.md)
+
 ```bash
 # Auto-detect all GPUs
 ./seine --backend nvidia
