@@ -128,6 +128,11 @@ echo 'vm.nr_hugepages=4096' | sudo tee /etc/sysctl.d/99-seine-hugepages.conf
 sudo sysctl --system
 ```
 
+If a runtime `sysctl -w vm.nr_hugepages=...` request only allocates a fraction of
+the target, keep the value persisted and reboot. Early-boot reservation is much
+more reliable than trying to carve out tens of GiB of HugeTLB pages after the
+machine is already fragmented.
+
 Runtime checks:
 - Startup warns with exact sizing/commands when HugeTLB is under-provisioned (`hugepages | CPU lanes=... need ...`).
 - Per-backend fallback warnings still appear if a worker falls back from `MAP_HUGETLB` (`MAP_HUGETLB unavailable; hugepage coverage...`).

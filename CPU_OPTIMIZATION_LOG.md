@@ -12,6 +12,7 @@ This log tracks CPU backend/hash-kernel tuning attempts and measured outcomes.
 ## Newest-first index
 
 - `Updated summary of cumulative adopted optimizations`
+- `2026-03-09 Zen 5 hugepage reservation + AVX-512 vpermq retest`
 - `2026-03-09 Zen 5 (Ryzen 9 9950X3D) AVX-512 dispatch audit + native retest`
 - `2026-02-18 Apple Silicon superpage arena + pcore-only affinity trial`
 - `2026-02-18 Apple Silicon arena residency + shared-arena trials`
@@ -69,6 +70,11 @@ lanes are active the backend is mostly memory/hugepage limited on this host, so
 the kernel win does not translate into a large end-to-end throughput gain unless
 the build is also tuned for the local CPU and the hugepage situation is improved.
 
+Operational note: a partial runtime HugeTLB reservation (`6136 / 16384` pages)
+raised the same host's 16T native backend from ~`7.998 H/s` to ~`8.479 H/s`
+(~**+6.0%**), which makes early hugepage reservation the highest-leverage next
+step on this machine.
+
 ### AArch64 (Apple M4 Max)
 
 | Attempt | Change | Kernel delta | Backend delta | Status |
@@ -108,6 +114,55 @@ Cumulative AArch64: from ~1.37 H/s (scalar) to ~2.73 H/s, **~99% total improveme
   wall**. On Ryzen 9 9950X3D, enabling the AVX-512 kernel cut instructions/hash by
   ~38.5% and cycles/hash by ~17.2% in a pinned 1T kernel run, yet a 16T backend A/B
   remained effectively flat without stronger HugeTLB coverage.
+- **On this Zen 5 host, partial HugeTLB coverage was worth more than the next
+  AVX-512 micro-optimization**. Runtime-reserving only `6136` hugepages still gave
+  roughly +6% at 16T native backend throughput, while a subsequent AVX-512
+  diagonal-permute micro-tweak improved the 1T kernel by ~1% but regressed the
+  16T native backend and was rejected.
+
+## 2026-03-09 Zen 5 hugepage reservation + AVX-512 vpermq retest
+
+Host: AMD Ryzen 9 9950X3D, 16 cores / 32 threads, Linux x86_64, AVX-512F + AVX-512VL available.
+
+### Runtime HugeTLB reservation trial (operationally adopted; system-level, not repo code)
+
+- **Goal**: test whether the host was still memory/TLB-bound after the AVX-512
+  dispatch fix by provisioning HugeTLB pages for the 16-thread native backend.
+- **Runtime action**:
+  - `sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches; echo 1 > /proc/sys/vm/compact_memory; sysctl -w vm.nr_hugepages=17204'`
+- **Observed result**:
+  - The kernel accepted the request but only materialized `6136` hugepages
+    (`~12 GiB`) because memory was already fragmented.
+  - `HugePages_Total` and `vm.nr_hugepages` both settled at `6136`, not `17204`.
+- **Benchmark result (16T, native, direct run)**:
+  - `data/bench_ryzen9950x3d_backend_t16_native_hugepages_partial.json`
+  - Throughput: `8.479 H/s`.
+  - Previous 16T native A/B mean without reserved HugeTLB pages:
+    `7.9977 H/s` from `data/bench_cpu_ab_ryzen9950x3d_backend_t16_native/summary.txt`.
+  - Effective uplift: **~+6.0%** despite only partial reservation.
+- **Conclusion**:
+  - HugeTLB availability is the largest remaining lever on this machine.
+  - The correct operational fix is to keep `vm.nr_hugepages=17204` persisted and
+    reboot so the kernel reserves pages before fragmentation sets in.
+
+### Attempt 50 (Zen 5): AVX-512 diagonal immediate `vpermq` permutes (not adopted)
+
+- **Hypothesis**: replace the AVX-512 diagonal step's `_mm512_permutexvar_epi64`
+  calls plus vector index constants with `_mm512_permutex_epi64::<IMM>` so the
+  rotate pattern is encoded as immediate `vpermq` shuffles.
+- **Why it looked promising**:
+  - Same within-256-bit-lane permutation semantics.
+  - Removes vector constant construction from the hottest AVX-512 round helper.
+- **Kernel A/B result (1T)**:
+  - `data/bench_cpu_ab_ryzen9950x3d_kernel_vpermq/summary.txt`
+  - Baseline `3.4000 H/s` vs candidate `3.4333 H/s` (**+0.9804%**).
+- **Backend A/B result (16T native, partial HugeTLB pool active)**:
+  - `data/bench_cpu_ab_ryzen9950x3d_backend_t16_native_vpermq/summary.txt`
+  - Baseline `8.0067 H/s` vs candidate `7.9513 H/s` (**-0.6916%**).
+- **Conclusion**:
+  - The micro-kernel win is real but too small and does not survive the full
+    backend workload on this host.
+  - Rejected and reverted.
 
 ## 2026-03-09 Zen 5 (Ryzen 9 9950X3D) AVX-512 dispatch audit + native retest
 
