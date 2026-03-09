@@ -1,7 +1,9 @@
 #[path = "../../src/backend/cpu/fixed_argon.rs"]
 mod fixed_argon_impl;
 
-pub use fixed_argon_impl::{Error, FixedArgon2id, PowBlock, Result};
+pub use fixed_argon_impl::{
+    active_isa_label, compiled_isa_variants, Error, FixedArgon2id, PowBlock, Result,
+};
 
 #[derive(Debug, Clone)]
 pub struct ReusablePowContext {

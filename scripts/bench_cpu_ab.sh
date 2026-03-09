@@ -20,6 +20,12 @@ Usage:
     [--native] \
     [--baseline-native] \
     [--candidate-native] \
+    [--no-default-features] \
+    [--baseline-no-default-features] \
+    [--candidate-no-default-features] \
+    [--features <cargo-features>] \
+    [--baseline-features <cargo-features>] \
+    [--candidate-features <cargo-features>] \
     [--output-dir <path>] \
     [-- <extra miner args>]
 
@@ -54,6 +60,13 @@ candidate_profile=""
 baseline_native=0
 candidate_native=0
 native_override=0
+no_default_features=0
+baseline_no_default_features=0
+candidate_no_default_features=0
+no_default_features_override=0
+features=""
+baseline_features=""
+candidate_features=""
 output_dir=""
 extra_args=()
 
@@ -125,6 +138,32 @@ while (($#)); do
             native_override=1
             shift
             ;;
+        --no-default-features)
+            no_default_features=1
+            shift
+            ;;
+        --baseline-no-default-features)
+            baseline_no_default_features=1
+            no_default_features_override=1
+            shift
+            ;;
+        --candidate-no-default-features)
+            candidate_no_default_features=1
+            no_default_features_override=1
+            shift
+            ;;
+        --features)
+            features="${2:-}"
+            shift 2
+            ;;
+        --baseline-features)
+            baseline_features="${2:-}"
+            shift 2
+            ;;
+        --candidate-features)
+            candidate_features="${2:-}"
+            shift 2
+            ;;
         -h|--help)
             usage
             exit 0
@@ -157,6 +196,16 @@ fi
 if ((native_override == 0)); then
     baseline_native="$native"
     candidate_native="$native"
+fi
+if ((no_default_features_override == 0)); then
+    baseline_no_default_features="$no_default_features"
+    candidate_no_default_features="$no_default_features"
+fi
+if [[ -z "$baseline_features" ]]; then
+    baseline_features="$features"
+fi
+if [[ -z "$candidate_features" ]]; then
+    candidate_features="$features"
 fi
 
 if ! [[ "$pairs" =~ ^[0-9]+$ ]] || ((pairs < 1)); then
@@ -214,11 +263,21 @@ run_single() {
     local order="$4"
     local run_profile="$5"
     local run_native="$6"
+    local run_no_default_features="$7"
+    local run_features="$8"
     local report_file="$output_dir/${variant}_pair${pair}_${order}.json"
 
     local cmd=(
         cargo run
         --profile "$run_profile"
+    )
+    if ((run_no_default_features)); then
+        cmd+=(--no-default-features)
+    fi
+    if [[ -n "$run_features" ]]; then
+        cmd+=(--features "$run_features")
+    fi
+    cmd+=(
         --
         --bench
         --bench-kind "$bench_kind"
@@ -235,7 +294,7 @@ run_single() {
         cmd+=("${extra_args[@]}")
     fi
 
-    echo "[pair ${pair}/${pairs}] ${variant}:${order} | repo=${repo_dir} profile=${run_profile} native=${run_native}"
+    echo "[pair ${pair}/${pairs}] ${variant}:${order} | repo=${repo_dir} profile=${run_profile} native=${run_native} no_default_features=${run_no_default_features} features=${run_features:-<none>}"
     if ((run_native)); then
         (
             cd "$repo_dir"
@@ -275,29 +334,37 @@ for ((pair = 1; pair <= pairs; pair++)); do
         first_repo="$baseline_dir"
         first_profile="$baseline_profile"
         first_native="$baseline_native"
+        first_no_default_features="$baseline_no_default_features"
+        first_features="$baseline_features"
         second_variant="candidate"
         second_repo="$candidate_dir"
         second_profile="$candidate_profile"
         second_native="$candidate_native"
+        second_no_default_features="$candidate_no_default_features"
+        second_features="$candidate_features"
     else
         first_variant="candidate"
         first_repo="$candidate_dir"
         first_profile="$candidate_profile"
         first_native="$candidate_native"
+        first_no_default_features="$candidate_no_default_features"
+        first_features="$candidate_features"
         second_variant="baseline"
         second_repo="$baseline_dir"
         second_profile="$baseline_profile"
         second_native="$baseline_native"
+        second_no_default_features="$baseline_no_default_features"
+        second_features="$baseline_features"
     fi
 
-    run_single "$first_variant" "$first_repo" "$pair" "first" "$first_profile" "$first_native"
+    run_single "$first_variant" "$first_repo" "$pair" "first" "$first_profile" "$first_native" "$first_no_default_features" "$first_features"
     run_idx=$((run_idx + 1))
     if ((cooldown_secs > 0 && run_idx < total_runs)); then
         echo "  cooldown ${cooldown_secs}s"
         sleep "$cooldown_secs"
     fi
 
-    run_single "$second_variant" "$second_repo" "$pair" "second" "$second_profile" "$second_native"
+    run_single "$second_variant" "$second_repo" "$pair" "second" "$second_profile" "$second_native" "$second_no_default_features" "$second_features"
     run_idx=$((run_idx + 1))
     if ((cooldown_secs > 0 && run_idx < total_runs)); then
         echo "  cooldown ${cooldown_secs}s"
@@ -323,6 +390,10 @@ delta_pct="$(awk -v b="$baseline_avg" -v c="$candidate_avg" 'BEGIN { if (b == 0 
     echo "candidate_profile=$candidate_profile"
     echo "baseline_native=$baseline_native"
     echo "candidate_native=$candidate_native"
+    echo "baseline_no_default_features=$baseline_no_default_features"
+    echo "candidate_no_default_features=$candidate_no_default_features"
+    echo "baseline_features=$baseline_features"
+    echo "candidate_features=$candidate_features"
     echo "baseline_dir=$baseline_dir"
     echo "candidate_dir=$candidate_dir"
     echo "baseline_avg_hps=$baseline_avg"

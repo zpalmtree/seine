@@ -90,6 +90,7 @@ Full CLI reference: [`docs/MINER_FLAGS.md`](docs/MINER_FLAGS.md)
 | Windows x86_64 | works out of the box | CUDA driver + NVRTC libs |
 
 Each CPU thread needs ~2 GB RAM (Argon2id parameters). Seine auto-sizes thread count from available cores and memory.
+On x86_64, CPU builds include both AVX2 and AVX-512 kernels and dispatch at runtime when the host supports them.
 
 ## Linux HugePages (CPU Throughput)
 
@@ -130,6 +131,7 @@ sudo sysctl --system
 Runtime checks:
 - Startup warns with exact sizing/commands when HugeTLB is under-provisioned (`hugepages | CPU lanes=... need ...`).
 - Per-backend fallback warnings still appear if a worker falls back from `MAP_HUGETLB` (`MAP_HUGETLB unavailable; hugepage coverage...`).
+- In practice, once many CPU lanes are active, hugepage coverage usually matters more than ISA-level tuning for backend throughput.
 
 ## Configuration
 
@@ -274,6 +276,8 @@ cargo build --release --no-default-features
 # Host-native CPU build (optimized for your specific CPU)
 ./scripts/build_cpu_native.sh --cpu-only
 ```
+
+On dedicated local x86_64 miners, `build-native` can still provide a small extra backend uplift on top of runtime AVX2/AVX-512 dispatch.
 
 ## Benchmarking
 

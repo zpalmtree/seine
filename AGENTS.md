@@ -159,6 +159,11 @@ Build with host ISA tuning (`target-cpu=native`) and the `release-native` profil
 ./scripts/build_cpu_native.sh --cpu-only
 ```
 
+On x86_64, standard CPU builds now compile both AVX2 and AVX-512 kernels and
+dispatch at runtime when the host supports them. `target-cpu=native` is still
+worth testing for dedicated host-local deployments because it can improve
+backend throughput slightly even when kernel throughput is unchanged.
+
 ### Thermal-stable CPU A/B harness
 
 Run interleaved baseline/candidate CPU benchmarks with cooldown gaps to reduce thermal drift bias:
@@ -181,6 +186,10 @@ Output goes to `data/bench_cpu_ab_<kind>_<timestamp>/` and includes:
 - `results.tsv` with per-run metrics.
 - `summary.txt` with baseline/candidate means and percent delta.
 - Optional: use `--baseline-profile` / `--candidate-profile` and `--baseline-native` / `--candidate-native` to A/B build profiles or ISA flags in one interleaved run.
+- Optional: use `--no-default-features`, `--baseline-no-default-features`,
+  `--candidate-no-default-features`, `--features`, `--baseline-features`, and
+  `--candidate-features` to A/B CPU-only or feature-gated builds without
+  editing the script.
 
 ### Thermal-stable NVIDIA A/B harness
 

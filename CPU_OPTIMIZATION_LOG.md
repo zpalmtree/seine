@@ -12,6 +12,7 @@ This log tracks CPU backend/hash-kernel tuning attempts and measured outcomes.
 ## Newest-first index
 
 - `Updated summary of cumulative adopted optimizations`
+- `2026-03-09 Zen 5 (Ryzen 9 9950X3D) AVX-512 dispatch audit + native retest`
 - `2026-02-18 Apple Silicon superpage arena + pcore-only affinity trial`
 - `2026-02-18 Apple Silicon arena residency + shared-arena trials`
 - `2026-02-18 Apple Silicon hot-path revisit + build/runtime retests`
@@ -56,6 +57,18 @@ mmap huge page contribution alone is ~+20% on top of Attempt 23.
 
 Cumulative x86_64: from ~1.19 H/s (original) to ~2.34 H/s, **~97% total improvement**.
 
+### x86_64 (AMD Ryzen 9 9950X3D, Zen 5)
+
+| Attempt | Change | Kernel delta | Backend delta | Status |
+|---------|--------|-------------|---------------|--------|
+| 48 | Compile AVX-512 x86 path into normal builds and keep runtime dispatch | +19.65% (1T kernel) | -0.28% at 16T backend (effectively flat) | Adopted |
+| 49 | `target-cpu=native` on top of the AVX-512-enabled build | +0.00% (1T kernel) | +0.71% at 16T backend | Recommended for host-local builds |
+
+Zen 5 result: AVX-512 materially reduces per-hash compute cost, but once 16 CPU
+lanes are active the backend is mostly memory/hugepage limited on this host, so
+the kernel win does not translate into a large end-to-end throughput gain unless
+the build is also tuned for the local CPU and the hugepage situation is improved.
+
 ### AArch64 (Apple M4 Max)
 
 | Attempt | Change | Kernel delta | Backend delta | Status |
@@ -91,6 +104,102 @@ Cumulative AArch64: from ~1.37 H/s (scalar) to ~2.73 H/s, **~99% total improveme
   x86_64**. The function call boundary from `#[target_feature(enable = "avx2")]` was
   verified as zero-cost — Zen 3's deep OOO engine overlaps across it. The bottleneck
   is memory, not compute.
+- **Zen 5 AVX-512 meaningfully lowers compute cost but does not remove the memory
+  wall**. On Ryzen 9 9950X3D, enabling the AVX-512 kernel cut instructions/hash by
+  ~38.5% and cycles/hash by ~17.2% in a pinned 1T kernel run, yet a 16T backend A/B
+  remained effectively flat without stronger HugeTLB coverage.
+
+## 2026-03-09 Zen 5 (Ryzen 9 9950X3D) AVX-512 dispatch audit + native retest
+
+Host: AMD Ryzen 9 9950X3D, 16 cores / 32 threads, Linux x86_64, AVX-512F + AVX-512VL available.
+
+### Attempt 48 (Zen 5): make the existing AVX-512 kernel reachable from normal `seine` builds (adopted)
+
+- **Problem found**: the AVX-512 implementation already existed in
+  `src/backend/cpu/fixed_argon.rs`, but it was compiled only when
+  `cfg(feature = "avx512")` was enabled.
+- **Wiring gap**: `pow-kernel` declared an `avx512` feature, but the top-level
+  `seine` package did not define or forward it, so ordinary `cargo build`,
+  `cargo build --no-default-features`, `make build-cpu`, and `make build-native`
+  never compiled the AVX-512 path.
+- **Fix adopted**:
+  - Remove the crate-level AVX-512 gate on x86_64 and always compile the AVX-512
+    helpers for x86_64 targets.
+  - Keep runtime ISA dispatch based on `is_x86_feature_detected!("avx512f")` and
+    `is_x86_feature_detected!("avx512vl")`, so execution still falls back safely
+    to AVX2 or scalar on older CPUs.
+  - Export ISA-label helpers from `blocknet-pow-kernel` for future observability.
+
+### Benchmark protocol
+
+- Interleaved A/B harness:
+  - `scripts/bench_cpu_ab.sh --baseline-dir /media/Code/blocknet/seine-baseline-avx512 --candidate-dir /media/Code/blocknet/seine --no-default-features`
+- CPU-only builds to isolate the miner CPU backend from CUDA/default-feature noise.
+- Kernel benchmarks use `1T`, `10s`, `2 rounds`, `1 warmup`, `3 pairs`.
+- Backend benchmarks use `16T`, `10s`, `2 rounds`, `1 warmup`, `3 pairs`.
+- Dedicated host-native comparison uses the same patched tree for both sides, with
+  the candidate built under `RUSTFLAGS=-C target-cpu=native`.
+
+### Kernel result: clear compute win
+
+- Interleaved A/B:
+  - `data/bench_cpu_ab_ryzen9950x3d_kernel_avx512/summary.txt`
+  - Baseline `2.8833 H/s` vs candidate `3.4500 H/s` (**+19.6532%**).
+- `perf stat` sanity check (pinned 1T, 5-second kernel run):
+  - Baseline log: `data/ryzen9950x3d_perf/kernel_baseline_perf.csv`
+  - Candidate log: `data/ryzen9950x3d_perf/kernel_candidate_perf.csv`
+  - Baseline: ~`3.971e9` cycles/hash, ~`6.259e9` instructions/hash.
+  - Candidate: ~`3.288e9` cycles/hash, ~`3.852e9` instructions/hash.
+  - Delta: **-17.2% cycles/hash**, **-38.5% instructions/hash**.
+- **Conclusion**: the AVX-512 path is genuinely faster on Zen 5; the improvement
+  is not measurement noise.
+
+### Backend result at the highest safe lane count on this host: essentially flat
+
+- Interleaved A/B at `16T`:
+  - `data/bench_cpu_ab_ryzen9950x3d_backend_t16_avx512/summary.txt`
+  - Baseline `7.9266 H/s` vs candidate `7.9040 H/s` (**-0.2846%**).
+- Interpretation:
+  - This is effectively flat/noise-level once full backend scheduling, memory
+    traffic, and fencing are included.
+  - On this host, the backend safety check allows `16T`, while `24T` and `32T`
+    exceed available safe memory for the 2 GiB-per-lane CPU backend.
+- **Conclusion**: at 16 lanes, the Ryzen 9 9950X3D backend is dominated by memory
+  behavior rather than raw compress-round instruction throughput.
+
+### Attempt 49 (Zen 5): `target-cpu=native` on top of AVX-512-enabled code (recommended for dedicated local builds)
+
+- Interleaved A/B at `16T`:
+  - `data/bench_cpu_ab_ryzen9950x3d_backend_t16_native/summary.txt`
+  - Generic release `7.9414 H/s` vs native release `7.9977 H/s` (**+0.7098%**).
+- Matching 1T kernel A/B:
+  - `data/bench_cpu_ab_ryzen9950x3d_kernel_native/summary.txt`
+  - Generic release `3.4000 H/s` vs native release `3.4000 H/s` (**0.0000%**).
+- **Conclusion**: `target-cpu=native` does not change the kernel on this host, but
+  it does provide a small backend-level improvement. Keep it as the recommended
+  build mode for dedicated Ryzen miners (`make build-native` /
+  `./scripts/build_cpu_native.sh --cpu-only`).
+
+### Hugepage / memory observations on this host
+
+- No HugeTLB pool was reserved during the run (`HugePages_Total=0`), so all CPU
+  backend runs relied on the fallback path.
+- The backend repeatedly warned that `MAP_HUGETLB` was unavailable and reported
+  partial or zero hugepage coverage after `MADV_HUGEPAGE` + `MADV_COLLAPSE`.
+- A short patched-build scaling sweep showed:
+  - `8T`: ~`7.41 H/s`
+  - `16T`: ~`8.07 H/s`
+  - `24T`: rejected by memory safety (needs ~48 GiB while available memory was ~45.09 GiB)
+  - `32T`: rejected by memory safety (needs ~64 GiB; effective memory limit was ~60.20 GiB)
+- **Takeaway**: on this 9950X3D system, hugepage provisioning and memory headroom
+  matter more than ISA selection once the miner is running many CPU lanes.
+
+### Net outcome
+
+- Keep the automatic x86_64 AVX-512 runtime dispatch; the kernel win is large and real.
+- Recommend `build-native` for dedicated local Ryzen deployments.
+- Do **not** overstate the expected full-backend gain: without explicit HugeTLB
+  pages, Zen 5 remains largely memory-limited at 16 CPU lanes.
 
 ## 2026-02-18 Apple Silicon superpage arena + pcore-only affinity trial
 
