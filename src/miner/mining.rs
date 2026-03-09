@@ -2210,12 +2210,7 @@ fn resolve_next_template_request(
                 if cfg.token_cookie_path.is_some() {
                     let first = cfg.daemon_auth_wait_message(false);
                     let repeat = cfg.daemon_auth_wait_message(true);
-                    auth_retry.note_failure(
-                        "AUTH",
-                        &first,
-                        &repeat,
-                        true,
-                    );
+                    auth_retry.note_failure("AUTH", &first, &repeat, true);
                 } else {
                     auth_retry.note_failure(
                         "AUTH",

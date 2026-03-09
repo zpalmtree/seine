@@ -241,12 +241,7 @@ pub(super) fn spawn_tip_listener(
                                 TokenRefreshOutcome::Unchanged => {
                                     let first = cfg.daemon_auth_wait_message(false);
                                     let repeat = cfg.daemon_auth_wait_message(true);
-                                    retry.note_failure(
-                                        "AUTH",
-                                        &first,
-                                        &repeat,
-                                        true,
-                                    );
+                                    retry.note_failure("AUTH", &first, &repeat, true);
                                 }
                                 TokenRefreshOutcome::Unavailable => {
                                     retry.note_failure(
@@ -257,14 +252,8 @@ pub(super) fn spawn_tip_listener(
                                     );
                                 }
                                 TokenRefreshOutcome::Failed(msg) => {
-                                    let message =
-                                        cfg.daemon_cookie_refresh_failure_message(&msg);
-                                    retry.note_failure(
-                                        "AUTH",
-                                        &message,
-                                        &message,
-                                        true,
-                                    );
+                                    let message = cfg.daemon_cookie_refresh_failure_message(&msg);
+                                    retry.note_failure("AUTH", &message, &message, true);
                                 }
                             }
                         }
