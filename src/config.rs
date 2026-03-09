@@ -1038,7 +1038,10 @@ impl Config {
         let daemon_resolved_data_dir = if cli.bench {
             None
         } else {
-            Some(resolve_effective_daemon_data_dir(&cli, daemon_context.as_ref()))
+            Some(resolve_effective_daemon_data_dir(
+                &cli,
+                daemon_context.as_ref(),
+            ))
         };
         let daemon_expected_cookie_path = daemon_resolved_data_dir
             .as_ref()
@@ -1219,7 +1222,11 @@ impl Config {
         if let Some(cookie_path) = self.token_cookie_path.as_ref() {
             let mismatch_hint = self.daemon_cookie_mismatch_hint();
             if let Some(hint) = mismatch_hint {
-                return format!("{reason}; watched cookie {}. {}", cookie_path.display(), hint);
+                return format!(
+                    "{reason}; watched cookie {}. {}",
+                    cookie_path.display(),
+                    hint
+                );
             }
             return format!("{reason}; watched cookie {}", cookie_path.display());
         }
@@ -1475,7 +1482,9 @@ fn detect_daemon_context(preferred_network: Option<DaemonNetwork>) -> Option<Dae
 
     let preferred_network = preferred_network.unwrap_or(DaemonNetwork::Mainnet);
     let managed_config = load_bnt_config_context();
-    let managed_dir = managed_config.as_ref().map(|config| config.config_dir.as_path());
+    let managed_dir = managed_config
+        .as_ref()
+        .map(|config| config.config_dir.as_path());
     let mut sys = System::new();
     sys.refresh_processes_specifics(
         ProcessesToUpdate::All,
@@ -1500,14 +1509,21 @@ fn detect_daemon_context(preferred_network: Option<DaemonNetwork>) -> Option<Dae
             managed_dir.and_then(|config_dir| daemon_pidfile_match(config_dir, pid))
         {
             let data_dir = daemon_data_dir_from_cmdline(&cmd)
-                .or_else(|| managed_config.as_ref().map(|config| config.data_dir_for(network)))
+                .or_else(|| {
+                    managed_config
+                        .as_ref()
+                        .map(|config| config.data_dir_for(network))
+                })
                 .unwrap_or_else(|| network.default_data_dir());
             let data_dir = resolve_relative_daemon_path(process.cwd(), &data_dir);
             return Some(DaemonContext {
                 network,
                 data_dir,
-                api_addr: daemon_api_addr_from_cmdline(&cmd)
-                    .or_else(|| managed_config.as_ref().and_then(|config| config.api_addr_for(network))),
+                api_addr: daemon_api_addr_from_cmdline(&cmd).or_else(|| {
+                    managed_config
+                        .as_ref()
+                        .and_then(|config| config.api_addr_for(network))
+                }),
                 source: DaemonContextSource::WrapperPidfile,
                 running: true,
                 manager_config_path: managed_config
@@ -1527,11 +1543,18 @@ fn detect_daemon_context(preferred_network: Option<DaemonNetwork>) -> Option<Dae
             data_dir: resolve_relative_daemon_path(
                 process.cwd(),
                 &daemon_data_dir_from_cmdline(&cmd)
-                    .or_else(|| managed_config.as_ref().map(|config| config.data_dir_for(network)))
+                    .or_else(|| {
+                        managed_config
+                            .as_ref()
+                            .map(|config| config.data_dir_for(network))
+                    })
                     .unwrap_or_else(|| network.default_data_dir()),
             ),
-            api_addr: daemon_api_addr_from_cmdline(&cmd)
-                .or_else(|| managed_config.as_ref().and_then(|config| config.api_addr_for(network))),
+            api_addr: daemon_api_addr_from_cmdline(&cmd).or_else(|| {
+                managed_config
+                    .as_ref()
+                    .and_then(|config| config.api_addr_for(network))
+            }),
             source: DaemonContextSource::ProcessScan,
             running: true,
             manager_config_path: managed_config
@@ -1576,17 +1599,26 @@ fn cookie_candidates(cli: &Cli, daemon_context: Option<&DaemonContext>) -> Vec<P
         for network in ordered_networks(requested_network) {
             let pidfile = managed_pidfile_path(&config.config_dir, network);
             if pidfile.exists() {
-                push_cookie_candidate(&mut candidates, config.data_dir_for(network).join("api.cookie"));
+                push_cookie_candidate(
+                    &mut candidates,
+                    config.data_dir_for(network).join("api.cookie"),
+                );
             }
         }
         for network in ordered_networks(requested_network) {
-            push_cookie_candidate(&mut candidates, config.data_dir_for(network).join("api.cookie"));
+            push_cookie_candidate(
+                &mut candidates,
+                config.data_dir_for(network).join("api.cookie"),
+            );
         }
     } else if let Some(config_dir) = default_managed_config_dir() {
         for network in ordered_networks(requested_network) {
             push_cookie_candidate(
                 &mut candidates,
-                config_dir.join("data").join(network.as_str()).join("api.cookie"),
+                config_dir
+                    .join("data")
+                    .join(network.as_str())
+                    .join("api.cookie"),
             );
         }
     }
@@ -1619,10 +1651,7 @@ fn format_cookie_search_list(candidates: &[PathBuf]) -> String {
         .join("\n")
 }
 
-fn resolve_effective_daemon_data_dir(
-    cli: &Cli,
-    daemon_context: Option<&DaemonContext>,
-) -> PathBuf {
+fn resolve_effective_daemon_data_dir(cli: &Cli, daemon_context: Option<&DaemonContext>) -> PathBuf {
     cli.daemon_dir
         .clone()
         .or_else(|| daemon_context.map(|context| context.data_dir.clone()))
