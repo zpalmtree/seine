@@ -146,12 +146,28 @@ impl HashrateTracker {
 
     /// Compute hashrates: current uses a rolling window, average uses active (unpaused) time.
     pub fn rates(&self) -> HashrateRates {
+        self.rates_with_current_windows(&BTreeMap::new())
+    }
+
+    /// Compute hashrates with optional per-device current-rate window overrides.
+    ///
+    /// Devices omitted from `current_window_secs` keep the default current window.
+    pub fn rates_with_current_windows(
+        &self,
+        current_window_secs: &BTreeMap<BackendInstanceId, f64>,
+    ) -> HashrateRates {
         let now = Instant::now();
         let (average_total, average_per_device) = self.session_rates(now);
+        let current_per_device = self.window_rates_per_device(now, current_window_secs);
+        let current_total = if current_window_secs.is_empty() || current_per_device.is_empty() {
+            self.window_rate_total(now, CURRENT_WINDOW_SECS)
+        } else {
+            current_per_device.values().sum()
+        };
         HashrateRates {
-            current_total: self.window_rate_total(now, CURRENT_WINDOW_SECS),
+            current_total,
             average_total,
-            current_per_device: self.window_rates_per_device(now, CURRENT_WINDOW_SECS),
+            current_per_device,
             average_per_device,
         }
     }
@@ -212,43 +228,60 @@ impl HashrateTracker {
     fn window_rates_per_device(
         &self,
         now: Instant,
-        window_secs: f64,
+        current_window_secs: &BTreeMap<BackendInstanceId, f64>,
     ) -> BTreeMap<BackendInstanceId, f64> {
         let latest = match self.samples.back() {
             Some(s) => s,
             None => return BTreeMap::new(),
         };
-        let cutoff = now - std::time::Duration::from_secs_f64(window_secs);
+
+        let mut rates = BTreeMap::new();
+        for &id in latest.per_device.keys() {
+            let window_secs = current_window_secs
+                .get(&id)
+                .copied()
+                .unwrap_or(CURRENT_WINDOW_SECS)
+                .max(MIN_WINDOW_SECS);
+            if let Some(rate) = self.window_rate_for_device(now, latest, id, window_secs) {
+                rates.insert(id, rate);
+            }
+        }
+        rates
+    }
+
+    fn window_rate_for_device(
+        &self,
+        now: Instant,
+        latest: &HashrateSnapshot,
+        id: BackendInstanceId,
+        window_secs: f64,
+    ) -> Option<f64> {
+        let latest_hashes = latest.per_device.get(&id).copied().unwrap_or(0);
+        if latest_hashes == 0 {
+            return None;
+        }
+
+        let cutoff = now - Duration::from_secs_f64(window_secs);
         let oldest = self
             .samples
             .iter()
             .find(|s| s.time >= cutoff)
             .unwrap_or(latest);
-
         let dt = latest.time.duration_since(oldest.time).as_secs_f64();
         if dt < MIN_WINDOW_SECS {
-            return BTreeMap::new();
+            return None;
         }
 
-        let mut rates = BTreeMap::new();
-        for (&id, &latest_hashes) in &latest.per_device {
-            let oldest_hashes = oldest.per_device.get(&id).copied().unwrap_or(0);
-            let dh = latest_hashes.saturating_sub(oldest_hashes);
-            if dh > 0 {
-                rates.insert(id, dh as f64 / dt);
-            } else if latest_hashes > 0 {
-                // Device had no new hashes in the standard window.  This is
-                // common for GPU backends that produce hashes in bursts (the
-                // kernel runs for several seconds between completions).
-                // Extend the lookback to find the last sample where this
-                // device's cumulative count was lower, and compute an
-                // amortized rate over that longer period.
-                if let Some(rate) = self.extended_device_rate(now, latest, id) {
-                    rates.insert(id, rate);
-                }
-            }
+        let oldest_hashes = oldest.per_device.get(&id).copied().unwrap_or(0);
+        let dh = latest_hashes.saturating_sub(oldest_hashes);
+        if dh > 0 {
+            return Some(dh as f64 / dt);
         }
-        rates
+
+        // Device had no new hashes in the selected window. This is common for
+        // bursty accelerators that only publish work completion after a deeper
+        // launch finishes, so extend the lookback to avoid showing 0 H/s.
+        self.extended_device_rate(now, latest, id)
     }
 
     /// Walk backwards through the sample buffer for `id` to find the most
@@ -504,6 +537,65 @@ mod tests {
         assert!(
             gpu_current > 0.0,
             "GPU current rate should be non-zero via extended lookback, got {gpu_current}"
+        );
+    }
+
+    #[test]
+    fn custom_device_window_can_smooth_bursty_current_rate() {
+        let now = Instant::now();
+        let samples = [
+            (12_300_u64, 0_u64),
+            (8_200_u64, 40_u64),
+            (4_900_u64, 40_u64),
+            (100_u64, 80_u64),
+            (0_u64, 120_u64),
+        ]
+        .into_iter()
+        .map(|(millis_ago, hashes)| {
+            let mut per_device = BTreeMap::new();
+            per_device.insert(7_u64, hashes);
+            HashrateSnapshot {
+                time: now - Duration::from_millis(millis_ago),
+                total: hashes,
+                per_device,
+            }
+        })
+        .collect();
+
+        let tracker = HashrateTracker {
+            samples,
+            session_start: None,
+            device_session_start: BTreeMap::new(),
+            paused_since: None,
+            paused_total: Duration::ZERO,
+            completed_rounds_device_hashes: BTreeMap::new(),
+            last_round_start: None,
+            last_round_device_hashes: BTreeMap::new(),
+        };
+
+        let raw = tracker.rates();
+        let mut current_window_secs = BTreeMap::new();
+        current_window_secs.insert(7_u64, 15.0);
+        let smoothed = tracker.rates_with_current_windows(&current_window_secs);
+
+        let raw_device = raw.current_per_device.get(&7_u64).copied().unwrap_or(0.0);
+        let smooth_device = smoothed
+            .current_per_device
+            .get(&7_u64)
+            .copied()
+            .unwrap_or(0.0);
+
+        assert!(
+            raw_device > 15.0,
+            "expected short window spike, got {raw_device}"
+        );
+        assert!(
+            (smooth_device - 10.0).abs() < 0.3,
+            "expected longer window to smooth near 10 H/s, got {smooth_device}"
+        );
+        assert!(
+            (smoothed.current_total - smooth_device).abs() < f64::EPSILON,
+            "single-device total should match device current"
         );
     }
 }

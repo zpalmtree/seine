@@ -14,6 +14,7 @@ use super::tui::{DeviceHashrate, TuiRenderer, TuiState};
 use super::ui::{set_tui_state, warn};
 use super::{backend_descriptions, backend_display_names, BackendSlot};
 
+const NVIDIA_CURRENT_WINDOW_SECS: f64 = 15.0;
 const TUI_RENDER_INTERVAL: Duration = Duration::from_secs(1);
 const TUI_QUIT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const TUI_RENDER_SIGNAL_CAPACITY: usize = 8;
@@ -93,7 +94,10 @@ impl TuiDisplay {
         // Record sample in the sliding-window tracker
         self.hashrate_tracker
             .record(snapshot.hashes, view.round_start, view.round_backend_hashes);
-        let rates = self.hashrate_tracker.rates();
+        let current_window_secs = current_hashrate_window_overrides(view.backends);
+        let rates = self
+            .hashrate_tracker
+            .rates_with_current_windows(&current_window_secs);
 
         // Build per-device hashrate display data
         let display_names = backend_display_names(view.backends);
@@ -182,6 +186,19 @@ fn should_zero_current_hashrate(state_label: &str) -> bool {
             | "daemon-unavailable"
             | "invalid-address"
     )
+}
+
+fn current_hashrate_window_overrides(backends: &[BackendSlot]) -> BTreeMap<u64, f64> {
+    let mut overrides = BTreeMap::new();
+    for slot in backends {
+        if slot.backend.name() == "nvidia" {
+            // NVIDIA deep-launch batches complete in bursts, so a longer
+            // current-rate window keeps the TUI from oscillating between
+            // adjacent samples while leaving other backends responsive.
+            overrides.insert(slot.id, NVIDIA_CURRENT_WINDOW_SECS);
+        }
+    }
+    overrides
 }
 
 impl Drop for TuiDisplay {
