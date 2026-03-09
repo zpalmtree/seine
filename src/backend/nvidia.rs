@@ -349,8 +349,19 @@ struct CudaArgon2Engine {
     host_completed_iters: [u32; 1],
     host_found_index: [u32; 1],
     fused_target_check: bool,
-    last_header_base_ptr: usize,
-    last_target_ptr: usize,
+    cached_header_base: Vec<u8>,
+    cached_target: Option<[u8; POW_OUTPUT_LEN]>,
+}
+
+fn header_base_upload_needed(cached: &[u8], next: &[u8]) -> bool {
+    cached != next
+}
+
+fn target_upload_needed(
+    cached: Option<&[u8; POW_OUTPUT_LEN]>,
+    next: &[u8; POW_OUTPUT_LEN],
+) -> bool {
+    cached != Some(next)
 }
 
 impl CudaArgon2Engine {
@@ -587,8 +598,8 @@ impl CudaArgon2Engine {
             host_completed_iters: [0u32; 1],
             host_found_index: [u32::MAX; 1],
             fused_target_check,
-            last_header_base_ptr: 0,
-            last_target_ptr: 0,
+            cached_header_base: Vec::new(),
+            cached_target: None,
         })
     }
 
@@ -650,8 +661,7 @@ impl CudaArgon2Engine {
         }
 
         let requested_hashes = nonces.len();
-        let header_ptr = header_base.as_ptr() as usize;
-        if header_ptr != self.last_header_base_ptr {
+        if header_base_upload_needed(&self.cached_header_base, header_base) {
             {
                 let mut header_view = self
                     .header_base_input
@@ -661,7 +671,8 @@ impl CudaArgon2Engine {
                     .memcpy_htod(header_base, &mut header_view)
                     .map_err(cuda_driver_err)?;
             }
-            self.last_header_base_ptr = header_ptr;
+            self.cached_header_base.clear();
+            self.cached_header_base.extend_from_slice(header_base);
         }
         {
             let mut nonce_view = self
@@ -696,8 +707,7 @@ impl CudaArgon2Engine {
         }
         let use_fused_target_check = target.is_some() && self.fused_target_check;
         if let Some(target_hash) = target {
-            let target_ptr = target_hash.as_ptr() as usize;
-            if target_ptr != self.last_target_ptr {
+            if target_upload_needed(self.cached_target.as_ref(), target_hash) {
                 {
                     let mut target_view = self
                         .target_input
@@ -707,7 +717,7 @@ impl CudaArgon2Engine {
                         .memcpy_htod(target_hash, &mut target_view)
                         .map_err(cuda_driver_err)?;
                 }
-                self.last_target_ptr = target_ptr;
+                self.cached_target = Some(*target_hash);
             }
             if use_fused_target_check {
                 self.host_found_index[0] = u32::MAX;
@@ -3895,6 +3905,40 @@ mod tests {
 
         assert!(nvidia_autotune_candidate_beats(&faster, &slower, 8));
         assert!(!nvidia_autotune_candidate_beats(&slower, &faster, 8));
+    }
+
+    #[test]
+    fn header_base_upload_decision_uses_content_not_pointer_identity() {
+        let cached = vec![0x11; POW_HEADER_BASE_LEN];
+        let mut next = vec![0x11; POW_HEADER_BASE_LEN];
+
+        assert!(
+            !header_base_upload_needed(&cached, &next),
+            "identical header bytes should not trigger a refresh"
+        );
+
+        next[0] ^= 0xFF;
+        assert!(
+            header_base_upload_needed(&cached, &next),
+            "changed header bytes must refresh even if an allocator later reuses the same address"
+        );
+    }
+
+    #[test]
+    fn target_upload_decision_uses_content_not_pointer_identity() {
+        let cached = [0x22; POW_OUTPUT_LEN];
+        let mut next = [0x22; POW_OUTPUT_LEN];
+
+        assert!(
+            !target_upload_needed(Some(&cached), &next),
+            "identical target bytes should not trigger a refresh"
+        );
+
+        next[POW_OUTPUT_LEN - 1] ^= 0x01;
+        assert!(
+            target_upload_needed(Some(&cached), &next),
+            "changed target bytes must refresh even if an allocator later reuses the same address"
+        );
     }
 
     #[test]
