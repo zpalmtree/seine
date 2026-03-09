@@ -271,8 +271,7 @@ pub fn is_no_wallet_loaded_error(err: &anyhow::Error) -> bool {
     let Some(api_err) = err.downcast_ref::<ApiStatusError>() else {
         return false;
     };
-    api_err.endpoint() == "blocktemplate"
-        && api_err.status() == StatusCode::SERVICE_UNAVAILABLE
+    api_err.status() == StatusCode::SERVICE_UNAVAILABLE
         && api_err.message().trim() == "no wallet loaded"
 }
 
@@ -489,6 +488,25 @@ mod tests {
         let err = client
             .get_block_template(None)
             .expect_err("blocktemplate request should fail");
+        assert!(is_no_wallet_loaded_error(&err));
+        mock.assert();
+    }
+
+    #[test]
+    fn wallet_address_no_wallet_loaded_error_is_classified() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/api/wallet/address")
+                .header("authorization", "Bearer testtoken");
+            then.status(503)
+                .json_body(json!({"error": "no wallet loaded"}));
+        });
+
+        let client = test_client(&server);
+        let err = client
+            .get_wallet_address()
+            .expect_err("wallet address request should fail");
         assert!(is_no_wallet_loaded_error(&err));
         mock.assert();
     }

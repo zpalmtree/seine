@@ -10,12 +10,16 @@ use crossterm::terminal::is_raw_mode_enabled;
 
 use crate::config::Config;
 use crate::daemon_api::{
-    is_retryable_api_error, is_timeout_api_error, is_wallet_already_loaded_error,
-    is_wallet_wrong_password_error, ApiClient,
+    is_no_wallet_loaded_error, is_retryable_api_error, is_timeout_api_error,
+    is_wallet_already_loaded_error, is_wallet_wrong_password_error, ApiClient,
 };
 
 use super::mining_tui::{begin_prompt_session, render_tui_now, set_tui_state_label, TuiDisplay};
 use super::ui::{error, info, success, warn};
+
+const MAX_PROMPT_ATTEMPTS: u32 = 3;
+const WALLET_LOAD_RETRY_DELAY: Duration = Duration::from_secs(3);
+const DAEMON_RETRY_LOG_INTERVAL: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum WalletPasswordSource {
@@ -36,16 +40,76 @@ impl WalletPasswordSource {
     }
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum WalletLoadAcceptance {
+    Loaded,
+    AlreadyLoaded,
+}
+
+impl WalletLoadAcceptance {
+    fn ready_message(self, source: WalletPasswordSource) -> String {
+        match self {
+            Self::Loaded => format!("loaded via {}", source.as_str()),
+            Self::AlreadyLoaded => "already loaded".to_string(),
+        }
+    }
+
+    fn wait_message(self, pending: WalletReadinessPendingKind) -> &'static str {
+        match (self, pending) {
+            (Self::Loaded, WalletReadinessPendingKind::NotLoaded) => {
+                "wallet/load succeeded, but wallet is not ready yet; waiting for daemon wallet load to finish"
+            }
+            (Self::Loaded, WalletReadinessPendingKind::Timeout) => {
+                "wallet/load succeeded, but wallet readiness check timed out; waiting for daemon wallet load to finish"
+            }
+            (Self::Loaded, WalletReadinessPendingKind::Transient) => {
+                "wallet/load succeeded, but wallet readiness check is temporarily unavailable; waiting for daemon wallet load to finish"
+            }
+            (Self::AlreadyLoaded, WalletReadinessPendingKind::NotLoaded) => {
+                "wallet/load reports already loaded, but wallet is not ready yet; waiting for daemon wallet load to finish"
+            }
+            (Self::AlreadyLoaded, WalletReadinessPendingKind::Timeout) => {
+                "wallet/load reports already loaded, but wallet readiness check timed out; waiting for daemon wallet load to finish"
+            }
+            (Self::AlreadyLoaded, WalletReadinessPendingKind::Transient) => {
+                "wallet/load reports already loaded, but wallet readiness check is temporarily unavailable; waiting for daemon wallet load to finish"
+            }
+        }
+    }
+
+    fn readiness_error_context(self, source: WalletPasswordSource) -> String {
+        match self {
+            Self::Loaded => format!(
+                "wallet readiness check failed after wallet/load succeeded via {}",
+                source.as_str()
+            ),
+            Self::AlreadyLoaded => {
+                "wallet readiness check failed after wallet/load reported already loaded"
+                    .to_string()
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum WalletReadiness {
+    Ready,
+    Pending(WalletReadinessPendingKind),
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum WalletReadinessPendingKind {
+    NotLoaded,
+    Timeout,
+    Transient,
+}
+
 pub(super) fn auto_load_wallet(
     client: &ApiClient,
     cfg: &Config,
     shutdown: &AtomicBool,
     tui: &mut Option<TuiDisplay>,
 ) -> Result<bool> {
-    const MAX_PROMPT_ATTEMPTS: u32 = 3;
-    const WALLET_LOAD_RETRY_DELAY: Duration = Duration::from_secs(3);
-    const DAEMON_RETRY_LOG_INTERVAL: Duration = Duration::from_secs(10);
-
     let (mut password, source) = match resolve_wallet_password(cfg)? {
         Some((password, source)) => (password, source),
         None => {
@@ -68,14 +132,28 @@ pub(super) fn auto_load_wallet(
 
         match client.load_wallet(&password) {
             Ok(()) => {
-                success("WALLET", format!("loaded via {}", source.as_str()));
+                let result = wait_for_wallet_ready(
+                    client,
+                    source,
+                    WalletLoadAcceptance::Loaded,
+                    shutdown,
+                    tui,
+                    &mut last_transient_log_at,
+                );
                 password.clear();
-                return Ok(true);
+                return result;
             }
             Err(err) if is_wallet_already_loaded_error(&err) => {
-                info("WALLET", "already loaded");
+                let result = wait_for_wallet_ready(
+                    client,
+                    source,
+                    WalletLoadAcceptance::AlreadyLoaded,
+                    shutdown,
+                    tui,
+                    &mut last_transient_log_at,
+                );
                 password.clear();
-                return Ok(true);
+                return result;
             }
             Err(err) if is_wallet_wrong_password_error(&err) => {
                 set_tui_state_label(tui, "wallet-password-required");
@@ -142,6 +220,71 @@ pub(super) fn auto_load_wallet(
                 });
             }
         }
+    }
+}
+
+fn wait_for_wallet_ready(
+    client: &ApiClient,
+    source: WalletPasswordSource,
+    acceptance: WalletLoadAcceptance,
+    shutdown: &AtomicBool,
+    tui: &mut Option<TuiDisplay>,
+    last_transient_log_at: &mut Option<Instant>,
+) -> Result<bool> {
+    loop {
+        if shutdown.load(Ordering::Relaxed) {
+            return Ok(false);
+        }
+
+        match probe_wallet_readiness(client) {
+            Ok(WalletReadiness::Ready) => {
+                let message = acceptance.ready_message(source);
+                match acceptance {
+                    WalletLoadAcceptance::Loaded => success("WALLET", message),
+                    WalletLoadAcceptance::AlreadyLoaded => info("WALLET", message),
+                }
+                return Ok(true);
+            }
+            Ok(WalletReadiness::Pending(pending)) => {
+                set_tui_state_label(tui, "daemon-syncing");
+                maybe_log_wallet_readiness_wait(acceptance, pending, last_transient_log_at);
+                render_tui_now(tui);
+                if !sleep_with_shutdown(shutdown, WALLET_LOAD_RETRY_DELAY) {
+                    return Ok(false);
+                }
+            }
+            Err(err) => return Err(err).context(acceptance.readiness_error_context(source)),
+        }
+    }
+}
+
+fn probe_wallet_readiness(client: &ApiClient) -> Result<WalletReadiness> {
+    match client.get_wallet_address() {
+        Ok(_) => Ok(WalletReadiness::Ready),
+        Err(err) if is_no_wallet_loaded_error(&err) => Ok(WalletReadiness::Pending(
+            WalletReadinessPendingKind::NotLoaded,
+        )),
+        Err(err) if is_timeout_api_error(&err) => Ok(WalletReadiness::Pending(
+            WalletReadinessPendingKind::Timeout,
+        )),
+        Err(err) if is_retryable_api_error(&err) => Ok(WalletReadiness::Pending(
+            WalletReadinessPendingKind::Transient,
+        )),
+        Err(err) => Err(err),
+    }
+}
+
+fn maybe_log_wallet_readiness_wait(
+    acceptance: WalletLoadAcceptance,
+    pending: WalletReadinessPendingKind,
+    last_transient_log_at: &mut Option<Instant>,
+) {
+    let now = Instant::now();
+    if last_transient_log_at
+        .is_none_or(|last| now.saturating_duration_since(last) >= DAEMON_RETRY_LOG_INTERVAL)
+    {
+        warn("DAEMON", acceptance.wait_message(pending));
+        *last_transient_log_at = Some(now);
     }
 }
 
@@ -225,6 +368,102 @@ fn prompt_wallet_password(tui: &mut Option<TuiDisplay>) -> Result<Option<String>
         return Ok(None);
     }
     Ok(Some(password))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use httpmock::prelude::*;
+    use serde_json::json;
+
+    fn test_client(server: &MockServer) -> ApiClient {
+        let base = server.url("").trim_end_matches('/').to_string();
+        ApiClient::new(
+            base,
+            "testtoken".to_string(),
+            Duration::from_secs(5),
+            Duration::from_secs(5),
+            Duration::from_secs(30),
+        )
+        .expect("test client should be created")
+    }
+
+    #[test]
+    fn probe_wallet_readiness_reports_ready_when_wallet_address_is_available() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/api/wallet/address")
+                .header("authorization", "Bearer testtoken");
+            then.status(200).json_body(json!({
+                "address": "Pwallet123"
+            }));
+        });
+
+        let readiness =
+            probe_wallet_readiness(&test_client(&server)).expect("wallet should be ready");
+        assert_eq!(readiness, WalletReadiness::Ready);
+        mock.assert();
+    }
+
+    #[test]
+    fn probe_wallet_readiness_reports_pending_when_wallet_is_not_ready() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/api/wallet/address")
+                .header("authorization", "Bearer testtoken");
+            then.status(503)
+                .json_body(json!({"error": "no wallet loaded"}));
+        });
+
+        let readiness = probe_wallet_readiness(&test_client(&server))
+            .expect("wallet readiness probe should classify pending state");
+        assert_eq!(
+            readiness,
+            WalletReadiness::Pending(WalletReadinessPendingKind::NotLoaded)
+        );
+        mock.assert();
+    }
+
+    #[test]
+    fn probe_wallet_readiness_reports_timeout_pending() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/api/wallet/address")
+                .header("authorization", "Bearer testtoken");
+            then.status(408).json_body(json!({"error": "timeout"}));
+        });
+
+        let readiness = probe_wallet_readiness(&test_client(&server))
+            .expect("wallet readiness probe should classify timeouts as pending");
+        assert_eq!(
+            readiness,
+            WalletReadiness::Pending(WalletReadinessPendingKind::Timeout)
+        );
+        mock.assert();
+    }
+
+    #[test]
+    fn probe_wallet_readiness_reports_transient_pending() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/api/wallet/address")
+                .header("authorization", "Bearer testtoken");
+            then.status(503)
+                .json_body(json!({"error": "daemon syncing"}));
+        });
+
+        let readiness = probe_wallet_readiness(&test_client(&server))
+            .expect("wallet readiness probe should classify transient errors as pending");
+        assert_eq!(
+            readiness,
+            WalletReadiness::Pending(WalletReadinessPendingKind::Transient)
+        );
+        mock.assert();
+    }
 }
 
 fn prompt_wallet_password_raw_mode() -> Result<Option<String>> {
