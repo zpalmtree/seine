@@ -14,7 +14,7 @@ use super::tui::{DeviceHashrate, TuiRenderer, TuiState};
 use super::ui::{set_tui_state, warn};
 use super::{backend_descriptions, backend_display_names, BackendSlot};
 
-const NVIDIA_CURRENT_WINDOW_SECS: f64 = 15.0;
+const NVIDIA_CURRENT_WINDOW_SECS: f64 = 30.0;
 const TUI_RENDER_INTERVAL: Duration = Duration::from_secs(1);
 const TUI_QUIT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const TUI_RENDER_SIGNAL_CAPACITY: usize = 8;
@@ -191,14 +191,21 @@ fn should_zero_current_hashrate(state_label: &str) -> bool {
 fn current_hashrate_window_overrides(backends: &[BackendSlot]) -> BTreeMap<u64, f64> {
     let mut overrides = BTreeMap::new();
     for slot in backends {
-        if slot.backend.name() == "nvidia" {
+        if let Some(window_secs) = current_hashrate_window_secs_for_backend(slot.backend.name()) {
             // NVIDIA deep-launch batches complete in bursts, so a longer
             // current-rate window keeps the TUI from oscillating between
             // adjacent samples while leaving other backends responsive.
-            overrides.insert(slot.id, NVIDIA_CURRENT_WINDOW_SECS);
+            overrides.insert(slot.id, window_secs);
         }
     }
     overrides
+}
+
+fn current_hashrate_window_secs_for_backend(backend_name: &str) -> Option<f64> {
+    match backend_name {
+        "nvidia" => Some(NVIDIA_CURRENT_WINDOW_SECS),
+        _ => None,
+    }
 }
 
 impl Drop for TuiDisplay {
@@ -408,7 +415,7 @@ fn spawn_tui_quit_watcher(shutdown: Arc<AtomicBool>) -> (Arc<AtomicBool>, JoinHa
 
 #[cfg(test)]
 mod tests {
-    use super::should_zero_current_hashrate;
+    use super::{current_hashrate_window_secs_for_backend, should_zero_current_hashrate};
 
     #[test]
     fn zeroes_current_hashrate_for_non_mining_states() {
@@ -423,5 +430,14 @@ mod tests {
         }
         assert!(!should_zero_current_hashrate("working"));
         assert!(!should_zero_current_hashrate("refresh"));
+    }
+
+    #[test]
+    fn nvidia_uses_longer_current_hashrate_window() {
+        assert_eq!(
+            current_hashrate_window_secs_for_backend("nvidia"),
+            Some(30.0)
+        );
+        assert_eq!(current_hashrate_window_secs_for_backend("cpu"), None);
     }
 }
