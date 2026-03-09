@@ -44,7 +44,6 @@ const POOL_MAX_DEFERRED_SUBMITS: usize = 4096;
 const POOL_SUBMIT_ACK_TIMEOUT: Duration = Duration::from_secs(30);
 const POOL_TELEMETRY_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 const POOL_TELEMETRY_TIMEOUT: Duration = Duration::from_secs(3);
-const POOL_API_DEFAULT_PORT: u16 = 24783;
 const ATOMIC_UNITS_PER_BNT: u64 = 100_000_000;
 const BNT_DISPLAY_DECIMALS: usize = 4;
 const BNT_DISPLAY_SCALE_ATOMIC_UNITS: u64 = 10_000;
@@ -1708,7 +1707,9 @@ impl PoolUiTelemetryClient {
             .into_iter()
             .map(|base_url| PoolTelemetryEndpoint {
                 stats_url: format!("{base_url}/api/stats"),
-                miner_balance_url: format!("{base_url}/api/miner/{address}/balance"),
+                miner_balance_url: format!(
+                    "{base_url}/api/miner/{address}/balance?include_pending_estimate=false"
+                ),
                 miner_url: format!("{base_url}/api/miner/{address}"),
             })
             .collect::<Vec<_>>();
@@ -1872,7 +1873,6 @@ fn pool_api_base_urls_from_pool_url(pool_url: &str) -> Vec<String> {
     }
 
     let mut out = Vec::new();
-    push_unique(&mut out, format!("http://{host}:{POOL_API_DEFAULT_PORT}"));
     match transport {
         "https" => push_unique(&mut out, format!("https://{authority}")),
         "http" => push_unique(&mut out, format!("http://{authority}")),
@@ -1970,8 +1970,8 @@ mod tests {
         fetch_local_daemon_wallet_snapshot, pool_api_base_urls_from_pool_url,
         service_pool_submit_backlog_with_submitter, should_apply_submit_ack_difficulty_immediately,
         should_resume_pool_assignment, submit_pool_solution_with_submitter, ActivePoolJob,
-        PoolConnectionMode, PoolJob, PoolShareSubmitOutcome, POOL_MAX_INFLIGHT_SUBMITS,
-        POOL_SUBMIT_ACK_TIMEOUT,
+        PoolConnectionMode, PoolJob, PoolShareSubmitOutcome, PoolUiTelemetryClient,
+        POOL_MAX_INFLIGHT_SUBMITS, POOL_SUBMIT_ACK_TIMEOUT,
     };
 
     fn test_daemon_client(server: &MockServer, token: &str) -> ApiClient {
@@ -2022,12 +2022,11 @@ mod tests {
     }
 
     #[test]
-    fn telemetry_base_urls_include_fallbacks_for_stratum_endpoint() {
+    fn telemetry_base_urls_prefer_public_http_origins_for_stratum_endpoint() {
         let urls = pool_api_base_urls_from_pool_url("stratum+tcp://bntpool.com:3333");
         assert_eq!(
             urls,
             vec![
-                "http://bntpool.com:24783".to_string(),
                 "https://bntpool.com".to_string(),
                 "http://bntpool.com".to_string()
             ]
@@ -2035,14 +2034,18 @@ mod tests {
     }
 
     #[test]
-    fn telemetry_base_urls_preserve_http_origin() {
+    fn telemetry_base_urls_preserve_https_origin() {
         let urls = pool_api_base_urls_from_pool_url("https://example.com:8443/path");
+        assert_eq!(urls, vec!["https://example.com:8443".to_string()]);
+    }
+
+    #[test]
+    fn telemetry_balance_url_skips_pending_estimate_query() {
+        let client = PoolUiTelemetryClient::new("stratum+tcp://bntpool.com:3333", "addr")
+            .expect("telemetry client should be created");
         assert_eq!(
-            urls,
-            vec![
-                "http://example.com:24783".to_string(),
-                "https://example.com:8443".to_string()
-            ]
+            client.endpoints[0].miner_balance_url,
+            "https://bntpool.com/api/miner/addr/balance?include_pending_estimate=false"
         );
     }
 
