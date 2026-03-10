@@ -42,6 +42,9 @@ const POOL_JOB_STOP_AT_HORIZON: Duration = Duration::from_secs(365 * 24 * 60 * 6
 const POOL_MAX_INFLIGHT_SUBMITS: usize = 16;
 const POOL_MAX_DEFERRED_SUBMITS: usize = 4096;
 const POOL_SUBMIT_ACK_TIMEOUT: Duration = Duration::from_secs(30);
+const POOL_SUBMIT_ACK_WARN_THRESHOLD: usize = 4;
+const POOL_SUBMIT_LOOKUP_RETENTION: Duration = Duration::from_secs(120);
+const POOL_SUBMIT_LOOKUP_CAPACITY: usize = 8192;
 const POOL_DESYNC_STALE_ACK_WINDOW: Duration = Duration::from_secs(60);
 const POOL_DESYNC_STALE_ACK_THRESHOLD: usize = 3;
 const POOL_DESYNC_STALE_FOR_THRESHOLD: Duration = Duration::from_secs(15);
@@ -75,8 +78,11 @@ impl PoolConnectionMode {
     }
 }
 
-fn should_apply_submit_ack_difficulty_immediately(mode: PoolConnectionMode) -> bool {
-    mode.is_user()
+fn should_apply_submit_ack_difficulty_immediately(_mode: PoolConnectionMode) -> bool {
+    // Pool vardiff changes supersede the current assignment and arrive with a new job_id.
+    // Applying the difficulty from the ACK before the replacement job arrives can keep
+    // work/backlog attached to an already-stale assignment.
+    false
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -123,6 +129,7 @@ struct PoolSession {
     latest_job: Option<PoolJob>,
     connected: bool,
     resume_job: Option<ActivePoolJob>,
+    recent_submit_lookup: RecentPendingSubmitLookup,
 }
 
 struct ActivePoolJob {
@@ -159,6 +166,51 @@ struct PendingPoolSubmit {
     found_at: Instant,
     submitted_at: Instant,
     backend_label: String,
+}
+
+#[derive(Default)]
+struct RecentPendingSubmitLookup {
+    entries: HashMap<(String, u64), PendingPoolSubmit>,
+    order: VecDeque<(String, u64, Instant)>,
+}
+
+impl RecentPendingSubmitLookup {
+    fn insert(&mut self, job_id: &str, nonce: u64, pending_submit: PendingPoolSubmit) {
+        let submitted_at = pending_submit.submitted_at;
+        let key = (job_id.to_string(), nonce);
+        self.entries.insert(key.clone(), pending_submit);
+        self.order.push_back((key.0, key.1, submitted_at));
+        self.prune(Instant::now());
+    }
+
+    fn remove(&mut self, job_id: &str, nonce: u64) -> Option<PendingPoolSubmit> {
+        self.prune(Instant::now());
+        self.entries.remove(&(job_id.to_string(), nonce))
+    }
+
+    fn prune(&mut self, now: Instant) {
+        let cutoff = now.checked_sub(POOL_SUBMIT_LOOKUP_RETENTION).unwrap_or(now);
+        while let Some((job_id, nonce, submitted_at)) = self.order.front().cloned() {
+            let over_capacity = self.entries.len() > POOL_SUBMIT_LOOKUP_CAPACITY;
+            if !over_capacity && submitted_at > cutoff {
+                break;
+            }
+
+            self.order.pop_front();
+            let key = (job_id, nonce);
+            let should_remove = self
+                .entries
+                .get(&key)
+                .is_some_and(|pending| pending.submitted_at == submitted_at);
+            if should_remove {
+                self.entries.remove(&key);
+            }
+        }
+
+        if self.entries.is_empty() {
+            self.order.clear();
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -344,6 +396,28 @@ fn maybe_log_pool_submit_timing(
             warn("POOL", message);
         }
     }
+}
+
+fn take_submit_timing_for_ack(
+    ack_job_id: &str,
+    nonce: u64,
+    current_job_id: Option<&str>,
+    current_pending_submit_nonces: Option<&mut HashMap<u64, PendingPoolSubmit>>,
+    recent_submit_lookup: &mut RecentPendingSubmitLookup,
+) -> (bool, Option<PendingPoolSubmit>) {
+    let ack_for_current_job = current_job_id.is_some_and(|job_id| job_id == ack_job_id);
+    let mut submit_timing = if ack_for_current_job {
+        current_pending_submit_nonces.and_then(|pending| pending.remove(&nonce))
+    } else {
+        None
+    };
+
+    let tracked_submit = recent_submit_lookup.remove(ack_job_id, nonce);
+    if submit_timing.is_none() {
+        submit_timing = tracked_submit;
+    }
+
+    (ack_for_current_job, submit_timing)
 }
 
 fn log_pool_issue_timing(
@@ -547,6 +621,7 @@ pub(super) fn run_pool_mining_loop(
         latest_job: None,
         connected: false,
         resume_job: None,
+        recent_submit_lookup: RecentPendingSubmitLookup::default(),
     };
     let mut dev_session = PoolSession {
         connection: dev_connection,
@@ -555,6 +630,7 @@ pub(super) fn run_pool_mining_loop(
         latest_job: None,
         connected: false,
         resume_job: None,
+        recent_submit_lookup: RecentPendingSubmitLookup::default(),
     };
 
     let mut active_job: Option<ActivePoolJob> = None;
@@ -598,6 +674,7 @@ pub(super) fn run_pool_mining_loop(
                                 &mut dev_session.latest_job,
                                 &mut dev_session.connected,
                                 &mut dev_session.resume_job,
+                                &mut dev_session.recent_submit_lookup,
                                 &stats,
                             );
                         }
@@ -610,6 +687,7 @@ pub(super) fn run_pool_mining_loop(
                                 &mut user_session.latest_job,
                                 &mut user_session.connected,
                                 &mut user_session.resume_job,
+                                &mut user_session.recent_submit_lookup,
                                 &stats,
                             );
                         }
@@ -905,6 +983,7 @@ pub(super) fn run_pool_mining_loop(
                     backend_executor,
                     &mut backend_weights,
                     &mut active_job,
+                    &mut user_session.recent_submit_lookup,
                     &mut user_session.latest_job,
                     &mut user_session.connected,
                     &stats,
@@ -918,6 +997,7 @@ pub(super) fn run_pool_mining_loop(
                     &mut user_session.latest_job,
                     &mut user_session.connected,
                     &mut user_session.resume_job,
+                    &mut user_session.recent_submit_lookup,
                     &stats,
                 );
             }
@@ -936,6 +1016,7 @@ pub(super) fn run_pool_mining_loop(
                     backend_executor,
                     &mut backend_weights,
                     &mut active_job,
+                    &mut dev_session.recent_submit_lookup,
                     &mut dev_session.latest_job,
                     &mut dev_session.connected,
                     &stats,
@@ -949,6 +1030,7 @@ pub(super) fn run_pool_mining_loop(
                     &mut dev_session.latest_job,
                     &mut dev_session.connected,
                     &mut dev_session.resume_job,
+                    &mut dev_session.recent_submit_lookup,
                     &stats,
                 );
             }
@@ -970,6 +1052,7 @@ pub(super) fn run_pool_mining_loop(
                         backend_executor,
                         &mut backend_weights,
                         &mut active_job,
+                        &mut user_session.recent_submit_lookup,
                         &mut user_session.latest_job,
                         &mut user_session.connected,
                         &stats,
@@ -989,6 +1072,7 @@ pub(super) fn run_pool_mining_loop(
                     backend_executor,
                     &mut backend_weights,
                     &mut active_job,
+                    &mut dev_session.recent_submit_lookup,
                     &mut dev_session.latest_job,
                     &mut dev_session.connected,
                     &stats,
@@ -1014,20 +1098,27 @@ pub(super) fn run_pool_mining_loop(
                         topology_changed = true;
                     }
                     if let Some(solution) = maybe_solution {
-                        let active_client = if active_mode == PoolConnectionMode::Dev {
-                            &dev_session.client
-                        } else {
-                            &user_session.client
-                        };
                         let backend_label = solution_backend_label(backends, &solution);
-                        let submit_outcome = submit_pool_solution(
-                            active_mode,
-                            active_client,
-                            &mut active_job,
-                            &solution,
-                            &backend_label,
-                            &stats,
-                        );
+                        let submit_outcome = match active_mode {
+                            PoolConnectionMode::Dev => submit_pool_solution(
+                                active_mode,
+                                &dev_session.client,
+                                &mut active_job,
+                                &solution,
+                                &backend_label,
+                                &mut dev_session.recent_submit_lookup,
+                                &stats,
+                            ),
+                            PoolConnectionMode::User => submit_pool_solution(
+                                active_mode,
+                                &user_session.client,
+                                &mut active_job,
+                                &solution,
+                                &backend_label,
+                                &mut user_session.recent_submit_lookup,
+                                &stats,
+                            ),
+                        };
                         if matches!(submit_outcome, PoolShareSubmitOutcome::StaleEpoch) {
                             continue;
                         }
@@ -1039,23 +1130,40 @@ pub(super) fn run_pool_mining_loop(
         }
 
         if let Some(job) = active_job.as_mut() {
-            let active_client = if active_mode == PoolConnectionMode::Dev {
-                &dev_session.client
-            } else {
-                &user_session.client
-            };
-            service_pool_submit_backlog(active_mode, active_client, job, &stats);
+            match active_mode {
+                PoolConnectionMode::Dev => service_pool_submit_backlog(
+                    active_mode,
+                    &dev_session.client,
+                    job,
+                    &mut dev_session.recent_submit_lookup,
+                    &stats,
+                ),
+                PoolConnectionMode::User => service_pool_submit_backlog(
+                    active_mode,
+                    &user_session.client,
+                    job,
+                    &mut user_session.recent_submit_lookup,
+                    &stats,
+                ),
+            }
         }
         if let Some(job) = user_session.resume_job.as_mut() {
             service_pool_submit_backlog(
                 PoolConnectionMode::User,
                 &user_session.client,
                 job,
+                &mut user_session.recent_submit_lookup,
                 &stats,
             );
         }
         if let Some(job) = dev_session.resume_job.as_mut() {
-            service_pool_submit_backlog(PoolConnectionMode::Dev, &dev_session.client, job, &stats);
+            service_pool_submit_backlog(
+                PoolConnectionMode::Dev,
+                &dev_session.client,
+                job,
+                &mut dev_session.recent_submit_lookup,
+                &stats,
+            );
         }
 
         if topology_changed {
@@ -1198,6 +1306,7 @@ fn handle_active_pool_event(
     backend_executor: &super::backend_executor::BackendExecutor,
     backend_weights: &mut BTreeMap<u64, f64>,
     active_job: &mut Option<ActivePoolJob>,
+    recent_submit_lookup: &mut RecentPendingSubmitLookup,
     latest_job: &mut Option<PoolJob>,
     connected: &mut bool,
     stats: &Stats,
@@ -1300,15 +1409,25 @@ fn handle_active_pool_event(
             }
         }
         PoolEvent::SubmitAck(ack) => {
-            let current_job_id = active_job.as_ref().map(|job| job.job.job_id.as_str());
-            let ack_for_current_job = current_job_id.is_some_and(|job_id| job_id == ack.job_id);
+            let current_job_id = active_job.as_ref().map(|job| job.job.job_id.clone());
             let acknowledged_at = Instant::now();
-            let mut submit_timing = None::<PendingPoolSubmit>;
-            if ack_for_current_job {
-                if let Some(job) = active_job.as_mut() {
-                    submit_timing = job.pending_submit_nonces.remove(&ack.nonce);
-                }
-            }
+            let current_pending_submit_nonces = if current_job_id
+                .as_deref()
+                .is_some_and(|job_id| job_id == ack.job_id)
+            {
+                active_job
+                    .as_mut()
+                    .map(|job| &mut job.pending_submit_nonces)
+            } else {
+                None
+            };
+            let (ack_for_current_job, submit_timing) = take_submit_timing_for_ack(
+                ack.job_id.as_str(),
+                ack.nonce,
+                current_job_id.as_deref(),
+                current_pending_submit_nonces,
+                recent_submit_lookup,
+            );
             let mut desync_reason = None::<String>;
             if ack.accepted {
                 stats.bump_accepted();
@@ -1390,7 +1509,13 @@ fn handle_active_pool_event(
             }
             if ack_for_current_job {
                 if let Some(job) = active_job.as_mut() {
-                    service_pool_submit_backlog(mode, pool_client, job, stats);
+                    service_pool_submit_backlog(
+                        mode,
+                        pool_client,
+                        job,
+                        recent_submit_lookup,
+                        stats,
+                    );
                 }
             }
         }
@@ -1470,6 +1595,7 @@ fn handle_inactive_pool_event(
     latest_job: &mut Option<PoolJob>,
     connected: &mut bool,
     inactive_job: &mut Option<ActivePoolJob>,
+    recent_submit_lookup: &mut RecentPendingSubmitLookup,
     stats: &Stats,
 ) {
     match event {
@@ -1531,15 +1657,24 @@ fn handle_inactive_pool_event(
             }
         }
         PoolEvent::SubmitAck(ack) => {
-            let ack_for_current_job = inactive_job
-                .as_ref()
-                .is_some_and(|job| job.job.job_id == ack.job_id);
-            let mut submit_timing = None::<PendingPoolSubmit>;
-            if ack_for_current_job {
-                if let Some(job) = inactive_job.as_mut() {
-                    submit_timing = job.pending_submit_nonces.remove(&ack.nonce);
-                }
-            }
+            let current_job_id = inactive_job.as_ref().map(|job| job.job.job_id.clone());
+            let current_pending_submit_nonces = if current_job_id
+                .as_deref()
+                .is_some_and(|job_id| job_id == ack.job_id)
+            {
+                inactive_job
+                    .as_mut()
+                    .map(|job| &mut job.pending_submit_nonces)
+            } else {
+                None
+            };
+            let (ack_for_current_job, submit_timing) = take_submit_timing_for_ack(
+                ack.job_id.as_str(),
+                ack.nonce,
+                current_job_id.as_deref(),
+                current_pending_submit_nonces,
+                recent_submit_lookup,
+            );
             if ack.accepted {
                 stats.bump_accepted();
                 let backend_suffix = submit_timing
@@ -1575,7 +1710,13 @@ fn handle_inactive_pool_event(
                             job.target = difficulty_to_target(difficulty);
                         }
                     }
-                    service_pool_submit_backlog(mode, pool_client, job, stats);
+                    service_pool_submit_backlog(
+                        mode,
+                        pool_client,
+                        job,
+                        recent_submit_lookup,
+                        stats,
+                    );
                 }
             }
         }
@@ -1910,12 +2051,17 @@ fn service_pool_submit_backlog(
     mode: PoolConnectionMode,
     pool_client: &PoolClient,
     job: &mut ActivePoolJob,
+    recent_submit_lookup: &mut RecentPendingSubmitLookup,
     stats: &Stats,
 ) {
     let job_id = job.job.job_id.clone();
-    service_pool_submit_backlog_with_submitter(mode, job, stats, |nonce, claimed_hash| {
-        pool_client.submit_share(job_id.clone(), nonce, claimed_hash)
-    });
+    service_pool_submit_backlog_with_submitter(
+        mode,
+        job,
+        stats,
+        |nonce, claimed_hash| pool_client.submit_share(job_id.clone(), nonce, claimed_hash),
+        recent_submit_lookup,
+    );
 }
 
 fn service_pool_submit_backlog_with_submitter<F>(
@@ -1923,21 +2069,26 @@ fn service_pool_submit_backlog_with_submitter<F>(
     job: &mut ActivePoolJob,
     stats: &Stats,
     mut submitter: F,
+    recent_submit_lookup: &mut RecentPendingSubmitLookup,
 ) where
     F: FnMut(u64, Option<[u8; 32]>) -> Result<()>,
 {
     let now = Instant::now();
     let timed_out = reap_timed_out_pending_submits(job, now);
     if timed_out > 0 && mode.is_user() {
-        warn(
-            "SHARE",
-            format!(
-                "{timed_out} pending submit acknowledgement(s) timed out; keeping dedupe state and releasing inflight slots"
-            ),
+        let message = format!(
+            "{timed_out} pending submit acknowledgement(s) exceeded {}s; keeping dedupe state, releasing inflight slots, and continuing to match late ACKs",
+            POOL_SUBMIT_ACK_TIMEOUT.as_secs()
         );
+        if timed_out >= POOL_SUBMIT_ACK_WARN_THRESHOLD || !job.deferred_submits.is_empty() {
+            warn("SHARE", message);
+        } else {
+            info("SHARE", message);
+        }
     }
 
-    let (flushed, submit_failed) = flush_deferred_pool_submits(job, stats, &mut submitter);
+    let (flushed, submit_failed) =
+        flush_deferred_pool_submits(job, stats, &mut submitter, recent_submit_lookup);
     if flushed > 0 && mode.is_user() {
         info("SHARE", format!("submitted {flushed} deferred share(s)"));
     }
@@ -1996,6 +2147,7 @@ fn flush_deferred_pool_submits<F>(
     job: &mut ActivePoolJob,
     stats: &Stats,
     mut submitter: F,
+    recent_submit_lookup: &mut RecentPendingSubmitLookup,
 ) -> (u64, bool)
 where
     F: FnMut(u64, Option<[u8; 32]>) -> Result<()>,
@@ -2016,6 +2168,13 @@ where
                         backend_label: deferred.backend_label,
                     },
                 );
+                if let Some(pending_submit) = job.pending_submit_nonces.get(&deferred.nonce) {
+                    recent_submit_lookup.insert(
+                        job.job.job_id.as_str(),
+                        deferred.nonce,
+                        pending_submit.clone(),
+                    );
+                }
                 stats.bump_submitted();
                 flushed = flushed.saturating_add(1);
             }
@@ -2035,6 +2194,7 @@ fn submit_pool_solution(
     active_job: &mut Option<ActivePoolJob>,
     solution: &MiningSolution,
     backend_label: &str,
+    recent_submit_lookup: &mut RecentPendingSubmitLookup,
     stats: &Stats,
 ) -> PoolShareSubmitOutcome {
     submit_pool_solution_with_submitter(
@@ -2046,6 +2206,7 @@ fn submit_pool_solution(
         |job_id, nonce, claimed_hash| {
             pool_client.submit_share(job_id.to_string(), nonce, claimed_hash)
         },
+        recent_submit_lookup,
     )
 }
 
@@ -2056,6 +2217,7 @@ fn submit_pool_solution_with_submitter<F>(
     backend_label: &str,
     stats: &Stats,
     mut submitter: F,
+    recent_submit_lookup: &mut RecentPendingSubmitLookup,
 ) -> PoolShareSubmitOutcome
 where
     F: FnMut(&str, u64, Option<[u8; 32]>) -> Result<()>,
@@ -2070,9 +2232,13 @@ where
     advance_pool_nonce_cursor(job, solution.nonce);
 
     let job_id = job.job.job_id.clone();
-    service_pool_submit_backlog_with_submitter(mode, job, stats, |nonce, claimed_hash| {
-        submitter(job_id.as_str(), nonce, claimed_hash)
-    });
+    service_pool_submit_backlog_with_submitter(
+        mode,
+        job,
+        stats,
+        |nonce, claimed_hash| submitter(job_id.as_str(), nonce, claimed_hash),
+        recent_submit_lookup,
+    );
     if !job.submitted_nonces.insert(solution.nonce) {
         return PoolShareSubmitOutcome::Duplicate;
     }
@@ -2105,6 +2271,13 @@ where
                 backend_label: backend_label.to_string(),
             },
         );
+        if let Some(pending_submit) = job.pending_submit_nonces.get(&solution.nonce) {
+            recent_submit_lookup.insert(
+                job.job.job_id.as_str(),
+                solution.nonce,
+                pending_submit.clone(),
+            );
+        }
         PoolShareSubmitOutcome::Submitted
     } else {
         job.submitted_nonces.remove(&solution.nonce);
@@ -2385,6 +2558,7 @@ fn compact_pool_address_for_log(address: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::fs;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -2401,10 +2575,11 @@ mod tests {
         fetch_local_daemon_wallet_snapshot, note_current_job_stale_submit_rejection,
         parse_pool_stale_for, pool_api_base_urls_from_pool_url,
         service_pool_submit_backlog_with_submitter, should_apply_submit_ack_difficulty_immediately,
-        should_resume_pool_assignment, submit_pool_solution_with_submitter, ActivePoolJob,
-        PendingPoolSubmit, PoolConnectionMode, PoolJob, PoolShareSubmitOutcome,
-        PoolUiTelemetryClient, POOL_DESYNC_STALE_ACK_THRESHOLD, POOL_DESYNC_STALE_ACK_WINDOW,
-        POOL_MAX_INFLIGHT_SUBMITS, POOL_SUBMIT_ACK_TIMEOUT,
+        should_resume_pool_assignment, submit_pool_solution_with_submitter,
+        take_submit_timing_for_ack, ActivePoolJob, PendingPoolSubmit, PoolConnectionMode, PoolJob,
+        PoolShareSubmitOutcome, PoolUiTelemetryClient, RecentPendingSubmitLookup,
+        POOL_DESYNC_STALE_ACK_THRESHOLD, POOL_DESYNC_STALE_ACK_WINDOW, POOL_MAX_INFLIGHT_SUBMITS,
+        POOL_SUBMIT_ACK_TIMEOUT,
     };
 
     fn test_daemon_client(server: &MockServer, token: &str) -> ApiClient {
@@ -2631,6 +2806,7 @@ mod tests {
     fn submit_pool_solution_defers_when_inflight_limit_is_saturated() {
         let stats = Stats::new();
         let mut active_job = Some(test_active_job(7));
+        let mut recent_submit_lookup = RecentPendingSubmitLookup::default();
         {
             let now = Instant::now();
             let job = active_job.as_mut().expect("active job should exist");
@@ -2657,6 +2833,7 @@ mod tests {
                 submit_calls = submit_calls.saturating_add(1);
                 Ok(())
             },
+            &mut recent_submit_lookup,
         );
 
         assert!(matches!(outcome, PoolShareSubmitOutcome::Deferred));
@@ -2672,6 +2849,7 @@ mod tests {
     fn submit_pool_solution_deduplicates_nonce_and_keeps_cursor_progress() {
         let stats = Stats::new();
         let mut active_job = Some(test_active_job(9));
+        let mut recent_submit_lookup = RecentPendingSubmitLookup::default();
         let initial_next_nonce = active_job
             .as_ref()
             .expect("active job should exist")
@@ -2688,6 +2866,7 @@ mod tests {
                 submitted_nonces.push(nonce);
                 Ok(())
             },
+            &mut recent_submit_lookup,
         );
         let second = submit_pool_solution_with_submitter(
             PoolConnectionMode::Dev,
@@ -2699,6 +2878,7 @@ mod tests {
                 submitted_nonces.push(nonce);
                 Ok(())
             },
+            &mut recent_submit_lookup,
         );
 
         assert!(matches!(first, PoolShareSubmitOutcome::Submitted));
@@ -2722,12 +2902,20 @@ mod tests {
                 .backend_label,
             "cpu#1"
         );
+        assert_eq!(
+            recent_submit_lookup
+                .remove("job-1", 42)
+                .expect("recent submit lookup should retain backend label")
+                .backend_label,
+            "cpu#1"
+        );
     }
 
     #[test]
     fn timed_out_pending_submit_releases_slot_without_clearing_dedupe() {
         let stats = Stats::new();
         let mut job = test_active_job(11);
+        let mut recent_submit_lookup = RecentPendingSubmitLookup::default();
         let now = Instant::now();
         let timed_out_nonce = 7u64;
         let healthy_nonce = 8u64;
@@ -2768,6 +2956,7 @@ mod tests {
                 submitted.push(nonce);
                 Ok(())
             },
+            &mut recent_submit_lookup,
         );
 
         assert_eq!(submitted, vec![deferred_nonce]);
@@ -2782,14 +2971,85 @@ mod tests {
                 .backend_label,
             "cpu#3"
         );
+        assert_eq!(
+            recent_submit_lookup
+                .remove("job-1", deferred_nonce)
+                .expect("deferred share should stay discoverable after flush")
+                .backend_label,
+            "cpu#3"
+        );
     }
 
     #[test]
-    fn submit_ack_difficulty_is_deferred_for_dev_sessions() {
+    fn take_submit_timing_for_ack_recovers_backend_after_job_switch() {
+        let now = Instant::now();
+        let mut recent_submit_lookup = RecentPendingSubmitLookup::default();
+        recent_submit_lookup.insert(
+            "job-1",
+            42,
+            PendingPoolSubmit {
+                found_at: now,
+                submitted_at: now,
+                backend_label: "nvidia#1".to_string(),
+            },
+        );
+        let mut current_pending_submit_nonces = HashMap::new();
+
+        let (ack_for_current_job, submit_timing) = take_submit_timing_for_ack(
+            "job-1",
+            42,
+            Some("job-2"),
+            Some(&mut current_pending_submit_nonces),
+            &mut recent_submit_lookup,
+        );
+
+        assert!(!ack_for_current_job);
+        assert_eq!(
+            submit_timing
+                .expect("late ack should recover backend metadata from lookup")
+                .backend_label,
+            "nvidia#1"
+        );
+    }
+
+    #[test]
+    fn take_submit_timing_for_ack_recovers_backend_after_pending_timeout() {
+        let now = Instant::now();
+        let mut recent_submit_lookup = RecentPendingSubmitLookup::default();
+        recent_submit_lookup.insert(
+            "job-1",
+            7,
+            PendingPoolSubmit {
+                found_at: now,
+                submitted_at: now,
+                backend_label: "cpu#1".to_string(),
+            },
+        );
+        let mut current_pending_submit_nonces = HashMap::new();
+
+        let (ack_for_current_job, submit_timing) = take_submit_timing_for_ack(
+            "job-1",
+            7,
+            Some("job-1"),
+            Some(&mut current_pending_submit_nonces),
+            &mut recent_submit_lookup,
+        );
+
+        assert!(ack_for_current_job);
+        assert_eq!(
+            submit_timing
+                .expect("timed-out ack should still recover backend metadata")
+                .backend_label,
+            "cpu#1"
+        );
+    }
+
+    #[test]
+    fn submit_ack_difficulty_waits_for_replacement_job() {
         assert!(!should_apply_submit_ack_difficulty_immediately(
             PoolConnectionMode::Dev
         ));
-        assert!(should_apply_submit_ack_difficulty_immediately(
+        assert!(!should_apply_submit_ack_difficulty_immediately(
             PoolConnectionMode::User
         ));
     }
