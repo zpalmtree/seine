@@ -39,7 +39,7 @@ use crate::backend::metal::MetalBackend;
 use crate::backend::nvidia::{NvidiaBackend, NvidiaBackendTuningOptions};
 use crate::backend::{
     normalize_backend_capabilities, BackendCapabilities, BackendEvent, BackendExecutionModel,
-    BackendInstanceId, BackendTelemetry, BenchBackend, DeadlineSupport, PowBackend,
+    BackendInstanceId, BackendTelemetry, BenchBackend, DeadlineSupport, MiningSolution, PowBackend,
     PreemptionGranularity, WORK_ID_MAX,
 };
 use crate::config::{
@@ -2683,6 +2683,28 @@ fn backend_display_names(backends: &[BackendSlot]) -> BTreeMap<BackendInstanceId
         .collect()
 }
 
+fn solution_backend_label(backends: &[BackendSlot], solution: &MiningSolution) -> String {
+    let mut type_counter = 0u64;
+    for slot in backends {
+        if slot.backend.name() == solution.backend {
+            type_counter += 1;
+        }
+        if slot.id == solution.backend_id {
+            return format!("{}#{type_counter}", solution.backend);
+        }
+    }
+    format!("{}#{}", solution.backend, solution.backend_id)
+}
+
+fn pending_backend_slot_label(backends: &[BackendSlot], slot: &BackendSlot) -> String {
+    let display_id = backends
+        .iter()
+        .filter(|existing| existing.backend.name() == slot.backend.name())
+        .count() as u64
+        + 1;
+    format!("{}#{}", slot.backend.name(), display_id)
+}
+
 fn format_round_backend_telemetry(
     backends: &[BackendSlot],
     round_backend_telemetry: &BTreeMap<BackendInstanceId, BackendRoundTelemetry>,
@@ -3018,6 +3040,54 @@ mod tests {
             runtime_policy: BackendRuntimePolicy::default(),
             capabilities,
         }
+    }
+
+    #[test]
+    fn pending_backend_slot_label_uses_per_type_numbering() {
+        let existing_nvidia = slot(
+            2,
+            1,
+            Arc::new(MockBackend::new(
+                "nvidia",
+                1,
+                Arc::new(MockState::default()),
+            )),
+        );
+        let pending_nvidia = slot(
+            3,
+            1,
+            Arc::new(MockBackend::new(
+                "nvidia",
+                1,
+                Arc::new(MockState::default()),
+            )),
+        );
+
+        assert_eq!(
+            pending_backend_slot_label(
+                &[slot(
+                    1,
+                    1,
+                    Arc::new(MockBackend::new("cpu", 1, Arc::new(MockState::default()))),
+                )],
+                &pending_nvidia
+            ),
+            "nvidia#1"
+        );
+        assert_eq!(
+            pending_backend_slot_label(
+                &[
+                    slot(
+                        1,
+                        1,
+                        Arc::new(MockBackend::new("cpu", 1, Arc::new(MockState::default()))),
+                    ),
+                    existing_nvidia,
+                ],
+                &pending_nvidia
+            ),
+            "nvidia#2"
+        );
     }
 
     fn wait_for_stop_call(state: &MockState, timeout: Duration) -> bool {

@@ -54,8 +54,9 @@ use super::ui::{error, info, mined, notify_dev_fee_mode, success, warn};
 use super::wallet::auto_load_wallet;
 use super::{
     cancel_backend_slots, collect_backend_hashes, distribute_work, format_round_backend_telemetry,
-    next_work_id, quiesce_backend_slots, total_lanes, BackendRoundTelemetry, BackendSlot,
-    RuntimeBackendEventAction, RuntimeMode, TEMPLATE_RETRY_DELAY,
+    next_work_id, pending_backend_slot_label, quiesce_backend_slots, solution_backend_label,
+    total_lanes, BackendRoundTelemetry, BackendSlot, RuntimeBackendEventAction, RuntimeMode,
+    TEMPLATE_RETRY_DELAY,
 };
 
 type BackendEventAction = RuntimeBackendEventAction;
@@ -702,6 +703,7 @@ impl<'a> MiningControlPlane<'a> {
         &mut self,
         template: SubmitTemplate,
         solution: MiningSolution,
+        backend_label: String,
         is_dev_fee: bool,
         stats: &Stats,
         tui: &mut Option<TuiDisplay>,
@@ -712,6 +714,7 @@ impl<'a> MiningControlPlane<'a> {
                 request_id,
                 template,
                 solution,
+                backend_label,
                 is_dev_fee,
             },
             stats,
@@ -1062,10 +1065,14 @@ fn execute_round_phase(phase: ExecuteRoundPhase<'_, '_>) -> Result<()> {
     let mut enqueued_solution = None;
     if let Some(solution) = pending_solution.take() {
         let key = (solution.epoch, solution.nonce);
+        let backend_label = solution_backend_label(backends, &solution);
         if already_submitted_solution(submitted_solution_keys, &solution)
             || inflight_solution_keys.contains(&key)
         {
-            warn("SUBMIT", "skipping duplicate solution");
+            warn(
+                "SUBMIT",
+                format!("skipping duplicate solution from {backend_label}"),
+            );
         } else {
             let submit_template = current_submit_template
                 .get_or_insert_with(|| SubmitTemplate::from_template(current_template))
@@ -1073,6 +1080,7 @@ fn execute_round_phase(phase: ExecuteRoundPhase<'_, '_>) -> Result<()> {
             if control_plane.submit_template(
                 submit_template,
                 solution.clone(),
+                backend_label.clone(),
                 is_dev_round,
                 stats,
                 tui,
@@ -1080,7 +1088,10 @@ fn execute_round_phase(phase: ExecuteRoundPhase<'_, '_>) -> Result<()> {
                 inflight_solution_keys.insert(key);
                 enqueued_solution = Some(solution.clone());
             } else {
-                warn("SUBMIT", "submit queue saturated; deferring solution");
+                warn(
+                    "SUBMIT",
+                    format!("submit queue saturated; deferring solution from {backend_label}"),
+                );
                 defer_solution_indexed(
                     deferred_solutions,
                     deferred_solution_keys,
@@ -1300,12 +1311,7 @@ pub(super) fn run_mining_loop(
                 match deferred.try_recv() {
                     Ok(slot) => {
                         deferred_remaining = deferred_remaining.saturating_sub(1);
-                        let slot_display_id = backends
-                            .iter()
-                            .filter(|existing| existing.backend.name() == slot.backend.name())
-                            .count() as u64
-                            + 1;
-                        let slot_name = format!("{}#{}", slot.backend.name(), slot_display_id);
+                        let slot_name = pending_backend_slot_label(backends, &slot);
                         let slot_lanes = slot.lanes;
                         if !cfg.allow_best_effort_deadlines
                             && slot.capabilities.deadline_support
@@ -1507,13 +1513,18 @@ pub(super) fn run_mining_loop(
         let mut final_enqueued_solution = None;
         if let Some(solution) = final_pending_solution.as_ref() {
             let key = (solution.epoch, solution.nonce);
+            let backend_label = solution_backend_label(backends, solution);
             if already_submitted_solution(&submitted_solution_keys, solution)
                 || inflight_solution_keys.contains(&key)
             {
-                warn("SUBMIT", "skipping duplicate solution");
+                warn(
+                    "SUBMIT",
+                    format!("skipping duplicate solution from {backend_label}"),
+                );
             } else if control_plane.submit_template(
                 final_submit_template.clone(),
                 solution.clone(),
+                backend_label.clone(),
                 dev_fee_tracker.is_dev_round(),
                 &stats,
                 &mut tui,
@@ -1521,7 +1532,10 @@ pub(super) fn run_mining_loop(
                 inflight_solution_keys.insert(key);
                 final_enqueued_solution = final_pending_solution.clone();
             } else {
-                warn("SUBMIT", "submit queue saturated; deferring solution");
+                warn(
+                    "SUBMIT",
+                    format!("submit queue saturated; deferring solution from {backend_label}"),
+                );
                 defer_solution_indexed(
                     &mut deferred_solutions,
                     &mut deferred_solution_keys,
@@ -2525,6 +2539,7 @@ fn submit_deferred_solutions(
         if control_plane.submit_template(
             submit_template,
             solution.clone(),
+            solution_backend_label(backends, &solution),
             is_dev_fee,
             state.stats,
             state.tui,
@@ -2539,20 +2554,6 @@ fn submit_deferred_solutions(
             );
         }
     }
-}
-
-fn solution_backend_label(backends: &[BackendSlot], solution: &MiningSolution) -> String {
-    // Direct linear scan avoids building a full BTreeMap for a single lookup.
-    let mut type_counter = 0u64;
-    for slot in backends {
-        if slot.backend.name() == solution.backend {
-            type_counter += 1;
-        }
-        if slot.id == solution.backend_id {
-            return format!("{}#{type_counter}", solution.backend);
-        }
-    }
-    format!("{}#{}", solution.backend, solution.backend_id)
 }
 
 fn effective_backend_timeouts_for_template_cache(
@@ -3016,6 +3017,7 @@ mod tests {
                 backend_id: 1,
                 backend: "cpu",
             },
+            backend_label: "cpu#1".to_string(),
             is_dev_fee: false,
         };
         let shutdown = AtomicBool::new(false);
@@ -3493,6 +3495,7 @@ mod tests {
                 backend_id: 1,
                 backend: "cpu",
             },
+            backend_label: "cpu#1".to_string(),
             template_height: Some(7),
             outcome: SubmitOutcome::Response(crate::types::SubmitBlockResponse {
                 accepted: true,

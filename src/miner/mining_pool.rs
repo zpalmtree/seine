@@ -32,8 +32,8 @@ use super::stats::{format_hashrate_ui, Stats};
 use super::tui::TuiState;
 use super::ui::{error, info, notify_dev_fee_mode, success, warn};
 use super::{
-    distribute_work, next_work_id, total_lanes, BackendRoundTelemetry, BackendSlot,
-    DistributeWorkOptions, RuntimeMode, TEMPLATE_RETRY_DELAY,
+    distribute_work, next_work_id, pending_backend_slot_label, solution_backend_label, total_lanes,
+    BackendRoundTelemetry, BackendSlot, DistributeWorkOptions, RuntimeMode, TEMPLATE_RETRY_DELAY,
 };
 
 const POOL_WAIT_POLL: Duration = Duration::from_millis(200);
@@ -146,17 +146,19 @@ struct ActivePoolJob {
     last_assignment_timing: Option<PoolAssignmentTiming>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct DeferredPoolSubmit {
     nonce: u64,
     claimed_hash: Option<[u8; 32]>,
     found_at: Instant,
+    backend_label: String,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct PendingPoolSubmit {
     found_at: Instant,
     submitted_at: Instant,
+    backend_label: String,
 }
 
 #[derive(Debug, Clone)]
@@ -312,7 +314,7 @@ fn maybe_log_pool_submit_timing(
     mode: PoolConnectionMode,
     status: &str,
     nonce: u64,
-    pending_submit: Option<PendingPoolSubmit>,
+    pending_submit: Option<&PendingPoolSubmit>,
     acknowledged_at: Instant,
 ) {
     let Some(pending_submit) = pending_submit else {
@@ -329,7 +331,8 @@ fn maybe_log_pool_submit_timing(
     }
     let total = acknowledged_at.saturating_duration_since(pending_submit.found_at);
     let message = format!(
-        "timing | share={status} nonce={nonce} queued={} submit_to_ack={} total={}",
+        "timing | share={status} nonce={nonce} backend={} queued={} submit_to_ack={} total={}",
+        pending_submit.backend_label,
         format_pool_duration(queued_for),
         format_pool_duration(submit_to_ack),
         format_pool_duration(total),
@@ -358,6 +361,9 @@ fn log_pool_issue_timing(
     let mut parts = Vec::new();
     parts.push(format!("timing | context={context}"));
     parts.push(format!("reason={reason}"));
+    if let Some(pending_submit) = pending_submit.as_ref() {
+        parts.push(format!("backend={}", pending_submit.backend_label));
+    }
     if let Some(job) = active_job {
         parts.push(format!("job_height={}", job.height));
         parts.push(format!(
@@ -839,7 +845,7 @@ pub(super) fn run_pool_mining_loop(
                 match deferred.try_recv() {
                     Ok(slot) => {
                         deferred_remaining = deferred_remaining.saturating_sub(1);
-                        let slot_name = format!("{}#{}", slot.backend.name(), slot.id);
+                        let slot_name = pending_backend_slot_label(backends, &slot);
                         info(
                             "BACKEND",
                             format!(
@@ -1013,11 +1019,13 @@ pub(super) fn run_pool_mining_loop(
                         } else {
                             &user_session.client
                         };
+                        let backend_label = solution_backend_label(backends, &solution);
                         let submit_outcome = submit_pool_solution(
                             active_mode,
                             active_client,
                             &mut active_job,
                             &solution,
+                            &backend_label,
                             &stats,
                         );
                         if matches!(submit_outcome, PoolShareSubmitOutcome::StaleEpoch) {
@@ -1304,8 +1312,12 @@ fn handle_active_pool_event(
             let mut desync_reason = None::<String>;
             if ack.accepted {
                 stats.bump_accepted();
+                let backend_suffix = submit_timing
+                    .as_ref()
+                    .map(|pending| format!(" (backend={})", pending.backend_label))
+                    .unwrap_or_default();
                 if mode.is_user() {
-                    success("SHARE", "accepted");
+                    success("SHARE", format!("accepted{backend_suffix}"));
                 }
                 if let Some(display) = tui.as_mut() {
                     display.mark_block_found();
@@ -1319,20 +1331,24 @@ fn handle_active_pool_event(
                     mode,
                     "accepted",
                     ack.nonce,
-                    submit_timing,
+                    submit_timing.as_ref(),
                     acknowledged_at,
                 );
             } else {
                 stats.bump_stale_shares();
                 let reason = ack.error.as_deref().unwrap_or("unknown");
+                let backend_suffix = submit_timing
+                    .as_ref()
+                    .map(|pending| format!(" (backend={})", pending.backend_label))
+                    .unwrap_or_default();
                 if mode.is_user() {
-                    warn("SHARE", format!("rejected ({reason})"));
+                    warn("SHARE", format!("rejected ({reason}){backend_suffix}"));
                 }
                 maybe_log_pool_submit_timing(
                     mode,
                     "rejected",
                     ack.nonce,
-                    submit_timing,
+                    submit_timing.as_ref(),
                     acknowledged_at,
                 );
                 if ack_for_current_job {
@@ -1353,7 +1369,7 @@ fn handle_active_pool_event(
                     active_job,
                     tui,
                     &reason,
-                    submit_timing,
+                    submit_timing.clone(),
                 )?;
                 return Ok(());
             }
@@ -1518,21 +1534,36 @@ fn handle_inactive_pool_event(
             let ack_for_current_job = inactive_job
                 .as_ref()
                 .is_some_and(|job| job.job.job_id == ack.job_id);
+            let mut submit_timing = None::<PendingPoolSubmit>;
             if ack_for_current_job {
                 if let Some(job) = inactive_job.as_mut() {
-                    job.pending_submit_nonces.remove(&ack.nonce);
+                    submit_timing = job.pending_submit_nonces.remove(&ack.nonce);
                 }
             }
             if ack.accepted {
                 stats.bump_accepted();
+                let backend_suffix = submit_timing
+                    .as_ref()
+                    .map(|pending| format!(" (backend={})", pending.backend_label))
+                    .unwrap_or_default();
                 if mode.is_user() {
-                    success("SHARE", format!("accepted ({})", mode.as_str()));
+                    success(
+                        "SHARE",
+                        format!("accepted ({}){backend_suffix}", mode.as_str()),
+                    );
                 }
             } else {
                 stats.bump_stale_shares();
                 let reason = ack.error.as_deref().unwrap_or("unknown");
+                let backend_suffix = submit_timing
+                    .as_ref()
+                    .map(|pending| format!(" (backend={})", pending.backend_label))
+                    .unwrap_or_default();
                 if mode.is_user() {
-                    warn("SHARE", format!("rejected ({reason}) ({})", mode.as_str()));
+                    warn(
+                        "SHARE",
+                        format!("rejected ({reason}) ({}){backend_suffix}", mode.as_str()),
+                    );
                 }
             }
             if ack_for_current_job {
@@ -1934,6 +1965,7 @@ fn enqueue_deferred_pool_submit(
     nonce: u64,
     claimed_hash: Option<[u8; 32]>,
     found_at: Instant,
+    backend_label: &str,
     stats: &Stats,
 ) -> bool {
     if job.deferred_submits.len() >= POOL_MAX_DEFERRED_SUBMITS {
@@ -1942,8 +1974,8 @@ fn enqueue_deferred_pool_submit(
             warn(
                 "SHARE",
                 format!(
-                    "deferred submit queue full ({}); dropping share nonce={nonce}",
-                    POOL_MAX_DEFERRED_SUBMITS
+                    "deferred submit queue full ({}); dropping share nonce={nonce} (backend={backend_label})",
+                    POOL_MAX_DEFERRED_SUBMITS,
                 ),
             );
         }
@@ -1954,6 +1986,7 @@ fn enqueue_deferred_pool_submit(
         nonce,
         claimed_hash,
         found_at,
+        backend_label: backend_label.to_string(),
     });
     stats.add_deferred(1);
     true
@@ -1980,6 +2013,7 @@ where
                     PendingPoolSubmit {
                         found_at: deferred.found_at,
                         submitted_at: Instant::now(),
+                        backend_label: deferred.backend_label,
                     },
                 );
                 stats.bump_submitted();
@@ -2000,12 +2034,14 @@ fn submit_pool_solution(
     pool_client: &PoolClient,
     active_job: &mut Option<ActivePoolJob>,
     solution: &MiningSolution,
+    backend_label: &str,
     stats: &Stats,
 ) -> PoolShareSubmitOutcome {
     submit_pool_solution_with_submitter(
         mode,
         active_job,
         solution,
+        backend_label,
         stats,
         |job_id, nonce, claimed_hash| {
             pool_client.submit_share(job_id.to_string(), nonce, claimed_hash)
@@ -2017,6 +2053,7 @@ fn submit_pool_solution_with_submitter<F>(
     mode: PoolConnectionMode,
     active_job: &mut Option<ActivePoolJob>,
     solution: &MiningSolution,
+    backend_label: &str,
     stats: &Stats,
     mut submitter: F,
 ) -> PoolShareSubmitOutcome
@@ -2041,8 +2078,15 @@ where
     }
 
     if job.pending_submit_nonces.len() >= POOL_MAX_INFLIGHT_SUBMITS {
-        if !enqueue_deferred_pool_submit(mode, job, solution.nonce, solution.hash, found_at, stats)
-        {
+        if !enqueue_deferred_pool_submit(
+            mode,
+            job,
+            solution.nonce,
+            solution.hash,
+            found_at,
+            backend_label,
+            stats,
+        ) {
             // Keep dedupe marker even when dropped to prevent duplicate share spam.
         }
         return PoolShareSubmitOutcome::Deferred;
@@ -2051,20 +2095,24 @@ where
     if submitter(job.job.job_id.as_str(), solution.nonce, solution.hash).is_ok() {
         stats.bump_submitted();
         if mode.is_user() {
-            info("SHARE", "submitted");
+            info("SHARE", format!("submitted (backend={backend_label})"));
         }
         job.pending_submit_nonces.insert(
             solution.nonce,
             PendingPoolSubmit {
                 found_at,
                 submitted_at: Instant::now(),
+                backend_label: backend_label.to_string(),
             },
         );
         PoolShareSubmitOutcome::Submitted
     } else {
         job.submitted_nonces.remove(&solution.nonce);
         if mode.is_user() {
-            warn("SHARE", "failed to queue submit");
+            warn(
+                "SHARE",
+                format!("failed to queue submit (backend={backend_label})"),
+            );
         }
         PoolShareSubmitOutcome::QueueFailed
     }
@@ -2592,6 +2640,7 @@ mod tests {
                     PendingPoolSubmit {
                         found_at: now,
                         submitted_at: now,
+                        backend_label: "cpu#1".to_string(),
                     },
                 );
             }
@@ -2602,6 +2651,7 @@ mod tests {
             PoolConnectionMode::Dev,
             &mut active_job,
             &test_solution(7, 99),
+            "cpu#1",
             &stats,
             |_job_id, _nonce, _hash| {
                 submit_calls = submit_calls.saturating_add(1);
@@ -2615,6 +2665,7 @@ mod tests {
         assert!(job.submitted_nonces.contains(&99));
         assert_eq!(job.deferred_submits.len(), 1);
         assert_eq!(job.pending_submit_nonces.len(), POOL_MAX_INFLIGHT_SUBMITS);
+        assert_eq!(job.deferred_submits[0].backend_label, "cpu#1");
     }
 
     #[test]
@@ -2631,6 +2682,7 @@ mod tests {
             PoolConnectionMode::Dev,
             &mut active_job,
             &test_solution(9, 42),
+            "cpu#1",
             &stats,
             |_job_id, nonce, _hash| {
                 submitted_nonces.push(nonce);
@@ -2641,6 +2693,7 @@ mod tests {
             PoolConnectionMode::Dev,
             &mut active_job,
             &test_solution(9, 42),
+            "cpu#1",
             &stats,
             |_job_id, nonce, _hash| {
                 submitted_nonces.push(nonce);
@@ -2662,6 +2715,13 @@ mod tests {
             "share submission must not rewind or advance the dispatch cursor"
         );
         assert!(job.pending_submit_nonces.contains_key(&42));
+        assert_eq!(
+            job.pending_submit_nonces
+                .get(&42)
+                .expect("pending share should keep backend label")
+                .backend_label,
+            "cpu#1"
+        );
     }
 
     #[test]
@@ -2681,6 +2741,7 @@ mod tests {
             PendingPoolSubmit {
                 found_at: now - (POOL_SUBMIT_ACK_TIMEOUT + Duration::from_secs(2)),
                 submitted_at: now - (POOL_SUBMIT_ACK_TIMEOUT + Duration::from_secs(1)),
+                backend_label: "cpu#1".to_string(),
             },
         );
         job.pending_submit_nonces.insert(
@@ -2688,12 +2749,14 @@ mod tests {
             PendingPoolSubmit {
                 found_at: now,
                 submitted_at: now,
+                backend_label: "cpu#2".to_string(),
             },
         );
         job.deferred_submits.push_back(super::DeferredPoolSubmit {
             nonce: deferred_nonce,
             claimed_hash: Some([0xAB; 32]),
             found_at: now,
+            backend_label: "cpu#3".to_string(),
         });
 
         let mut submitted = Vec::new();
@@ -2712,6 +2775,13 @@ mod tests {
         assert!(job.pending_submit_nonces.contains_key(&healthy_nonce));
         assert!(job.pending_submit_nonces.contains_key(&deferred_nonce));
         assert!(job.submitted_nonces.contains(&timed_out_nonce));
+        assert_eq!(
+            job.pending_submit_nonces
+                .get(&deferred_nonce)
+                .expect("deferred share should move into pending state")
+                .backend_label,
+            "cpu#3"
+        );
     }
 
     #[test]

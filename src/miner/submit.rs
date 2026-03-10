@@ -74,6 +74,7 @@ pub(super) struct SubmitRequest {
     pub(super) request_id: u64,
     pub(super) template: SubmitTemplate,
     pub(super) solution: MiningSolution,
+    pub(super) backend_label: String,
     pub(super) is_dev_fee: bool,
 }
 
@@ -112,6 +113,7 @@ pub(super) enum SubmitOutcome {
 
 pub(super) struct SubmitResult {
     pub(super) solution: MiningSolution,
+    pub(super) backend_label: String,
     pub(super) template_height: Option<u64>,
     pub(super) outcome: SubmitOutcome,
     pub(super) attempts: u32,
@@ -258,6 +260,7 @@ pub(super) fn process_submit_request(
     let nonce = request.solution.nonce;
     let is_dev_fee = request.is_dev_fee;
     let solution = request.solution.clone();
+    let backend_label = request.backend_label.clone();
     let template_height = request.template.template_height();
     let mut payload = SubmitAttemptPayload::from_request(&request);
     let mut attempts = 0u32;
@@ -268,6 +271,7 @@ pub(super) fn process_submit_request(
             Ok(resp) => {
                 return SubmitResult {
                     solution,
+                    backend_label,
                     template_height,
                     outcome: SubmitOutcome::Response(resp),
                     attempts,
@@ -278,6 +282,7 @@ pub(super) fn process_submit_request(
                 if shutdown.load(Ordering::Relaxed) {
                     return SubmitResult {
                         solution,
+                        backend_label,
                         template_height,
                         outcome: SubmitOutcome::TerminalError(
                             "submit aborted by shutdown".to_string(),
@@ -292,6 +297,7 @@ pub(super) fn process_submit_request(
                 if let Some(outcome) = stale_submit_outcome(attempts, &error_context) {
                     return SubmitResult {
                         solution,
+                        backend_label,
                         template_height,
                         outcome,
                         attempts,
@@ -333,6 +339,7 @@ pub(super) fn process_submit_request(
                 if let Some(outcome) = stale_submit_outcome(attempts, &error_context) {
                     return SubmitResult {
                         solution,
+                        backend_label,
                         template_height,
                         outcome,
                         attempts,
@@ -344,6 +351,7 @@ pub(super) fn process_submit_request(
                     if !sleep_with_shutdown(shutdown, submit_retry_delay(attempts)) {
                         return SubmitResult {
                             solution,
+                            backend_label,
                             template_height,
                             outcome: SubmitOutcome::TerminalError(
                                 "submit aborted by shutdown".to_string(),
@@ -357,6 +365,7 @@ pub(super) fn process_submit_request(
 
                 return SubmitResult {
                     solution,
+                    backend_label,
                     template_height,
                     outcome: if retryable {
                         SubmitOutcome::RetryableError(format!(
@@ -478,6 +487,10 @@ fn compact_submit_error(message: &str) -> String {
         .unwrap_or_else(|| message.to_string())
 }
 
+fn submit_backend_suffix(result: &SubmitResult) -> String {
+    format!(" (backend={})", result.backend_label)
+}
+
 fn parse_stale_height_error(message: &str) -> Option<(u64, u64)> {
     let lower = message.to_ascii_lowercase();
     if !lower.contains("height") {
@@ -541,12 +554,19 @@ fn handle_submit_result(result: &SubmitResult, stats: &Stats, tui: &mut Option<T
                     .unwrap_or_else(|| "unknown".to_string());
                 success(
                     "ACCEPT",
-                    format!("block accepted at height={accepted_height}"),
+                    format!(
+                        "block accepted at height={accepted_height}{}",
+                        submit_backend_suffix(result)
+                    ),
                 );
                 if result.attempts > 1 {
                     info(
                         "ACCEPT",
-                        format!("accepted after {} submit attempts", result.attempts,),
+                        format!(
+                            "accepted after {} submit attempts{}",
+                            result.attempts,
+                            submit_backend_suffix(result)
+                        ),
                     );
                 }
             } else {
@@ -557,8 +577,9 @@ fn handle_submit_result(result: &SubmitResult, stats: &Stats, tui: &mut Option<T
                 warn(
                     "SUBMIT",
                     format!(
-                        "submit rejected by daemon at height={daemon_height} (attempts={})",
+                        "submit rejected by daemon at height={daemon_height} (attempts={}){}",
                         result.attempts,
+                        submit_backend_suffix(result),
                     ),
                 );
             }
@@ -572,8 +593,10 @@ fn handle_submit_result(result: &SubmitResult, stats: &Stats, tui: &mut Option<T
             warn(
                 "SUBMIT",
                 format!(
-                    "stale solution: chain tip advanced before submit (expected height {}, solution was for height {})",
-                    expected_height, got_height
+                    "stale solution: chain tip advanced before submit (expected height {}, solution was for height {}){}",
+                    expected_height,
+                    got_height,
+                    submit_backend_suffix(result)
                 ),
             );
         }
@@ -581,19 +604,26 @@ fn handle_submit_result(result: &SubmitResult, stats: &Stats, tui: &mut Option<T
             stats.bump_stale_shares();
             warn(
                 "SUBMIT",
-                format!("stale solution: template no longer matches current tip ({reason})"),
+                format!(
+                    "stale solution: template no longer matches current tip ({reason}){}",
+                    submit_backend_suffix(result)
+                ),
             );
         }
         SubmitOutcome::RetryableError(message) => {
             if let Some(summary) = stale_submit_summary(message) {
                 stats.bump_stale_shares();
-                warn("SUBMIT", format!("stale solution: {summary}"));
+                warn(
+                    "SUBMIT",
+                    format!("stale solution: {summary}{}", submit_backend_suffix(result)),
+                );
             } else {
                 warn(
                     "SUBMIT",
                     format!(
-                        "submit failed (retryable): {}",
-                        compact_submit_error(message)
+                        "submit failed (retryable): {}{}",
+                        compact_submit_error(message),
+                        submit_backend_suffix(result)
                     ),
                 );
             }
@@ -601,11 +631,18 @@ fn handle_submit_result(result: &SubmitResult, stats: &Stats, tui: &mut Option<T
         SubmitOutcome::TerminalError(message) => {
             if let Some(summary) = stale_submit_summary(message) {
                 stats.bump_stale_shares();
-                warn("SUBMIT", format!("stale solution: {summary}"));
+                warn(
+                    "SUBMIT",
+                    format!("stale solution: {summary}{}", submit_backend_suffix(result)),
+                );
             } else {
                 error(
                     "SUBMIT",
-                    format!("submit failed: {}", compact_submit_error(message)),
+                    format!(
+                        "submit failed: {}{}",
+                        compact_submit_error(message),
+                        submit_backend_suffix(result)
+                    ),
                 );
             }
         }
@@ -630,12 +667,51 @@ fn sleep_with_shutdown(shutdown: &AtomicBool, duration: Duration) -> bool {
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::AtomicU64;
+    use std::sync::{Arc, Mutex, OnceLock};
+
+    use crate::miner::ui::{set_log_sink, UiLogEvent};
 
     use super::{
         handle_submit_result, infer_stale_from_tip, parse_stale_height_error,
         parse_stale_tip_reject_reason, stale_submit_outcome, stale_submit_summary, Stats,
         SubmitOutcome, SubmitResult,
     };
+
+    static TEST_LOG_CAPTURE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn capture_logs(run: impl FnOnce()) -> Vec<UiLogEvent> {
+        let _guard = TEST_LOG_CAPTURE_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("log capture lock should not be poisoned");
+        let captured = Arc::new(Mutex::new(Vec::<UiLogEvent>::new()));
+        let sink = {
+            let captured = Arc::clone(&captured);
+            Arc::new(move |event: UiLogEvent| {
+                captured
+                    .lock()
+                    .expect("captured log storage should not be poisoned")
+                    .push(event);
+            })
+        };
+
+        struct ResetLogSinkGuard;
+        impl Drop for ResetLogSinkGuard {
+            fn drop(&mut self) {
+                set_log_sink(None);
+            }
+        }
+
+        let _reset = ResetLogSinkGuard;
+        set_log_sink(Some(sink));
+        run();
+
+        let logs = captured
+            .lock()
+            .expect("captured log storage should not be poisoned")
+            .clone();
+        logs
+    }
 
     #[test]
     fn parse_stale_height_reject_extracts_expected_and_got() {
@@ -793,6 +869,7 @@ mod tests {
                 backend_id: 1,
                 backend: "cpu",
             },
+            backend_label: "cpu#1".to_string(),
             template_height: Some(10),
             outcome: SubmitOutcome::Response(crate::types::SubmitBlockResponse {
                 accepted: true,
@@ -821,6 +898,7 @@ mod tests {
                 backend_id: 1,
                 backend: "cpu",
             },
+            backend_label: "cpu#1".to_string(),
             template_height: Some(10),
             outcome: SubmitOutcome::StaleTipError {
                 reason: "duplicate-or-stale",
@@ -834,5 +912,37 @@ mod tests {
         let snapshot = stats.snapshot();
         assert_eq!(snapshot.stale_shares, 1);
         assert_eq!(snapshot.accepted, 0);
+    }
+
+    #[test]
+    fn accepted_submit_log_includes_backend_label() {
+        let stats = Stats::new();
+        let mut tui = None;
+        let result = SubmitResult {
+            solution: crate::backend::MiningSolution {
+                epoch: 2,
+                nonce: 13,
+                hash: None,
+                backend_id: 9,
+                backend: "nvidia",
+            },
+            backend_label: "nvidia#1".to_string(),
+            template_height: Some(100),
+            outcome: SubmitOutcome::Response(crate::types::SubmitBlockResponse {
+                accepted: true,
+                hash: None,
+                height: Some(100),
+            }),
+            attempts: 1,
+            is_dev_fee: false,
+        };
+
+        let logs = capture_logs(|| handle_submit_result(&result, &stats, &mut tui));
+        let accept_log = logs
+            .iter()
+            .find(|entry| entry.tag == "ACCEPT")
+            .expect("accept log should be emitted");
+
+        assert!(accept_log.message.contains("backend=nvidia#1"));
     }
 }
