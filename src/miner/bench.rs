@@ -697,6 +697,7 @@ fn run_worker_benchmark_inner(
                 work_id,
                 header_base: std::sync::Arc::clone(&header_base),
                 target: impossible_target,
+                pause_on_solution: true,
                 reservation,
                 stop_at,
                 backend_weights: work_distribution_weights(cfg.work_allocation, &backend_weights),

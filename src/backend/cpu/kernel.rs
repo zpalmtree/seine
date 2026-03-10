@@ -16,6 +16,64 @@ use super::{
     MAX_DEADLINE_CHECK_INTERVAL, SOLVED_MASK,
 };
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum SolutionDisposition {
+    Continue,
+    PauseAssignment,
+}
+
+fn handle_found_solution(
+    shared: &Shared,
+    template: &crate::backend::WorkTemplate,
+    thread_idx: usize,
+    nonce: u64,
+    output: [u8; POW_OUTPUT_LEN],
+) -> Result<SolutionDisposition, String> {
+    if template.pause_on_solution {
+        let solved_state = SOLVED_MASK | template.work_id;
+        if shared
+            .solution_state
+            .compare_exchange(
+                template.work_id,
+                solved_state,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+        {
+            request_work_pause(shared).map_err(|err| {
+                format!("cpu thread {thread_idx}: failed to pause workers after solution ({err})")
+            })?;
+            emit_event(
+                shared,
+                BackendEvent::Solution(MiningSolution {
+                    epoch: template.epoch,
+                    nonce,
+                    hash: Some(output),
+                    backend_id: shared.instance_id.load(Ordering::Acquire),
+                    backend: "cpu",
+                }),
+            );
+            return Ok(SolutionDisposition::PauseAssignment);
+        }
+        return Ok(SolutionDisposition::Continue);
+    }
+
+    if shared.solution_state.load(Ordering::Acquire) == template.work_id {
+        emit_event(
+            shared,
+            BackendEvent::Solution(MiningSolution {
+                epoch: template.epoch,
+                nonce,
+                hash: Some(output),
+                backend_id: shared.instance_id.load(Ordering::Acquire),
+                backend: "cpu",
+            }),
+        );
+    }
+    Ok(SolutionDisposition::Continue)
+}
+
 pub(super) fn cpu_worker_loop(
     shared: Arc<Shared>,
     thread_idx: usize,
@@ -166,41 +224,19 @@ pub(super) fn cpu_worker_loop(
         }
 
         if hash_meets_target(&output, &template.target) {
-            let solved_state = SOLVED_MASK | template.work_id;
-            if shared
-                .solution_state
-                .compare_exchange(
-                    template.work_id,
-                    solved_state,
-                    Ordering::AcqRel,
-                    Ordering::Acquire,
-                )
-                .is_ok()
-            {
-                if let Err(err) = request_work_pause(&shared) {
-                    emit_error(
-                        &shared,
-                        format!(
-                            "cpu thread {thread_idx}: failed to pause workers after solution ({err})"
-                        ),
-                    );
+            match handle_found_solution(&shared, template, thread_idx, nonce, output) {
+                Ok(SolutionDisposition::PauseAssignment) => {
+                    flush_hashes(&shared, thread_idx, &mut pending_hashes);
+                    mark_worker_inactive(&shared, &mut worker_active);
+                    local_work = None;
+                    continue;
+                }
+                Ok(SolutionDisposition::Continue) => {}
+                Err(message) => {
+                    emit_error(&shared, message);
                     request_shutdown(&shared);
                     break;
                 }
-                emit_event(
-                    &shared,
-                    BackendEvent::Solution(MiningSolution {
-                        epoch: template.epoch,
-                        nonce,
-                        hash: Some(output),
-                        backend_id: shared.instance_id.load(Ordering::Acquire),
-                        backend: "cpu",
-                    }),
-                );
-                flush_hashes(&shared, thread_idx, &mut pending_hashes);
-                mark_worker_inactive(&shared, &mut worker_active);
-                local_work = None;
-                continue;
             }
         }
 
@@ -249,6 +285,58 @@ impl PowArena {
         match self {
             Self::Mmap(arena) => Some(arena),
             Self::Heap(_) => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{handle_found_solution, SolutionDisposition};
+    use crate::backend::cpu::CpuBackend;
+    use crate::backend::{BackendEvent, WorkTemplate};
+    use crate::config::CpuAffinityMode;
+    use blocknet_pow_spec::{POW_HEADER_BASE_LEN, POW_OUTPUT_LEN};
+    use crossbeam_channel::unbounded;
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn non_terminal_solution_emits_event_without_pausing_assignment() {
+        let backend = CpuBackend::new(1, CpuAffinityMode::Off);
+        backend.shared.started.store(true, Ordering::Release);
+        backend.shared.instance_id.store(11, Ordering::Release);
+        backend.shared.solution_state.store(7, Ordering::Release);
+        let (event_tx, event_rx) = unbounded();
+        if let Ok(mut slot) = backend.shared.event_dispatch_tx.write() {
+            *slot = Some(event_tx);
+        }
+
+        let template = WorkTemplate {
+            work_id: 7,
+            epoch: 3,
+            header_base: Arc::from(vec![0u8; POW_HEADER_BASE_LEN]),
+            target: [0xFF; 32],
+            pause_on_solution: false,
+            stop_at: Instant::now() + Duration::from_secs(1),
+        };
+
+        let disposition =
+            handle_found_solution(&backend.shared, &template, 0, 42, [0xAB; POW_OUTPUT_LEN])
+                .expect("non-terminal solution handling should succeed");
+
+        assert_eq!(disposition, SolutionDisposition::Continue);
+        assert_eq!(backend.shared.solution_state.load(Ordering::Acquire), 7);
+        match event_rx
+            .recv_timeout(Duration::from_millis(100))
+            .expect("solution event should be queued")
+        {
+            BackendEvent::Solution(solution) => {
+                assert_eq!(solution.epoch, 3);
+                assert_eq!(solution.nonce, 42);
+                assert_eq!(solution.backend_id, 11);
+            }
+            other => panic!("expected solution event, got {other:?}"),
         }
     }
 }

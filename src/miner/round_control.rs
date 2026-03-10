@@ -68,6 +68,7 @@ pub(super) fn redistribute_for_topology_change(
             work_id: options.work_id,
             header_base: options.header_base,
             target: options.target,
+            pause_on_solution: true,
             reservation,
             stop_at: options.stop_at,
             backend_weights: distribution_weights,

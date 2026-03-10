@@ -2143,6 +2143,9 @@ fn worker_loop(
                     backend: BACKEND_NAME,
                 }),
             );
+            if !current.work.template.pause_on_solution {
+                continue;
+            }
             queued.clear();
             finalize_active_assignment(&shared, current, 0);
             active = None;
@@ -2620,6 +2623,9 @@ fn ensure_compatible_template(first: &Arc<WorkTemplate>, second: &Arc<WorkTempla
     }
     if first.stop_at != second.stop_at {
         bail!("mismatched stop_at");
+    }
+    if first.pause_on_solution != second.pause_on_solution {
+        bail!("mismatched pause_on_solution");
     }
     if first.header_base.as_ref() != second.header_base.as_ref() {
         bail!("mismatched header_base");
@@ -3453,6 +3459,7 @@ mod tests {
             epoch: 7,
             header_base: Arc::<[u8]>::from(vec![1u8; 92]),
             target: [0xff; 32],
+            pause_on_solution: true,
             stop_at: Instant::now() + Duration::from_secs(30),
         })
     }

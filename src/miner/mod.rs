@@ -101,6 +101,7 @@ struct DistributeWorkOptions<'a> {
     work_id: u64,
     header_base: Arc<[u8]>,
     target: [u8; 32],
+    pause_on_solution: bool,
     reservation: NonceReservation,
     stop_at: Instant,
     backend_weights: Option<&'a BTreeMap<BackendInstanceId, f64>>,
@@ -2786,6 +2787,7 @@ mod tests {
         last_batch_len: AtomicUsize,
         stop_calls: AtomicUsize,
         last_chunk: Mutex<Option<NonceChunk>>,
+        last_pause_on_solution: Mutex<Option<bool>>,
         chunks: Mutex<Vec<NonceChunk>>,
     }
 
@@ -2937,6 +2939,12 @@ mod tests {
                 .lock()
                 .expect("mock chunk history lock should not be poisoned")
                 .push(work.nonce_chunk);
+            *self
+                .state
+                .last_pause_on_solution
+                .lock()
+                .expect("mock pause_on_solution lock should not be poisoned") =
+                Some(work.template.pause_on_solution);
             *self
                 .state
                 .last_chunk
@@ -3351,6 +3359,7 @@ mod tests {
                 work_id: 1,
                 header_base: Arc::from(vec![7u8; POW_HEADER_BASE_LEN]),
                 target: [0xFF; 32],
+                pause_on_solution: true,
                 reservation: NonceReservation {
                     start_nonce: 100,
                     max_iters_per_lane: 10,
@@ -3413,6 +3422,7 @@ mod tests {
                 work_id: 1,
                 header_base: Arc::from(vec![7u8; POW_HEADER_BASE_LEN]),
                 target: [0xFF; 32],
+                pause_on_solution: true,
                 reservation: NonceReservation {
                     start_nonce: 200,
                     max_iters_per_lane: 12,
@@ -3466,6 +3476,7 @@ mod tests {
                 work_id: 1,
                 header_base: Arc::from(vec![7u8; POW_HEADER_BASE_LEN]),
                 target: [0xFF; 32],
+                pause_on_solution: true,
                 reservation: NonceReservation {
                     start_nonce: 1_000,
                     max_iters_per_lane: 10,
@@ -3507,6 +3518,7 @@ mod tests {
                 work_id: 1,
                 header_base: Arc::from(vec![7u8; POW_HEADER_BASE_LEN]),
                 target: [0xFF; 32],
+                pause_on_solution: true,
                 reservation: NonceReservation {
                     start_nonce: 1_000,
                     max_iters_per_lane: 10,
@@ -3531,6 +3543,47 @@ mod tests {
             .expect("backend should receive strict-reservation work");
         assert_eq!(chunk.start_nonce, 1_000);
         assert_eq!(chunk.nonce_count, 138);
+    }
+
+    #[test]
+    fn distribute_work_propagates_pause_on_solution_flag() {
+        let backend_executor = backend_executor::BackendExecutor::new();
+        let state = Arc::new(MockState::default());
+        let mut backends = vec![slot(
+            7,
+            1,
+            Arc::new(MockBackend::new("cpu", 1, Arc::clone(&state))),
+        )];
+
+        distribute_work(
+            &mut backends,
+            DistributeWorkOptions {
+                epoch: 1,
+                work_id: 1,
+                header_base: Arc::from(vec![7u8; POW_HEADER_BASE_LEN]),
+                target: [0xFF; 32],
+                pause_on_solution: false,
+                reservation: NonceReservation {
+                    start_nonce: 64,
+                    max_iters_per_lane: 8,
+                    reserved_span: 16,
+                },
+                stop_at: Instant::now() + Duration::from_secs(1),
+                backend_weights: None,
+                strict_reservation: true,
+            },
+            &backend_executor,
+        )
+        .expect("distribution should succeed");
+
+        assert_eq!(
+            *state
+                .last_pause_on_solution
+                .lock()
+                .expect("mock pause_on_solution lock should not be poisoned"),
+            Some(false),
+            "pool-style work should keep hashing after solution events"
+        );
     }
 
     #[test]
@@ -3573,6 +3626,7 @@ mod tests {
                 work_id: 1,
                 header_base: Arc::from(vec![7u8; POW_HEADER_BASE_LEN]),
                 target: [0xFF; 32],
+                pause_on_solution: true,
                 reservation: NonceReservation {
                     start_nonce: 10,
                     max_iters_per_lane: 1,
@@ -3596,6 +3650,7 @@ mod tests {
                 work_id: 2,
                 header_base: Arc::from(vec![7u8; POW_HEADER_BASE_LEN]),
                 target: [0xFF; 32],
+                pause_on_solution: true,
                 reservation: NonceReservation {
                     start_nonce: 20,
                     max_iters_per_lane: 1,
@@ -3637,6 +3692,7 @@ mod tests {
                 work_id: 1,
                 header_base: Arc::from(vec![7u8; POW_HEADER_BASE_LEN]),
                 target: [0xFF; 32],
+                pause_on_solution: true,
                 reservation: NonceReservation {
                     start_nonce: 10,
                     max_iters_per_lane: 1,
@@ -3681,6 +3737,7 @@ mod tests {
                 work_id: 1,
                 header_base: Arc::from(vec![7u8; POW_HEADER_BASE_LEN]),
                 target: [0xFF; 32],
+                pause_on_solution: true,
                 reservation: NonceReservation {
                     start_nonce: 10,
                     max_iters_per_lane: 1,
@@ -3734,6 +3791,7 @@ mod tests {
                 work_id: 1,
                 header_base: Arc::from(vec![7u8; POW_HEADER_BASE_LEN]),
                 target: [0xFF; 32],
+                pause_on_solution: true,
                 reservation: NonceReservation {
                     start_nonce: 100,
                     max_iters_per_lane: 10,
@@ -3979,6 +4037,7 @@ mod tests {
                 epoch: 1,
                 header_base: Arc::from(vec![7u8; POW_HEADER_BASE_LEN]),
                 target: [0xFF; 32],
+                pause_on_solution: true,
                 stop_at: Instant::now() + Duration::from_secs(1),
             }),
             nonce_chunk: NonceChunk {

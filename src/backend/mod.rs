@@ -239,6 +239,10 @@ pub struct WorkTemplate {
     pub epoch: u64,
     pub header_base: Arc<[u8]>,
     pub target: [u8; 32],
+    /// When true, the backend should stop or supersede the current assignment after the first
+    /// solution event. Pool mining sets this to false so share discovery does not strand the
+    /// backend until a later job refresh.
+    pub pause_on_solution: bool,
     pub stop_at: Instant,
 }
 

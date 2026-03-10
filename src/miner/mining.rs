@@ -910,6 +910,7 @@ fn dispatch_round_assignments(
             work_id: inputs.work_id,
             header_base: Arc::clone(inputs.header_base),
             target: inputs.target,
+            pause_on_solution: true,
             reservation: inputs.reservation,
             stop_at: inputs.stop_at,
             backend_weights: work_distribution_weights(

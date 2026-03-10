@@ -1742,6 +1742,7 @@ mod tests {
                 epoch: 1,
                 header_base: Arc::from(vec![0u8; blocknet_pow_spec::POW_HEADER_BASE_LEN]),
                 target: [0xFF; 32],
+                pause_on_solution: true,
                 stop_at: Instant::now() + Duration::from_secs(1),
             }),
             nonce_chunk: NonceChunk {
@@ -2057,6 +2058,7 @@ mod tests {
                 epoch: 1,
                 header_base: Arc::from(vec![0u8; blocknet_pow_spec::POW_HEADER_BASE_LEN]),
                 target: [0xFF; 32],
+                pause_on_solution: true,
                 stop_at: Instant::now() + Duration::from_secs(1),
             }),
             nonce_chunk: NonceChunk {
@@ -2141,6 +2143,7 @@ mod tests {
                 epoch: 1,
                 header_base: Arc::from(vec![0u8; blocknet_pow_spec::POW_HEADER_BASE_LEN]),
                 target: [0xFF; 32],
+                pause_on_solution: true,
                 stop_at: Instant::now() + Duration::from_secs(1),
             }),
             nonce_chunk: NonceChunk {
@@ -2193,6 +2196,7 @@ mod tests {
                     epoch: 1,
                     header_base: Arc::from(vec![0u8; blocknet_pow_spec::POW_HEADER_BASE_LEN]),
                     target: [0xFF; 32],
+                    pause_on_solution: true,
                     stop_at: Instant::now() + Duration::from_secs(1),
                 }),
                 nonce_chunk: NonceChunk {
@@ -2235,6 +2239,7 @@ mod tests {
                 epoch: 1,
                 header_base: Arc::from(vec![0u8; blocknet_pow_spec::POW_HEADER_BASE_LEN]),
                 target: [0xFF; 32],
+                pause_on_solution: true,
                 stop_at: Instant::now() + Duration::from_secs(1),
             }),
             nonce_chunk: NonceChunk {
@@ -2321,6 +2326,7 @@ mod tests {
                 epoch: 1,
                 header_base: Arc::from(vec![0u8; blocknet_pow_spec::POW_HEADER_BASE_LEN]),
                 target: [0xFF; 32],
+                pause_on_solution: true,
                 stop_at: Instant::now() + Duration::from_secs(1),
             }),
             nonce_chunk: NonceChunk {
@@ -2411,6 +2417,7 @@ mod tests {
                 epoch: 1,
                 header_base: Arc::from(vec![0u8; blocknet_pow_spec::POW_HEADER_BASE_LEN]),
                 target: [0xFF; 32],
+                pause_on_solution: true,
                 stop_at: Instant::now() + Duration::from_secs(1),
             }),
             nonce_chunk: NonceChunk {
@@ -2546,6 +2553,7 @@ mod tests {
                 epoch: 1,
                 header_base: Arc::from(vec![0u8; blocknet_pow_spec::POW_HEADER_BASE_LEN]),
                 target: [0xFF; 32],
+                pause_on_solution: true,
                 stop_at: Instant::now() + Duration::from_secs(1),
             }),
             nonce_chunk: NonceChunk {

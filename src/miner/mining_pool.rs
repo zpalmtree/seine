@@ -1775,6 +1775,7 @@ fn assign_pool_continuation(
             work_id,
             header_base: Arc::clone(&active_job.header_base),
             target: active_job.target,
+            pause_on_solution: false,
             reservation,
             stop_at,
             backend_weights: match cfg.work_allocation {

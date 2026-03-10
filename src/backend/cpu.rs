@@ -965,6 +965,11 @@ fn maybe_finalize_assignment(shared: &Shared) {
                         .completed_assignment_micros
                         .fetch_add(micros, Ordering::AcqRel);
                 }
+                if let Ok(mut control) = shared.work_control.lock() {
+                    if control.generation == generation {
+                        control.work = None;
+                    }
+                }
                 return;
             }
             Err(current) => seen = current,
@@ -1040,11 +1045,12 @@ fn forward_event(shared: &Shared, event: BackendEvent) {
 #[cfg(test)]
 mod tests {
     use super::{
-        emit_error, forward_event, lane_quota_for_chunk, should_flush_hashes, start_assignment,
-        BackendEvent, CpuBackend, DEFAULT_HASH_BATCH_SIZE,
+        emit_error, forward_event, lane_quota_for_chunk, maybe_finalize_assignment,
+        should_flush_hashes, start_assignment, BackendEvent, CpuBackend, DEFAULT_HASH_BATCH_SIZE,
     };
-    use crate::backend::{MiningSolution, PowBackend};
+    use crate::backend::{MiningSolution, NonceChunk, PowBackend, WorkAssignment, WorkTemplate};
     use crate::config::CpuAffinityMode;
+    use blocknet_pow_spec::POW_HEADER_BASE_LEN;
     use std::sync::atomic::Ordering;
     use std::sync::Arc;
     use std::thread;
@@ -1292,6 +1298,51 @@ mod tests {
             .lock()
             .expect("assignment_started_at lock should not be poisoned")
             .is_some());
+    }
+
+    #[test]
+    fn maybe_finalize_assignment_clears_completed_work_when_no_replacement_arrived() {
+        let backend = CpuBackend::new(1, CpuAffinityMode::Off);
+        backend
+            .shared
+            .assignment_generation
+            .store(7, Ordering::Release);
+        backend
+            .shared
+            .assignment_reported_generation
+            .store(0, Ordering::Release);
+        if let Ok(mut started_at) = backend.shared.assignment_started_at.lock() {
+            *started_at = Some(Instant::now() - Duration::from_millis(5));
+        }
+        if let Ok(mut control) = backend.shared.work_control.lock() {
+            control.generation = 7;
+            control.work = Some(Arc::new(WorkAssignment {
+                template: Arc::new(WorkTemplate {
+                    work_id: 7,
+                    epoch: 1,
+                    header_base: Arc::from(vec![0u8; POW_HEADER_BASE_LEN]),
+                    target: [0xFF; 32],
+                    pause_on_solution: false,
+                    stop_at: Instant::now() + Duration::from_secs(1),
+                }),
+                nonce_chunk: NonceChunk {
+                    start_nonce: 0,
+                    nonce_count: 4,
+                },
+            }));
+        }
+
+        maybe_finalize_assignment(&backend.shared);
+
+        let control = backend
+            .shared
+            .work_control
+            .lock()
+            .expect("work control lock should not be poisoned");
+        assert!(
+            control.work.is_none(),
+            "completed assignments should not remain marked pending"
+        );
     }
 
     #[test]

@@ -62,6 +62,7 @@ pub(super) fn distribute_work(
         epoch: options.epoch,
         header_base: Arc::clone(&options.header_base),
         target: options.target,
+        pause_on_solution: options.pause_on_solution,
         stop_at: options.stop_at,
     });
     loop {
