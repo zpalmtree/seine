@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
+use std::io::Write;
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -7,16 +7,22 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
 use crossbeam_channel::{bounded, Receiver, RecvTimeoutError, Sender, TryRecvError};
+use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader as TokioBufReader};
+use tokio::net::TcpStream as TokioTcpStream;
+use tokio::sync::mpsc;
+use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 const LOGIN_REQUEST_ID: u64 = 1;
 const RECONNECT_DELAY: Duration = Duration::from_secs(2);
-const SOCKET_IO_TIMEOUT: Duration = Duration::from_millis(250);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const CHANNEL_CAPACITY: usize = 4096;
 const MAX_SUBMITS_PER_IO_CYCLE: usize = 32;
+const SUBMIT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const LOCAL_POOL_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
+const MAX_POOL_MESSAGE_BYTES: usize = 8 * 1024;
 const STRATUM_PROTOCOL_VERSION: u32 = 2;
 const STRATUM_CAPABILITY_LOGIN_NEGOTIATION: &str = "login_negotiation";
 const STRATUM_CAPABILITY_VALIDATION_STATUS: &str = "share_validation_status";
@@ -250,8 +256,105 @@ struct LoginResult {
     required_capabilities: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum PoolTransport {
+    Tcp,
+    Ws,
+    Wss,
+}
+
+#[derive(Debug, Clone)]
+struct PoolEndpoint {
+    transport: PoolTransport,
+    authority: String,
+    url: String,
+}
+
+impl PoolEndpoint {
+    fn display(&self) -> &str {
+        &self.url
+    }
+
+    fn is_local(&self) -> bool {
+        self.authority.starts_with("127.0.0.1:")
+            || self.authority.starts_with("localhost:")
+            || self.authority.starts_with("[::1]:")
+    }
+
+    fn ws_connect_url(&self) -> Option<String> {
+        match self.transport {
+            PoolTransport::Ws => Some(format!("ws://{}", self.authority)),
+            PoolTransport::Wss => Some(format!("wss://{}", self.authority)),
+            PoolTransport::Tcp => None,
+        }
+    }
+}
+
+#[derive(Debug)]
+enum ClientOutbound {
+    Text(String),
+    Keepalive,
+}
+
+#[derive(Debug)]
+enum InboundFrame {
+    Text(String),
+    ReadError(String),
+}
+
+struct PoolConnection {
+    outbound_tx: mpsc::UnboundedSender<ClientOutbound>,
+    inbound_rx: mpsc::UnboundedReceiver<InboundFrame>,
+    reader_task: tokio::task::JoinHandle<()>,
+    writer_task: tokio::task::JoinHandle<()>,
+}
+
+impl PoolConnection {
+    fn abort(self) {
+        drop(self.outbound_tx);
+        self.reader_task.abort();
+        self.writer_task.abort();
+    }
+}
+
 fn run_pool_client_thread(
-    endpoint: String,
+    endpoint: PoolEndpoint,
+    address: String,
+    worker: String,
+    submit_rx: Receiver<PoolSubmit>,
+    event_tx: Sender<PoolEvent>,
+    process_shutdown: Arc<AtomicBool>,
+    reconnect_requested: Arc<AtomicBool>,
+    shutdown: Arc<AtomicBool>,
+) {
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(err) => {
+            let _ = event_tx.try_send(PoolEvent::Disconnected(format!(
+                "pool client runtime failed for {}: {err}",
+                endpoint.display()
+            )));
+            return;
+        }
+    };
+
+    runtime.block_on(run_pool_client_loop(
+        endpoint,
+        address,
+        worker,
+        submit_rx,
+        event_tx,
+        process_shutdown,
+        reconnect_requested,
+        shutdown,
+    ));
+}
+
+async fn run_pool_client_loop(
+    endpoint: PoolEndpoint,
     address: String,
     worker: String,
     submit_rx: Receiver<PoolSubmit>,
@@ -261,12 +364,11 @@ fn run_pool_client_thread(
     shutdown: Arc<AtomicBool>,
 ) {
     let mut next_request_id = LOGIN_REQUEST_ID + 1;
-    let enable_idle_keepalive = should_enable_idle_keepalive(&endpoint);
     let mut allow_login_difficulty_hint = false;
     let mut login_difficulty_hint: Option<u64> = None;
     while !should_shutdown(process_shutdown.as_ref(), shutdown.as_ref()) {
-        match connect_pool_stream(&endpoint) {
-            Ok((mut stream, mut reader)) => {
+        match connect_pool_transport(&endpoint).await {
+            Ok(mut connection) => {
                 reject_queued_submits(&event_tx, &submit_rx, SUBMIT_REJECT_REASON_DISCONNECTED);
                 let _ = event_tx.try_send(PoolEvent::Connected);
                 let login_hint = if allow_login_difficulty_hint {
@@ -274,12 +376,36 @@ fn run_pool_client_thread(
                 } else {
                     None
                 };
-                if let Err(_err) = send_login(&mut stream, &address, &worker, login_hint) {
+                let login_payload = match login_payload(&address, &worker, login_hint) {
+                    Ok(payload) => payload,
+                    Err(_) => {
+                        reject_queued_submits(
+                            &event_tx,
+                            &submit_rx,
+                            SUBMIT_REJECT_REASON_DISCONNECTED,
+                        );
+                        let _ = event_tx.try_send(PoolEvent::Disconnected(
+                            friendly_pool_disconnect_message(&endpoint),
+                        ));
+                        connection.abort();
+                        sleep_with_shutdown(
+                            process_shutdown.as_ref(),
+                            shutdown.as_ref(),
+                            RECONNECT_DELAY,
+                        );
+                        continue;
+                    }
+                };
+                if connection
+                    .outbound_tx
+                    .send(ClientOutbound::Text(login_payload))
+                    .is_err()
+                {
                     reject_queued_submits(&event_tx, &submit_rx, SUBMIT_REJECT_REASON_DISCONNECTED);
-                    let _ = event_tx.try_send(PoolEvent::Disconnected(format!(
-                        "{}",
-                        friendly_pool_disconnect_message(&endpoint)
-                    )));
+                    let _ = event_tx.try_send(PoolEvent::Disconnected(
+                        friendly_pool_disconnect_message(&endpoint),
+                    ));
+                    connection.abort();
                     sleep_with_shutdown(
                         process_shutdown.as_ref(),
                         shutdown.as_ref(),
@@ -287,13 +413,17 @@ fn run_pool_client_thread(
                     );
                     continue;
                 }
+
                 let mut pending_submits = HashMap::<u64, PoolSubmit>::new();
                 let mut login_confirmed = false;
                 let mut submit_claimed_hash_enabled = true;
                 let mut last_outbound = Instant::now();
+                let mut submit_tick = tokio::time::interval(SUBMIT_POLL_INTERVAL);
+                submit_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
                 loop {
                     if should_shutdown(process_shutdown.as_ref(), shutdown.as_ref()) {
+                        connection.abort();
                         return;
                     }
                     if reconnect_requested.swap(false, Ordering::Relaxed) {
@@ -304,112 +434,154 @@ fn run_pool_client_thread(
                         );
                         reject_queued_submits(&event_tx, &submit_rx, SUBMIT_REJECT_REASON_RESYNC);
                         let _ = event_tx.try_send(PoolEvent::Disconnected(format!(
-                            "pool resync requested at {endpoint}"
+                            "pool resync requested at {}",
+                            endpoint.display()
                         )));
+                        connection.abort();
                         break;
                     }
 
-                    let mut reconnect_requested = false;
-                    if login_confirmed {
-                        if enable_idle_keepalive
-                            && pending_submits.is_empty()
-                            && last_outbound.elapsed() >= LOCAL_POOL_KEEPALIVE_INTERVAL
-                        {
-                            if send_keepalive(&mut stream).is_err() {
-                                reject_pending_submits(
-                                    &event_tx,
-                                    &mut pending_submits,
-                                    SUBMIT_REJECT_REASON_SEND_FAILED,
+                    tokio::select! {
+                        _ = submit_tick.tick() => {
+                            let mut reconnect_now = false;
+                            if login_confirmed {
+                                if pending_submits.is_empty()
+                                    && last_outbound.elapsed() >= LOCAL_POOL_KEEPALIVE_INTERVAL
+                                {
+                                    if connection.outbound_tx.send(ClientOutbound::Keepalive).is_err() {
+                                        reject_pending_submits(
+                                            &event_tx,
+                                            &mut pending_submits,
+                                            SUBMIT_REJECT_REASON_SEND_FAILED,
+                                        );
+                                        reject_queued_submits(
+                                            &event_tx,
+                                            &submit_rx,
+                                            SUBMIT_REJECT_REASON_SEND_FAILED,
+                                        );
+                                        let _ = event_tx.try_send(PoolEvent::Disconnected(
+                                            friendly_pool_disconnect_message(&endpoint),
+                                        ));
+                                        reconnect_now = true;
+                                    } else {
+                                        last_outbound = Instant::now();
+                                    }
+                                }
+                                if reconnect_now {
+                                    connection.abort();
+                                    sleep_with_shutdown(
+                                        process_shutdown.as_ref(),
+                                        shutdown.as_ref(),
+                                        RECONNECT_DELAY,
+                                    );
+                                    break;
+                                }
+
+                                for _ in 0..MAX_SUBMITS_PER_IO_CYCLE {
+                                    let Ok(submit) = submit_rx.try_recv() else {
+                                        break;
+                                    };
+                                    let request_id = next_request_id;
+                                    next_request_id =
+                                        next_request_id.wrapping_add(1).max(LOGIN_REQUEST_ID + 1);
+                                    let payload = match submit_payload(
+                                        request_id,
+                                        &submit,
+                                        submit_claimed_hash_enabled,
+                                    ) {
+                                        Ok(payload) => payload,
+                                        Err(_) => {
+                                            reject_submit(&event_tx, submit, SUBMIT_REJECT_REASON_SEND_FAILED);
+                                            continue;
+                                        }
+                                    };
+                                    if connection
+                                        .outbound_tx
+                                        .send(ClientOutbound::Text(payload))
+                                        .is_err()
+                                    {
+                                        reject_submit(&event_tx, submit, SUBMIT_REJECT_REASON_SEND_FAILED);
+                                        reject_pending_submits(
+                                            &event_tx,
+                                            &mut pending_submits,
+                                            SUBMIT_REJECT_REASON_SEND_FAILED,
+                                        );
+                                        reject_queued_submits(
+                                            &event_tx,
+                                            &submit_rx,
+                                            SUBMIT_REJECT_REASON_SEND_FAILED,
+                                        );
+                                        let _ = event_tx.try_send(PoolEvent::Disconnected(
+                                            friendly_pool_disconnect_message(&endpoint),
+                                        ));
+                                        reconnect_now = true;
+                                        break;
+                                    }
+                                    last_outbound = Instant::now();
+                                    pending_submits.insert(request_id, submit);
+                                }
+                            }
+
+                            if reconnect_now {
+                                connection.abort();
+                                sleep_with_shutdown(
+                                    process_shutdown.as_ref(),
+                                    shutdown.as_ref(),
+                                    RECONNECT_DELAY,
                                 );
-                                reject_queued_submits(
-                                    &event_tx,
-                                    &submit_rx,
-                                    SUBMIT_REJECT_REASON_SEND_FAILED,
-                                );
-                                let _ = event_tx.try_send(PoolEvent::Disconnected(format!(
-                                    "{}",
-                                    friendly_pool_disconnect_message(&endpoint)
-                                )));
-                                reconnect_requested = true;
-                            } else {
-                                last_outbound = Instant::now();
+                                break;
                             }
                         }
-                        if reconnect_requested {
-                            sleep_with_shutdown(
-                                process_shutdown.as_ref(),
-                                shutdown.as_ref(),
-                                RECONNECT_DELAY,
-                            );
-                            break;
-                        }
-
-                        for _ in 0..MAX_SUBMITS_PER_IO_CYCLE {
-                            let Ok(submit) = submit_rx.try_recv() else {
-                                break;
+                        maybe_inbound = connection.inbound_rx.recv() => {
+                            let inbound = match maybe_inbound {
+                                Some(frame) => frame,
+                                None => {
+                                    reject_pending_submits(
+                                        &event_tx,
+                                        &mut pending_submits,
+                                        SUBMIT_REJECT_REASON_DISCONNECTED,
+                                    );
+                                    reject_queued_submits(
+                                        &event_tx,
+                                        &submit_rx,
+                                        SUBMIT_REJECT_REASON_DISCONNECTED,
+                                    );
+                                    let _ = event_tx.try_send(PoolEvent::Disconnected(
+                                        friendly_pool_disconnect_message(&endpoint),
+                                    ));
+                                    connection.abort();
+                                    break;
+                                }
                             };
-                            let request_id = next_request_id;
-                            next_request_id =
-                                next_request_id.wrapping_add(1).max(LOGIN_REQUEST_ID + 1);
-                            if send_submit(
-                                &mut stream,
-                                request_id,
-                                &submit,
-                                submit_claimed_hash_enabled,
-                            )
-                            .is_err()
-                            {
-                                reject_submit(&event_tx, submit, SUBMIT_REJECT_REASON_SEND_FAILED);
-                                reject_pending_submits(
-                                    &event_tx,
-                                    &mut pending_submits,
-                                    SUBMIT_REJECT_REASON_SEND_FAILED,
-                                );
-                                reject_queued_submits(
-                                    &event_tx,
-                                    &submit_rx,
-                                    SUBMIT_REJECT_REASON_SEND_FAILED,
-                                );
-                                let _ = event_tx.try_send(PoolEvent::Disconnected(format!(
-                                    "{}",
-                                    friendly_pool_disconnect_message(&endpoint)
-                                )));
-                                reconnect_requested = true;
-                                break;
-                            }
-                            last_outbound = Instant::now();
-                            pending_submits.insert(request_id, submit);
-                        }
-                    }
-                    if reconnect_requested {
-                        sleep_with_shutdown(
-                            process_shutdown.as_ref(),
-                            shutdown.as_ref(),
-                            RECONNECT_DELAY,
-                        );
-                        break;
-                    }
 
-                    let mut line = String::new();
-                    match reader.read_line(&mut line) {
-                        Ok(0) => {
-                            reject_pending_submits(
-                                &event_tx,
-                                &mut pending_submits,
-                                SUBMIT_REJECT_REASON_DISCONNECTED,
-                            );
-                            reject_queued_submits(
-                                &event_tx,
-                                &submit_rx,
-                                SUBMIT_REJECT_REASON_DISCONNECTED,
-                            );
-                            let _ = event_tx.try_send(PoolEvent::Disconnected(format!(
-                                "{}",
-                                friendly_pool_disconnect_message(&endpoint)
-                            )));
-                            break;
-                        }
-                        Ok(_) => {
+                            let line = match inbound {
+                                InboundFrame::Text(line) => line,
+                                InboundFrame::ReadError(err) => {
+                                    reject_pending_submits(
+                                        &event_tx,
+                                        &mut pending_submits,
+                                        SUBMIT_REJECT_REASON_DISCONNECTED,
+                                    );
+                                    reject_queued_submits(
+                                        &event_tx,
+                                        &submit_rx,
+                                        SUBMIT_REJECT_REASON_DISCONNECTED,
+                                    );
+                                    let detail = err.trim();
+                                    let message = if detail.is_empty() {
+                                        friendly_pool_disconnect_message(&endpoint)
+                                    } else {
+                                        format!(
+                                            "{} ({detail})",
+                                            friendly_pool_disconnect_message(&endpoint)
+                                        )
+                                    };
+                                    let _ = event_tx.try_send(PoolEvent::Disconnected(message));
+                                    connection.abort();
+                                    break;
+                                }
+                            };
+
                             let trimmed = line.trim();
                             if trimmed.is_empty() {
                                 continue;
@@ -469,10 +641,10 @@ fn run_pool_client_thread(
                                         &submit_rx,
                                         SUBMIT_REJECT_REASON_LOGIN_REJECTED,
                                     );
-                                    let _ = event_tx.try_send(PoolEvent::Disconnected(format!(
-                                        "{}",
-                                        friendly_pool_disconnect_message(&endpoint)
-                                    )));
+                                    let _ = event_tx.try_send(PoolEvent::Disconnected(
+                                        friendly_pool_disconnect_message(&endpoint),
+                                    ));
+                                    connection.abort();
                                     sleep_with_shutdown(
                                         process_shutdown.as_ref(),
                                         shutdown.as_ref(),
@@ -481,30 +653,6 @@ fn run_pool_client_thread(
                                     break;
                                 }
                             }
-                        }
-                        Err(err)
-                            if matches!(
-                                err.kind(),
-                                ErrorKind::WouldBlock
-                                    | ErrorKind::TimedOut
-                                    | ErrorKind::Interrupted
-                            ) => {}
-                        Err(_err) => {
-                            reject_pending_submits(
-                                &event_tx,
-                                &mut pending_submits,
-                                SUBMIT_REJECT_REASON_DISCONNECTED,
-                            );
-                            reject_queued_submits(
-                                &event_tx,
-                                &submit_rx,
-                                SUBMIT_REJECT_REASON_DISCONNECTED,
-                            );
-                            let _ = event_tx.try_send(PoolEvent::Disconnected(format!(
-                                "{}",
-                                friendly_pool_disconnect_message(&endpoint)
-                            )));
-                            break;
                         }
                     }
                 }
@@ -525,92 +673,212 @@ fn run_pool_client_thread(
     }
 }
 
-fn friendly_pool_connect_error(endpoint: &str, detail: &str) -> String {
-    let lower = detail.to_ascii_lowercase();
-    if lower.contains("connection refused") {
-        if is_local_pool_endpoint(endpoint) {
-            return format!("pool offline at {endpoint}");
-        }
-        return format!("pool unreachable at {endpoint}");
+async fn connect_pool_transport(endpoint: &PoolEndpoint) -> Result<PoolConnection> {
+    match endpoint.transport {
+        PoolTransport::Tcp => connect_pool_tcp_transport(endpoint).await,
+        PoolTransport::Ws | PoolTransport::Wss => connect_pool_ws_transport(endpoint).await,
     }
-    if lower.contains("timed out") {
-        return format!("pool timed out at {endpoint}");
-    }
-    if lower.contains("failed to resolve")
-        || lower.contains("resolved to no addresses")
-        || lower.contains("name or service not known")
-    {
-        return format!("invalid pool address {endpoint}");
-    }
-    format!("pool offline at {endpoint}")
 }
 
-fn friendly_pool_disconnect_message(endpoint: &str) -> String {
-    format!("pool offline at {endpoint}")
+async fn connect_pool_tcp_transport(endpoint: &PoolEndpoint) -> Result<PoolConnection> {
+    let stream = connect_pool_tcp_stream(endpoint).await?;
+    let (reader_half, writer_half) = stream.into_split();
+    let (inbound_tx, inbound_rx) = mpsc::unbounded_channel();
+    let reader_task = tokio::spawn(async move {
+        run_tcp_reader(TokioBufReader::new(reader_half), inbound_tx).await;
+    });
+    let (outbound_tx, outbound_rx) = mpsc::unbounded_channel();
+    let writer_task = tokio::spawn(async move {
+        run_tcp_writer(writer_half, outbound_rx).await;
+    });
+    Ok(PoolConnection {
+        outbound_tx,
+        inbound_rx,
+        reader_task,
+        writer_task,
+    })
 }
 
-fn should_enable_idle_keepalive(endpoint: &str) -> bool {
-    !endpoint.trim().is_empty()
+async fn connect_pool_ws_transport(endpoint: &PoolEndpoint) -> Result<PoolConnection> {
+    let Some(url) = endpoint.ws_connect_url() else {
+        bail!("websocket pool endpoint missing connect url");
+    };
+    let (ws_stream, _) = connect_async(url.as_str())
+        .await
+        .with_context(|| format!("failed to connect to pool websocket {}", endpoint.display()))?;
+    let (writer, reader) = ws_stream.split();
+    let (inbound_tx, inbound_rx) = mpsc::unbounded_channel();
+    let reader_task = tokio::spawn(async move {
+        run_ws_reader(reader, inbound_tx).await;
+    });
+    let (outbound_tx, outbound_rx) = mpsc::unbounded_channel();
+    let writer_task = tokio::spawn(async move {
+        run_ws_writer(writer, outbound_rx).await;
+    });
+    Ok(PoolConnection {
+        outbound_tx,
+        inbound_rx,
+        reader_task,
+        writer_task,
+    })
 }
 
-fn is_local_pool_endpoint(endpoint: &str) -> bool {
-    endpoint.starts_with("127.0.0.1:")
-        || endpoint.starts_with("localhost:")
-        || endpoint.starts_with("[::1]:")
-}
-
-fn connect_pool_stream(endpoint: &str) -> Result<(TcpStream, BufReader<TcpStream>)> {
-    let mut addrs: Vec<SocketAddr> = endpoint
-        .to_socket_addrs()
-        .with_context(|| format!("failed to resolve pool endpoint {endpoint}"))?
-        .collect();
+async fn connect_pool_tcp_stream(endpoint: &PoolEndpoint) -> Result<TokioTcpStream> {
+    let addrs = resolve_pool_addrs(&endpoint.authority)
+        .with_context(|| format!("failed to resolve pool endpoint {}", endpoint.display()))?;
     if addrs.is_empty() {
-        bail!("pool endpoint resolved to no addresses: {endpoint}");
+        bail!("pool endpoint resolved to no addresses: {}", endpoint.display());
     }
-    addrs.sort_by_key(|addr| !addr.is_ipv4());
 
-    let mut last_err: Option<std::io::Error> = None;
-    let mut stream = None;
+    let mut last_err: Option<String> = None;
     for addr in addrs {
-        match TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT) {
-            Ok(connected) => {
-                stream = Some(connected);
+        match tokio::time::timeout(CONNECT_TIMEOUT, TokioTcpStream::connect(addr)).await {
+            Ok(Ok(stream)) => {
+                let _ = stream.set_nodelay(true);
+                return Ok(stream);
+            }
+            Ok(Err(err)) => {
+                last_err = Some(err.to_string());
+            }
+            Err(_) => {
+                last_err = Some(format!("connection timed out to {addr}"));
+            }
+        }
+    }
+
+    Err(anyhow!(
+        "failed to connect to pool at {}: {}",
+        endpoint.display(),
+        last_err.unwrap_or_else(|| "no addresses available".to_string())
+    ))
+}
+
+fn resolve_pool_addrs(authority: &str) -> Result<Vec<SocketAddr>> {
+    let mut addrs: Vec<SocketAddr> = authority.to_socket_addrs()?.collect();
+    addrs.sort_by_key(|addr| !addr.is_ipv4());
+    Ok(addrs)
+}
+
+async fn run_tcp_reader(
+    mut reader: TokioBufReader<tokio::net::tcp::OwnedReadHalf>,
+    inbound_tx: mpsc::UnboundedSender<InboundFrame>,
+) {
+    loop {
+        match read_line_limited_async(&mut reader, MAX_POOL_MESSAGE_BYTES).await {
+            Ok(Some(line)) => {
+                if inbound_tx.send(InboundFrame::Text(line)).is_err() {
+                    break;
+                }
+            }
+            Ok(None) => break,
+            Err(err) => {
+                let _ = inbound_tx.send(InboundFrame::ReadError(err.to_string()));
                 break;
             }
+        }
+    }
+}
+
+async fn run_ws_reader<S>(mut reader: S, inbound_tx: mpsc::UnboundedSender<InboundFrame>)
+where
+    S: Stream<Item = std::result::Result<Message, tokio_tungstenite::tungstenite::Error>>
+        + Unpin,
+{
+    while let Some(message) = reader.next().await {
+        match message {
+            Ok(Message::Text(text)) => {
+                if inbound_tx
+                    .send(InboundFrame::Text(text.to_string()))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            Ok(Message::Binary(_)) => {
+                let _ = inbound_tx.send(InboundFrame::ReadError(
+                    "binary websocket frames are not supported".to_string(),
+                ));
+                break;
+            }
+            Ok(Message::Close(_)) => break,
+            Ok(Message::Ping(_)) | Ok(Message::Pong(_)) => {}
+            Ok(_) => {}
             Err(err) => {
-                last_err = Some(err);
+                let _ = inbound_tx.send(InboundFrame::ReadError(err.to_string()));
+                break;
             }
         }
     }
-    let stream = stream.ok_or_else(|| {
-        anyhow!(
-            "failed to connect to pool at {endpoint}: {}",
-            last_err
-                .map(|err| err.to_string())
-                .unwrap_or_else(|| "no addresses available".to_string())
-        )
-    })?;
-
-    stream
-        .set_read_timeout(Some(SOCKET_IO_TIMEOUT))
-        .context("failed to set pool read timeout")?;
-    stream
-        .set_write_timeout(Some(SOCKET_IO_TIMEOUT))
-        .context("failed to set pool write timeout")?;
-    let reader = BufReader::new(
-        stream
-            .try_clone()
-            .context("failed to clone pool stream for reader")?,
-    );
-    Ok((stream, reader))
 }
 
-fn send_login(
-    stream: &mut TcpStream,
-    address: &str,
-    worker: &str,
-    difficulty_hint: Option<u64>,
-) -> Result<()> {
+async fn run_tcp_writer<W>(mut writer: W, mut outbound_rx: mpsc::UnboundedReceiver<ClientOutbound>)
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    while let Some(message) = outbound_rx.recv().await {
+        let result = match message {
+            ClientOutbound::Text(text) => {
+                let mut payload = text.into_bytes();
+                payload.push(b'\n');
+                writer.write_all(&payload).await
+            }
+            ClientOutbound::Keepalive => writer.write_all(b"\n").await,
+        };
+        if result.is_err() {
+            break;
+        }
+    }
+}
+
+async fn run_ws_writer<W>(mut writer: W, mut outbound_rx: mpsc::UnboundedReceiver<ClientOutbound>)
+where
+    W: Sink<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin,
+{
+    while let Some(message) = outbound_rx.recv().await {
+        let result = match message {
+            ClientOutbound::Text(text) => writer.send(Message::Text(text.into())).await,
+            ClientOutbound::Keepalive => writer.send(Message::Ping(Vec::new().into())).await,
+        };
+        if result.is_err() {
+            break;
+        }
+    }
+}
+
+async fn read_line_limited_async(
+    reader: &mut TokioBufReader<tokio::net::tcp::OwnedReadHalf>,
+    max_bytes: usize,
+) -> Result<Option<String>> {
+    let mut data = Vec::<u8>::with_capacity(256);
+    loop {
+        let byte = match reader.read_u8().await {
+            Ok(value) => value,
+            Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => {
+                if data.is_empty() {
+                    return Ok(None);
+                }
+                break;
+            }
+            Err(err) => return Err(err.into()),
+        };
+
+        if byte == b'\n' {
+            break;
+        }
+        if data.len() >= max_bytes {
+            bail!("pool message exceeds {max_bytes} bytes");
+        }
+        if byte != b'\r' {
+            data.push(byte);
+        }
+    }
+
+    String::from_utf8(data)
+        .map(Some)
+        .map_err(|_| anyhow!("pool message is not valid UTF-8"))
+}
+
+fn login_payload(address: &str, worker: &str, difficulty_hint: Option<u64>) -> Result<String> {
     let request = StratumRequest {
         id: LOGIN_REQUEST_ID,
         method: "login",
@@ -622,15 +890,14 @@ fn send_login(
             difficulty_hint,
         },
     };
-    send_json_line(stream, &request)
+    serde_json::to_string(&request).context("failed to serialize stratum login payload")
 }
 
-fn send_submit(
-    stream: &mut TcpStream,
+fn submit_payload(
     request_id: u64,
     submit: &PoolSubmit,
     include_claimed_hash: bool,
-) -> Result<()> {
+) -> Result<String> {
     let claimed_hash_hex = if include_claimed_hash {
         submit.claimed_hash.map(hex::encode)
     } else {
@@ -645,17 +912,59 @@ fn send_submit(
             claimed_hash: claimed_hash_hex.as_deref(),
         },
     };
-    send_json_line(stream, &request)
+    serde_json::to_string(&request).context("failed to serialize stratum submit payload")
 }
 
-fn send_keepalive(stream: &mut TcpStream) -> Result<()> {
-    stream
-        .write_all(b"\n")
-        .context("failed writing pool keepalive")
+fn friendly_pool_connect_error(endpoint: &PoolEndpoint, detail: &str) -> String {
+    let lower = detail.to_ascii_lowercase();
+    if lower.contains("connection refused") {
+        if endpoint.is_local() {
+            return format!("pool offline at {}", endpoint.display());
+        }
+        return format!("pool unreachable at {}", endpoint.display());
+    }
+    if lower.contains("timed out") {
+        return format!("pool timed out at {}", endpoint.display());
+    }
+    if lower.contains("failed to resolve")
+        || lower.contains("resolved to no addresses")
+        || lower.contains("name or service not known")
+    {
+        return format!("invalid pool address {}", endpoint.display());
+    }
+    format!("pool offline at {}", endpoint.display())
 }
 
-fn send_json_line<T: Serialize>(stream: &mut TcpStream, payload: &T) -> Result<()> {
-    let mut line = serde_json::to_vec(payload).context("failed to serialize stratum payload")?;
+fn friendly_pool_disconnect_message(endpoint: &PoolEndpoint) -> String {
+    format!("pool offline at {}", endpoint.display())
+}
+
+fn should_enable_idle_keepalive(endpoint: &str) -> bool {
+    !endpoint.trim().is_empty()
+}
+
+fn send_login(
+    stream: &mut TcpStream,
+    address: &str,
+    worker: &str,
+    difficulty_hint: Option<u64>,
+) -> Result<()> {
+    let payload = login_payload(address, worker, difficulty_hint)?;
+    write_text_line(stream, &payload)
+}
+
+fn send_submit(
+    stream: &mut TcpStream,
+    request_id: u64,
+    submit: &PoolSubmit,
+    include_claimed_hash: bool,
+) -> Result<()> {
+    let payload = submit_payload(request_id, submit, include_claimed_hash)?;
+    write_text_line(stream, &payload)
+}
+
+fn write_text_line(stream: &mut TcpStream, payload: &str) -> Result<()> {
+    let mut line = payload.as_bytes().to_vec();
     line.push(b'\n');
     stream
         .write_all(&line)
@@ -868,25 +1177,41 @@ fn reject_queued_submits(
     }
 }
 
-fn parse_pool_endpoint(pool_url: &str) -> Result<String> {
+fn parse_pool_endpoint(pool_url: &str) -> Result<PoolEndpoint> {
     let trimmed = pool_url.trim();
     if trimmed.is_empty() {
         bail!("pool URL is empty");
     }
-    let authority = trimmed
-        .strip_prefix("stratum+tcp://")
-        .unwrap_or(trimmed)
-        .split('/')
-        .next()
-        .unwrap_or(trimmed)
-        .trim();
+
+    let (transport, rest) = if let Some(rest) = trimmed.strip_prefix("stratum+tcp://") {
+        (PoolTransport::Tcp, rest)
+    } else if let Some(rest) = trimmed.strip_prefix("stratum+ws://") {
+        (PoolTransport::Ws, rest)
+    } else if let Some(rest) = trimmed.strip_prefix("stratum+wss://") {
+        (PoolTransport::Wss, rest)
+    } else {
+        (PoolTransport::Tcp, trimmed)
+    };
+    let authority = rest.split('/').next().unwrap_or(rest).trim();
     if authority.is_empty() {
         bail!("pool URL authority is empty");
     }
     if authority.contains("://") {
         bail!("unsupported pool URL scheme");
     }
-    Ok(authority.to_string())
+    if rest != authority {
+        bail!("pool URL paths are not supported");
+    }
+    let url = match transport {
+        PoolTransport::Tcp => format!("stratum+tcp://{authority}"),
+        PoolTransport::Ws => format!("stratum+ws://{authority}"),
+        PoolTransport::Wss => format!("stratum+wss://{authority}"),
+    };
+    Ok(PoolEndpoint {
+        transport,
+        authority: authority.to_string(),
+        url,
+    })
 }
 
 fn should_shutdown(process_shutdown: &AtomicBool, shutdown: &AtomicBool) -> bool {
@@ -906,7 +1231,7 @@ fn sleep_with_shutdown(process_shutdown: &AtomicBool, shutdown: &AtomicBool, dur
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::ErrorKind;
+    use std::io::{BufRead, BufReader, ErrorKind, Read};
     use std::net::TcpListener;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
@@ -1540,6 +1865,28 @@ mod tests {
         assert!(should_enable_idle_keepalive("127.0.0.1:3333"));
         assert!(should_enable_idle_keepalive("pool.example.com:3333"));
         assert!(!should_enable_idle_keepalive("   "));
+    }
+
+    #[test]
+    fn parse_pool_endpoint_supports_websocket_schemes() {
+        let ws = parse_pool_endpoint("stratum+ws://pool.example.com:3334")
+            .expect("ws endpoint should parse");
+        assert_eq!(ws.transport, PoolTransport::Ws);
+        assert_eq!(ws.authority, "pool.example.com:3334");
+        assert_eq!(ws.display(), "stratum+ws://pool.example.com:3334");
+
+        let wss = parse_pool_endpoint("stratum+wss://pool.example.com:443")
+            .expect("wss endpoint should parse");
+        assert_eq!(wss.transport, PoolTransport::Wss);
+        assert_eq!(wss.authority, "pool.example.com:443");
+        assert_eq!(wss.display(), "stratum+wss://pool.example.com:443");
+    }
+
+    #[test]
+    fn parse_pool_endpoint_rejects_paths() {
+        let err = parse_pool_endpoint("stratum+ws://pool.example.com:3334/miner")
+            .expect_err("path-based websocket endpoints are out of scope");
+        assert!(err.to_string().contains("paths are not supported"));
     }
 
     #[test]

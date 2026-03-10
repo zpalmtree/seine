@@ -1097,15 +1097,20 @@ fn normalize_pool_url(value: &str) -> Result<String> {
         bail!("pool_url cannot be empty");
     }
 
-    let authority = trimmed
-        .strip_prefix("stratum+tcp://")
-        .unwrap_or(trimmed)
-        .split('/')
-        .next()
-        .unwrap_or(trimmed)
-        .trim();
-    if authority.is_empty() || authority.contains("://") {
-        bail!("pool_url must be host:port or stratum+tcp://host:port");
+    let (scheme, rest) = if let Some(rest) = trimmed.strip_prefix("stratum+tcp://") {
+        ("stratum+tcp://", rest)
+    } else if let Some(rest) = trimmed.strip_prefix("stratum+ws://") {
+        ("stratum+ws://", rest)
+    } else if let Some(rest) = trimmed.strip_prefix("stratum+wss://") {
+        ("stratum+wss://", rest)
+    } else {
+        ("stratum+tcp://", trimmed)
+    };
+    let authority = rest.split('/').next().unwrap_or(rest).trim();
+    if authority.is_empty() || authority.contains("://") || rest != authority {
+        bail!(
+            "pool_url must be host:port, stratum+tcp://host:port, stratum+ws://host:port, or stratum+wss://host:port"
+        );
     }
 
     let (host, port) = parse_pool_host_port(authority)?;
@@ -1114,7 +1119,7 @@ fn normalize_pool_url(value: &str) -> Result<String> {
     } else {
         host
     };
-    Ok(format!("stratum+tcp://{host_for_url}:{port}"))
+    Ok(format!("{scheme}{host_for_url}:{port}"))
 }
 
 fn parse_pool_host_port(authority: &str) -> Result<(String, u16)> {
