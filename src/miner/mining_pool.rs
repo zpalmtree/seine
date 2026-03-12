@@ -9,7 +9,7 @@ use crossbeam_channel::{unbounded, Receiver};
 use reqwest::blocking::Client as HttpClient;
 use serde_json::Value;
 
-use crate::backend::MiningSolution;
+use crate::backend::{DynamicShareTarget, MiningSolution, ShareBindingId};
 use crate::config::{Config, WorkAllocation};
 use crate::daemon_api::{is_unauthorized_error, ApiClient};
 use crate::dev_fee::{effective_pool_dev_fee_percent, DevFeeTracker, DEV_ADDRESS, DEV_FEE_PERCENT};
@@ -135,8 +135,13 @@ struct PoolSession {
 struct ActivePoolJob {
     job: PoolJob,
     header_base: Arc<[u8]>,
+    template_id: Option<String>,
+    network_target: Option<[u8; 32]>,
     target: [u8; 32],
+    dynamic_share_target: Arc<DynamicShareTarget>,
     share_difficulty: Option<u64>,
+    next_share_binding_id: ShareBindingId,
+    share_bindings: HashMap<ShareBindingId, PoolShareBinding>,
     next_nonce: u64,
     dispatch_nonce: u64,
     epoch: u64,
@@ -146,7 +151,7 @@ struct ActivePoolJob {
     round_backend_hashes: BTreeMap<u64, u64>,
     round_backend_telemetry: BTreeMap<u64, BackendRoundTelemetry>,
     submitted_nonces: HashSet<u64>,
-    pending_submit_nonces: HashMap<u64, PendingPoolSubmit>,
+    pending_submit_nonces: HashMap<(String, u64), PendingPoolSubmit>,
     deferred_submits: VecDeque<DeferredPoolSubmit>,
     recent_stale_submit_acks: VecDeque<Instant>,
     job_received_at: Instant,
@@ -154,7 +159,13 @@ struct ActivePoolJob {
 }
 
 #[derive(Debug, Clone)]
+struct PoolShareBinding {
+    job_id: String,
+}
+
+#[derive(Debug, Clone)]
 struct DeferredPoolSubmit {
+    share_binding_id: ShareBindingId,
     nonce: u64,
     claimed_hash: Option<[u8; 32]>,
     found_at: Instant,
@@ -222,16 +233,38 @@ struct PoolAssignmentTiming {
 }
 
 impl ActivePoolJob {
-    fn new(job: PoolJob, epoch: u64, header_base: Arc<[u8]>, target: [u8; 32]) -> Self {
+    fn new(
+        job: PoolJob,
+        epoch: u64,
+        header_base: Arc<[u8]>,
+        target: [u8; 32],
+        network_target: Option<[u8; 32]>,
+    ) -> Self {
         let now = Instant::now();
         let next_nonce = job.nonce_start;
         let dispatch_nonce = next_nonce;
         let share_difficulty = job.difficulty;
+        let current_share_binding_id = 1;
+        let dynamic_share_target =
+            Arc::new(DynamicShareTarget::new(target, current_share_binding_id));
+        let template_id = job.template_id.clone();
+        let mut share_bindings = HashMap::new();
+        share_bindings.insert(
+            current_share_binding_id,
+            PoolShareBinding {
+                job_id: job.job_id.clone(),
+            },
+        );
         Self {
             height: job.height.to_string(),
             header_base,
+            template_id,
+            network_target,
             target,
+            dynamic_share_target,
             share_difficulty,
+            next_share_binding_id: current_share_binding_id.saturating_add(1),
+            share_bindings,
             next_nonce,
             dispatch_nonce,
             job,
@@ -248,6 +281,98 @@ impl ActivePoolJob {
             last_assignment_timing: None,
         }
     }
+
+    fn has_share_binding_job_id(&self, job_id: &str) -> bool {
+        self.share_bindings
+            .values()
+            .any(|binding| binding.job_id == job_id)
+    }
+
+    fn share_binding(&self, share_binding_id: ShareBindingId) -> Option<&PoolShareBinding> {
+        self.share_bindings.get(&share_binding_id)
+    }
+
+    fn register_share_binding(
+        &mut self,
+        job_id: String,
+        target: [u8; 32],
+    ) -> ShareBindingId {
+        let share_binding_id = self.next_share_binding_id.max(1);
+        self.next_share_binding_id = share_binding_id.saturating_add(1);
+        self.share_bindings
+            .insert(share_binding_id, PoolShareBinding { job_id });
+        self.dynamic_share_target.update(target, share_binding_id);
+        share_binding_id
+    }
+}
+
+fn same_pool_template_identity(
+    active_job: &ActivePoolJob,
+    incoming_job: &PoolJob,
+    header_base: &[u8],
+    network_target: Option<&[u8; 32]>,
+) -> bool {
+    if active_job.job.height != incoming_job.height {
+        return false;
+    }
+    if active_job.job.nonce_start != incoming_job.nonce_start
+        || active_job.job.nonce_end != incoming_job.nonce_end
+    {
+        return false;
+    }
+    if active_job.header_base.as_ref() != header_base {
+        return false;
+    }
+    match (active_job.network_target.as_ref(), network_target) {
+        (Some(current), Some(incoming)) if current != incoming => return false,
+        _ => {}
+    }
+    match (&active_job.template_id, &incoming_job.template_id) {
+        (Some(current), Some(incoming)) if current != incoming => return false,
+        _ => {}
+    }
+    true
+}
+
+fn rebind_active_pool_job(
+    mode: PoolConnectionMode,
+    active_job: &mut ActivePoolJob,
+    job: PoolJob,
+    target: [u8; 32],
+    network_target: Option<[u8; 32]>,
+) {
+    let now = Instant::now();
+    let previous_difficulty = active_job.share_difficulty;
+    active_job.template_id = job.template_id.clone();
+    active_job.network_target = network_target;
+    active_job.target = target;
+    active_job.share_difficulty = job.difficulty;
+    active_job.height = job.height.to_string();
+    active_job.job_received_at = now;
+    active_job.register_share_binding(job.job_id.clone(), target);
+    active_job.job = job.clone();
+
+    if !mode.is_user() {
+        return;
+    }
+    let difficulty_label = job
+        .difficulty
+        .map(|difficulty| difficulty.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    match (previous_difficulty, job.difficulty) {
+        (Some(old), Some(new)) if old != new => {
+            if new > old {
+                success("VARDIFF", format!("difficulty {old} -> {new}"));
+            } else {
+                info("VARDIFF", format!("difficulty {old} -> {new}"));
+            }
+        }
+        _ => {}
+    }
+    info(
+        "JOB",
+        format!("updated job height={} difficulty={difficulty_label}", job.height),
+    );
 }
 
 enum PoolShareSubmitOutcome {
@@ -401,13 +526,13 @@ fn maybe_log_pool_submit_timing(
 fn take_submit_timing_for_ack(
     ack_job_id: &str,
     nonce: u64,
-    current_job_id: Option<&str>,
-    current_pending_submit_nonces: Option<&mut HashMap<u64, PendingPoolSubmit>>,
+    ack_for_active_job: bool,
+    current_pending_submit_nonces: Option<&mut HashMap<(String, u64), PendingPoolSubmit>>,
     recent_submit_lookup: &mut RecentPendingSubmitLookup,
 ) -> (bool, Option<PendingPoolSubmit>) {
-    let ack_for_current_job = current_job_id.is_some_and(|job_id| job_id == ack_job_id);
-    let mut submit_timing = if ack_for_current_job {
-        current_pending_submit_nonces.and_then(|pending| pending.remove(&nonce))
+    let mut submit_timing = if ack_for_active_job {
+        current_pending_submit_nonces
+            .and_then(|pending| pending.remove(&(ack_job_id.to_string(), nonce)))
     } else {
         None
     };
@@ -417,7 +542,7 @@ fn take_submit_timing_for_ack(
         submit_timing = tracked_submit;
     }
 
-    (ack_for_current_job, submit_timing)
+    (ack_for_active_job, submit_timing)
 }
 
 fn log_pool_issue_timing(
@@ -1409,23 +1534,15 @@ fn handle_active_pool_event(
             }
         }
         PoolEvent::SubmitAck(ack) => {
-            let current_job_id = active_job.as_ref().map(|job| job.job.job_id.clone());
             let acknowledged_at = Instant::now();
-            let current_pending_submit_nonces = if current_job_id
-                .as_deref()
-                .is_some_and(|job_id| job_id == ack.job_id)
-            {
-                active_job
-                    .as_mut()
-                    .map(|job| &mut job.pending_submit_nonces)
-            } else {
-                None
-            };
+            let ack_for_current_job = active_job
+                .as_ref()
+                .is_some_and(|job| job.has_share_binding_job_id(ack.job_id.as_str()));
             let (ack_for_current_job, submit_timing) = take_submit_timing_for_ack(
                 ack.job_id.as_str(),
                 ack.nonce,
-                current_job_id.as_deref(),
-                current_pending_submit_nonces,
+                ack_for_current_job,
+                active_job.as_mut().map(|job| &mut job.pending_submit_nonces),
                 recent_submit_lookup,
             );
             let mut desync_reason = None::<String>;
@@ -1657,22 +1774,14 @@ fn handle_inactive_pool_event(
             }
         }
         PoolEvent::SubmitAck(ack) => {
-            let current_job_id = inactive_job.as_ref().map(|job| job.job.job_id.clone());
-            let current_pending_submit_nonces = if current_job_id
-                .as_deref()
-                .is_some_and(|job_id| job_id == ack.job_id)
-            {
-                inactive_job
-                    .as_mut()
-                    .map(|job| &mut job.pending_submit_nonces)
-            } else {
-                None
-            };
+            let ack_for_current_job = inactive_job
+                .as_ref()
+                .is_some_and(|job| job.has_share_binding_job_id(ack.job_id.as_str()));
             let (ack_for_current_job, submit_timing) = take_submit_timing_for_ack(
                 ack.job_id.as_str(),
                 ack.nonce,
-                current_job_id.as_deref(),
-                current_pending_submit_nonces,
+                ack_for_current_job,
+                inactive_job.as_mut().map(|job| &mut job.pending_submit_nonces),
                 recent_submit_lookup,
             );
             if ack.accepted {
@@ -1832,6 +1941,28 @@ fn assign_pool_job(
             return Ok(());
         }
     };
+    let network_target = match job.network_target.as_deref() {
+        Some(value) => match parse_target(value) {
+            Ok(target) => Some(target),
+            Err(err) => {
+                if mode.is_user() {
+                    warn("JOB", format!("invalid job network_target: {err:#}"));
+                }
+                return Ok(());
+            }
+        },
+        None => None,
+    };
+
+    if let Some(current) = active_job.as_mut() {
+        if same_pool_template_identity(current, &job, header_base.as_ref(), network_target.as_ref())
+        {
+            rebind_active_pool_job(mode, current, job, target, network_target);
+            set_tui_state_label(tui, "working");
+            render_tui_now(tui);
+            return Ok(());
+        }
+    }
 
     let mut cancel_latency = None;
     if cancel_prior_work {
@@ -1853,7 +1984,7 @@ fn assign_pool_job(
         .difficulty
         .map(|difficulty| difficulty.to_string())
         .unwrap_or_else(|| "unknown".to_string());
-    *active_job = Some(ActivePoolJob::new(job, 0, header_base, target));
+    *active_job = Some(ActivePoolJob::new(job, 0, header_base, target, network_target));
 
     if mode.is_user() {
         info(
@@ -1947,6 +2078,7 @@ fn assign_pool_continuation(
             work_id,
             header_base: Arc::clone(&active_job.header_base),
             target: active_job.target,
+            dynamic_share_target: Some(Arc::clone(&active_job.dynamic_share_target)),
             pause_on_solution: false,
             reservation,
             stop_at,
@@ -2054,12 +2186,11 @@ fn service_pool_submit_backlog(
     recent_submit_lookup: &mut RecentPendingSubmitLookup,
     stats: &Stats,
 ) {
-    let job_id = job.job.job_id.clone();
     service_pool_submit_backlog_with_submitter(
         mode,
         job,
         stats,
-        |nonce, claimed_hash| pool_client.submit_share(job_id.clone(), nonce, claimed_hash),
+        |job_id, nonce, claimed_hash| pool_client.submit_share(job_id.to_string(), nonce, claimed_hash),
         recent_submit_lookup,
     );
 }
@@ -2071,7 +2202,7 @@ fn service_pool_submit_backlog_with_submitter<F>(
     mut submitter: F,
     recent_submit_lookup: &mut RecentPendingSubmitLookup,
 ) where
-    F: FnMut(u64, Option<[u8; 32]>) -> Result<()>,
+    F: FnMut(&str, u64, Option<[u8; 32]>) -> Result<()>,
 {
     let now = Instant::now();
     let timed_out = reap_timed_out_pending_submits(job, now);
@@ -2099,13 +2230,13 @@ fn service_pool_submit_backlog_with_submitter<F>(
 
 fn reap_timed_out_pending_submits(job: &mut ActivePoolJob, now: Instant) -> usize {
     let mut timed_out = Vec::new();
-    for (&nonce, pending_submit) in &job.pending_submit_nonces {
+    for (key, pending_submit) in &job.pending_submit_nonces {
         if now.saturating_duration_since(pending_submit.submitted_at) >= POOL_SUBMIT_ACK_TIMEOUT {
-            timed_out.push(nonce);
+            timed_out.push(key.clone());
         }
     }
-    for nonce in &timed_out {
-        job.pending_submit_nonces.remove(nonce);
+    for key in &timed_out {
+        job.pending_submit_nonces.remove(key);
     }
     timed_out.len()
 }
@@ -2113,6 +2244,7 @@ fn reap_timed_out_pending_submits(job: &mut ActivePoolJob, now: Instant) -> usiz
 fn enqueue_deferred_pool_submit(
     mode: PoolConnectionMode,
     job: &mut ActivePoolJob,
+    share_binding_id: ShareBindingId,
     nonce: u64,
     claimed_hash: Option<[u8; 32]>,
     found_at: Instant,
@@ -2134,6 +2266,7 @@ fn enqueue_deferred_pool_submit(
     }
 
     job.deferred_submits.push_back(DeferredPoolSubmit {
+        share_binding_id,
         nonce,
         claimed_hash,
         found_at,
@@ -2150,7 +2283,7 @@ fn flush_deferred_pool_submits<F>(
     recent_submit_lookup: &mut RecentPendingSubmitLookup,
 ) -> (u64, bool)
 where
-    F: FnMut(u64, Option<[u8; 32]>) -> Result<()>,
+    F: FnMut(&str, u64, Option<[u8; 32]>) -> Result<()>,
 {
     let mut flushed = 0u64;
     let mut submit_failed = false;
@@ -2158,19 +2291,26 @@ where
         let Some(deferred) = job.deferred_submits.pop_front() else {
             break;
         };
-        match submitter(deferred.nonce, deferred.claimed_hash) {
+        let Some(binding) = job.share_binding(deferred.share_binding_id).cloned() else {
+            stats.add_dropped(1);
+            continue;
+        };
+        match submitter(binding.job_id.as_str(), deferred.nonce, deferred.claimed_hash) {
             Ok(()) => {
                 job.pending_submit_nonces.insert(
-                    deferred.nonce,
+                    (binding.job_id.clone(), deferred.nonce),
                     PendingPoolSubmit {
                         found_at: deferred.found_at,
                         submitted_at: Instant::now(),
                         backend_label: deferred.backend_label,
                     },
                 );
-                if let Some(pending_submit) = job.pending_submit_nonces.get(&deferred.nonce) {
+                if let Some(pending_submit) = job
+                    .pending_submit_nonces
+                    .get(&(binding.job_id.clone(), deferred.nonce))
+                {
                     recent_submit_lookup.insert(
-                        job.job.job_id.as_str(),
+                        binding.job_id.as_str(),
                         deferred.nonce,
                         pending_submit.clone(),
                     );
@@ -2229,14 +2369,16 @@ where
     if solution.epoch != job.epoch {
         return PoolShareSubmitOutcome::StaleEpoch;
     }
+    let Some(binding) = job.share_binding(solution.share_binding_id).cloned() else {
+        return PoolShareSubmitOutcome::StaleEpoch;
+    };
     advance_pool_nonce_cursor(job, solution.nonce);
 
-    let job_id = job.job.job_id.clone();
     service_pool_submit_backlog_with_submitter(
         mode,
         job,
         stats,
-        |nonce, claimed_hash| submitter(job_id.as_str(), nonce, claimed_hash),
+        |job_id, nonce, claimed_hash| submitter(job_id, nonce, claimed_hash),
         recent_submit_lookup,
     );
     if !job.submitted_nonces.insert(solution.nonce) {
@@ -2247,6 +2389,7 @@ where
         if !enqueue_deferred_pool_submit(
             mode,
             job,
+            solution.share_binding_id,
             solution.nonce,
             solution.hash,
             found_at,
@@ -2258,22 +2401,25 @@ where
         return PoolShareSubmitOutcome::Deferred;
     }
 
-    if submitter(job.job.job_id.as_str(), solution.nonce, solution.hash).is_ok() {
+    if submitter(binding.job_id.as_str(), solution.nonce, solution.hash).is_ok() {
         stats.bump_submitted();
         if mode.is_user() {
             info("SHARE", format!("submitted (backend={backend_label})"));
         }
         job.pending_submit_nonces.insert(
-            solution.nonce,
+            (binding.job_id.clone(), solution.nonce),
             PendingPoolSubmit {
                 found_at,
                 submitted_at: Instant::now(),
                 backend_label: backend_label.to_string(),
             },
         );
-        if let Some(pending_submit) = job.pending_submit_nonces.get(&solution.nonce) {
+        if let Some(pending_submit) = job
+            .pending_submit_nonces
+            .get(&(binding.job_id.clone(), solution.nonce))
+        {
             recent_submit_lookup.insert(
-                job.job.job_id.as_str(),
+                binding.job_id.as_str(),
                 solution.nonce,
                 pending_submit.clone(),
             );
@@ -2605,10 +2751,15 @@ mod tests {
         ActivePoolJob::new(
             PoolJob {
                 job_id: "job-1".to_string(),
+                template_id: Some("tmpl-1".to_string()),
                 header_base: "00".to_string(),
                 target: "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
                     .to_string(),
                 difficulty: Some(1),
+                network_target: Some(
+                    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                        .to_string(),
+                ),
                 height: 1,
                 nonce_start: 0,
                 nonce_end: 1_000,
@@ -2616,6 +2767,7 @@ mod tests {
             epoch,
             Arc::<[u8]>::from(vec![0u8; 1]),
             [0xFF; 32],
+            Some([0xFF; 32]),
         )
     }
 
@@ -2624,6 +2776,7 @@ mod tests {
             epoch,
             nonce,
             hash: Some([0xAA; 32]),
+            share_binding_id: 1,
             backend_id: 1,
             backend: "cpu",
         }
@@ -2812,7 +2965,7 @@ mod tests {
             let job = active_job.as_mut().expect("active job should exist");
             for nonce in 0..POOL_MAX_INFLIGHT_SUBMITS as u64 {
                 job.pending_submit_nonces.insert(
-                    nonce,
+                    ("job-1".to_string(), nonce),
                     PendingPoolSubmit {
                         found_at: now,
                         submitted_at: now,
@@ -2894,10 +3047,12 @@ mod tests {
             job.dispatch_nonce, initial_next_nonce,
             "share submission must not rewind or advance the dispatch cursor"
         );
-        assert!(job.pending_submit_nonces.contains_key(&42));
+        assert!(job
+            .pending_submit_nonces
+            .contains_key(&("job-1".to_string(), 42)));
         assert_eq!(
             job.pending_submit_nonces
-                .get(&42)
+                .get(&("job-1".to_string(), 42))
                 .expect("pending share should keep backend label")
                 .backend_label,
             "cpu#1"
@@ -2925,7 +3080,7 @@ mod tests {
         job.submitted_nonces.insert(healthy_nonce);
         job.submitted_nonces.insert(deferred_nonce);
         job.pending_submit_nonces.insert(
-            timed_out_nonce,
+            ("job-1".to_string(), timed_out_nonce),
             PendingPoolSubmit {
                 found_at: now - (POOL_SUBMIT_ACK_TIMEOUT + Duration::from_secs(2)),
                 submitted_at: now - (POOL_SUBMIT_ACK_TIMEOUT + Duration::from_secs(1)),
@@ -2933,7 +3088,7 @@ mod tests {
             },
         );
         job.pending_submit_nonces.insert(
-            healthy_nonce,
+            ("job-1".to_string(), healthy_nonce),
             PendingPoolSubmit {
                 found_at: now,
                 submitted_at: now,
@@ -2941,6 +3096,7 @@ mod tests {
             },
         );
         job.deferred_submits.push_back(super::DeferredPoolSubmit {
+            share_binding_id: 1,
             nonce: deferred_nonce,
             claimed_hash: Some([0xAB; 32]),
             found_at: now,
@@ -2952,7 +3108,7 @@ mod tests {
             PoolConnectionMode::Dev,
             &mut job,
             &stats,
-            |nonce, _hash| {
+            |_job_id, nonce, _hash| {
                 submitted.push(nonce);
                 Ok(())
             },
@@ -2960,13 +3116,19 @@ mod tests {
         );
 
         assert_eq!(submitted, vec![deferred_nonce]);
-        assert!(!job.pending_submit_nonces.contains_key(&timed_out_nonce));
-        assert!(job.pending_submit_nonces.contains_key(&healthy_nonce));
-        assert!(job.pending_submit_nonces.contains_key(&deferred_nonce));
+        assert!(!job
+            .pending_submit_nonces
+            .contains_key(&("job-1".to_string(), timed_out_nonce)));
+        assert!(job
+            .pending_submit_nonces
+            .contains_key(&("job-1".to_string(), healthy_nonce)));
+        assert!(job
+            .pending_submit_nonces
+            .contains_key(&("job-1".to_string(), deferred_nonce)));
         assert!(job.submitted_nonces.contains(&timed_out_nonce));
         assert_eq!(
             job.pending_submit_nonces
-                .get(&deferred_nonce)
+                .get(&("job-1".to_string(), deferred_nonce))
                 .expect("deferred share should move into pending state")
                 .backend_label,
             "cpu#3"
@@ -2998,7 +3160,7 @@ mod tests {
         let (ack_for_current_job, submit_timing) = take_submit_timing_for_ack(
             "job-1",
             42,
-            Some("job-2"),
+            false,
             Some(&mut current_pending_submit_nonces),
             &mut recent_submit_lookup,
         );
@@ -3030,7 +3192,7 @@ mod tests {
         let (ack_for_current_job, submit_timing) = take_submit_timing_for_ack(
             "job-1",
             7,
-            Some("job-1"),
+            true,
             Some(&mut current_pending_submit_nonces),
             &mut recent_submit_lookup,
         );

@@ -39,8 +39,8 @@ use crate::backend::metal::MetalBackend;
 use crate::backend::nvidia::{NvidiaBackend, NvidiaBackendTuningOptions};
 use crate::backend::{
     normalize_backend_capabilities, BackendCapabilities, BackendEvent, BackendExecutionModel,
-    BackendInstanceId, BackendTelemetry, BenchBackend, DeadlineSupport, MiningSolution, PowBackend,
-    PreemptionGranularity, WORK_ID_MAX,
+    BackendInstanceId, BackendTelemetry, BenchBackend, DeadlineSupport, DynamicShareTarget,
+    MiningSolution, PowBackend, PreemptionGranularity, WORK_ID_MAX,
 };
 use crate::config::{
     BackendKind, BackendSpec, Config, CpuPerformanceProfile, MiningMode, UiMode, WorkAllocation,
@@ -101,6 +101,7 @@ struct DistributeWorkOptions<'a> {
     work_id: u64,
     header_base: Arc<[u8]>,
     target: [u8; 32],
+    dynamic_share_target: Option<Arc<DynamicShareTarget>>,
     pause_on_solution: bool,
     reservation: NonceReservation,
     stop_at: Instant,
@@ -3429,6 +3430,7 @@ mod tests {
                 work_id: 1,
                 header_base: Arc::from(vec![7u8; POW_HEADER_BASE_LEN]),
                 target: [0xFF; 32],
+                dynamic_share_target: None,
                 pause_on_solution: true,
                 reservation: NonceReservation {
                     start_nonce: 100,
@@ -3492,6 +3494,7 @@ mod tests {
                 work_id: 1,
                 header_base: Arc::from(vec![7u8; POW_HEADER_BASE_LEN]),
                 target: [0xFF; 32],
+                dynamic_share_target: None,
                 pause_on_solution: true,
                 reservation: NonceReservation {
                     start_nonce: 200,
@@ -3546,6 +3549,7 @@ mod tests {
                 work_id: 1,
                 header_base: Arc::from(vec![7u8; POW_HEADER_BASE_LEN]),
                 target: [0xFF; 32],
+                dynamic_share_target: None,
                 pause_on_solution: true,
                 reservation: NonceReservation {
                     start_nonce: 1_000,
@@ -3588,6 +3592,7 @@ mod tests {
                 work_id: 1,
                 header_base: Arc::from(vec![7u8; POW_HEADER_BASE_LEN]),
                 target: [0xFF; 32],
+                dynamic_share_target: None,
                 pause_on_solution: true,
                 reservation: NonceReservation {
                     start_nonce: 1_000,
@@ -3632,6 +3637,7 @@ mod tests {
                 work_id: 1,
                 header_base: Arc::from(vec![7u8; POW_HEADER_BASE_LEN]),
                 target: [0xFF; 32],
+                dynamic_share_target: None,
                 pause_on_solution: false,
                 reservation: NonceReservation {
                     start_nonce: 64,
@@ -3696,6 +3702,7 @@ mod tests {
                 work_id: 1,
                 header_base: Arc::from(vec![7u8; POW_HEADER_BASE_LEN]),
                 target: [0xFF; 32],
+                dynamic_share_target: None,
                 pause_on_solution: true,
                 reservation: NonceReservation {
                     start_nonce: 10,
@@ -3720,6 +3727,7 @@ mod tests {
                 work_id: 2,
                 header_base: Arc::from(vec![7u8; POW_HEADER_BASE_LEN]),
                 target: [0xFF; 32],
+                dynamic_share_target: None,
                 pause_on_solution: true,
                 reservation: NonceReservation {
                     start_nonce: 20,
@@ -3762,6 +3770,7 @@ mod tests {
                 work_id: 1,
                 header_base: Arc::from(vec![7u8; POW_HEADER_BASE_LEN]),
                 target: [0xFF; 32],
+                dynamic_share_target: None,
                 pause_on_solution: true,
                 reservation: NonceReservation {
                     start_nonce: 10,
@@ -3807,6 +3816,7 @@ mod tests {
                 work_id: 1,
                 header_base: Arc::from(vec![7u8; POW_HEADER_BASE_LEN]),
                 target: [0xFF; 32],
+                dynamic_share_target: None,
                 pause_on_solution: true,
                 reservation: NonceReservation {
                     start_nonce: 10,
@@ -3861,6 +3871,7 @@ mod tests {
                 work_id: 1,
                 header_base: Arc::from(vec![7u8; POW_HEADER_BASE_LEN]),
                 target: [0xFF; 32],
+                dynamic_share_target: None,
                 pause_on_solution: true,
                 reservation: NonceReservation {
                     start_nonce: 100,
@@ -4107,6 +4118,7 @@ mod tests {
                 epoch: 1,
                 header_base: Arc::from(vec![7u8; POW_HEADER_BASE_LEN]),
                 target: [0xFF; 32],
+                dynamic_share_target: None,
                 pause_on_solution: true,
                 stop_at: Instant::now() + Duration::from_secs(1),
             }),

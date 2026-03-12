@@ -26,6 +26,7 @@ const STRATUM_CAPABILITY_LOGIN_NEGOTIATION: &str = "login_negotiation";
 const STRATUM_CAPABILITY_VALIDATION_STATUS: &str = "share_validation_status";
 const STRATUM_CAPABILITY_SUBMIT_CLAIMED_HASH: &str = "submit_claimed_hash";
 const STRATUM_CAPABILITY_DIFFICULTY_HINT: &str = "difficulty_hint";
+const STRATUM_CAPABILITY_SAME_TEMPLATE_REBIND_V1: &str = "same_template_rebind_v1";
 const STRATUM_METHOD_NOTIFICATION: &str = "notification";
 const SUBMIT_REJECT_REASON_DISCONNECTED: &str = "pool disconnected";
 const SUBMIT_REJECT_REASON_LOGIN_REJECTED: &str = "pool login rejected";
@@ -40,15 +41,20 @@ const CLIENT_CAPABILITIES: &[&str] = &[
     STRATUM_CAPABILITY_VALIDATION_STATUS,
     STRATUM_CAPABILITY_SUBMIT_CLAIMED_HASH,
     STRATUM_CAPABILITY_DIFFICULTY_HINT,
+    STRATUM_CAPABILITY_SAME_TEMPLATE_REBIND_V1,
 ];
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct PoolJob {
     pub job_id: String,
+    #[serde(default)]
+    pub template_id: Option<String>,
     pub header_base: String,
     pub target: String,
     #[serde(default)]
     pub difficulty: Option<u64>,
+    #[serde(default)]
+    pub network_target: Option<String>,
     pub height: u64,
     pub nonce_start: u64,
     pub nonce_end: u64,

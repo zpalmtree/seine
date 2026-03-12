@@ -697,6 +697,7 @@ fn run_worker_benchmark_inner(
                 work_id,
                 header_base: std::sync::Arc::clone(&header_base),
                 target: impossible_target,
+                dynamic_share_target: None,
                 pause_on_solution: true,
                 reservation,
                 stop_at,
@@ -797,7 +798,9 @@ fn run_worker_benchmark_inner(
         let round_hashes = counted_hashes.saturating_add(late_hashes);
         let late_hash_pct = late_hash_share_pct(late_hashes, round_hashes);
         let measured_elapsed = (counted_elapsed + fence_elapsed).max(0.001);
-        let hps = round_hashes as f64 / measured_elapsed;
+        // Surface effective throughput as H/s so vardiff/cancel improvements show up
+        // in the headline rate without introducing a second user-facing unit.
+        let hps = counted_hashes as f64 / measured_elapsed;
         let backend_runs = build_backend_round_stats(
             backends,
             &round_backend_hashes,
@@ -2133,6 +2136,7 @@ mod tests {
                 epoch: 99,
                 nonce: 123,
                 hash: None,
+                share_binding_id: 0,
                 backend_id: 1,
                 backend: "cpu",
             }),

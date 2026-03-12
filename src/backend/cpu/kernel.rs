@@ -25,6 +25,7 @@ enum SolutionDisposition {
 fn handle_found_solution(
     shared: &Shared,
     template: &crate::backend::WorkTemplate,
+    share_binding_id: crate::backend::ShareBindingId,
     thread_idx: usize,
     nonce: u64,
     output: [u8; POW_OUTPUT_LEN],
@@ -50,6 +51,7 @@ fn handle_found_solution(
                     epoch: template.epoch,
                     nonce,
                     hash: Some(output),
+                    share_binding_id,
                     backend_id: shared.instance_id.load(Ordering::Acquire),
                     backend: "cpu",
                 }),
@@ -66,6 +68,7 @@ fn handle_found_solution(
                 epoch: template.epoch,
                 nonce,
                 hash: Some(output),
+                share_binding_id,
                 backend_id: shared.instance_id.load(Ordering::Acquire),
                 backend: "cpu",
             }),
@@ -189,6 +192,7 @@ pub(super) fn cpu_worker_loop(
             }
         }
 
+        let target_snapshot = template.target_snapshot();
         let nonce_bytes = nonce.to_le_bytes();
         if hasher
             .hash_password_into_with_memory(
@@ -223,8 +227,15 @@ pub(super) fn cpu_worker_loop(
             next_flush_at = hash_completed_at + shared.hash_flush_interval;
         }
 
-        if hash_meets_target(&output, &template.target) {
-            match handle_found_solution(&shared, template, thread_idx, nonce, output) {
+        if hash_meets_target(&output, &target_snapshot.target) {
+            match handle_found_solution(
+                &shared,
+                template,
+                target_snapshot.share_binding_id,
+                thread_idx,
+                nonce,
+                output,
+            ) {
                 Ok(SolutionDisposition::PauseAssignment) => {
                     flush_hashes(&shared, thread_idx, &mut pending_hashes);
                     mark_worker_inactive(&shared, &mut worker_active);
@@ -317,13 +328,20 @@ mod tests {
             epoch: 3,
             header_base: Arc::from(vec![0u8; POW_HEADER_BASE_LEN]),
             target: [0xFF; 32],
+            dynamic_share_target: None,
             pause_on_solution: false,
             stop_at: Instant::now() + Duration::from_secs(1),
         };
 
-        let disposition =
-            handle_found_solution(&backend.shared, &template, 0, 42, [0xAB; POW_OUTPUT_LEN])
-                .expect("non-terminal solution handling should succeed");
+        let disposition = handle_found_solution(
+            &backend.shared,
+            &template,
+            0,
+            0,
+            42,
+            [0xAB; POW_OUTPUT_LEN],
+        )
+        .expect("non-terminal solution handling should succeed");
 
         assert_eq!(disposition, SolutionDisposition::Continue);
         assert_eq!(backend.shared.solution_state.load(Ordering::Acquire), 7);
@@ -334,6 +352,7 @@ mod tests {
             BackendEvent::Solution(solution) => {
                 assert_eq!(solution.epoch, 3);
                 assert_eq!(solution.nonce, 42);
+                assert_eq!(solution.share_binding_id, 0);
                 assert_eq!(solution.backend_id, 11);
             }
             other => panic!("expected solution event, got {other:?}"),

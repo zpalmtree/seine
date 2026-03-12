@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -232,6 +232,73 @@ pub mod nvidia {
 
 pub const WORK_ID_MAX: u64 = (1u64 << 63) - 1;
 pub type BackendInstanceId = u64;
+pub type ShareBindingId = u64;
+
+#[derive(Debug, Clone, Copy)]
+pub struct TargetSnapshot {
+    pub target: [u8; 32],
+    pub share_binding_id: ShareBindingId,
+}
+
+#[derive(Debug)]
+pub struct DynamicShareTarget {
+    version: AtomicU64,
+    share_binding_id: AtomicU64,
+    target_words: [AtomicU64; 4],
+}
+
+impl DynamicShareTarget {
+    pub fn new(target: [u8; 32], share_binding_id: ShareBindingId) -> Self {
+        Self {
+            version: AtomicU64::new(0),
+            share_binding_id: AtomicU64::new(share_binding_id),
+            target_words: std::array::from_fn(|idx| {
+                let start = idx * 8;
+                let mut bytes = [0u8; 8];
+                bytes.copy_from_slice(&target[start..start + 8]);
+                AtomicU64::new(u64::from_le_bytes(bytes))
+            }),
+        }
+    }
+
+    pub fn snapshot(&self) -> TargetSnapshot {
+        loop {
+            let version_before = self.version.load(Ordering::Acquire);
+            if version_before % 2 != 0 {
+                thread::yield_now();
+                continue;
+            }
+
+            let mut target = [0u8; 32];
+            for (idx, word) in self.target_words.iter().enumerate() {
+                let start = idx * 8;
+                target[start..start + 8]
+                    .copy_from_slice(&word.load(Ordering::Acquire).to_le_bytes());
+            }
+            let share_binding_id = self.share_binding_id.load(Ordering::Acquire);
+            let version_after = self.version.load(Ordering::Acquire);
+            if version_before == version_after {
+                return TargetSnapshot {
+                    target,
+                    share_binding_id,
+                };
+            }
+        }
+    }
+
+    pub fn update(&self, target: [u8; 32], share_binding_id: ShareBindingId) {
+        self.version.fetch_add(1, Ordering::AcqRel);
+        for (idx, word) in self.target_words.iter().enumerate() {
+            let start = idx * 8;
+            let mut bytes = [0u8; 8];
+            bytes.copy_from_slice(&target[start..start + 8]);
+            word.store(u64::from_le_bytes(bytes), Ordering::Release);
+        }
+        self.share_binding_id
+            .store(share_binding_id, Ordering::Release);
+        self.version.fetch_add(1, Ordering::AcqRel);
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct WorkTemplate {
@@ -239,11 +306,24 @@ pub struct WorkTemplate {
     pub epoch: u64,
     pub header_base: Arc<[u8]>,
     pub target: [u8; 32],
+    pub dynamic_share_target: Option<Arc<DynamicShareTarget>>,
     /// When true, the backend should stop or supersede the current assignment after the first
     /// solution event. Pool mining sets this to false so share discovery does not strand the
     /// backend until a later job refresh.
     pub pause_on_solution: bool,
     pub stop_at: Instant,
+}
+
+impl WorkTemplate {
+    pub fn target_snapshot(&self) -> TargetSnapshot {
+        self.dynamic_share_target
+            .as_ref()
+            .map(|state| state.snapshot())
+            .unwrap_or(TargetSnapshot {
+                target: self.target,
+                share_binding_id: 0,
+            })
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -263,6 +343,7 @@ pub struct MiningSolution {
     pub epoch: u64,
     pub nonce: u64,
     pub hash: Option<[u8; 32]>,
+    pub share_binding_id: ShareBindingId,
     pub backend_id: BackendInstanceId,
     pub backend: &'static str,
 }

@@ -94,6 +94,7 @@ impl MetalShared {
         epoch: u64,
         nonce: u64,
         hash: Option<[u8; 32]>,
+        share_binding_id: crate::backend::ShareBindingId,
     ) {
         self.emit_event(
             instance_id,
@@ -101,6 +102,7 @@ impl MetalShared {
                 epoch,
                 nonce,
                 hash,
+                share_binding_id,
                 backend_id: instance_id,
                 backend: BACKEND_NAME,
             }),
@@ -915,10 +917,11 @@ fn metal_worker_loop(
                 Ordering::Release,
             );
 
+            let target_snapshot = assignment.work.template.target_snapshot();
             match engine.run_fill_batch(
                 &assignment.work.template.header_base,
                 &nonces,
-                Some(&assignment.work.template.target),
+                Some(&target_snapshot.target),
             ) {
                 Ok(result) => {
                     let done = result.hashes_done;
@@ -932,6 +935,7 @@ fn metal_worker_loop(
                             assignment.work.template.epoch,
                             solved_nonce,
                             result.solved_hash,
+                            target_snapshot.share_binding_id,
                         );
                     }
                 }

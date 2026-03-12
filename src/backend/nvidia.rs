@@ -2046,11 +2046,12 @@ fn worker_loop(
             .active_hashes_per_launch_per_lane
             .store(effective_launch_depth as u32, Ordering::Release);
 
+        let target_snapshot = current.work.template.target_snapshot();
         let launch_started = Instant::now();
         let done = match engine.run_fill_batch(
             current.work.template.header_base.as_ref(),
             &nonce_buf[..hashes_per_batch],
-            Some(&current.work.template.target),
+            Some(&target_snapshot.target),
         ) {
             Ok(done) => {
                 transient_retries = 0;
@@ -2139,6 +2140,7 @@ fn worker_loop(
                     epoch: current.work.template.epoch,
                     nonce,
                     hash: done.solved_hash,
+                    share_binding_id: target_snapshot.share_binding_id,
                     backend_id: instance_id.load(Ordering::Acquire),
                     backend: BACKEND_NAME,
                 }),
@@ -3459,6 +3461,7 @@ mod tests {
             epoch: 7,
             header_base: Arc::<[u8]>::from(vec![1u8; 92]),
             target: [0xff; 32],
+            dynamic_share_target: None,
             pause_on_solution: true,
             stop_at: Instant::now() + Duration::from_secs(30),
         })

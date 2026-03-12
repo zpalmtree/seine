@@ -341,6 +341,7 @@ mod tests {
             epoch,
             nonce,
             hash: None,
+            share_binding_id: 0,
             backend_id: 1,
             backend: "cpu",
         }

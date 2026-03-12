@@ -1115,6 +1115,7 @@ mod tests {
                 epoch: 1,
                 nonce: 1,
                 hash: None,
+                share_binding_id: 0,
                 backend_id: 99,
                 backend: "cpu",
             }))
@@ -1183,6 +1184,7 @@ mod tests {
                 epoch: 1,
                 nonce: 1,
                 hash: None,
+                share_binding_id: 0,
                 backend_id: 99,
                 backend: "cpu",
             }))
@@ -1322,6 +1324,7 @@ mod tests {
                     epoch: 1,
                     header_base: Arc::from(vec![0u8; POW_HEADER_BASE_LEN]),
                     target: [0xFF; 32],
+                    dynamic_share_target: None,
                     pause_on_solution: false,
                     stop_at: Instant::now() + Duration::from_secs(1),
                 }),
