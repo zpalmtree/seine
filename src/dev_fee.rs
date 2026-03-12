@@ -106,8 +106,6 @@ fn pool_url_host(pool_url: &str) -> Option<String> {
     }
     let rest = trimmed
         .strip_prefix("stratum+tcp://")
-        .or_else(|| trimmed.strip_prefix("stratum+ws://"))
-        .or_else(|| trimmed.strip_prefix("stratum+wss://"))
         .or_else(|| trimmed.strip_prefix("stratum+ssl://"))
         .or_else(|| trimmed.strip_prefix("stratum+tls://"))
         .unwrap_or(trimmed);

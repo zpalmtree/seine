@@ -1099,18 +1099,14 @@ fn normalize_pool_url(value: &str) -> Result<String> {
 
     let (scheme, rest) = if let Some(rest) = trimmed.strip_prefix("stratum+tcp://") {
         ("stratum+tcp://", rest)
-    } else if let Some(rest) = trimmed.strip_prefix("stratum+ws://") {
-        ("stratum+ws://", rest)
-    } else if let Some(rest) = trimmed.strip_prefix("stratum+wss://") {
-        ("stratum+wss://", rest)
+    } else if trimmed.starts_with("stratum+ws://") || trimmed.starts_with("stratum+wss://") {
+        bail!("pool_url must be host:port or stratum+tcp://host:port");
     } else {
         ("stratum+tcp://", trimmed)
     };
     let authority = rest.split('/').next().unwrap_or(rest).trim();
     if authority.is_empty() || authority.contains("://") || rest != authority {
-        bail!(
-            "pool_url must be host:port, stratum+tcp://host:port, stratum+ws://host:port, or stratum+wss://host:port"
-        );
+        bail!("pool_url must be host:port or stratum+tcp://host:port");
     }
 
     let (host, port) = parse_pool_host_port(authority)?;

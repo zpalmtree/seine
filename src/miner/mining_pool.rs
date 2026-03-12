@@ -2437,10 +2437,6 @@ fn pool_api_base_urls_from_pool_url(pool_url: &str) -> Vec<String> {
     }
     let (transport, rest) = if let Some(rest) = trimmed.strip_prefix("stratum+tcp://") {
         ("stratum+tcp", rest)
-    } else if let Some(rest) = trimmed.strip_prefix("stratum+ws://") {
-        ("stratum+ws", rest)
-    } else if let Some(rest) = trimmed.strip_prefix("stratum+wss://") {
-        ("stratum+wss", rest)
     } else if let Some(rest) = trimmed.strip_prefix("stratum+ssl://") {
         ("stratum+ssl", rest)
     } else if let Some(rest) = trimmed.strip_prefix("stratum+tls://") {
@@ -2647,18 +2643,6 @@ mod tests {
             vec![
                 "https://example.com".to_string(),
                 "http://example.com".to_string()
-            ]
-        );
-    }
-
-    #[test]
-    fn telemetry_base_urls_keep_same_host_for_websocket_endpoint() {
-        let urls = pool_api_base_urls_from_pool_url("stratum+wss://pool.example.com:3334");
-        assert_eq!(
-            urls,
-            vec![
-                "https://pool.example.com".to_string(),
-                "http://pool.example.com".to_string()
             ]
         );
     }

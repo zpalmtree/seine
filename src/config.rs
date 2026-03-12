@@ -279,7 +279,7 @@ struct Cli {
     testnet: bool,
 
     /// Stratum pool endpoint for pool mode.
-    /// Accepts host:port, stratum+tcp://host:port, stratum+ws://host:port, or stratum+wss://host:port.
+    /// Accepts host:port or stratum+tcp://host:port.
     #[arg(long = "pool-url")]
     pool_url: Option<String>,
 
@@ -813,9 +813,7 @@ impl Config {
         }
         if let Some(pool_url) = cli.pool_url.as_ref() {
             if normalize_pool_url(pool_url).is_none() {
-                bail!(
-                    "--pool-url must be host:port, stratum+tcp://host:port, stratum+ws://host:port, or stratum+wss://host:port"
-                );
+                bail!("--pool-url must be host:port or stratum+tcp://host:port");
             }
         }
         if let Some(pool_worker) = cli.pool_worker.as_ref() {
@@ -1980,10 +1978,8 @@ fn normalize_pool_url(input: &str) -> Option<String> {
 
     let (scheme, rest) = if let Some(rest) = trimmed.strip_prefix("stratum+tcp://") {
         ("stratum+tcp://", rest)
-    } else if let Some(rest) = trimmed.strip_prefix("stratum+ws://") {
-        ("stratum+ws://", rest)
-    } else if let Some(rest) = trimmed.strip_prefix("stratum+wss://") {
-        ("stratum+wss://", rest)
+    } else if trimmed.starts_with("stratum+ws://") || trimmed.starts_with("stratum+wss://") {
+        return None;
     } else {
         ("stratum+tcp://", trimmed)
     };
@@ -2106,7 +2102,7 @@ fn ensure_pool_mode_inputs_available(cli: &Cli, user_config_path: &Path) -> Resu
     {
         bail!(
             "pool mode requires a valid pool URL.\n\
-             Pass --pool-url (host:port, stratum+tcp://host:port, stratum+ws://host:port, or stratum+wss://host:port) or edit {}.",
+             Pass --pool-url (host:port or stratum+tcp://host:port) or edit {}.",
             user_config_path.display()
         );
     }
@@ -2735,27 +2731,24 @@ mod tests {
     }
 
     #[test]
-    fn normalize_pool_url_accepts_websocket_schemes() {
+    fn normalize_pool_url_rejects_websocket_schemes() {
         assert_eq!(
             normalize_pool_url("stratum+ws://pool.example.com:3334"),
-            Some("stratum+ws://pool.example.com:3334".to_string())
+            None
         );
         assert_eq!(
             normalize_pool_url("stratum+wss://pool.example.com:443"),
-            Some("stratum+wss://pool.example.com:443".to_string())
+            None
         );
     }
 
     #[test]
-    fn normalize_pool_url_rejects_websocket_paths() {
+    fn normalize_pool_url_rejects_paths() {
         assert_eq!(
-            normalize_pool_url("stratum+ws://pool.example.com:3334/miner"),
+            normalize_pool_url("stratum+tcp://pool.example.com:3334/miner"),
             None
         );
-        assert_eq!(
-            normalize_pool_url("stratum+wss://pool.example.com:443/pool"),
-            None
-        );
+        assert_eq!(normalize_pool_url("pool.example.com:3334/miner"), None);
     }
 
     #[cfg(target_os = "linux")]

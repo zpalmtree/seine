@@ -7,13 +7,11 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
 use crossbeam_channel::{bounded, Receiver, RecvTimeoutError, Sender, TryRecvError};
-use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader as TokioBufReader};
 use tokio::net::TcpStream as TokioTcpStream;
 use tokio::sync::mpsc;
-use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 const LOGIN_REQUEST_ID: u64 = 1;
 const RECONNECT_DELAY: Duration = Duration::from_secs(2);
@@ -256,16 +254,8 @@ struct LoginResult {
     required_capabilities: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum PoolTransport {
-    Tcp,
-    Ws,
-    Wss,
-}
-
 #[derive(Debug, Clone)]
 struct PoolEndpoint {
-    transport: PoolTransport,
     authority: String,
     url: String,
 }
@@ -279,14 +269,6 @@ impl PoolEndpoint {
         self.authority.starts_with("127.0.0.1:")
             || self.authority.starts_with("localhost:")
             || self.authority.starts_with("[::1]:")
-    }
-
-    fn ws_connect_url(&self) -> Option<String> {
-        match self.transport {
-            PoolTransport::Ws => Some(format!("ws://{}", self.authority)),
-            PoolTransport::Wss => Some(format!("wss://{}", self.authority)),
-            PoolTransport::Tcp => None,
-        }
     }
 }
 
@@ -674,10 +656,7 @@ async fn run_pool_client_loop(
 }
 
 async fn connect_pool_transport(endpoint: &PoolEndpoint) -> Result<PoolConnection> {
-    match endpoint.transport {
-        PoolTransport::Tcp => connect_pool_tcp_transport(endpoint).await,
-        PoolTransport::Ws | PoolTransport::Wss => connect_pool_ws_transport(endpoint).await,
-    }
+    connect_pool_tcp_transport(endpoint).await
 }
 
 async fn connect_pool_tcp_transport(endpoint: &PoolEndpoint) -> Result<PoolConnection> {
@@ -699,35 +678,14 @@ async fn connect_pool_tcp_transport(endpoint: &PoolEndpoint) -> Result<PoolConne
     })
 }
 
-async fn connect_pool_ws_transport(endpoint: &PoolEndpoint) -> Result<PoolConnection> {
-    let Some(url) = endpoint.ws_connect_url() else {
-        bail!("websocket pool endpoint missing connect url");
-    };
-    let (ws_stream, _) = connect_async(url.as_str())
-        .await
-        .with_context(|| format!("failed to connect to pool websocket {}", endpoint.display()))?;
-    let (writer, reader) = ws_stream.split();
-    let (inbound_tx, inbound_rx) = mpsc::unbounded_channel();
-    let reader_task = tokio::spawn(async move {
-        run_ws_reader(reader, inbound_tx).await;
-    });
-    let (outbound_tx, outbound_rx) = mpsc::unbounded_channel();
-    let writer_task = tokio::spawn(async move {
-        run_ws_writer(writer, outbound_rx).await;
-    });
-    Ok(PoolConnection {
-        outbound_tx,
-        inbound_rx,
-        reader_task,
-        writer_task,
-    })
-}
-
 async fn connect_pool_tcp_stream(endpoint: &PoolEndpoint) -> Result<TokioTcpStream> {
     let addrs = resolve_pool_addrs(&endpoint.authority)
         .with_context(|| format!("failed to resolve pool endpoint {}", endpoint.display()))?;
     if addrs.is_empty() {
-        bail!("pool endpoint resolved to no addresses: {}", endpoint.display());
+        bail!(
+            "pool endpoint resolved to no addresses: {}",
+            endpoint.display()
+        );
     }
 
     let mut last_err: Option<String> = None;
@@ -779,38 +737,6 @@ async fn run_tcp_reader(
     }
 }
 
-async fn run_ws_reader<S>(mut reader: S, inbound_tx: mpsc::UnboundedSender<InboundFrame>)
-where
-    S: Stream<Item = std::result::Result<Message, tokio_tungstenite::tungstenite::Error>>
-        + Unpin,
-{
-    while let Some(message) = reader.next().await {
-        match message {
-            Ok(Message::Text(text)) => {
-                if inbound_tx
-                    .send(InboundFrame::Text(text.to_string()))
-                    .is_err()
-                {
-                    break;
-                }
-            }
-            Ok(Message::Binary(_)) => {
-                let _ = inbound_tx.send(InboundFrame::ReadError(
-                    "binary websocket frames are not supported".to_string(),
-                ));
-                break;
-            }
-            Ok(Message::Close(_)) => break,
-            Ok(Message::Ping(_)) | Ok(Message::Pong(_)) => {}
-            Ok(_) => {}
-            Err(err) => {
-                let _ = inbound_tx.send(InboundFrame::ReadError(err.to_string()));
-                break;
-            }
-        }
-    }
-}
-
 async fn run_tcp_writer<W>(mut writer: W, mut outbound_rx: mpsc::UnboundedReceiver<ClientOutbound>)
 where
     W: tokio::io::AsyncWrite + Unpin,
@@ -823,21 +749,6 @@ where
                 writer.write_all(&payload).await
             }
             ClientOutbound::Keepalive => writer.write_all(b"\n").await,
-        };
-        if result.is_err() {
-            break;
-        }
-    }
-}
-
-async fn run_ws_writer<W>(mut writer: W, mut outbound_rx: mpsc::UnboundedReceiver<ClientOutbound>)
-where
-    W: Sink<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin,
-{
-    while let Some(message) = outbound_rx.recv().await {
-        let result = match message {
-            ClientOutbound::Text(text) => writer.send(Message::Text(text.into())).await,
-            ClientOutbound::Keepalive => writer.send(Message::Ping(Vec::new().into())).await,
         };
         if result.is_err() {
             break;
@@ -1182,16 +1093,13 @@ fn parse_pool_endpoint(pool_url: &str) -> Result<PoolEndpoint> {
     if trimmed.is_empty() {
         bail!("pool URL is empty");
     }
+    if trimmed.starts_with("stratum+ws://") || trimmed.starts_with("stratum+wss://") {
+        bail!(
+            "websocket pool URLs are no longer supported; use host:port or stratum+tcp://host:port"
+        );
+    }
 
-    let (transport, rest) = if let Some(rest) = trimmed.strip_prefix("stratum+tcp://") {
-        (PoolTransport::Tcp, rest)
-    } else if let Some(rest) = trimmed.strip_prefix("stratum+ws://") {
-        (PoolTransport::Ws, rest)
-    } else if let Some(rest) = trimmed.strip_prefix("stratum+wss://") {
-        (PoolTransport::Wss, rest)
-    } else {
-        (PoolTransport::Tcp, trimmed)
-    };
+    let rest = trimmed.strip_prefix("stratum+tcp://").unwrap_or(trimmed);
     let authority = rest.split('/').next().unwrap_or(rest).trim();
     if authority.is_empty() {
         bail!("pool URL authority is empty");
@@ -1202,13 +1110,8 @@ fn parse_pool_endpoint(pool_url: &str) -> Result<PoolEndpoint> {
     if rest != authority {
         bail!("pool URL paths are not supported");
     }
-    let url = match transport {
-        PoolTransport::Tcp => format!("stratum+tcp://{authority}"),
-        PoolTransport::Ws => format!("stratum+ws://{authority}"),
-        PoolTransport::Wss => format!("stratum+wss://{authority}"),
-    };
+    let url = format!("stratum+tcp://{authority}");
     Ok(PoolEndpoint {
-        transport,
         authority: authority.to_string(),
         url,
     })
@@ -1868,24 +1771,20 @@ mod tests {
     }
 
     #[test]
-    fn parse_pool_endpoint_supports_websocket_schemes() {
+    fn parse_pool_endpoint_rejects_websocket_schemes() {
         let ws = parse_pool_endpoint("stratum+ws://pool.example.com:3334")
-            .expect("ws endpoint should parse");
-        assert_eq!(ws.transport, PoolTransport::Ws);
-        assert_eq!(ws.authority, "pool.example.com:3334");
-        assert_eq!(ws.display(), "stratum+ws://pool.example.com:3334");
+            .expect_err("ws endpoints should be rejected");
+        assert!(ws.to_string().contains("no longer supported"));
 
         let wss = parse_pool_endpoint("stratum+wss://pool.example.com:443")
-            .expect("wss endpoint should parse");
-        assert_eq!(wss.transport, PoolTransport::Wss);
-        assert_eq!(wss.authority, "pool.example.com:443");
-        assert_eq!(wss.display(), "stratum+wss://pool.example.com:443");
+            .expect_err("wss endpoints should be rejected");
+        assert!(wss.to_string().contains("no longer supported"));
     }
 
     #[test]
     fn parse_pool_endpoint_rejects_paths() {
-        let err = parse_pool_endpoint("stratum+ws://pool.example.com:3334/miner")
-            .expect_err("path-based websocket endpoints are out of scope");
+        let err = parse_pool_endpoint("stratum+tcp://pool.example.com:3334/miner")
+            .expect_err("path-based pool endpoints are out of scope");
         assert!(err.to_string().contains("paths are not supported"));
     }
 
