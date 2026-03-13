@@ -12,6 +12,7 @@ This log tracks CPU backend/hash-kernel tuning attempts and measured outcomes.
 ## Newest-first index
 
 - `Updated summary of cumulative adopted optimizations`
+- `2026-03-13 Zen 5 AVX-512 column gather/scatter + MaybeUninit`
 - `2026-03-09 Zen 5 hugepage reservation + AVX-512 vpermq retest`
 - `2026-03-09 Zen 5 (Ryzen 9 9950X3D) AVX-512 dispatch audit + native retest`
 - `2026-02-18 Apple Silicon superpage arena + pcore-only affinity trial`
@@ -64,6 +65,7 @@ Cumulative x86_64: from ~1.19 H/s (original) to ~2.34 H/s, **~97% total improvem
 |---------|--------|-------------|---------------|--------|
 | 48 | Compile AVX-512 x86 path into normal builds and keep runtime dispatch | +19.65% (1T kernel) | -0.28% at 16T backend (effectively flat) | Adopted |
 | 49 | `target-cpu=native` on top of the AVX-512-enabled build | +0.00% (1T kernel) | +0.71% at 16T backend | Recommended for host-local builds |
+| 51 | AVX-512 256-bit contiguous column gather/scatter + MaybeUninit q buffer | +1.5% (1T kernel) | memory-bound at 14T | Adopted |
 
 Zen 5 result: AVX-512 materially reduces per-hash compute cost, but once 16 CPU
 lanes are active the backend is mostly memory/hugepage limited on this host, so
@@ -119,6 +121,56 @@ Cumulative AArch64: from ~1.37 H/s (scalar) to ~2.73 H/s, **~99% total improveme
   roughly +6% at 16T native backend throughput, while a subsequent AVX-512
   diagonal-permute micro-tweak improved the 1T kernel by ~1% but regressed the
   16T native backend and was rejected.
+
+## 2026-03-13 Zen 5 AVX-512 column gather/scatter + MaybeUninit
+
+Host: AMD Ryzen 9 9950X3D, 16 cores / 32 threads, Linux x86_64, AVX-512F + AVX-512VL available.
+
+### Attempt 51 (Zen 5): 256-bit contiguous column gather/scatter + MaybeUninit q buffer (adopted)
+
+- **Hypothesis**: Two independent micro-optimizations to the AVX-512 compress functions:
+  1. **256-bit contiguous column gather/scatter**: Since each column pair has
+     `base_j = base_i + 2`, the two columns' 128-bit chunks are adjacent in memory
+     and can be loaded as a single 256-bit contiguous load. A `VSHUFI64X2` (imm8=0xD8)
+     swaps 128-bit chunks 1↔2 to convert between the contiguous memory layout and the
+     round's per-column register layout. This replaces 4×128-bit `VINSERTI32X4` gathers
+     with 2×256-bit loads + 1 shuffle, and 4×128-bit `VEXTRACTI32X4` + XOR + stores
+     with 1 shuffle + 2×256-bit XOR + stores. Net: ~160 fewer micro-ops per compress in
+     the column phase (352 → 192).
+  2. **MaybeUninit for q buffer**: The AVX-512 path zero-initialized a 1 KiB `PowBlock`
+     on the stack as the working buffer, but Phase 1 writes all 128 u64s via 512-bit
+     stores before any read. Switching to `MaybeUninit` (matching what the NEON path
+     already does) eliminates ~1 KiB of dead zero-writes per compress call (~2M calls
+     per hash).
+
+- **Changes**:
+  - `compress_avx512_into`: MaybeUninit for q, 256-bit gather/scatter with `VSHUFI64X2`.
+  - `compress_avx512_into_mid_prefetch`: Same changes, preserving the mid-compress
+    prefetch insertion point after column pair 0.
+  - Correctness: `fixed_kernel_matches_reference_for_small_memory_configs` passes.
+
+- **Kernel benchmark (1T, 15s, 3 rounds, 1 warmup)**:
+  - Baseline: avg=3.378 H/s, median=3.400 H/s
+    (`data/bench_baseline_kernel_1t.json`)
+  - Candidate: avg=3.444 H/s, median=3.467 H/s (short run)
+    (`data/bench_avx512_opt_kernel_1t.json`)
+  - Delta: **+1.97%** (short run)
+  - Long confirmation (20s, 5 rounds): avg=3.430 H/s, median=3.450 H/s → **+1.5%**
+    (`data/bench_avx512_opt_kernel_1t_long.json`)
+
+- **Backend benchmark (14T, 15s, 3 rounds, no HugeTLB)**:
+  - avg=7.674 H/s, median=7.690 H/s
+    (`data/bench_avx512_opt_backend_14t.json`)
+  - No same-config baseline available; multi-thread remains memory/TLB-bound as
+    expected from prior analysis.
+
+- **Conclusion**:
+  - +1.5% 1T kernel improvement is real and consistent across multiple runs.
+  - The column gather/scatter optimization contributes the bulk of the savings
+    (micro-op reduction in the hottest phase); MaybeUninit adds a small constant
+    savings from eliminating dead zero-writes.
+  - Multi-thread impact is negligible as expected — the memory wall dominates.
+  - Adopted: the change is pure upside with no downside risk.
 
 ## 2026-03-09 Zen 5 hugepage reservation + AVX-512 vpermq retest
 

@@ -1137,6 +1137,11 @@ unsafe fn compress_avx512(rhs: &PowBlock, lhs: &PowBlock) -> PowBlock {
 /// In-place AVX-512 block compression: processes two rows/columns per iteration
 /// using 512-bit registers, each holding two independent 4-element groups.
 ///
+/// Column gather/scatter uses 256-bit contiguous loads because each column pair
+/// (base_i, base_i+2) is adjacent in memory.  A single `vshufi64x2` converts
+/// between the contiguous memory layout and the round's per-column register
+/// layout, halving gather/scatter micro-ops vs the 4×128-bit insert path.
+///
 /// # Safety
 /// * Requires AVX-512F + AVX-512VL.
 /// * `dst` must not alias `rhs` or `lhs`.
@@ -1144,21 +1149,21 @@ unsafe fn compress_avx512(rhs: &PowBlock, lhs: &PowBlock) -> PowBlock {
 #[target_feature(enable = "avx512f,avx512vl")]
 unsafe fn compress_avx512_into(rhs: &PowBlock, lhs: &PowBlock, dst: &mut PowBlock) {
     use std::arch::x86_64::{
-        __m128i, __m256i, __m512i, _mm256_loadu_si256, _mm256_storeu_si256, _mm512_castsi128_si512,
-        _mm512_castsi256_si512, _mm512_castsi512_si128, _mm512_castsi512_si256,
-        _mm512_extracti32x4_epi32, _mm512_extracti64x4_epi64, _mm512_inserti32x4,
-        _mm512_inserti64x4, _mm512_loadu_si512, _mm512_storeu_si512, _mm512_xor_si512,
-        _mm_loadu_si128, _mm_storeu_si128, _mm_xor_si128,
+        __m256i, __m512i, _mm256_loadu_si256, _mm256_storeu_si256, _mm256_xor_si256,
+        _mm512_castsi256_si512, _mm512_castsi512_si256, _mm512_extracti64x4_epi64,
+        _mm512_inserti64x4, _mm512_loadu_si512, _mm512_shuffle_i64x2, _mm512_storeu_si512,
+        _mm512_xor_si512,
     };
 
     // q lives on the stack as the working buffer for round permutations.
     // dst doubles as the pre-round XOR backup (r), eliminating the second stack buffer.
-    let mut q = PowBlock::default();
+    // Use MaybeUninit — Phase 1 fully writes q before any reads.
+    let mut q = std::mem::MaybeUninit::<PowBlock>::uninit();
 
     let rhs_ptr = rhs.0.as_ptr();
     let lhs_ptr = lhs.0.as_ptr();
     let dst_ptr = dst.0.as_mut_ptr();
-    let q_ptr = q.0.as_mut_ptr();
+    let q_ptr = q.as_mut_ptr() as *mut u64;
 
     // Phase 1: XOR rhs ^ lhs → store to both dst (pre-round backup) and q (working copy).
     for vec_idx in 0..(PowBlock::SIZE / 64) {
@@ -1227,91 +1232,55 @@ unsafe fn compress_avx512_into(rhs: &PowBlock, lhs: &PowBlock, dst: &mut PowBloc
     }
 
     // Phase 3: Column rounds — process 2 columns per iteration via 512-bit registers.
-    // Each __m512i packs four 128-bit (2-u64) chunks: col_i from rows 0,1 + col_j from rows 0,1.
-    // The fused scatter+XOR writes results directly into dst, eliminating a separate Phase 4.
-    macro_rules! scatter_xor_quad {
-        ($vec:expr, $o0:expr, $o1:expr, $o2:expr, $o3:expr) => {{
-            let q0 = _mm512_castsi512_si128($vec);
-            let q1 = _mm512_extracti32x4_epi32::<1>($vec);
-            let q2 = _mm512_extracti32x4_epi32::<2>($vec);
-            let q3 = _mm512_extracti32x4_epi32::<3>($vec);
-            _mm_storeu_si128(
-                dst_ptr.add($o0) as *mut __m128i,
-                _mm_xor_si128(q0, _mm_loadu_si128(dst_ptr.add($o0) as *const __m128i)),
+    // Since base_j = base_i + 2, each column pair is contiguous at 256-bit granularity.
+    // Gather: 2 × 256-bit contiguous loads → inserti64x4 → vshufi64x2 to reach the
+    // round's [col_i_row0, col_i_row2, col_j_row0, col_j_row2] layout.
+    // Scatter: same vshufi64x2 back to contiguous → 2 × 256-bit XOR+store to dst.
+    // Swap 128-bit chunks 1↔2 to convert between contiguous and per-column layouts.
+    const DEINTERLEAVE: i32 = 0xD8;
+
+    macro_rules! gather_col_pair {
+        ($lo_off:expr, $hi_off:expr) => {{
+            let raw = _mm512_inserti64x4::<1>(
+                _mm512_castsi256_si512(_mm256_loadu_si256(
+                    q_ptr.add($lo_off) as *const __m256i,
+                )),
+                _mm256_loadu_si256(q_ptr.add($hi_off) as *const __m256i),
             );
-            _mm_storeu_si128(
-                dst_ptr.add($o1) as *mut __m128i,
-                _mm_xor_si128(q1, _mm_loadu_si128(dst_ptr.add($o1) as *const __m128i)),
+            _mm512_shuffle_i64x2::<DEINTERLEAVE>(raw, raw)
+        }};
+    }
+
+    macro_rules! scatter_xor_256 {
+        ($vec:expr, $lo_off:expr, $hi_off:expr) => {{
+            let contiguous = _mm512_shuffle_i64x2::<DEINTERLEAVE>($vec, $vec);
+            let lo = _mm512_castsi512_si256(contiguous);
+            let hi = _mm512_extracti64x4_epi64::<1>(contiguous);
+            _mm256_storeu_si256(
+                dst_ptr.add($lo_off) as *mut __m256i,
+                _mm256_xor_si256(lo, _mm256_loadu_si256(dst_ptr.add($lo_off) as *const __m256i)),
             );
-            _mm_storeu_si128(
-                dst_ptr.add($o2) as *mut __m128i,
-                _mm_xor_si128(q2, _mm_loadu_si128(dst_ptr.add($o2) as *const __m128i)),
-            );
-            _mm_storeu_si128(
-                dst_ptr.add($o3) as *mut __m128i,
-                _mm_xor_si128(q3, _mm_loadu_si128(dst_ptr.add($o3) as *const __m128i)),
+            _mm256_storeu_si256(
+                dst_ptr.add($hi_off) as *mut __m256i,
+                _mm256_xor_si256(hi, _mm256_loadu_si256(dst_ptr.add($hi_off) as *const __m256i)),
             );
         }};
     }
 
     for pair in 0..4 {
-        let base_i = pair * 4;
-        let base_j = pair * 4 + 2;
+        let base = pair * 4; // base_i; base_j = base + 2 is implicit in 256-bit loads
 
-        // Gather: 4 × 128-bit loads per register (col_i rows 0,1 + col_j rows 0,1).
-        let mut a = _mm512_inserti32x4::<3>(
-            _mm512_inserti32x4::<2>(
-                _mm512_inserti32x4::<1>(
-                    _mm512_castsi128_si512(_mm_loadu_si128(q_ptr.add(base_i) as *const __m128i)),
-                    _mm_loadu_si128(q_ptr.add(base_i + 16) as *const __m128i),
-                ),
-                _mm_loadu_si128(q_ptr.add(base_j) as *const __m128i),
-            ),
-            _mm_loadu_si128(q_ptr.add(base_j + 16) as *const __m128i),
-        );
-        let mut b = _mm512_inserti32x4::<3>(
-            _mm512_inserti32x4::<2>(
-                _mm512_inserti32x4::<1>(
-                    _mm512_castsi128_si512(_mm_loadu_si128(
-                        q_ptr.add(base_i + 32) as *const __m128i
-                    )),
-                    _mm_loadu_si128(q_ptr.add(base_i + 48) as *const __m128i),
-                ),
-                _mm_loadu_si128(q_ptr.add(base_j + 32) as *const __m128i),
-            ),
-            _mm_loadu_si128(q_ptr.add(base_j + 48) as *const __m128i),
-        );
-        let mut c = _mm512_inserti32x4::<3>(
-            _mm512_inserti32x4::<2>(
-                _mm512_inserti32x4::<1>(
-                    _mm512_castsi128_si512(_mm_loadu_si128(
-                        q_ptr.add(base_i + 64) as *const __m128i
-                    )),
-                    _mm_loadu_si128(q_ptr.add(base_i + 80) as *const __m128i),
-                ),
-                _mm_loadu_si128(q_ptr.add(base_j + 64) as *const __m128i),
-            ),
-            _mm_loadu_si128(q_ptr.add(base_j + 80) as *const __m128i),
-        );
-        let mut d = _mm512_inserti32x4::<3>(
-            _mm512_inserti32x4::<2>(
-                _mm512_inserti32x4::<1>(
-                    _mm512_castsi128_si512(_mm_loadu_si128(
-                        q_ptr.add(base_i + 96) as *const __m128i
-                    )),
-                    _mm_loadu_si128(q_ptr.add(base_i + 112) as *const __m128i),
-                ),
-                _mm_loadu_si128(q_ptr.add(base_j + 96) as *const __m128i),
-            ),
-            _mm_loadu_si128(q_ptr.add(base_j + 112) as *const __m128i),
-        );
+        let mut a = gather_col_pair!(base, base + 16);
+        let mut b = gather_col_pair!(base + 32, base + 48);
+        let mut c = gather_col_pair!(base + 64, base + 80);
+        let mut d = gather_col_pair!(base + 96, base + 112);
 
         avx512_round(&mut a, &mut b, &mut c, &mut d);
 
-        scatter_xor_quad!(a, base_i, base_i + 16, base_j, base_j + 16);
-        scatter_xor_quad!(b, base_i + 32, base_i + 48, base_j + 32, base_j + 48);
-        scatter_xor_quad!(c, base_i + 64, base_i + 80, base_j + 64, base_j + 80);
-        scatter_xor_quad!(d, base_i + 96, base_i + 112, base_j + 96, base_j + 112);
+        scatter_xor_256!(a, base, base + 16);
+        scatter_xor_256!(b, base + 32, base + 48);
+        scatter_xor_256!(c, base + 64, base + 80);
+        scatter_xor_256!(d, base + 96, base + 112);
     }
     // No Phase 4 needed — final XOR was fused into the column scatter above.
 }
@@ -1321,6 +1290,8 @@ unsafe fn compress_avx512_into(rhs: &PowBlock, lhs: &PowBlock, dst: &mut PowBloc
 /// that value, computes the next iteration's ref_index, and prefetches the
 /// target block.  The remaining 3 column pairs (~6 column rounds of compute)
 /// overlap with the DRAM fetch.
+///
+/// Uses the same 256-bit contiguous gather/scatter as `compress_avx512_into`.
 ///
 /// # Safety
 /// * Requires AVX-512F + AVX-512VL.
@@ -1336,19 +1307,19 @@ unsafe fn compress_avx512_into_mid_prefetch(
     memory_blocks_base: *const PowBlock,
 ) {
     use std::arch::x86_64::{
-        __m128i, __m256i, __m512i, _mm256_loadu_si256, _mm256_storeu_si256, _mm512_castsi128_si512,
-        _mm512_castsi256_si512, _mm512_castsi512_si128, _mm512_castsi512_si256,
-        _mm512_extracti32x4_epi32, _mm512_extracti64x4_epi64, _mm512_inserti32x4,
-        _mm512_inserti64x4, _mm512_loadu_si512, _mm512_storeu_si512, _mm512_xor_si512,
-        _mm_loadu_si128, _mm_storeu_si128, _mm_xor_si128,
+        __m256i, __m512i, _mm256_loadu_si256, _mm256_storeu_si256, _mm256_xor_si256,
+        _mm512_castsi256_si512, _mm512_castsi512_si256, _mm512_extracti64x4_epi64,
+        _mm512_inserti64x4, _mm512_loadu_si512, _mm512_shuffle_i64x2, _mm512_storeu_si512,
+        _mm512_xor_si512,
     };
 
-    let mut q = PowBlock::default();
+    // Use MaybeUninit — Phase 1 fully writes q before any reads.
+    let mut q = std::mem::MaybeUninit::<PowBlock>::uninit();
 
     let rhs_ptr = rhs.0.as_ptr();
     let lhs_ptr = lhs.0.as_ptr();
     let dst_ptr = dst.0.as_mut_ptr();
-    let q_ptr = q.0.as_mut_ptr();
+    let q_ptr = q.as_mut_ptr() as *mut u64;
 
     // Phase 1: XOR rhs ^ lhs → store to both dst (pre-round backup) and q (working copy).
     for vec_idx in 0..(PowBlock::SIZE / 64) {
@@ -1415,90 +1386,52 @@ unsafe fn compress_avx512_into_mid_prefetch(
         );
     }
 
-    // Scatter-XOR macro shared by all column rounds.
-    macro_rules! scatter_xor_quad {
-        ($vec:expr, $o0:expr, $o1:expr, $o2:expr, $o3:expr) => {{
-            let q0 = _mm512_castsi512_si128($vec);
-            let q1 = _mm512_extracti32x4_epi32::<1>($vec);
-            let q2 = _mm512_extracti32x4_epi32::<2>($vec);
-            let q3 = _mm512_extracti32x4_epi32::<3>($vec);
-            _mm_storeu_si128(
-                dst_ptr.add($o0) as *mut __m128i,
-                _mm_xor_si128(q0, _mm_loadu_si128(dst_ptr.add($o0) as *const __m128i)),
+    // Column gather/scatter helpers (same as compress_avx512_into).
+    const DEINTERLEAVE: i32 = 0xD8;
+
+    macro_rules! gather_col_pair {
+        ($lo_off:expr, $hi_off:expr) => {{
+            let raw = _mm512_inserti64x4::<1>(
+                _mm512_castsi256_si512(_mm256_loadu_si256(
+                    q_ptr.add($lo_off) as *const __m256i,
+                )),
+                _mm256_loadu_si256(q_ptr.add($hi_off) as *const __m256i),
             );
-            _mm_storeu_si128(
-                dst_ptr.add($o1) as *mut __m128i,
-                _mm_xor_si128(q1, _mm_loadu_si128(dst_ptr.add($o1) as *const __m128i)),
+            _mm512_shuffle_i64x2::<DEINTERLEAVE>(raw, raw)
+        }};
+    }
+
+    macro_rules! scatter_xor_256 {
+        ($vec:expr, $lo_off:expr, $hi_off:expr) => {{
+            let contiguous = _mm512_shuffle_i64x2::<DEINTERLEAVE>($vec, $vec);
+            let lo = _mm512_castsi512_si256(contiguous);
+            let hi = _mm512_extracti64x4_epi64::<1>(contiguous);
+            _mm256_storeu_si256(
+                dst_ptr.add($lo_off) as *mut __m256i,
+                _mm256_xor_si256(lo, _mm256_loadu_si256(dst_ptr.add($lo_off) as *const __m256i)),
             );
-            _mm_storeu_si128(
-                dst_ptr.add($o2) as *mut __m128i,
-                _mm_xor_si128(q2, _mm_loadu_si128(dst_ptr.add($o2) as *const __m128i)),
-            );
-            _mm_storeu_si128(
-                dst_ptr.add($o3) as *mut __m128i,
-                _mm_xor_si128(q3, _mm_loadu_si128(dst_ptr.add($o3) as *const __m128i)),
+            _mm256_storeu_si256(
+                dst_ptr.add($hi_off) as *mut __m256i,
+                _mm256_xor_si256(hi, _mm256_loadu_si256(dst_ptr.add($hi_off) as *const __m256i)),
             );
         }};
     }
 
     // Phase 3a: Column pair 0 (columns 0+1) — writes dst[0] to its final value.
     {
-        let base_i = 0;
-        let base_j = 2;
+        let base = 0;
 
-        let mut a = _mm512_inserti32x4::<3>(
-            _mm512_inserti32x4::<2>(
-                _mm512_inserti32x4::<1>(
-                    _mm512_castsi128_si512(_mm_loadu_si128(q_ptr.add(base_i) as *const __m128i)),
-                    _mm_loadu_si128(q_ptr.add(base_i + 16) as *const __m128i),
-                ),
-                _mm_loadu_si128(q_ptr.add(base_j) as *const __m128i),
-            ),
-            _mm_loadu_si128(q_ptr.add(base_j + 16) as *const __m128i),
-        );
-        let mut b = _mm512_inserti32x4::<3>(
-            _mm512_inserti32x4::<2>(
-                _mm512_inserti32x4::<1>(
-                    _mm512_castsi128_si512(_mm_loadu_si128(
-                        q_ptr.add(base_i + 32) as *const __m128i
-                    )),
-                    _mm_loadu_si128(q_ptr.add(base_i + 48) as *const __m128i),
-                ),
-                _mm_loadu_si128(q_ptr.add(base_j + 32) as *const __m128i),
-            ),
-            _mm_loadu_si128(q_ptr.add(base_j + 48) as *const __m128i),
-        );
-        let mut c = _mm512_inserti32x4::<3>(
-            _mm512_inserti32x4::<2>(
-                _mm512_inserti32x4::<1>(
-                    _mm512_castsi128_si512(_mm_loadu_si128(
-                        q_ptr.add(base_i + 64) as *const __m128i
-                    )),
-                    _mm_loadu_si128(q_ptr.add(base_i + 80) as *const __m128i),
-                ),
-                _mm_loadu_si128(q_ptr.add(base_j + 64) as *const __m128i),
-            ),
-            _mm_loadu_si128(q_ptr.add(base_j + 80) as *const __m128i),
-        );
-        let mut d = _mm512_inserti32x4::<3>(
-            _mm512_inserti32x4::<2>(
-                _mm512_inserti32x4::<1>(
-                    _mm512_castsi128_si512(_mm_loadu_si128(
-                        q_ptr.add(base_i + 96) as *const __m128i
-                    )),
-                    _mm_loadu_si128(q_ptr.add(base_i + 112) as *const __m128i),
-                ),
-                _mm_loadu_si128(q_ptr.add(base_j + 96) as *const __m128i),
-            ),
-            _mm_loadu_si128(q_ptr.add(base_j + 112) as *const __m128i),
-        );
+        let mut a = gather_col_pair!(base, base + 16);
+        let mut b = gather_col_pair!(base + 32, base + 48);
+        let mut c = gather_col_pair!(base + 64, base + 80);
+        let mut d = gather_col_pair!(base + 96, base + 112);
 
         avx512_round(&mut a, &mut b, &mut c, &mut d);
 
-        scatter_xor_quad!(a, base_i, base_i + 16, base_j, base_j + 16);
-        scatter_xor_quad!(b, base_i + 32, base_i + 48, base_j + 32, base_j + 48);
-        scatter_xor_quad!(c, base_i + 64, base_i + 80, base_j + 64, base_j + 80);
-        scatter_xor_quad!(d, base_i + 96, base_i + 112, base_j + 96, base_j + 112);
+        scatter_xor_256!(a, base, base + 16);
+        scatter_xor_256!(b, base + 32, base + 48);
+        scatter_xor_256!(c, base + 64, base + 80);
+        scatter_xor_256!(d, base + 96, base + 112);
     }
 
     // --- Mid-compress prefetch ---
@@ -1513,62 +1446,19 @@ unsafe fn compress_avx512_into_mid_prefetch(
 
     // Phase 3b: Column pairs 1-3 (columns 2-7).
     for pair in 1..4 {
-        let base_i = pair * 4;
-        let base_j = pair * 4 + 2;
+        let base = pair * 4;
 
-        let mut a = _mm512_inserti32x4::<3>(
-            _mm512_inserti32x4::<2>(
-                _mm512_inserti32x4::<1>(
-                    _mm512_castsi128_si512(_mm_loadu_si128(q_ptr.add(base_i) as *const __m128i)),
-                    _mm_loadu_si128(q_ptr.add(base_i + 16) as *const __m128i),
-                ),
-                _mm_loadu_si128(q_ptr.add(base_j) as *const __m128i),
-            ),
-            _mm_loadu_si128(q_ptr.add(base_j + 16) as *const __m128i),
-        );
-        let mut b = _mm512_inserti32x4::<3>(
-            _mm512_inserti32x4::<2>(
-                _mm512_inserti32x4::<1>(
-                    _mm512_castsi128_si512(_mm_loadu_si128(
-                        q_ptr.add(base_i + 32) as *const __m128i
-                    )),
-                    _mm_loadu_si128(q_ptr.add(base_i + 48) as *const __m128i),
-                ),
-                _mm_loadu_si128(q_ptr.add(base_j + 32) as *const __m128i),
-            ),
-            _mm_loadu_si128(q_ptr.add(base_j + 48) as *const __m128i),
-        );
-        let mut c = _mm512_inserti32x4::<3>(
-            _mm512_inserti32x4::<2>(
-                _mm512_inserti32x4::<1>(
-                    _mm512_castsi128_si512(_mm_loadu_si128(
-                        q_ptr.add(base_i + 64) as *const __m128i
-                    )),
-                    _mm_loadu_si128(q_ptr.add(base_i + 80) as *const __m128i),
-                ),
-                _mm_loadu_si128(q_ptr.add(base_j + 64) as *const __m128i),
-            ),
-            _mm_loadu_si128(q_ptr.add(base_j + 80) as *const __m128i),
-        );
-        let mut d = _mm512_inserti32x4::<3>(
-            _mm512_inserti32x4::<2>(
-                _mm512_inserti32x4::<1>(
-                    _mm512_castsi128_si512(_mm_loadu_si128(
-                        q_ptr.add(base_i + 96) as *const __m128i
-                    )),
-                    _mm_loadu_si128(q_ptr.add(base_i + 112) as *const __m128i),
-                ),
-                _mm_loadu_si128(q_ptr.add(base_j + 96) as *const __m128i),
-            ),
-            _mm_loadu_si128(q_ptr.add(base_j + 112) as *const __m128i),
-        );
+        let mut a = gather_col_pair!(base, base + 16);
+        let mut b = gather_col_pair!(base + 32, base + 48);
+        let mut c = gather_col_pair!(base + 64, base + 80);
+        let mut d = gather_col_pair!(base + 96, base + 112);
 
         avx512_round(&mut a, &mut b, &mut c, &mut d);
 
-        scatter_xor_quad!(a, base_i, base_i + 16, base_j, base_j + 16);
-        scatter_xor_quad!(b, base_i + 32, base_i + 48, base_j + 32, base_j + 48);
-        scatter_xor_quad!(c, base_i + 64, base_i + 80, base_j + 64, base_j + 80);
-        scatter_xor_quad!(d, base_i + 96, base_i + 112, base_j + 96, base_j + 112);
+        scatter_xor_256!(a, base, base + 16);
+        scatter_xor_256!(b, base + 32, base + 48);
+        scatter_xor_256!(c, base + 64, base + 80);
+        scatter_xor_256!(d, base + 96, base + 112);
     }
 }
 
