@@ -1,7 +1,6 @@
-#[path = "../../src/backend/cpu/fixed_argon.rs"]
-mod fixed_argon_impl;
+mod fixed_argon;
 
-pub use fixed_argon_impl::{
+pub use fixed_argon::{
     active_isa_label, compiled_isa_variants, Error, FixedArgon2id, PowBlock, Result,
 };
 
