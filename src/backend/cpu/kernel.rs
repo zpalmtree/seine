@@ -333,15 +333,9 @@ mod tests {
             stop_at: Instant::now() + Duration::from_secs(1),
         };
 
-        let disposition = handle_found_solution(
-            &backend.shared,
-            &template,
-            0,
-            0,
-            42,
-            [0xAB; POW_OUTPUT_LEN],
-        )
-        .expect("non-terminal solution handling should succeed");
+        let disposition =
+            handle_found_solution(&backend.shared, &template, 0, 0, 42, [0xAB; POW_OUTPUT_LEN])
+                .expect("non-terminal solution handling should succeed");
 
         assert_eq!(disposition, SolutionDisposition::Continue);
         assert_eq!(backend.shared.solution_state.load(Ordering::Acquire), 7);

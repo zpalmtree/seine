@@ -1,12 +1,14 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Result};
 use crossbeam_channel::{unbounded, Receiver};
-use reqwest::blocking::Client as HttpClient;
+use reqwest::blocking::{Client as HttpClient, Response as HttpResponse};
+use reqwest::header::RETRY_AFTER;
+use reqwest::StatusCode;
 use serde_json::Value;
 
 use crate::backend::{DynamicShareTarget, MiningSolution, ShareBindingId};
@@ -97,6 +99,7 @@ struct PoolConnectionConfig {
 struct PoolUiTelemetryClient {
     endpoints: Vec<PoolTelemetryEndpoint>,
     http: HttpClient,
+    rate_limit_backoff_until: Arc<Mutex<Option<Instant>>>,
 }
 
 #[derive(Debug)]
@@ -292,11 +295,7 @@ impl ActivePoolJob {
         self.share_bindings.get(&share_binding_id)
     }
 
-    fn register_share_binding(
-        &mut self,
-        job_id: String,
-        target: [u8; 32],
-    ) -> ShareBindingId {
+    fn register_share_binding(&mut self, job_id: String, target: [u8; 32]) -> ShareBindingId {
         let share_binding_id = self.next_share_binding_id.max(1);
         self.next_share_binding_id = share_binding_id.saturating_add(1);
         self.share_bindings
@@ -371,7 +370,10 @@ fn rebind_active_pool_job(
     }
     info(
         "JOB",
-        format!("updated job height={} difficulty={difficulty_label}", job.height),
+        format!(
+            "updated job height={} difficulty={difficulty_label}",
+            job.height
+        ),
     );
 }
 
@@ -1542,7 +1544,9 @@ fn handle_active_pool_event(
                 ack.job_id.as_str(),
                 ack.nonce,
                 ack_for_current_job,
-                active_job.as_mut().map(|job| &mut job.pending_submit_nonces),
+                active_job
+                    .as_mut()
+                    .map(|job| &mut job.pending_submit_nonces),
                 recent_submit_lookup,
             );
             let mut desync_reason = None::<String>;
@@ -1781,7 +1785,9 @@ fn handle_inactive_pool_event(
                 ack.job_id.as_str(),
                 ack.nonce,
                 ack_for_current_job,
-                inactive_job.as_mut().map(|job| &mut job.pending_submit_nonces),
+                inactive_job
+                    .as_mut()
+                    .map(|job| &mut job.pending_submit_nonces),
                 recent_submit_lookup,
             );
             if ack.accepted {
@@ -1984,7 +1990,13 @@ fn assign_pool_job(
         .difficulty
         .map(|difficulty| difficulty.to_string())
         .unwrap_or_else(|| "unknown".to_string());
-    *active_job = Some(ActivePoolJob::new(job, 0, header_base, target, network_target));
+    *active_job = Some(ActivePoolJob::new(
+        job,
+        0,
+        header_base,
+        target,
+        network_target,
+    ));
 
     if mode.is_user() {
         info(
@@ -2190,7 +2202,9 @@ fn service_pool_submit_backlog(
         mode,
         job,
         stats,
-        |job_id, nonce, claimed_hash| pool_client.submit_share(job_id.to_string(), nonce, claimed_hash),
+        |job_id, nonce, claimed_hash| {
+            pool_client.submit_share(job_id.to_string(), nonce, claimed_hash)
+        },
         recent_submit_lookup,
     );
 }
@@ -2295,7 +2309,11 @@ where
             stats.add_dropped(1);
             continue;
         };
-        match submitter(binding.job_id.as_str(), deferred.nonce, deferred.claimed_hash) {
+        match submitter(
+            binding.job_id.as_str(),
+            deferred.nonce,
+            deferred.claimed_hash,
+        ) {
             Ok(()) => {
                 job.pending_submit_nonces.insert(
                     (binding.job_id.clone(), deferred.nonce),
@@ -2457,20 +2475,30 @@ impl PoolUiTelemetryClient {
                 miner_url: format!("{base_url}/api/miner/{address}?include_pending_estimate=false"),
             })
             .collect::<Vec<_>>();
-        Some(Self { endpoints, http })
+        Some(Self {
+            endpoints,
+            http,
+            rate_limit_backoff_until: Arc::new(Mutex::new(None)),
+        })
     }
 
     fn fetch_pool_hashrate(&self) -> Result<String> {
+        self.fail_if_rate_limited()?;
         let mut errors = Vec::new();
         for endpoint in &self.endpoints {
-            let body: Value = match self
-                .http
-                .get(&endpoint.stats_url)
-                .send()
-                .and_then(|resp| resp.json())
-            {
+            let response = match self.http.get(&endpoint.stats_url).send() {
+                Ok(response) => response,
+                Err(err) => {
+                    errors.push(format!("GET {} failed: {err}", endpoint.stats_url));
+                    continue;
+                }
+            };
+            let body: Value = match self.json_or_rate_limit(response, &endpoint.stats_url) {
                 Ok(body) => body,
                 Err(err) => {
+                    if self.is_rate_limited() {
+                        return Err(err);
+                    }
                     errors.push(format!("GET {} failed: {err}", endpoint.stats_url));
                     continue;
                 }
@@ -2502,27 +2530,92 @@ impl PoolUiTelemetryClient {
     }
 
     fn fetch_pool_balances(&self) -> Result<(String, String)> {
+        self.fail_if_rate_limited()?;
         let mut errors = Vec::new();
         for endpoint in &self.endpoints {
             match self.fetch_balance_from_url(&endpoint.miner_balance_url) {
                 Ok(value) => return Ok(value),
-                Err(err) => errors.push(format!(
-                    "GET {} failed: {err:#}",
-                    endpoint.miner_balance_url
-                )),
+                Err(err) => {
+                    if self.is_rate_limited() {
+                        return Err(err);
+                    }
+                    errors.push(format!(
+                        "GET {} failed: {err:#}",
+                        endpoint.miner_balance_url
+                    ));
+                }
             }
 
             match self.fetch_balance_from_url(&endpoint.miner_url) {
                 Ok(value) => return Ok(value),
-                Err(err) => errors.push(format!("GET {} failed: {err:#}", endpoint.miner_url)),
+                Err(err) => {
+                    if self.is_rate_limited() {
+                        return Err(err);
+                    }
+                    errors.push(format!("GET {} failed: {err:#}", endpoint.miner_url));
+                }
             }
         }
 
         bail!("pool balance telemetry unavailable: {}", errors.join("; "))
     }
 
+    fn fail_if_rate_limited(&self) -> Result<()> {
+        let Some(remaining) = self.rate_limit_backoff_remaining() else {
+            return Ok(());
+        };
+        let secs = remaining.as_secs().max(1);
+        bail!("pool telemetry temporarily rate limited; retry in {secs}s")
+    }
+
+    fn is_rate_limited(&self) -> bool {
+        self.rate_limit_backoff_remaining().is_some()
+    }
+
+    fn rate_limit_backoff_remaining(&self) -> Option<Duration> {
+        let now = Instant::now();
+        let mut backoff = self
+            .rate_limit_backoff_until
+            .lock()
+            .expect("telemetry rate-limit lock should not be poisoned");
+        match *backoff {
+            Some(until) if until > now => Some(until.saturating_duration_since(now)),
+            Some(_) => {
+                *backoff = None;
+                None
+            }
+            None => None,
+        }
+    }
+
+    fn json_or_rate_limit(&self, response: HttpResponse, url: &str) -> Result<Value> {
+        if response.status() == StatusCode::TOO_MANY_REQUESTS {
+            let retry_after = telemetry_retry_after(&response);
+            self.record_rate_limit_backoff(retry_after);
+            let secs = retry_after
+                .unwrap_or(POOL_TELEMETRY_REFRESH_INTERVAL)
+                .as_secs()
+                .max(1);
+            bail!("GET {url} rate limited; retry in {secs}s");
+        }
+        let response = response.error_for_status()?;
+        Ok(response.json()?)
+    }
+
+    fn record_rate_limit_backoff(&self, retry_after: Option<Duration>) {
+        let until = Instant::now() + retry_after.unwrap_or(POOL_TELEMETRY_REFRESH_INTERVAL);
+        let mut backoff = self
+            .rate_limit_backoff_until
+            .lock()
+            .expect("telemetry rate-limit lock should not be poisoned");
+        if backoff.is_none_or(|current| current < until) {
+            *backoff = Some(until);
+        }
+    }
+
     fn fetch_balance_from_url(&self, url: &str) -> Result<(String, String)> {
-        let body: Value = self.http.get(url).send().and_then(|resp| resp.json())?;
+        let response = self.http.get(url).send()?;
+        let body = self.json_or_rate_limit(response, url)?;
         let pending = body
             .pointer("/balance/pending_confirmed")
             .and_then(Value::as_u64)
@@ -2536,6 +2629,15 @@ impl PoolUiTelemetryClient {
             format_atomic_units_bnt(paid),
         ))
     }
+}
+
+fn telemetry_retry_after(response: &HttpResponse) -> Option<Duration> {
+    response
+        .headers()
+        .get(RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .map(Duration::from_secs)
 }
 
 fn fetch_local_daemon_wallet_snapshot(
@@ -2757,8 +2859,7 @@ mod tests {
                     .to_string(),
                 difficulty: Some(1),
                 network_target: Some(
-                    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
-                        .to_string(),
+                    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff".to_string(),
                 ),
                 height: 1,
                 nonce_start: 0,
@@ -2824,6 +2925,52 @@ mod tests {
             client.endpoints[0].miner_url,
             "https://bntpool.com/api/miner/addr?include_pending_estimate=false"
         );
+    }
+
+    #[test]
+    fn telemetry_balance_fetch_stops_after_rate_limit() {
+        let server = MockServer::start();
+        let balance_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/api/miner/addr/balance")
+                .query_param("include_pending_estimate", "false");
+            then.status(429)
+                .header("retry-after", "5")
+                .json_body(json!({ "error": "rate limit exceeded" }));
+        });
+        let fallback_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/api/miner/addr")
+                .query_param("include_pending_estimate", "false");
+            then.status(200).json_body(json!({
+                "balance": {
+                    "pending_confirmed": 1u64,
+                    "paid": 2u64
+                }
+            }));
+        });
+
+        let client = PoolUiTelemetryClient::new(server.url("").trim_end_matches('/'), "addr")
+            .expect("telemetry client should be created");
+        let err = client
+            .fetch_pool_balances()
+            .expect_err("rate-limited balance fetch should fail");
+
+        assert!(err.to_string().contains("rate limited"));
+        assert!(client.rate_limit_backoff_remaining().is_some());
+        balance_mock.assert_hits(1);
+        fallback_mock.assert_hits(0);
+    }
+
+    #[test]
+    fn telemetry_rate_limit_backoff_expires() {
+        let client = PoolUiTelemetryClient::new("stratum+tcp://bntpool.com:3333", "addr")
+            .expect("telemetry client should be created");
+
+        client.record_rate_limit_backoff(Some(Duration::from_millis(5)));
+        assert!(client.rate_limit_backoff_remaining().is_some());
+        std::thread::sleep(Duration::from_millis(10));
+        assert!(client.rate_limit_backoff_remaining().is_none());
     }
 
     #[test]
