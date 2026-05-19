@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "nvidia")]
 use std::process::Command;
 
+use crate::address::validate_mining_address;
 use crate::user_config::{
     read_user_config, write_user_config, UserConfig, USER_CONFIG_SCHEMA_VERSION,
 };
@@ -767,6 +768,7 @@ impl Config {
             if should_prompt_for_pool_bootstrap {
                 resolve_first_run_pool_inputs(&mut cli, &user_config_path)?;
             }
+            validate_cli_mining_address(&cli, "--address")?;
             if dev_fee_pool_worker.is_none() {
                 dev_fee_pool_worker = Some(generate_default_dev_fee_pool_worker());
             }
@@ -810,6 +812,8 @@ impl Config {
             if mining_address.trim().is_empty() {
                 bail!("--address is empty");
             }
+            validate_mining_address(mining_address)
+                .map_err(|err| anyhow::anyhow!("invalid --address: {err}"))?;
         }
         if let Some(pool_url) = cli.pool_url.as_ref() {
             if normalize_pool_url(pool_url).is_none() {
@@ -2105,6 +2109,17 @@ fn ensure_pool_mode_inputs_available(cli: &Cli, user_config_path: &Path) -> Resu
              Pass --pool-url (host:port or stratum+tcp://host:port) or edit {}.",
             user_config_path.display()
         );
+    }
+    Ok(())
+}
+
+fn validate_cli_mining_address(cli: &Cli, label: &str) -> Result<()> {
+    if let Some(address) = cli.mining_address.as_ref() {
+        if address.trim().is_empty() {
+            bail!("{label} is empty");
+        }
+        validate_mining_address(address)
+            .map_err(|err| anyhow::anyhow!("invalid {label}: {err}"))?;
     }
     Ok(())
 }
