@@ -1,3 +1,4 @@
+mod address;
 mod backend;
 mod config;
 mod control_api;
