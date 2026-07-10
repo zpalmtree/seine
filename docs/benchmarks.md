@@ -39,6 +39,10 @@ python3 scripts/benchctl.py compare \
   --json-output data/cpu-comparison.json
 ```
 
+For CPU lane-count comparisons, pass `--baseline-threads` and
+`--candidate-threads` to `bench_cpu_ab.sh`. `--threads` remains the shared
+default when either variant-specific value is omitted.
+
 The comparison rejects missing, duplicate, non-positive, malformed, or
 unpaired rows. Three complete pairs are required by default; change this only
 with `--min-pairs`. It reports:

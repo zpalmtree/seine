@@ -186,6 +186,26 @@ explicitly use `--threads 16 --cpu-affinity auto` for the highest observed rate,
 but it trades another ~5.7% over the paired 14-lane baseline for substantial OS
 memory pressure.
 
+### 15-lane follow-up (not recommended)
+
+The missing point between the balanced 14-lane setting and the pressured
+16-lane maximum was measured at commit `90a57da` with the CPU-only release build.
+Three alternating `pcore-only` pairs used one 15-second warmup plus two measured
+15-second rounds per leg and ten-second cooldowns:
+
+- 14 lanes: `29.1262 H/s` arithmetic mean.
+- 15 lanes: `29.4098 H/s` arithmetic mean.
+- Paired geometric delta: **+0.968%** (95% bootstrap CI **-0.465% to +2.086%**),
+  with two of three pairs faster.
+- Swap used increased by `951,383,491` bytes (`907.31 MiB`) over the wrapped
+  sequence, and macOS expanded total swap by exactly `1 GiB`.
+
+The gain is small, uncertain, and costs measurable swap activity, so 15 lanes is
+not a worthwhile operating point. Retain 14 lanes for balanced use and reserve
+16 lanes for an explicit maximum-throughput choice. The CPU A/B harness now
+accepts separate `--baseline-threads` and `--candidate-threads` values so future
+lane-count comparisons remain interleaved and reproducible.
+
 Semantic correction: `core_affinity` on macOS maps its values to Mach
 `THREAD_AFFINITY_POLICY` tags, not hard logical CPU IDs. `pcore-only` limits the
 tag set using the perflevel0 count and combines that with a high-QoS scheduler
