@@ -118,8 +118,9 @@ Run deterministic local benchmarking (no API connection needed):
 - `--bench-kind kernel`: hash kernel only (single backend).
 - `--bench-kind kernel-effective`: kernel path with wall-time accounting and target/eval enabled (single backend), useful for isolating backend orchestration overhead.
 - `--bench-kind backend`: persistent backend workers (steady-state throughput).
-- `--bench-kind end-to-end`: includes backend start/stop per round.
-- Kernel benchmarks report both `elapsed` (steady benchmark window, from `--bench-secs`) and `wall` (full runtime including startup/teardown) per round.
+- `--bench-kind end-to-end`: lifecycle throughput including backend start, measured work/fence, and backend teardown per round.
+- With `--bench-warmup-rounds 0`, the first end-to-end round includes cold backend initialization such as autotune and NVRTC/cache loading; warmups intentionally consume that cold-start cost before measured rounds.
+- Kernel benchmarks calculate H/s from actual elapsed time (including completed-batch overrun), not the configured duration. Reports retain configured, actual, overrun, and wall timing per round.
 - Worker benchmarks always apply a round-end measurement fence so round H/s is comparable across strict/relaxed accounting modes.
   - Worker benchmarks now honor `--work-allocation` (`adaptive`/`static`) so scheduler tuning can be measured without mining mode.
   - Benchmark reports now expose `counted_hashes`, `late_hashes`, and `late_hash_pct` per round plus aggregate late-hash accounting in the summary; throughput uses measured elapsed + fence time to avoid inflation when backend preemption is coarse.
@@ -207,11 +208,11 @@ Run interleaved baseline/candidate NVIDIA benchmarks with cooldown gaps to reduc
   --cooldown-secs 20 \
   --nvidia-devices 0 \
   --nvidia-max-rregcount 208 \
-  --nvidia-hashes-per-launch-per-lane 2 \
   --profile release
 ```
 
 Output goes to `data/bench_nvidia_ab_<kind>_<timestamp>/` and includes:
 - `results.tsv` with per-run benchmark metrics plus GPU start/end snapshots (`temp/sm_clock/mem_clock/power/util`).
 - `summary.txt` with baseline/candidate means, percent delta, and averaged late-hash percentage.
+- Launch depth is omitted by default so both variants exercise their shipping defaults (including Blackwell's implicit depth handling); pass `--nvidia-hashes-per-launch-per-lane` only for an explicit depth experiment.
 - Optional: use `--nvidia-fused-target-check`, `--nvidia-no-adaptive-launch-depth`, and trailing `-- <extra miner args>` for controlled A/B sweeps.

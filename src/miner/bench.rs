@@ -101,7 +101,20 @@ struct BenchRun {
     late_hashes: u64,
     #[serde(default)]
     late_hash_pct: f64,
+    /// Backward-compatible rate denominator. See `actual_elapsed_secs` and `wall_secs`.
     elapsed_secs: f64,
+    #[serde(default)]
+    configured_secs: f64,
+    #[serde(default)]
+    actual_elapsed_secs: f64,
+    #[serde(default)]
+    window_overrun_secs: f64,
+    #[serde(default)]
+    wall_secs: f64,
+    #[serde(default)]
+    startup_secs: f64,
+    #[serde(default)]
+    teardown_secs: f64,
     #[serde(default)]
     fence_secs: f64,
     hps: f64,
@@ -176,6 +189,7 @@ struct BenchConfigFingerprint {
     nvidia_dispatch_iters_per_lane: Option<u64>,
     nvidia_allocation_iters_per_lane: Option<u64>,
     nvidia_hashes_per_launch_per_lane: u32,
+    nvidia_hashes_per_launch_per_lane_was_set: bool,
     nvidia_fused_target_check: bool,
     nvidia_adaptive_launch_depth: bool,
     nvidia_enforce_template_stop: bool,
@@ -214,6 +228,16 @@ struct BenchEnvironment {
     seine_version: String,
     git_commit: Option<String>,
     target_triple: String,
+    runtime_environment: String,
+    wsl_distro: Option<String>,
+    build_host: String,
+    build_profile: String,
+    build_opt_level: String,
+    build_rustflags: String,
+    build_features: String,
+    rustc_version: String,
+    source_fingerprint: String,
+    build_fingerprint: String,
     hostname: Option<String>,
     os: Option<String>,
     kernel_version: Option<String>,
@@ -234,11 +258,12 @@ struct WorkerBenchmarkIdentity {
     backends: Vec<String>,
     preemption: Vec<String>,
     total_lanes: u64,
+    initial_startup_secs: f64,
 }
 
 type BackendEventAction = RuntimeBackendEventAction;
-const BENCH_REPORT_SCHEMA_VERSION: u32 = 10;
-const BENCH_REPORT_COMPAT_MIN_SCHEMA_VERSION: u32 = 2;
+const BENCH_REPORT_SCHEMA_VERSION: u32 = 11;
+const BENCH_REPORT_COMPAT_MIN_SCHEMA_VERSION: u32 = 11;
 const BENCH_SHORT_WINDOW_WARN_SECS: u64 = 10;
 const BENCH_FENCE_JITTER_WARN_SECS: f64 = 0.250;
 const BENCH_FENCE_JITTER_WARN_RATIO: f64 = 0.50;
@@ -248,6 +273,37 @@ const BENCH_CONTROL_LATENCY_WARN_MICROS: u64 = 300_000;
 enum KernelBenchMode {
     Steady,
     Effective,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct BenchTiming {
+    configured_secs: f64,
+    actual_elapsed_secs: f64,
+    window_overrun_secs: f64,
+    wall_secs: f64,
+    rate_elapsed_secs: f64,
+}
+
+fn normalize_bench_timing(
+    configured_secs: f64,
+    actual_elapsed_secs: f64,
+    wall_secs: f64,
+    lifecycle_rate: bool,
+) -> BenchTiming {
+    let configured_secs = configured_secs.max(0.001);
+    let actual_elapsed_secs = actual_elapsed_secs.max(0.001);
+    let wall_secs = wall_secs.max(actual_elapsed_secs);
+    BenchTiming {
+        configured_secs,
+        actual_elapsed_secs,
+        window_overrun_secs: (actual_elapsed_secs - configured_secs).max(0.0),
+        wall_secs,
+        rate_elapsed_secs: if lifecycle_rate {
+            wall_secs
+        } else {
+            actual_elapsed_secs
+        },
+    }
 }
 
 impl KernelBenchMode {
@@ -375,29 +431,30 @@ fn run_kernel_benchmark(
         let KernelBenchSample {
             hashes,
             elapsed_secs,
+            wall_elapsed_secs,
         } = sample;
-        let wall_elapsed = elapsed_secs.max(0.001);
-        let elapsed = match mode {
-            // Kernel benchmark backend hooks are expected to run for bench_secs.
-            // Use that steady-state window for H/s so backend init/setup overhead does not
-            // skew per-round throughput when the backend internally rebuilds engines.
-            KernelBenchMode::Steady => cfg.bench_secs.max(1) as f64,
-            // Effective mode uses wall time to expose real per-round overhead from the
-            // target/eval path and host/device launch/copy synchronization.
-            KernelBenchMode::Effective => wall_elapsed,
-        };
-        let hps = hashes as f64 / elapsed.max(0.001);
+        let timing = normalize_bench_timing(
+            cfg.bench_secs.max(1) as f64,
+            elapsed_secs,
+            wall_elapsed_secs,
+            false,
+        );
+        // Whole hash batches can complete after the requested deadline. Dividing by the
+        // configured window inflates H/s, so every kernel mode uses its measured duration.
+        let hps = hashes as f64 / timing.rate_elapsed_secs;
 
         if is_warmup {
             info(
                 "BENCH",
                 format!(
-                    "warmup {}/{} | hashes={} | elapsed={:.2}s | wall={:.2}s | {}",
+                    "warmup {}/{} | hashes={} | configured={:.2}s actual={:.2}s overrun={:.3}s wall={:.2}s | {}",
                     round + 1,
                     cfg.bench_warmup_rounds,
                     hashes,
-                    elapsed,
-                    wall_elapsed,
+                    timing.configured_secs,
+                    timing.actual_elapsed_secs,
+                    timing.window_overrun_secs,
+                    timing.wall_secs,
                     format_hashrate(hps),
                 ),
             );
@@ -408,12 +465,14 @@ fn run_kernel_benchmark(
         info(
             "BENCH",
             format!(
-                "round {}/{} | hashes={} | elapsed={:.2}s | wall={:.2}s | {}",
+                "round {}/{} | hashes={} | configured={:.2}s actual={:.2}s overrun={:.3}s wall={:.2}s | {}",
                 measured_round,
                 cfg.bench_rounds,
                 hashes,
-                elapsed,
-                wall_elapsed,
+                timing.configured_secs,
+                timing.actual_elapsed_secs,
+                timing.window_overrun_secs,
+                timing.wall_secs,
                 format_hashrate(hps),
             ),
         );
@@ -424,7 +483,13 @@ fn run_kernel_benchmark(
             counted_hashes: hashes,
             late_hashes: 0,
             late_hash_pct: 0.0,
-            elapsed_secs: elapsed,
+            elapsed_secs: timing.rate_elapsed_secs,
+            configured_secs: timing.configured_secs,
+            actual_elapsed_secs: timing.actual_elapsed_secs,
+            window_overrun_secs: timing.window_overrun_secs,
+            wall_secs: timing.wall_secs,
+            startup_secs: 0.0,
+            teardown_secs: 0.0,
             fence_secs: 0.0,
             hps,
             backend_runs: Vec::new(),
@@ -463,7 +528,10 @@ fn run_kernel_benchmark(
     )
 }
 
-fn worker_benchmark_identity(backends: &[BackendSlot]) -> WorkerBenchmarkIdentity {
+fn worker_benchmark_identity(
+    backends: &[BackendSlot],
+    initial_startup_secs: f64,
+) -> WorkerBenchmarkIdentity {
     WorkerBenchmarkIdentity {
         backend_ids: backends.iter().map(|slot| slot.id).collect(),
         backend_lanes: backends.iter().map(|slot| (slot.id, slot.lanes)).collect(),
@@ -483,6 +551,7 @@ fn worker_benchmark_identity(backends: &[BackendSlot]) -> WorkerBenchmarkIdentit
             })
             .collect(),
         total_lanes: total_lanes(backends),
+        initial_startup_secs,
     }
 }
 
@@ -540,6 +609,7 @@ fn run_worker_benchmark(
     if let Some(hint) = cfg.nvidia_hint {
         info("HINT", hint);
     }
+    let initial_startup_started = Instant::now();
     let (mut backends, backend_events) = activate_backends(
         instances,
         cfg.backend_event_capacity,
@@ -553,7 +623,8 @@ fn run_worker_benchmark(
         RuntimeMode::Bench,
         backend_executor,
     )?;
-    let identity = worker_benchmark_identity(&backends);
+    let initial_startup_secs = initial_startup_started.elapsed().as_secs_f64();
+    let identity = worker_benchmark_identity(&backends, initial_startup_secs);
     let bench_kind = if restart_each_round {
         "end_to_end"
     } else {
@@ -600,7 +671,15 @@ fn run_worker_benchmark(
             }
             .to_string(),
         ),
-        ("Measurement", "counted window + end fence".to_string()),
+        (
+            "Measurement",
+            if restart_each_round {
+                "backend start + counted window/fence + teardown"
+            } else {
+                "counted window + end fence"
+            }
+            .to_string(),
+        ),
         (
             "Regress Gate",
             cfg.bench_fail_below_pct
@@ -616,15 +695,6 @@ fn run_worker_benchmark(
         ),
     ];
     startup_banner(&lines);
-
-    if restart_each_round {
-        stop_backend_slots(
-            &mut backends,
-            backend_executor,
-            cfg.backend_control_timeout,
-            "BENCH",
-        );
-    }
 
     let result = run_worker_benchmark_inner(
         cfg,
@@ -678,10 +748,17 @@ fn run_worker_benchmark_inner(
             format!("round {}", measured_round + 1)
         };
 
-        if restart_each_round {
+        let first_round_uses_initial_startup = restart_each_round && round == 0;
+        let startup_secs = if first_round_uses_initial_startup {
+            identity.initial_startup_secs
+        } else if restart_each_round {
+            let startup_started = Instant::now();
             start_backend_slots(backends, backend_executor, cfg.backend_control_timeout)?;
             ensure_worker_topology_identity(backends, identity, "backend restart")?;
-        }
+            startup_started.elapsed().as_secs_f64()
+        } else {
+            0.0
+        };
 
         epoch = epoch.wrapping_add(1).max(1);
         let work_id = next_work_id(&mut work_id_cursor);
@@ -797,34 +874,82 @@ fn run_worker_benchmark_inner(
 
         let round_hashes = counted_hashes.saturating_add(late_hashes);
         let late_hash_pct = late_hash_share_pct(late_hashes, round_hashes);
-        let measured_elapsed = (counted_elapsed + fence_elapsed).max(0.001);
-        // Surface effective throughput as H/s so vardiff/cancel improvements show up
-        // in the headline rate without introducing a second user-facing unit.
-        let hps = counted_hashes as f64 / measured_elapsed;
+        let actual_elapsed_secs = (counted_elapsed + fence_elapsed).max(0.001);
+
+        let round_end_reason = if shutdown.load(Ordering::Relaxed) {
+            RoundEndReason::Shutdown
+        } else {
+            RoundEndReason::Refresh
+        };
+        update_backend_weights(
+            &mut backend_weights,
+            WeightUpdateInputs {
+                backends,
+                round_backend_hashes: &round_backend_hashes,
+                round_backend_telemetry: Some(&round_backend_telemetry),
+                round_elapsed_secs: actual_elapsed_secs,
+                mode: cfg.work_allocation,
+                round_end_reason,
+                refresh_interval: cfg.refresh_interval,
+            },
+        );
+
+        let teardown_started = Instant::now();
+        let teardown_secs = if restart_each_round {
+            stop_backend_slots(
+                backends,
+                backend_executor,
+                cfg.backend_control_timeout,
+                "BENCH",
+            );
+            teardown_started.elapsed().as_secs_f64()
+        } else {
+            0.0
+        };
+        let raw_wall_secs = if restart_each_round {
+            startup_secs + actual_elapsed_secs + teardown_secs
+        } else {
+            actual_elapsed_secs
+        };
+        // Backend mode reports steady effective throughput. End-to-end mode is a lifecycle
+        // benchmark, so backend startup and teardown are part of its rate denominator.
+        let timing = normalize_bench_timing(
+            cfg.bench_secs.max(1) as f64,
+            actual_elapsed_secs,
+            raw_wall_secs,
+            restart_each_round,
+        );
+        let hps = counted_hashes as f64 / timing.rate_elapsed_secs;
         let backend_runs = build_backend_round_stats(
             backends,
             &round_backend_hashes,
             &round_backend_telemetry,
-            measured_elapsed,
+            timing.rate_elapsed_secs,
         );
-
-        let backend_rates =
-            format_bench_backend_hashrate(backends, &round_backend_hashes, measured_elapsed);
+        let backend_rates = format_bench_backend_hashrate(
+            backends,
+            &round_backend_hashes,
+            timing.rate_elapsed_secs,
+        );
         let telemetry_line = format_round_backend_telemetry(backends, &round_backend_telemetry);
 
         if is_warmup {
             info(
                 "BENCH",
                 format!(
-                    "warmup {}/{} hashes={} counted={} late={} late_pct={:.2}% window={:.2}s fence={:.3}s rate={} backends={}",
+                    "warmup {}/{} hashes={} counted={} late={} late_pct={:.2}% configured={:.2}s actual={:.2}s fence={:.3}s startup={:.3}s teardown={:.3}s wall={:.2}s rate={} backends={}",
                     round + 1,
                     cfg.bench_warmup_rounds,
                     round_hashes,
                     counted_hashes,
                     late_hashes,
                     late_hash_pct,
-                    counted_elapsed,
+                    timing.configured_secs,
+                    timing.actual_elapsed_secs,
                     fence_elapsed,
+                    startup_secs,
+                    teardown_secs,
+                    timing.wall_secs,
                     format_hashrate(hps),
                     backend_rates,
                 ),
@@ -837,15 +962,19 @@ fn run_worker_benchmark_inner(
             info(
                 "BENCH",
                 format!(
-                    "round {}/{} hashes={} counted={} late={} late_pct={:.2}% window={:.2}s fence={:.3}s rate={} backends={}",
+                    "round {}/{} hashes={} counted={} late={} late_pct={:.2}% configured={:.2}s actual={:.2}s fence={:.3}s startup={:.3}s teardown={:.3}s wall={:.2}s rate={} backends={}",
                     measured_round,
                     cfg.bench_rounds,
                     round_hashes,
                     counted_hashes,
                     late_hashes,
                     late_hash_pct,
-                    counted_elapsed,
+                    timing.configured_secs,
+                    timing.actual_elapsed_secs,
                     fence_elapsed,
+                    startup_secs,
+                    teardown_secs,
+                    timing.wall_secs,
                     format_hashrate(hps),
                     backend_rates,
                 ),
@@ -860,38 +989,17 @@ fn run_worker_benchmark_inner(
                 counted_hashes,
                 late_hashes,
                 late_hash_pct,
-                elapsed_secs: measured_elapsed,
+                elapsed_secs: timing.rate_elapsed_secs,
+                configured_secs: timing.configured_secs,
+                actual_elapsed_secs: timing.actual_elapsed_secs,
+                window_overrun_secs: timing.window_overrun_secs,
+                wall_secs: timing.wall_secs,
+                startup_secs,
+                teardown_secs,
                 fence_secs: fence_elapsed,
                 hps,
                 backend_runs,
             });
-        }
-
-        let round_end_reason = if shutdown.load(Ordering::Relaxed) {
-            RoundEndReason::Shutdown
-        } else {
-            RoundEndReason::Refresh
-        };
-        update_backend_weights(
-            &mut backend_weights,
-            WeightUpdateInputs {
-                backends,
-                round_backend_hashes: &round_backend_hashes,
-                round_backend_telemetry: Some(&round_backend_telemetry),
-                round_elapsed_secs: measured_elapsed,
-                mode: cfg.work_allocation,
-                round_end_reason,
-                refresh_interval: cfg.refresh_interval,
-            },
-        );
-
-        if restart_each_round {
-            stop_backend_slots(
-                backends,
-                backend_executor,
-                cfg.backend_control_timeout,
-                "BENCH",
-            );
         }
     }
 
@@ -1342,6 +1450,25 @@ fn baseline_compatibility_issues(
                 ));
             }
         }
+        if baseline.schema_version >= 11
+            && current.schema_version >= 11
+            && baseline
+                .config_fingerprint
+                .nvidia_hashes_per_launch_per_lane_was_set
+                != current
+                    .config_fingerprint
+                    .nvidia_hashes_per_launch_per_lane_was_set
+        {
+            issues.push(format!(
+                "nvidia_hashes_per_launch_per_lane_was_set mismatch baseline={} current={}",
+                baseline
+                    .config_fingerprint
+                    .nvidia_hashes_per_launch_per_lane_was_set,
+                current
+                    .config_fingerprint
+                    .nvidia_hashes_per_launch_per_lane_was_set
+            ));
+        }
         if baseline.schema_version >= 6 && current.schema_version >= 6 {
             if baseline.config_fingerprint.cpu_hash_batch_size
                 != current.config_fingerprint.cpu_hash_batch_size
@@ -1526,6 +1653,33 @@ fn baseline_compatibility_issues(
                 baseline.environment.target_triple, current.environment.target_triple
             ));
         }
+        if baseline.schema_version >= 11 && current.schema_version >= 11 {
+            if baseline.environment.runtime_environment != current.environment.runtime_environment {
+                issues.push(format!(
+                    "runtime environment mismatch baseline={} current={}",
+                    baseline.environment.runtime_environment,
+                    current.environment.runtime_environment
+                ));
+            }
+            if baseline.environment.kernel_version != current.environment.kernel_version {
+                issues.push(format!(
+                    "kernel mismatch baseline={} current={}",
+                    baseline
+                        .environment
+                        .kernel_version
+                        .as_deref()
+                        .unwrap_or("unknown"),
+                    current
+                        .environment
+                        .kernel_version
+                        .as_deref()
+                        .unwrap_or("unknown")
+                ));
+            }
+            if baseline.environment.build_fingerprint != current.environment.build_fingerprint {
+                issues.push("build/toolchain fingerprint mismatch".to_string());
+            }
+        }
         if baseline.environment.cpu_arch.is_some()
             && current.environment.cpu_arch.is_some()
             && baseline.environment.cpu_arch != current.environment.cpu_arch
@@ -1635,7 +1789,17 @@ fn benchmark_environment() -> BenchEnvironment {
             .or_else(|| std::env::var("BNMINER_GIT_COMMIT").ok())
             .or_else(|| option_env!("SEINE_GIT_COMMIT").map(str::to_string))
             .or_else(|| option_env!("BNMINER_GIT_COMMIT").map(str::to_string)),
-        target_triple: format!("{}/{}", std::env::consts::OS, std::env::consts::ARCH),
+        target_triple: crate::runtime_identity::build_target().to_string(),
+        runtime_environment: crate::runtime_identity::runtime_environment(),
+        wsl_distro: crate::runtime_identity::wsl_distro(),
+        build_host: crate::runtime_identity::build_host().to_string(),
+        build_profile: crate::runtime_identity::build_profile().to_string(),
+        build_opt_level: crate::runtime_identity::build_opt_level().to_string(),
+        build_rustflags: crate::runtime_identity::build_rustflags().to_string(),
+        build_features: crate::runtime_identity::build_features().to_string(),
+        rustc_version: crate::runtime_identity::rustc_version().to_string(),
+        source_fingerprint: crate::runtime_identity::source_fingerprint().to_string(),
+        build_fingerprint: crate::runtime_identity::build_fingerprint(),
         hostname: System::host_name(),
         os: System::long_os_version().or_else(System::name),
         kernel_version: System::kernel_version(),
@@ -1697,6 +1861,7 @@ fn benchmark_config_fingerprint(
         nvidia_dispatch_iters_per_lane: cfg.nvidia_dispatch_iters_per_lane,
         nvidia_allocation_iters_per_lane: cfg.nvidia_allocation_iters_per_lane,
         nvidia_hashes_per_launch_per_lane: cfg.nvidia_hashes_per_launch_per_lane,
+        nvidia_hashes_per_launch_per_lane_was_set: cfg.nvidia_hashes_per_launch_per_lane_was_set,
         nvidia_fused_target_check: cfg.nvidia_fused_target_check,
         nvidia_adaptive_launch_depth: cfg.nvidia_adaptive_launch_depth,
         nvidia_enforce_template_stop: cfg.nvidia_enforce_template_stop,
@@ -2039,6 +2204,13 @@ mod tests {
             environment: BenchEnvironment {
                 seine_version: "0.1.0".to_string(),
                 target_triple: "linux/x86_64".to_string(),
+                runtime_environment: "native".to_string(),
+                build_host: "x86_64-unknown-linux-gnu".to_string(),
+                build_profile: "release".to_string(),
+                build_opt_level: "3".to_string(),
+                rustc_version: "rustc test".to_string(),
+                source_fingerprint: "test-source".to_string(),
+                build_fingerprint: "test-build".to_string(),
                 cpu_brand: Some("test-cpu".to_string()),
                 cpu_arch: Some("x86_64".to_string()),
                 logical_cores: 8,
@@ -2065,6 +2237,7 @@ mod tests {
                 nvidia_dispatch_iters_per_lane: None,
                 nvidia_allocation_iters_per_lane: None,
                 nvidia_hashes_per_launch_per_lane: 2,
+                nvidia_hashes_per_launch_per_lane_was_set: false,
                 nvidia_fused_target_check: false,
                 nvidia_adaptive_launch_depth: true,
                 nvidia_enforce_template_stop: false,
@@ -2120,6 +2293,12 @@ mod tests {
                 late_hashes: 0,
                 late_hash_pct: 0.0,
                 elapsed_secs: 1.0,
+                configured_secs: 1.0,
+                actual_elapsed_secs: 1.0,
+                window_overrun_secs: 0.0,
+                wall_secs: 1.0,
+                startup_secs: 0.0,
+                teardown_secs: 0.0,
                 fence_secs: 0.0,
                 hps: 10.0,
                 backend_runs: Vec::new(),
@@ -2172,22 +2351,22 @@ mod tests {
     }
 
     #[test]
-    fn baseline_compatibility_accepts_previous_schema_when_compatible() {
+    fn baseline_compatibility_rejects_pre_timing_fix_schema() {
         let current = sample_report();
         let mut baseline = sample_report();
         baseline.schema_version = BENCH_REPORT_SCHEMA_VERSION - 1;
 
         let issues =
             baseline_compatibility_issues(&current, &baseline, BenchBaselinePolicy::Strict);
-        assert!(!issues.iter().any(|issue| issue.contains("schema mismatch")));
+        assert!(issues.iter().any(|issue| issue.contains("schema mismatch")));
     }
 
     #[test]
-    fn baseline_parsing_allows_missing_v3_fields_in_v2_report() {
+    fn baseline_parsing_allows_old_fields_but_rejects_comparison() {
         let current = sample_report();
         let mut baseline_value =
             serde_json::to_value(sample_report()).expect("sample report should serialize to JSON");
-        baseline_value["schema_version"] = json!(BENCH_REPORT_COMPAT_MIN_SCHEMA_VERSION);
+        baseline_value["schema_version"] = json!(BENCH_REPORT_SCHEMA_VERSION - 1);
         baseline_value
             .as_object_mut()
             .expect("baseline report should be a JSON object")
@@ -2196,15 +2375,20 @@ mod tests {
             .as_object_mut()
             .expect("config fingerprint should be a JSON object")
             .remove("bench_warmup_rounds");
+        baseline_value["runs"][0]
+            .as_object_mut()
+            .expect("benchmark run should be a JSON object")
+            .remove("actual_elapsed_secs");
 
         let baseline: BenchReport = serde_json::from_value(baseline_value)
-            .expect("v2-style baseline report should deserialize");
+            .expect("old-style baseline report should deserialize");
         assert_eq!(baseline.warmup_rounds, 0);
         assert_eq!(baseline.config_fingerprint.bench_warmup_rounds, 0);
+        assert_eq!(baseline.runs[0].actual_elapsed_secs, 0.0);
 
         let issues =
             baseline_compatibility_issues(&current, &baseline, BenchBaselinePolicy::Strict);
-        assert!(!issues.iter().any(|issue| issue.contains("schema mismatch")));
+        assert!(issues.iter().any(|issue| issue.contains("schema mismatch")));
     }
 
     #[test]
@@ -2232,6 +2416,50 @@ mod tests {
         assert!(!relaxed_issues
             .iter()
             .any(|issue| issue.contains("git mismatch")));
+    }
+
+    #[test]
+    fn strict_baseline_detects_runtime_and_build_identity_mismatch() {
+        let mut current = sample_report();
+        let baseline = sample_report();
+        current.environment.runtime_environment = "wsl2".to_string();
+        current.environment.build_fingerprint = "different-build".to_string();
+
+        let issues =
+            baseline_compatibility_issues(&current, &baseline, BenchBaselinePolicy::Strict);
+        assert!(issues
+            .iter()
+            .any(|issue| issue.contains("runtime environment mismatch")));
+        assert!(issues
+            .iter()
+            .any(|issue| issue.contains("build/toolchain fingerprint mismatch")));
+
+        let relaxed = baseline_compatibility_issues(
+            &current,
+            &baseline,
+            BenchBaselinePolicy::IgnoreEnvironment,
+        );
+        assert!(!relaxed
+            .iter()
+            .any(|issue| issue.contains("runtime environment mismatch")));
+    }
+
+    #[test]
+    fn kernel_timing_uses_actual_elapsed_and_tracks_overrun() {
+        let timing = normalize_bench_timing(10.0, 12.5, 13.0, false);
+        assert_eq!(timing.configured_secs, 10.0);
+        assert_eq!(timing.actual_elapsed_secs, 12.5);
+        assert_eq!(timing.window_overrun_secs, 2.5);
+        assert_eq!(timing.wall_secs, 13.0);
+        assert_eq!(timing.rate_elapsed_secs, 12.5);
+    }
+
+    #[test]
+    fn lifecycle_timing_uses_full_wall_elapsed() {
+        let timing = normalize_bench_timing(10.0, 10.5, 14.0, true);
+        assert_eq!(timing.actual_elapsed_secs, 10.5);
+        assert_eq!(timing.wall_secs, 14.0);
+        assert_eq!(timing.rate_elapsed_secs, 14.0);
     }
     #[test]
     fn baseline_compatibility_detects_warmup_round_mismatch() {
@@ -2350,7 +2578,7 @@ mod tests {
             },
         ];
 
-        let identity = worker_benchmark_identity(&backends);
+        let identity = worker_benchmark_identity(&backends, 0.0);
         assert_eq!(
             identity.backends,
             vec!["noop#2".to_string(), "noop#9".to_string()]
@@ -2391,7 +2619,7 @@ mod tests {
             runtime_policy: crate::miner::BackendRuntimePolicy::default(),
             capabilities: crate::backend::BackendCapabilities::default(),
         }];
-        let identity = worker_benchmark_identity(&expected);
+        let identity = worker_benchmark_identity(&expected, 0.0);
 
         let err = ensure_worker_topology_identity(&current, &identity, "round 1")
             .expect_err("topology mismatch should fail benchmark");
@@ -2414,7 +2642,7 @@ mod tests {
             runtime_policy: crate::miner::BackendRuntimePolicy::default(),
             capabilities: crate::backend::BackendCapabilities::default(),
         }];
-        let identity = worker_benchmark_identity(&expected);
+        let identity = worker_benchmark_identity(&expected, 0.0);
 
         let err = ensure_worker_topology_identity(&current, &identity, "round 1")
             .expect_err("lane mismatch should fail benchmark");

@@ -41,8 +41,8 @@ const SEED_KERNEL_THREADS: u32 = 64;
 const EVAL_KERNEL_THREADS: u32 = 64;
 const DEFAULT_WARPS_PER_BLOCK: u32 = 1;
 const DEFAULT_NVIDIA_MAX_RREGCOUNT: u32 = 240;
-const NVIDIA_AUTOTUNE_SCHEMA_VERSION: u32 = 9;
-const NVIDIA_CUBIN_CACHE_SCHEMA_VERSION: u32 = 1;
+const NVIDIA_AUTOTUNE_SCHEMA_VERSION: u32 = 10;
+const NVIDIA_CUBIN_CACHE_SCHEMA_VERSION: u32 = 2;
 const NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_AMPERE_PLUS: &[u32] =
     &[240, 224, 208, 192, 176, 160, 144, 128];
 const NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_LEGACY: &[u32] =
@@ -143,6 +143,18 @@ struct NvidiaAutotuneKey {
     t_cost: u32,
     kernel_threads: u32,
     hashes_per_launch_per_lane_cap: u32,
+    #[serde(default)]
+    os: String,
+    #[serde(default)]
+    kernel_version: String,
+    #[serde(default)]
+    runtime_environment: String,
+    #[serde(default)]
+    build_fingerprint: String,
+    #[serde(default)]
+    cuda_kernel_fingerprint: String,
+    #[serde(default)]
+    nvrtc_version: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -421,7 +433,13 @@ impl CudaArgon2Engine {
             options
         };
         let program_name = "seine_argon2id_fill.cu";
-        let cache_key = build_cubin_cache_key(CUDA_KERNEL_SRC, program_name, &nvrtc_cubin_options);
+        let nvrtc_version = nvrtc_compiler_identity();
+        let cache_key = build_cubin_cache_key(
+            CUDA_KERNEL_SRC,
+            program_name,
+            &nvrtc_cubin_options,
+            &nvrtc_version,
+        );
         let cache_path = cubin_cache_file_path(cubin_cache_dir, &cache_key);
         let module = if let Some(cached) = load_cached_cubin(&cache_path) {
             match ctx.load_module(Ptx::from_binary(cached)) {
@@ -1730,9 +1748,11 @@ impl BenchBackend for NvidiaBackend {
                 total = total.saturating_add(done.hashes_done as u64);
             }
 
+            let elapsed_secs = round_started.elapsed().as_secs_f64().max(0.001);
             samples.push(KernelBenchSample {
                 hashes: total,
-                elapsed_secs: round_started.elapsed().as_secs_f64().max(0.001),
+                elapsed_secs,
+                wall_elapsed_secs: elapsed_secs,
             });
         }
 
@@ -2503,10 +2523,17 @@ fn compile_ptx_with_nvrtc(source: &str, program_name: &str, options: &[String]) 
     Ok(ptx)
 }
 
-fn build_cubin_cache_key(source: &str, program_name: &str, options: &[String]) -> String {
+fn build_cubin_cache_key(
+    source: &str,
+    program_name: &str,
+    options: &[String],
+    compiler_identity: &str,
+) -> String {
     let mut hasher = Blake2b512::new();
     hasher.update(NVIDIA_CUBIN_CACHE_SCHEMA_VERSION.to_le_bytes());
     hasher.update(program_name.as_bytes());
+    hasher.update([0u8]);
+    hasher.update(compiler_identity.as_bytes());
     hasher.update([0u8]);
     for option in options {
         hasher.update(option.as_bytes());
@@ -2514,6 +2541,28 @@ fn build_cubin_cache_key(source: &str, program_name: &str, options: &[String]) -
     }
     hasher.update(source.as_bytes());
     hex::encode(hasher.finalize())
+}
+
+fn cuda_kernel_fingerprint() -> String {
+    let mut hasher = Blake2b512::new();
+    hasher.update(CUDA_KERNEL_SRC.as_bytes());
+    hex::encode(hasher.finalize())
+}
+
+fn nvrtc_compiler_identity() -> String {
+    let available = unsafe { nvrtc_sys::is_culib_present() };
+    if !available {
+        return "unavailable".to_string();
+    }
+
+    let mut major = 0;
+    let mut minor = 0;
+    let result = unsafe { nvrtc_sys::nvrtcVersion(&mut major, &mut minor) };
+    if result.result().is_ok() {
+        format!("nvrtc-{major}.{minor}")
+    } else {
+        "unknown".to_string()
+    }
 }
 
 fn cubin_cache_file_path(cache_dir: &Path, cache_key: &str) -> PathBuf {
@@ -2872,6 +2921,12 @@ fn build_nvidia_autotune_key(
         t_cost,
         kernel_threads: KERNEL_THREADS,
         hashes_per_launch_per_lane_cap: hashes_per_launch_per_lane_cap.max(1),
+        os: std::env::consts::OS.to_string(),
+        kernel_version: crate::runtime_identity::runtime_kernel_version().unwrap_or_default(),
+        runtime_environment: crate::runtime_identity::runtime_environment(),
+        build_fingerprint: crate::runtime_identity::build_fingerprint(),
+        cuda_kernel_fingerprint: cuda_kernel_fingerprint(),
+        nvrtc_version: nvrtc_compiler_identity(),
     }
 }
 
@@ -2954,6 +3009,12 @@ fn nvidia_autotune_key_compatible(lhs: &NvidiaAutotuneKey, rhs: &NvidiaAutotuneK
         && lhs.t_cost == rhs.t_cost
         && lhs.kernel_threads == rhs.kernel_threads
         && lhs.hashes_per_launch_per_lane_cap == rhs.hashes_per_launch_per_lane_cap
+        && lhs.os == rhs.os
+        && lhs.kernel_version == rhs.kernel_version
+        && lhs.runtime_environment == rhs.runtime_environment
+        && lhs.build_fingerprint == rhs.build_fingerprint
+        && lhs.cuda_kernel_fingerprint == rhs.cuda_kernel_fingerprint
+        && lhs.nvrtc_version == rhs.nvrtc_version
 }
 
 fn memory_budget_distance(lhs: u64, rhs: u64) -> u64 {
@@ -3503,6 +3564,12 @@ mod tests {
             t_cost: 1,
             kernel_threads: KERNEL_THREADS,
             hashes_per_launch_per_lane_cap: 2,
+            os: "linux".to_string(),
+            kernel_version: "test-kernel".to_string(),
+            runtime_environment: "native".to_string(),
+            build_fingerprint: "test-build".to_string(),
+            cuda_kernel_fingerprint: "test-cuda-kernel".to_string(),
+            nvrtc_version: "nvrtc-test".to_string(),
         };
         persist_nvidia_autotune_record(
             &path,
@@ -3554,6 +3621,12 @@ mod tests {
             t_cost: 1,
             kernel_threads: KERNEL_THREADS,
             hashes_per_launch_per_lane_cap: 2,
+            os: "linux".to_string(),
+            kernel_version: "test-kernel".to_string(),
+            runtime_environment: "native".to_string(),
+            build_fingerprint: "test-build".to_string(),
+            cuda_kernel_fingerprint: "test-cuda-kernel".to_string(),
+            nvrtc_version: "nvrtc-test".to_string(),
         };
         let closer_key = NvidiaAutotuneKey {
             memory_budget_mib: 8_192,
@@ -3615,6 +3688,12 @@ mod tests {
             t_cost: 1,
             kernel_threads: KERNEL_THREADS,
             hashes_per_launch_per_lane_cap: 2,
+            os: "linux".to_string(),
+            kernel_version: "test-kernel".to_string(),
+            runtime_environment: "native".to_string(),
+            build_fingerprint: "test-build".to_string(),
+            cuda_kernel_fingerprint: "test-cuda-kernel".to_string(),
+            nvrtc_version: "nvrtc-test".to_string(),
         };
         let cap1_key = NvidiaAutotuneKey {
             hashes_per_launch_per_lane_cap: 1,
@@ -3646,12 +3725,62 @@ mod tests {
     }
 
     #[test]
+    fn nvidia_autotune_compatibility_does_not_cross_build_or_runtime() {
+        let key = NvidiaAutotuneKey {
+            device_name: "NVIDIA GeForce RTX 5090".to_string(),
+            memory_total_mib: 32_768,
+            memory_budget_mib: 30_720,
+            lane_capacity_tier: 14,
+            compute_cap_major: 12,
+            compute_cap_minor: 0,
+            m_cost_kib: 2_097_152,
+            t_cost: 1,
+            kernel_threads: KERNEL_THREADS,
+            hashes_per_launch_per_lane_cap: 2,
+            os: "linux".to_string(),
+            kernel_version: "6.6.0".to_string(),
+            runtime_environment: "wsl2".to_string(),
+            build_fingerprint: "build-a".to_string(),
+            cuda_kernel_fingerprint: "kernel-a".to_string(),
+            nvrtc_version: "nvrtc-12.8".to_string(),
+        };
+        let different_build = NvidiaAutotuneKey {
+            build_fingerprint: "build-b".to_string(),
+            ..key.clone()
+        };
+        let different_runtime = NvidiaAutotuneKey {
+            runtime_environment: "native".to_string(),
+            ..key.clone()
+        };
+
+        assert!(!nvidia_autotune_key_compatible(&key, &different_build));
+        assert!(!nvidia_autotune_key_compatible(&key, &different_runtime));
+    }
+
+    #[test]
     fn cubin_cache_key_changes_with_compile_options() {
         let source = "__global__ void k() {}";
-        let key_a =
-            build_cubin_cache_key(source, "k.cu", &["--gpu-architecture=sm_86".to_string()]);
-        let key_b =
-            build_cubin_cache_key(source, "k.cu", &["--gpu-architecture=sm_89".to_string()]);
+        let key_a = build_cubin_cache_key(
+            source,
+            "k.cu",
+            &["--gpu-architecture=sm_86".to_string()],
+            "nvrtc-12.8",
+        );
+        let key_b = build_cubin_cache_key(
+            source,
+            "k.cu",
+            &["--gpu-architecture=sm_89".to_string()],
+            "nvrtc-12.8",
+        );
+        assert_ne!(key_a, key_b);
+    }
+
+    #[test]
+    fn cubin_cache_key_changes_with_nvrtc_version() {
+        let source = "__global__ void k() {}";
+        let options = ["--gpu-architecture=sm_86".to_string()];
+        let key_a = build_cubin_cache_key(source, "k.cu", &options, "nvrtc-12.8");
+        let key_b = build_cubin_cache_key(source, "k.cu", &options, "nvrtc-13.0");
         assert_ne!(key_a, key_b);
     }
 

@@ -669,9 +669,11 @@ pub trait BenchBackend: Send {
             }
             let started = Instant::now();
             let hashes = self.kernel_bench(seconds, shutdown)?;
+            let elapsed_secs = started.elapsed().as_secs_f64().max(0.001);
             samples.push(KernelBenchSample {
                 hashes,
-                elapsed_secs: started.elapsed().as_secs_f64().max(0.001),
+                elapsed_secs,
+                wall_elapsed_secs: elapsed_secs,
             });
         }
         Ok(samples)
@@ -694,9 +696,11 @@ pub trait BenchBackend: Send {
             }
             let started = Instant::now();
             let hashes = self.kernel_bench_effective(seconds, shutdown)?;
+            let elapsed_secs = started.elapsed().as_secs_f64().max(0.001);
             samples.push(KernelBenchSample {
                 hashes,
-                elapsed_secs: started.elapsed().as_secs_f64().max(0.001),
+                elapsed_secs,
+                wall_elapsed_secs: elapsed_secs,
             });
         }
         Ok(samples)
@@ -706,7 +710,10 @@ pub trait BenchBackend: Send {
 #[derive(Debug, Clone, Copy)]
 pub struct KernelBenchSample {
     pub hashes: u64,
+    /// Actual elapsed time for the hashes counted in this sample.
     pub elapsed_secs: f64,
+    /// Full wall time attributed to the sample, including any backend lifecycle overhead.
+    pub wall_elapsed_secs: f64,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]

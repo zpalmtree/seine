@@ -54,7 +54,7 @@ use ui::{info, warn};
 const TEMPLATE_RETRY_DELAY: Duration = Duration::from_secs(2);
 const MIN_EVENT_WAIT: Duration = Duration::from_millis(1);
 const BACKEND_EVENT_SOURCE_CAPACITY_MAX: usize = 256;
-const CPU_AUTOTUNE_RECORD_SCHEMA_VERSION: u32 = 5;
+const CPU_AUTOTUNE_RECORD_SCHEMA_VERSION: u32 = 6;
 const CPU_AUTOTUNE_RECORD_MAX_AGE_SECS: u64 = 14 * 24 * 60 * 60;
 const CPU_AUTOTUNE_LINEAR_SCAN_MAX_CANDIDATES: usize = 8;
 const CPU_AUTOTUNE_FINAL_SWEEP_RADIUS: usize = 2;
@@ -149,9 +149,14 @@ pub(super) struct BackendRoundTelemetry {
 #[serde(default)]
 struct CpuAutotuneHostFingerprint {
     cpu_brand: Option<String>,
+    cpu_arch: Option<String>,
     logical_cores: usize,
     physical_cores: Option<usize>,
     total_memory_bytes: u64,
+    os: String,
+    kernel_version: Option<String>,
+    runtime_environment: String,
+    build_fingerprint: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1597,11 +1602,16 @@ fn cpu_autotune_host_fingerprint() -> CpuAutotuneHostFingerprint {
     sys.refresh_cpu_all();
     CpuAutotuneHostFingerprint {
         cpu_brand: sys.cpus().first().map(|cpu| cpu.brand().to_string()),
+        cpu_arch: System::cpu_arch(),
         logical_cores: std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(0),
         physical_cores: sys.physical_core_count(),
         total_memory_bytes: sys.total_memory(),
+        os: std::env::consts::OS.to_string(),
+        kernel_version: crate::runtime_identity::runtime_kernel_version(),
+        runtime_environment: crate::runtime_identity::runtime_environment(),
+        build_fingerprint: crate::runtime_identity::build_fingerprint(),
     }
 }
 
@@ -3229,6 +3239,15 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    #[test]
+    fn cpu_autotune_fingerprint_includes_runtime_and_build_identity() {
+        let fingerprint = cpu_autotune_host_fingerprint();
+        assert!(!fingerprint.os.is_empty());
+        assert!(!fingerprint.runtime_environment.is_empty());
+        assert!(fingerprint.build_fingerprint.contains("source="));
+        assert!(fingerprint.build_fingerprint.contains("rustc="));
     }
 
     #[test]
