@@ -344,7 +344,7 @@ struct Cli {
     #[arg(long, alias = "cpu-threads")]
     threads: Option<usize>,
 
-    /// CPU pinning policy for CPU mining workers.
+    /// CPU affinity/scheduler-hint policy for CPU mining workers.
     /// Default: `pcore-only` on macOS Apple Silicon, otherwise `auto`.
     #[arg(long, value_enum, default_value_t = DEFAULT_CPU_AFFINITY)]
     cpu_affinity: CpuAffinityMode,
@@ -2438,8 +2438,8 @@ fn macos_hybrid_pcore_parallelism_cap(pcore_count: usize, logical_parallelism: u
     let logical_parallelism = logical_parallelism.max(1);
     let pcore_count = pcore_count.max(1).min(logical_parallelism);
     let non_pcore_count = logical_parallelism.saturating_sub(pcore_count);
-    // Keep some oversubscription headroom on P-cores without stepping all the way into
-    // full logical-core usage, which has shown unstable high-variance behavior on some Macs.
+    // Keep a balanced hybrid-core ceiling without stepping all the way into full logical-core
+    // usage, which has shown memory pressure and unstable behavior on some Macs.
     pcore_count.saturating_add(non_pcore_count / 2).max(1)
 }
 

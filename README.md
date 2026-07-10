@@ -138,6 +138,19 @@ Runtime checks:
 - Per-backend fallback warnings still appear if a worker falls back from `MAP_HUGETLB` (`MAP_HUGETLB unavailable; hugepage coverage...`).
 - In practice, once many CPU lanes are active, hugepage coverage usually matters more than ISA-level tuning for backend throughput.
 
+## Windows Large Pages
+
+Native Windows CPU workers first try `VirtualAlloc` with large pages, then safely
+fall back to regular `VirtualAlloc` pages. Large-page use requires the mining
+account to hold **Lock pages in memory** (`SeLockMemoryPrivilege`); changing that
+user right normally requires signing out and back in before a process can enable
+it. Seine never grants the right or triggers a sign-out itself, and logs the Win32
+fallback reason so benchmark manifests remain interpretable.
+
+Native Windows `--cpu-affinity auto` also uses complete processor-core topology
+groups before SMT siblings. If Windows returns incomplete or contradictory
+topology data, Seine retains the original logical-CPU order.
+
 ## Configuration
 
 All miner flags are documented in [`docs/MINER_FLAGS.md`](docs/MINER_FLAGS.md).
@@ -218,6 +231,29 @@ Password sources (checked in order): `--wallet-password`, `--wallet-password-fil
 
 ## GPU Mining
 
+### Apple Silicon CPU guidance
+
+Apple Silicon defaults to CPU-only mining; Metal remains explicit opt-in. On the
+48 GiB M4 Max validation host, the balanced 14-lane `pcore-only` policy averaged
+`29.26 H/s` and beat 14-lane `auto` by `0.94%` in three paired runs (95% paired
+bootstrap interval `-1.22%` to `-0.45%` for `auto`). For a dedicated maximum-rate
+run, 16-lane `auto` reached `30.94 H/s`, but the 32 GiB arena set caused macOS to
+create and use roughly 3 GiB of swap. Treat that as a throughput setting, not a
+general balanced default.
+
+Examples:
+
+```bash
+# Balanced on a 48 GiB 12P+4E M4 Max
+./seine --backend cpu --threads 14 --cpu-affinity pcore-only
+
+# Maximum observed rate; expect much higher memory pressure
+./seine --backend cpu --threads 16 --cpu-affinity auto
+```
+
+On macOS, affinity values are Mach scheduler tags plus a high-QoS preference;
+they are not hard CPU-ID pinning.
+
 ### NVIDIA
 
 Requires CUDA driver and NVRTC libraries on the host. Seine compiles kernels at startup via NVRTC.
@@ -237,7 +273,10 @@ If CUDA initialization fails, NVIDIA backends are quarantined and CPU mining con
 
 ### Metal (macOS ARM)
 
-Metal support is experimental. Pre-built macOS ARM binaries include it. To build from source:
+Metal support is experimental and is not auto-selected. The M4 Max CPU-only path
+substantially outperformed Metal-only and CPU+Metal tests because both processors
+compete for unified memory bandwidth. Pre-built macOS ARM binaries include Metal
+for explicit experiments. To build from source:
 
 ```bash
 cargo build --release --no-default-features --features metal

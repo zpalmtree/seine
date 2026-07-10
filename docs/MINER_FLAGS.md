@@ -31,7 +31,7 @@ For the raw CLI output, run:
 | `--backend` | `cpu`, `nvidia`, `metal`; repeatable / comma-separated; default auto | Selects mining backends. Auto mode selects CPU and NVIDIA (when available). |
 | `--nvidia-devices` | comma-separated GPU indices | Creates one NVIDIA backend instance per listed device index. Requires NVIDIA backend selected. |
 | `--threads` | integer `>=1`; alias: `--cpu-threads` | CPU threads per CPU backend instance. If omitted, auto-sized by CPU/RAM/profile. |
-| `--cpu-affinity` | `off`, `auto`, `pcore-only`; default platform-dependent | CPU worker pinning policy. |
+| `--cpu-affinity` | `off`, `auto`, `pcore-only`; default `pcore-only` on macOS, `auto` elsewhere | CPU worker affinity policy. Native Windows `auto` uses complete physical-core topology before SMT; Linux/WSL keep OS order. macOS modes use best-effort Mach affinity tags/QoS, not hard CPU IDs. |
 | `--cpu-profile` | `balanced`, `throughput`, `efficiency`; default `balanced` | Profile presets for CPU defaults (threads/poll/flush/event batching). |
 | `--cpu-threads-per-instance` | comma-separated integers `>=1` | Per-CPU-backend thread counts; length must match CPU instances. |
 | `--cpu-affinity-per-instance` | comma-separated `off|auto|pcore-only` | Per-CPU-backend affinity; length must match CPU instances. |

@@ -206,6 +206,7 @@ struct BenchConfigFingerprint {
     start_nonce: u64,
     work_allocation: String,
     cpu_affinity: String,
+    cpu_affinity_strategy: String,
     events_idle_timeout_secs: u64,
     backend_runtime: Vec<BenchBackendRuntimeFingerprint>,
 }
@@ -1600,6 +1601,17 @@ fn baseline_compatibility_issues(
                 baseline.config_fingerprint.cpu_affinity, current.config_fingerprint.cpu_affinity
             ));
         }
+        if !baseline.config_fingerprint.cpu_affinity_strategy.is_empty()
+            && !current.config_fingerprint.cpu_affinity_strategy.is_empty()
+            && baseline.config_fingerprint.cpu_affinity_strategy
+                != current.config_fingerprint.cpu_affinity_strategy
+        {
+            issues.push(format!(
+                "cpu_affinity_strategy mismatch baseline={} current={}",
+                baseline.config_fingerprint.cpu_affinity_strategy,
+                current.config_fingerprint.cpu_affinity_strategy
+            ));
+        }
         if baseline.schema_version >= 5
             && current.schema_version >= 5
             && baseline.config_fingerprint.backend_runtime
@@ -1878,6 +1890,7 @@ fn benchmark_config_fingerprint(
         start_nonce: cfg.start_nonce,
         work_allocation: work_allocation_label(cfg.work_allocation).to_string(),
         cpu_affinity: cpu_affinity_label(cfg.cpu_affinity).to_string(),
+        cpu_affinity_strategy: cpu_affinity_strategy_label(cfg.cpu_affinity).to_string(),
         events_idle_timeout_secs: cfg.events_idle_timeout.as_secs(),
         backend_runtime,
     }
@@ -1905,6 +1918,32 @@ fn cpu_affinity_label(mode: CpuAffinityMode) -> &'static str {
         CpuAffinityMode::Off => "off",
         CpuAffinityMode::Auto => "auto",
         CpuAffinityMode::PcoreOnly => "pcore-only",
+    }
+}
+
+fn cpu_affinity_strategy_label(mode: CpuAffinityMode) -> &'static str {
+    if mode == CpuAffinityMode::Off {
+        return "off";
+    }
+    #[cfg(target_os = "windows")]
+    {
+        "windows-physical-first-if-complete"
+    }
+    #[cfg(target_os = "linux")]
+    {
+        "linux-os-order"
+    }
+    #[cfg(target_os = "macos")]
+    {
+        match mode {
+            CpuAffinityMode::PcoreOnly => "macos-limited-affinity-tags-high-qos",
+            CpuAffinityMode::Auto => "macos-affinity-tags-high-qos",
+            CpuAffinityMode::Off => "off",
+        }
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+    {
+        "os-order"
     }
 }
 
@@ -2254,6 +2293,7 @@ mod tests {
                 start_nonce: 7,
                 work_allocation: "adaptive".to_string(),
                 cpu_affinity: "auto".to_string(),
+                cpu_affinity_strategy: "linux-os-order".to_string(),
                 events_idle_timeout_secs: 90,
                 backend_runtime: vec![BenchBackendRuntimeFingerprint {
                     backend_id: 1,
@@ -2304,6 +2344,26 @@ mod tests {
                 backend_runs: Vec::new(),
             }],
         }
+    }
+
+    #[test]
+    fn affinity_strategy_records_platform_policy() {
+        assert_eq!(cpu_affinity_strategy_label(CpuAffinityMode::Off), "off");
+        #[cfg(target_os = "linux")]
+        assert_eq!(
+            cpu_affinity_strategy_label(CpuAffinityMode::Auto),
+            "linux-os-order"
+        );
+        #[cfg(target_os = "windows")]
+        assert_eq!(
+            cpu_affinity_strategy_label(CpuAffinityMode::Auto),
+            "windows-physical-first-if-complete"
+        );
+        #[cfg(target_os = "macos")]
+        assert_eq!(
+            cpu_affinity_strategy_label(CpuAffinityMode::PcoreOnly),
+            "macos-limited-affinity-tags-high-qos"
+        );
     }
 
     #[test]

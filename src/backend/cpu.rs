@@ -1,3 +1,4 @@
+#[cfg(any(target_os = "windows", test))]
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, Condvar, Mutex, OnceLock, RwLock};
@@ -39,9 +40,9 @@ const STARTUP_READY_TIMEOUT_MAX: Duration = Duration::from_secs(180);
 const BYTES_PER_GIB: u64 = 1024 * 1024 * 1024;
 const DEFAULT_EVENT_DISPATCH_CAPACITY: usize = 256;
 
-/// On macOS, promote the calling thread to the highest QoS class to ensure
-/// scheduling on performance cores (P-cores) rather than efficiency cores.
-/// No-op on other platforms.
+/// On macOS, request the highest QoS class so the scheduler prefers performance
+/// cores. This is a best-effort scheduling hint, not hard CPU pinning. No-op on
+/// other platforms.
 #[inline]
 fn set_thread_high_perf() {
     #[cfg(target_os = "macos")]
@@ -49,7 +50,7 @@ fn set_thread_high_perf() {
         extern "C" {
             fn pthread_set_qos_class_self_np(qos_class: u32, relative_priority: i32) -> i32;
         }
-        // QOS_CLASS_USER_INTERACTIVE = 0x21 — highest priority, P-core affinity.
+        // QOS_CLASS_USER_INTERACTIVE = 0x21 — highest-priority scheduler preference.
         const QOS_CLASS_USER_INTERACTIVE: u32 = 0x21;
         unsafe {
             let _ = pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
@@ -665,14 +666,26 @@ fn resolve_affinity_core_ids(mode: CpuAffinityMode) -> Option<Vec<core_affinity:
     if mode == CpuAffinityMode::Off {
         return None;
     }
-    let mut core_ids = core_affinity::get_core_ids().filter(|ids| !ids.is_empty())?;
-    core_ids = order_core_ids_physical_first(core_ids);
-    if mode == CpuAffinityMode::PcoreOnly {
-        #[cfg(target_os = "macos")]
-        if let Some(pcore_count) = macos_pcore_count() {
-            core_ids.truncate(pcore_count.min(core_ids.len()));
+    let core_ids = core_affinity::get_core_ids().filter(|ids| !ids.is_empty())?;
+    // Native Windows exposes reliable processor-core masks and benefits materially from
+    // spreading memory-hard workers across physical cores before SMT siblings. Linux keeps
+    // the OS/core_affinity order: WSL topology experiments were unstable and transparent
+    // huge-page coverage dominated the measured affinity delta.
+    #[cfg(target_os = "windows")]
+    let core_ids = order_core_ids_physical_first(core_ids);
+    #[cfg(target_os = "macos")]
+    let core_ids = {
+        let mut core_ids = core_ids;
+        if mode == CpuAffinityMode::PcoreOnly {
+            // core_affinity maps these values to Mach affinity tags on macOS, not hard CPU
+            // identifiers. Limiting the distinct tag set complements the QoS preference above
+            // but cannot guarantee that a worker runs on a particular P-core.
+            if let Some(pcore_count) = macos_pcore_count() {
+                core_ids.truncate(pcore_count.min(core_ids.len()));
+            }
         }
-    }
+        core_ids
+    };
     if core_ids.is_empty() {
         None
     } else {
@@ -680,10 +693,9 @@ fn resolve_affinity_core_ids(mode: CpuAffinityMode) -> Option<Vec<core_affinity:
     }
 }
 
-/// Orders logical CPUs so one hardware thread from every physical core is used before SMT
-/// siblings. Linux commonly numbers siblings far apart, but WSL numbers them adjacently
-/// (`0-1`, `2-3`, ...); trusting raw OS order can therefore pin half the workers onto the same
-/// cores. Platforms without discoverable sibling topology retain their original order.
+/// Orders native Windows logical CPUs so one hardware thread from every physical core is used
+/// before SMT siblings. Incomplete or contradictory topology data retains the original order.
+#[cfg(target_os = "windows")]
 fn order_core_ids_physical_first(
     core_ids: Vec<core_affinity::CoreId>,
 ) -> Vec<core_affinity::CoreId> {
@@ -694,10 +706,27 @@ fn order_core_ids_physical_first(
     order_core_ids_by_groups(core_ids, groups)
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn order_core_ids_by_groups(
     core_ids: Vec<core_affinity::CoreId>,
     groups: Vec<Vec<usize>>,
 ) -> Vec<core_affinity::CoreId> {
+    let available = core_ids.iter().map(|core| core.id).collect::<BTreeSet<_>>();
+    let mut topology_ids = BTreeSet::new();
+    for group in &groups {
+        if group.is_empty() {
+            return core_ids;
+        }
+        for id in group {
+            if !available.contains(id) || !topology_ids.insert(*id) {
+                return core_ids;
+            }
+        }
+    }
+    if topology_ids != available {
+        return core_ids;
+    }
+
     let by_id = core_ids
         .iter()
         .copied()
@@ -705,15 +734,10 @@ fn order_core_ids_by_groups(
         .collect::<BTreeMap<_, _>>();
     let mut normalized = groups
         .into_iter()
-        .map(|group| {
+        .map(|mut group| {
+            group.sort_unstable();
             group
-                .into_iter()
-                .filter(|id| by_id.contains_key(id))
-                .collect::<BTreeSet<_>>()
-                .into_iter()
-                .collect::<Vec<_>>()
         })
-        .filter(|group| !group.is_empty())
         .collect::<Vec<_>>();
     normalized.sort_by_key(|group| group[0]);
 
@@ -733,53 +757,8 @@ fn order_core_ids_by_groups(
         }
     }
 
-    // Preserve any logical CPUs omitted by a partial/quirky platform topology query.
-    for core in core_ids {
-        if seen.insert(core.id) {
-            ordered.push(core);
-        }
-    }
+    debug_assert_eq!(seen, available);
     ordered
-}
-
-#[cfg(target_os = "linux")]
-fn platform_physical_core_groups(available: &BTreeSet<usize>) -> Option<Vec<Vec<usize>>> {
-    let mut unique = BTreeSet::<Vec<usize>>::new();
-    for id in available {
-        let path = format!("/sys/devices/system/cpu/cpu{id}/topology/thread_siblings_list");
-        let value = std::fs::read_to_string(path).ok()?;
-        let group = parse_linux_cpu_list(value.trim())
-            .into_iter()
-            .filter(|cpu| available.contains(cpu))
-            .collect::<Vec<_>>();
-        if group.is_empty() {
-            return None;
-        }
-        unique.insert(group);
-    }
-    (!unique.is_empty()).then(|| unique.into_iter().collect())
-}
-
-#[cfg(target_os = "linux")]
-fn parse_linux_cpu_list(value: &str) -> Vec<usize> {
-    let mut ids = BTreeSet::new();
-    for part in value
-        .split(',')
-        .map(str::trim)
-        .filter(|part| !part.is_empty())
-    {
-        if let Some((start, end)) = part.split_once('-') {
-            let (Ok(start), Ok(end)) = (start.parse::<usize>(), end.parse::<usize>()) else {
-                continue;
-            };
-            if start <= end {
-                ids.extend(start..=end);
-            }
-        } else if let Ok(id) = part.parse::<usize>() {
-            ids.insert(id);
-        }
-    }
-    ids.into_iter().collect()
 }
 
 #[cfg(target_os = "windows")]
@@ -826,11 +805,6 @@ fn platform_physical_core_groups(available: &BTreeSet<usize>) -> Option<Vec<Vec<
         }
     }
     (!groups.is_empty()).then_some(groups)
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "windows")))]
-fn platform_physical_core_groups(_available: &BTreeSet<usize>) -> Option<Vec<Vec<usize>>> {
-    None
 }
 
 #[cfg(target_os = "macos")]
@@ -1238,7 +1212,7 @@ mod tests {
     }
 
     #[test]
-    fn affinity_order_preserves_cpus_missing_from_topology_groups() {
+    fn affinity_order_rejects_incomplete_topology_groups() {
         let cores = (0..5)
             .map(|id| core_affinity::CoreId { id })
             .collect::<Vec<_>>();
@@ -1246,16 +1220,31 @@ mod tests {
             .into_iter()
             .map(|core| core.id)
             .collect::<Vec<_>>();
-        assert_eq!(ordered, vec![0, 2, 1, 3, 4]);
+        assert_eq!(ordered, vec![0, 1, 2, 3, 4]);
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
-    fn linux_cpu_list_parser_handles_ranges_and_sparse_ids() {
-        assert_eq!(
-            super::parse_linux_cpu_list("0-3,8,10-11"),
-            vec![0, 1, 2, 3, 8, 10, 11]
-        );
+    fn affinity_order_rejects_overlapping_topology_groups() {
+        let cores = (0..4)
+            .map(|id| core_affinity::CoreId { id })
+            .collect::<Vec<_>>();
+        let ordered = order_core_ids_by_groups(cores, vec![vec![0, 1], vec![1, 2], vec![3]])
+            .into_iter()
+            .map(|core| core.id)
+            .collect::<Vec<_>>();
+        assert_eq!(ordered, vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn affinity_order_rejects_unknown_topology_cpu() {
+        let cores = (0..4)
+            .map(|id| core_affinity::CoreId { id })
+            .collect::<Vec<_>>();
+        let ordered = order_core_ids_by_groups(cores, vec![vec![0, 1], vec![2, 4], vec![3]])
+            .into_iter()
+            .map(|core| core.id)
+            .collect::<Vec<_>>();
+        assert_eq!(ordered, vec![0, 1, 2, 3]);
     }
 
     #[test]

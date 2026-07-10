@@ -12,6 +12,7 @@ This log tracks CPU backend/hash-kernel tuning attempts and measured outcomes.
 ## Newest-first index
 
 - `Updated summary of cumulative adopted optimizations`
+- `2026-07-10 cross-host affinity, memory-pressure, and native Windows validation`
 - `2026-03-13 Zen 5 AVX-512 column gather/scatter + MaybeUninit`
 - `2026-03-09 Zen 5 hugepage reservation + AVX-512 vpermq retest`
 - `2026-03-09 Zen 5 (Ryzen 9 9950X3D) AVX-512 dispatch audit + native retest`
@@ -90,7 +91,7 @@ step on this machine.
 | 35 | Interleaved lo/hi BLAMKA half-rounds | +0.95% | — | Adopted |
 | 37 | 2-column Phase 3+4 interleave | +1.56% | — | Adopted |
 | 38 | AArch64 `PowBlock` 128-byte alignment | ~0% (1T) | +0.44% short, +0.10% long (12T backend) | Adopted |
-| 47 | macOS `pcore-only` CPU affinity default | ~0% | +0.15% (12T), +2-5% directional (16T) | Adopted |
+| 47 | macOS `pcore-only` affinity-tag/QoS default | ~0% | +0.94% at 14T in 2026-07 paired retest | Retained |
 
 Cumulative AArch64: from ~1.37 H/s (scalar) to ~2.73 H/s, **~99% total improvement**.
 
@@ -121,6 +122,79 @@ Cumulative AArch64: from ~1.37 H/s (scalar) to ~2.73 H/s, **~99% total improveme
   roughly +6% at 16T native backend throughput, while a subsequent AVX-512
   diagonal-permute micro-tweak improved the 1T kernel by ~1% but regressed the
   16T native backend and was rejected.
+
+## 2026-07-10 cross-host affinity, memory-pressure, and native Windows validation
+
+The benchmark report now accounts for the measured wall interval and lifecycle
+overhead, and `benchctl` captures host/build identity around paired runs. Absolute
+rates below should therefore not be compared directly with older reports that used
+nominal windows or different lifecycle accounting.
+
+### Native Windows (Ryzen 9 9950X3D)
+
+- Host: Windows 11, 16 physical / 32 logical CPUs, 64 GiB, native Rust 1.93 MSVC.
+- Four 2 GiB lanes, High Performance selected only during each experiment and the
+  original Balanced plan restored in `finally`.
+- `auto` physical-core-first versus no affinity:
+  - `5.6725` -> `6.8009 H/s`
+  - paired geometric delta **+20.01%** (95% bootstrap CI **+12.16% to +27.03%**).
+- Exact same-source binary isolation, old raw logical order versus complete
+  physical-core-first topology:
+  - `5.7912` -> `6.6980 H/s`
+  - paired geometric delta **+15.81%** (95% CI **+8.34% to +20.00%**), all three
+    pairs faster and candidate CV `0.78%`.
+- Adopted only for native Windows. Incomplete, overlapping, or unknown topology
+  groups fail closed to the original order.
+- The new `VirtualAlloc` arena path safely fell back to regular pages because the
+  account lacked `SeLockMemoryPrivilege` (Win32 1300). No privilege or reboot was
+  applied during this validation.
+
+### WSL2 (same Ryzen host)
+
+- WSL exposed 10 physical / 20 logical CPUs and a 16 GiB memory limit.
+- A same-code raw-order versus physical-first A/B measured `5.7894` versus
+  `5.7245 H/s`: **-1.14%**, with a wide **-7.20% to +2.21%** confidence interval
+  and mixed pair signs.
+- Transparent-hugepage coverage varied from `0.2%` to `39.9%` between legs, and
+  earlier interleaved work measured a significant `-8.21%` physical-first
+  regression. Affinity cannot be isolated reliably under those conditions.
+- Conclusion: retain legacy OS/core_affinity ordering on Linux and WSL. Revisit
+  native Linux separately with a fixed HugeTLB reservation; do not infer native
+  Linux policy from WSL's virtual topology.
+
+### Apple M4 Max (12P + 4E, 48 GiB)
+
+CPU-only steady backend results (`5 x 20s`, one warmup unless noted):
+
+| Lanes / affinity | Average H/s | Memory observation |
+|---|---:|---|
+| 10 / `pcore-only` | 23.856 | no swap pressure observed |
+| 12 / `pcore-only` | 27.348 | no swap pressure observed |
+| 14 / `auto` | 29.323 | no swap created |
+| 16 / `auto` | 30.938 | created/used about 3 GiB swap |
+| 16 / `pcore-only` | 30.000 | began with swap already in use |
+
+The shipping 14-lane affinity decision used a separate three-pair interleaved A/B:
+
+- `pcore-only`: `29.2556 H/s`
+- `auto`: `28.9809 H/s`
+- `auto` paired geometric delta **-0.94%** (95% CI **-1.22% to -0.45%**), all
+  three pairs slower.
+
+Retain `pcore-only` as the balanced macOS default. A dedicated 48 GiB M4 Max can
+explicitly use `--threads 16 --cpu-affinity auto` for the highest observed rate,
+but it trades another ~5.7% over the paired 14-lane baseline for substantial OS
+memory pressure.
+
+Semantic correction: `core_affinity` on macOS maps its values to Mach
+`THREAD_AFFINITY_POLICY` tags, not hard logical CPU IDs. `pcore-only` limits the
+tag set using the perflevel0 count and combines that with a high-QoS scheduler
+preference; it does not guarantee P-core placement. Historical sections below
+describe the original hypothesis and are retained as experiment history.
+
+Metal remains explicit opt-in. Prior M4 Max measurements (`24.3 H/s` CPU-only,
+`2.32 H/s` Metal-only, `4.61 H/s` combined under the older harness) and the new
+CPU scaling results do not justify active Metal optimization on unified memory.
 
 ## 2026-03-13 Zen 5 AVX-512 column gather/scatter + MaybeUninit
 
