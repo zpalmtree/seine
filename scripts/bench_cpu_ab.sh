@@ -9,6 +9,8 @@ Usage:
     --candidate-dir <path> \
     [--bench-kind kernel|kernel-effective|backend|end-to-end] \
     [--threads <n>] \
+    [--baseline-threads <n>] \
+    [--candidate-threads <n>] \
     [--bench-secs <n>] \
     [--bench-rounds <n>] \
     [--bench-warmup-rounds <n>] \
@@ -48,6 +50,8 @@ baseline_dir=""
 candidate_dir=""
 bench_kind="backend"
 threads=1
+baseline_threads=""
+candidate_threads=""
 bench_secs=20
 bench_rounds=3
 bench_warmup_rounds=1
@@ -86,6 +90,14 @@ while (($#)); do
             ;;
         --threads)
             threads="${2:-}"
+            shift 2
+            ;;
+        --baseline-threads)
+            baseline_threads="${2:-}"
+            shift 2
+            ;;
+        --candidate-threads)
+            candidate_threads="${2:-}"
             shift 2
             ;;
         --bench-secs)
@@ -193,6 +205,12 @@ fi
 if [[ -z "$candidate_profile" ]]; then
     candidate_profile="$profile"
 fi
+if [[ -z "$baseline_threads" ]]; then
+    baseline_threads="$threads"
+fi
+if [[ -z "$candidate_threads" ]]; then
+    candidate_threads="$threads"
+fi
 if ((native_override == 0)); then
     baseline_native="$native"
     candidate_native="$native"
@@ -214,6 +232,14 @@ if ! [[ "$pairs" =~ ^[0-9]+$ ]] || ((pairs < 1)); then
 fi
 if ! [[ "$threads" =~ ^[0-9]+$ ]] || ((threads < 1)); then
     echo "error: --threads must be an integer >= 1" >&2
+    exit 1
+fi
+if ! [[ "$baseline_threads" =~ ^[0-9]+$ ]] || ((baseline_threads < 1)); then
+    echo "error: --baseline-threads must be an integer >= 1" >&2
+    exit 1
+fi
+if ! [[ "$candidate_threads" =~ ^[0-9]+$ ]] || ((candidate_threads < 1)); then
+    echo "error: --candidate-threads must be an integer >= 1" >&2
     exit 1
 fi
 if ! [[ "$bench_secs" =~ ^[0-9]+$ ]] || ((bench_secs < 1)); then
@@ -272,9 +298,10 @@ run_single() {
     local pair="$3"
     local order="$4"
     local run_profile="$5"
-    local run_native="$6"
-    local run_no_default_features="$7"
-    local run_features="$8"
+    local run_threads="$6"
+    local run_native="$7"
+    local run_no_default_features="$8"
+    local run_features="$9"
     local report_file="$output_dir/${variant}_pair${pair}_${order}.json"
 
     local cmd=(
@@ -292,7 +319,7 @@ run_single() {
         --bench
         --bench-kind "$bench_kind"
         --backend cpu
-        --threads "$threads"
+        --threads "$run_threads"
         --disable-cpu-autotune-threads
         --bench-secs "$bench_secs"
         --bench-rounds "$bench_rounds"
@@ -304,7 +331,7 @@ run_single() {
         cmd+=("${extra_args[@]}")
     fi
 
-    echo "[pair ${pair}/${pairs}] ${variant}:${order} | repo=${repo_dir} profile=${run_profile} native=${run_native} no_default_features=${run_no_default_features} features=${run_features:-<none>}"
+    echo "[pair ${pair}/${pairs}] ${variant}:${order} | repo=${repo_dir} profile=${run_profile} threads=${run_threads} native=${run_native} no_default_features=${run_no_default_features} features=${run_features:-<none>}"
     if ((run_native)); then
         (
             cd "$repo_dir"
@@ -343,12 +370,14 @@ for ((pair = 1; pair <= pairs; pair++)); do
         first_variant="baseline"
         first_repo="$baseline_dir"
         first_profile="$baseline_profile"
+        first_threads="$baseline_threads"
         first_native="$baseline_native"
         first_no_default_features="$baseline_no_default_features"
         first_features="$baseline_features"
         second_variant="candidate"
         second_repo="$candidate_dir"
         second_profile="$candidate_profile"
+        second_threads="$candidate_threads"
         second_native="$candidate_native"
         second_no_default_features="$candidate_no_default_features"
         second_features="$candidate_features"
@@ -356,25 +385,27 @@ for ((pair = 1; pair <= pairs; pair++)); do
         first_variant="candidate"
         first_repo="$candidate_dir"
         first_profile="$candidate_profile"
+        first_threads="$candidate_threads"
         first_native="$candidate_native"
         first_no_default_features="$candidate_no_default_features"
         first_features="$candidate_features"
         second_variant="baseline"
         second_repo="$baseline_dir"
         second_profile="$baseline_profile"
+        second_threads="$baseline_threads"
         second_native="$baseline_native"
         second_no_default_features="$baseline_no_default_features"
         second_features="$baseline_features"
     fi
 
-    run_single "$first_variant" "$first_repo" "$pair" "first" "$first_profile" "$first_native" "$first_no_default_features" "$first_features"
+    run_single "$first_variant" "$first_repo" "$pair" "first" "$first_profile" "$first_threads" "$first_native" "$first_no_default_features" "$first_features"
     run_idx=$((run_idx + 1))
     if ((cooldown_secs > 0 && run_idx < total_runs)); then
         echo "  cooldown ${cooldown_secs}s"
         sleep "$cooldown_secs"
     fi
 
-    run_single "$second_variant" "$second_repo" "$pair" "second" "$second_profile" "$second_native" "$second_no_default_features" "$second_features"
+    run_single "$second_variant" "$second_repo" "$pair" "second" "$second_profile" "$second_threads" "$second_native" "$second_no_default_features" "$second_features"
     run_idx=$((run_idx + 1))
     if ((cooldown_secs > 0 && run_idx < total_runs)); then
         echo "  cooldown ${cooldown_secs}s"
@@ -389,6 +420,8 @@ delta_pct="$(awk -v b="$baseline_avg" -v c="$candidate_avg" 'BEGIN { if (b == 0 
 {
     echo "bench_kind=$bench_kind"
     echo "threads=$threads"
+    echo "baseline_threads=$baseline_threads"
+    echo "candidate_threads=$candidate_threads"
     echo "bench_secs=$bench_secs"
     echo "bench_rounds=$bench_rounds"
     echo "bench_warmup_rounds=$bench_warmup_rounds"
