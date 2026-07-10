@@ -90,8 +90,11 @@ python3 scripts/benchctl.py run \
 ```
 
 The child inherits the terminal and its exit code becomes the wrapper's exit
-code. `preflight.json` and `manifest.json` are written atomically in the output
-directory. Shell metacharacters in child arguments remain literal arguments.
+code. `preflight.json`, `postflight.json`, and `manifest.json` are written
+atomically in the output directory. The v2 manifest embeds both host captures
+and records post-minus-pre available-memory and swap deltas, which makes a run
+that created memory pressure visible even when the benchmark itself remained
+fast. Shell metacharacters in child arguments remain literal arguments.
 
 Run the controller tests with:
 

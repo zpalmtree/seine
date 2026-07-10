@@ -54,6 +54,26 @@ class ParseHelpersTests(unittest.TestCase):
         self.assertEqual(rows[0]["power_draw_w"], 99.2)
         self.assertIsNone(rows[0]["power_limit_w"])
 
+    def test_memory_delta_reports_post_run_swap_growth(self) -> None:
+        delta = benchctl.memory_delta_bytes(
+            {
+                "available_bytes": 40 * 1024**3,
+                "swap_total_bytes": 0,
+                "swap_used_bytes": 0,
+                "swap_free_bytes": 0,
+            },
+            {
+                "available_bytes": 36 * 1024**3,
+                "swap_total_bytes": 4 * 1024**3,
+                "swap_used_bytes": 3 * 1024**3,
+                "swap_free_bytes": 1024**3,
+            },
+        )
+        self.assertEqual(delta["available_bytes"], -(4 * 1024**3))
+        self.assertEqual(delta["swap_total_bytes"], 4 * 1024**3)
+        self.assertEqual(delta["swap_used_bytes"], 3 * 1024**3)
+        self.assertEqual(delta["swap_free_bytes"], 1024**3)
+
 
 class PairedComparisonTests(unittest.TestCase):
     def write_tsv(self, directory: Path, body: str) -> Path:
@@ -200,7 +220,13 @@ class RunWrapperTests(unittest.TestCase):
                 "logical_available": 1,
                 "physical_cores": 1,
             },
-            "memory": {"total_bytes": 1024},
+            "memory": {
+                "total_bytes": 1024,
+                "available_bytes": 768,
+                "swap_total_bytes": 0,
+                "swap_used_bytes": 0,
+                "swap_free_bytes": 0,
+            },
             "load": {"load_average_1m": 0.0},
             "nvidia": {"gpus": []},
             "warnings": [],
@@ -236,6 +262,17 @@ class RunWrapperTests(unittest.TestCase):
             self.assertEqual(manifest["exit_code"], 0)
             self.assertIsNotNone(manifest["ended_at_utc"])
             self.assertGreaterEqual(manifest["duration_seconds"], 0)
+            self.assertEqual(manifest["schema"], "seine-benchmark-run/v2")
+            self.assertEqual(
+                manifest["memory_delta_bytes"],
+                {
+                    "available_bytes": 0,
+                    "swap_free_bytes": 0,
+                    "swap_total_bytes": 0,
+                    "swap_used_bytes": 0,
+                },
+            )
+            self.assertTrue((directory / "postflight.json").is_file())
 
 
 if __name__ == "__main__":

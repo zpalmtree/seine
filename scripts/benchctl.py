@@ -30,7 +30,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 PREFLIGHT_SCHEMA = "seine-benchmark-preflight/v1"
 COMPARISON_SCHEMA = "seine-benchmark-comparison/v1"
-RUN_SCHEMA = "seine-benchmark-run/v1"
+RUN_SCHEMA = "seine-benchmark-run/v2"
 DEFAULT_BOOTSTRAP_SAMPLES = 20_000
 DEFAULT_BOOTSTRAP_SEED = 0x5E1E
 
@@ -935,7 +935,9 @@ def human_bytes(value: Optional[int]) -> str:
     return f"{amount:.1f} TiB"
 
 
-def print_preflight_assessment(report: Mapping[str, Any], stream: Any = sys.stderr) -> None:
+def print_preflight_assessment(
+    report: Mapping[str, Any], stream: Any = sys.stderr, label: str = "Preflight"
+) -> None:
     runtime = report["runtime"]
     cpu = report["cpu"]
     memory = report["memory"]
@@ -952,10 +954,10 @@ def print_preflight_assessment(report: Mapping[str, Any], stream: Any = sys.stde
         parts.append(f"load {load_1m:.2f}")
     if gpu_names:
         parts.append(", ".join(str(name) for name in gpu_names if name))
-    print("Preflight: " + " | ".join(parts), file=stream)
+    print(f"{label}: " + " | ".join(parts), file=stream)
     warnings = report.get("warnings") or []
     if not warnings:
-        print("Preflight: no obvious benchmark confounders detected", file=stream)
+        print(f"{label}: no obvious benchmark confounders detected", file=stream)
     for item in warnings:
         print(
             f"[{item['severity'].upper()} {item['code']}] {item['message']}",
@@ -1290,6 +1292,28 @@ def selected_environment() -> Dict[str, str]:
     return {name: os.environ[name] for name in names if name in os.environ}
 
 
+def memory_delta_bytes(
+    before: Mapping[str, Any], after: Mapping[str, Any]
+) -> Dict[str, int]:
+    result: Dict[str, int] = {}
+    for name in (
+        "available_bytes",
+        "swap_total_bytes",
+        "swap_used_bytes",
+        "swap_free_bytes",
+    ):
+        before_value = before.get(name)
+        after_value = after.get(name)
+        if (
+            isinstance(before_value, int)
+            and not isinstance(before_value, bool)
+            and isinstance(after_value, int)
+            and not isinstance(after_value, bool)
+        ):
+            result[name] = after_value - before_value
+    return result
+
+
 def execute_wrapped(
     command: Sequence[str],
     cwd: Path,
@@ -1332,6 +1356,9 @@ def execute_wrapped(
         "exit_code": None,
         "preflight_path": str(preflight_path),
         "preflight": preflight,
+        "postflight_path": None,
+        "postflight": None,
+        "memory_delta_bytes": None,
     }
     atomic_write_json(manifest_path, manifest)
     print("Run: " + json.dumps(argv), file=sys.stderr)
@@ -1349,6 +1376,18 @@ def execute_wrapped(
     manifest["ended_at_utc"] = utc_now()
     manifest["duration_seconds"] = time.monotonic() - started_monotonic
     manifest["exit_code"] = exit_code
+    try:
+        postflight = collect_preflight(cwd, artifacts)
+        postflight_path = output_dir / "postflight.json"
+        atomic_write_json(postflight_path, postflight)
+        print_preflight_assessment(postflight, label="Postflight")
+        manifest["postflight_path"] = str(postflight_path)
+        manifest["postflight"] = postflight
+        manifest["memory_delta_bytes"] = memory_delta_bytes(
+            preflight.get("memory") or {}, postflight.get("memory") or {}
+        )
+    except Exception as exc:  # Keep the child result even if host recapture fails unexpectedly.
+        manifest["postflight_error"] = str(exc)
     atomic_write_json(manifest_path, manifest)
     print(
         f"Run: {manifest['status']} with exit code {exit_code} in "
