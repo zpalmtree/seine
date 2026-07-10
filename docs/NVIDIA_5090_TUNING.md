@@ -28,7 +28,10 @@ Packaging finding: the current `cudarc` feature set searches CUDA 12.8 Windows
 DLL names such as `nvrtc64_120_0.dll`; a CUDA 13.1-only archive exposes
 `nvrtc64_130_0.dll` and is not discovered. The native validation therefore used
 NVIDIA's checksum-verified 12.8.61 NVRTC redistributable in a user-local `PATH`,
-without a system installer or reboot.
+without a system installer or reboot. The tagged-release workflow now downloads
+that exact archive, verifies its SHA-256, and bundles `nvrtc64_120_0.dll` plus
+`nvrtc-builtins64_128.dll` beside `seine.exe`, so release users do not need the
+manual `PATH` setup.
 
 ## Current Backend Shape
 

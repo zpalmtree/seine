@@ -35,6 +35,11 @@ When sync is complete, type `exit` to shut down the daemon.
 ./seine
 ```
 
+The Windows release archive includes the CUDA 12.8.61 NVRTC runtime DLLs needed
+by the NVIDIA backend. An up-to-date NVIDIA display driver is still required;
+no separate CUDA Toolkit installation or `PATH` change should be necessary for
+the pre-built archive.
+
 **Option B — Build from source:**
 
 ```bash
@@ -259,8 +264,9 @@ they are not hard CPU-ID pinning.
 Requires CUDA driver and NVRTC libraries on the host. Seine compiles kernels at startup via NVRTC.
 The current Windows build uses cudarc's CUDA 12.8 loader feature, so a Windows
 machine with only CUDA 13.x-style DLL names (for example `nvrtc64_130_0.dll`)
-will not be discovered. Install or bundle the CUDA 12.8 NVRTC redistributable;
-it can live beside Seine or in any user-local directory added to `PATH`.
+will not be discovered. Official Windows release archives bundle the required
+12.8.61 NVRTC DLLs beside Seine. Source builds can install the CUDA 12.8 NVRTC
+redistributable separately or add its `bin` directory to `PATH`.
 
 Current Blackwell / RTX 5090 tuning notes and measured benchmark frontier:
 [`docs/NVIDIA_5090_TUNING.md`](docs/NVIDIA_5090_TUNING.md)

@@ -52,7 +52,36 @@ jobs:
         if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
         run: |
-          Compress-Archive -Path target/${{ matrix.target }}/release/seine.exe -DestinationPath ${{ matrix.name }}.zip
+          $ErrorActionPreference = 'Stop'
+          $nvrtcVersion = '12.8.61'
+          $nvrtcArchive = "cuda_nvrtc-windows-x86_64-$nvrtcVersion-archive.zip"
+          $nvrtcUrl = "https://developer.download.nvidia.com/compute/cuda/redist/cuda_nvrtc/windows-x86_64/$nvrtcArchive"
+          $nvrtcSha256 = 'e43603b09f8a52d681ceb814c00b655af19da53692ab91671dabbf8071c8f93d'
+          $nvrtcExtract = Join-Path $env:RUNNER_TEMP 'seine-nvrtc'
+          $stage = Join-Path $env:RUNNER_TEMP '${{ matrix.name }}'
+
+          Invoke-WebRequest -Uri $nvrtcUrl -OutFile $nvrtcArchive
+          $actualSha256 = (Get-FileHash -Algorithm SHA256 $nvrtcArchive).Hash.ToLowerInvariant()
+          if ($actualSha256 -ne $nvrtcSha256) {
+            throw "NVRTC archive checksum mismatch: expected $nvrtcSha256, got $actualSha256"
+          }
+
+          Expand-Archive -LiteralPath $nvrtcArchive -DestinationPath $nvrtcExtract
+          $nvrtcRoot = Join-Path $nvrtcExtract "cuda_nvrtc-windows-x86_64-$nvrtcVersion-archive"
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          Copy-Item 'target/${{ matrix.target }}/release/seine.exe' $stage
+          Copy-Item (Join-Path $nvrtcRoot 'bin/nvrtc64_120_0.dll') $stage
+          Copy-Item (Join-Path $nvrtcRoot 'bin/nvrtc-builtins64_128.dll') $stage
+          Copy-Item 'LICENSE' (Join-Path $stage 'SEINE-LICENSE.txt')
+          Copy-Item (Join-Path $nvrtcRoot 'LICENSE') (Join-Path $stage 'NVIDIA-CUDA-NVRTC-LICENSE.txt')
+          Copy-Item 'README.md' $stage
+
+          Get-ChildItem $stage -File | Sort-Object Name | ForEach-Object {
+            $hash = (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLowerInvariant()
+            "$hash  $($_.Name)"
+          } | Set-Content -Encoding ascii (Join-Path $stage 'SHA256SUMS.txt')
+
+          Compress-Archive -Path (Join-Path $stage '*') -DestinationPath '${{ matrix.name }}.zip'
 
       - name: Upload artifact
         if: startsWith(github.ref, 'refs/tags/v')
