@@ -7,7 +7,7 @@ use blocknet_pow_spec::{POW_MEMORY_KB, POW_OUTPUT_LEN};
 use crate::backend::{BackendEvent, MiningSolution};
 use crate::types::hash_meets_target;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 use super::emit_warning;
 use super::{
     emit_error, emit_event, fixed_argon, flush_hashes, lane_quota_for_chunk, mark_worker_active,
@@ -89,12 +89,14 @@ pub(super) fn cpu_worker_loop(
 
     let hasher = fixed_argon::FixedArgon2id::new(POW_MEMORY_KB);
     let block_count = hasher.block_count();
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     let block_bytes = block_count * std::mem::size_of::<fixed_argon::PowBlock>();
 
     let mut arena = PowArena::new(block_count);
     #[cfg(target_os = "linux")]
     emit_linux_hugepage_diagnostics(&shared, thread_idx, &arena, block_bytes);
+    #[cfg(target_os = "windows")]
+    emit_windows_large_page_diagnostics(&shared, thread_idx, &arena, block_bytes);
     let memory_blocks = arena.as_mut_slice();
 
     let mut output = [0u8; POW_OUTPUT_LEN];
@@ -270,6 +272,8 @@ const MADV_COLLAPSE: libc::c_int = 25;
 pub(super) enum PowArena {
     #[cfg(unix)]
     Mmap(MmapArena),
+    #[cfg(target_os = "windows")]
+    Virtual(VirtualArena),
     Heap(Vec<fixed_argon::PowBlock>),
 }
 
@@ -280,6 +284,10 @@ impl PowArena {
         if let Some(arena) = MmapArena::new(block_count, byte_len) {
             return Self::Mmap(arena);
         }
+        #[cfg(target_os = "windows")]
+        if let Some(arena) = VirtualArena::new(block_count, byte_len) {
+            return Self::Virtual(arena);
+        }
         Self::Heap(vec![fixed_argon::PowBlock::default(); block_count])
     }
 
@@ -287,6 +295,8 @@ impl PowArena {
         match self {
             #[cfg(unix)]
             Self::Mmap(arena) => arena.as_mut_slice(),
+            #[cfg(target_os = "windows")]
+            Self::Virtual(arena) => arena.as_mut_slice(),
             Self::Heap(blocks) => blocks.as_mut_slice(),
         }
     }
@@ -295,6 +305,14 @@ impl PowArena {
     fn mmap_ref(&self) -> Option<&MmapArena> {
         match self {
             Self::Mmap(arena) => Some(arena),
+            Self::Heap(_) => None,
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn virtual_ref(&self) -> Option<&VirtualArena> {
+        match self {
+            Self::Virtual(arena) => Some(arena),
             Self::Heap(_) => None,
         }
     }
@@ -416,6 +434,213 @@ fn emit_linux_hugepage_diagnostics(
             total_pages_needed,
         ),
     );
+}
+
+#[cfg(target_os = "windows")]
+fn emit_windows_large_page_diagnostics(
+    shared: &Shared,
+    thread_idx: usize,
+    arena: &PowArena,
+    block_bytes: usize,
+) {
+    if thread_idx != 0 {
+        return;
+    }
+
+    let Some(arena) = arena.virtual_ref() else {
+        emit_warning(
+            shared,
+            "VirtualAlloc failed; CPU hashing fell back to heap memory and may suffer extra TLB pressure"
+                .to_owned(),
+        );
+        return;
+    };
+    let Some(error) = arena.large_page_error() else {
+        return;
+    };
+
+    emit_warning(
+        shared,
+        format!(
+            "Windows large-page allocation unavailable for {} MiB per worker (Win32 error {}); using regular VirtualAlloc pages",
+            block_bytes / (1024 * 1024),
+            error,
+        ),
+    );
+    emit_warning(
+        shared,
+        "Large-page fix: grant this account 'Lock pages in memory' (SeLockMemoryPrivilege), sign out and back in, then restart Seine"
+            .to_owned(),
+    );
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum VirtualBacking {
+    LargePages,
+    Regular { large_page_error: u32 },
+}
+
+/// RAII wrapper around a Windows VirtualAlloc-backed arena.
+#[cfg(target_os = "windows")]
+pub(super) struct VirtualArena {
+    ptr: *mut u8,
+    block_count: usize,
+    backing: VirtualBacking,
+}
+
+#[cfg(target_os = "windows")]
+impl VirtualArena {
+    fn new(block_count: usize, byte_len: usize) -> Option<Self> {
+        use windows_sys::Win32::Foundation::GetLastError;
+        use windows_sys::Win32::System::Memory::{
+            GetLargePageMinimum, VirtualAlloc, MEM_COMMIT, MEM_LARGE_PAGES, MEM_RESERVE,
+            PAGE_READWRITE,
+        };
+
+        let large_page_minimum = unsafe { GetLargePageMinimum() };
+        let privilege = enable_lock_memory_privilege();
+        let mut large_page_error = privilege.err().unwrap_or(0);
+        if large_page_minimum > 0 && privilege.is_ok() {
+            let allocation_len = round_up_to_multiple(byte_len, large_page_minimum)?;
+            let ptr = unsafe {
+                VirtualAlloc(
+                    std::ptr::null(),
+                    allocation_len,
+                    MEM_RESERVE | MEM_COMMIT | MEM_LARGE_PAGES,
+                    PAGE_READWRITE,
+                )
+            };
+            if !ptr.is_null() {
+                return Some(Self {
+                    ptr: ptr.cast(),
+                    block_count,
+                    backing: VirtualBacking::LargePages,
+                });
+            }
+            large_page_error = unsafe { GetLastError() };
+        }
+
+        let ptr = unsafe {
+            VirtualAlloc(
+                std::ptr::null(),
+                byte_len,
+                MEM_RESERVE | MEM_COMMIT,
+                PAGE_READWRITE,
+            )
+        };
+        if ptr.is_null() {
+            return None;
+        }
+        Some(Self {
+            ptr: ptr.cast(),
+            block_count,
+            backing: VirtualBacking::Regular { large_page_error },
+        })
+    }
+
+    fn as_mut_slice(&mut self) -> &mut [fixed_argon::PowBlock] {
+        unsafe {
+            std::slice::from_raw_parts_mut(
+                self.ptr.cast::<fixed_argon::PowBlock>(),
+                self.block_count,
+            )
+        }
+    }
+
+    fn large_page_error(&self) -> Option<u32> {
+        match self.backing {
+            VirtualBacking::LargePages => None,
+            VirtualBacking::Regular { large_page_error } => Some(large_page_error),
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for VirtualArena {
+    fn drop(&mut self) {
+        use windows_sys::Win32::System::Memory::{VirtualFree, MEM_RELEASE};
+        unsafe {
+            let _ = VirtualFree(self.ptr.cast(), 0, MEM_RELEASE);
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+unsafe impl Send for VirtualArena {}
+
+#[cfg(target_os = "windows")]
+unsafe impl Sync for VirtualArena {}
+
+#[cfg(target_os = "windows")]
+fn round_up_to_multiple(value: usize, multiple: usize) -> Option<usize> {
+    if multiple == 0 {
+        return None;
+    }
+    value
+        .checked_add(multiple - 1)?
+        .checked_div(multiple)?
+        .checked_mul(multiple)
+}
+
+#[cfg(target_os = "windows")]
+fn enable_lock_memory_privilege() -> Result<(), u32> {
+    use std::sync::OnceLock;
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, GetLastError, SetLastError, ERROR_NOT_ALL_ASSIGNED, LUID,
+    };
+    use windows_sys::Win32::Security::{
+        AdjustTokenPrivileges, LookupPrivilegeValueW, LUID_AND_ATTRIBUTES, SE_PRIVILEGE_ENABLED,
+        TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES, TOKEN_QUERY,
+    };
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    static RESULT: OnceLock<Result<(), u32>> = OnceLock::new();
+    *RESULT.get_or_init(|| unsafe {
+        let mut token = std::ptr::null_mut();
+        if OpenProcessToken(
+            GetCurrentProcess(),
+            TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY,
+            &mut token,
+        ) == 0
+        {
+            return Err(GetLastError());
+        }
+
+        let result = (|| {
+            let mut luid = std::mem::zeroed::<LUID>();
+            let privilege_name = "SeLockMemoryPrivilege\0".encode_utf16().collect::<Vec<_>>();
+            if LookupPrivilegeValueW(std::ptr::null(), privilege_name.as_ptr(), &mut luid) == 0 {
+                return Err(GetLastError());
+            }
+            let privileges = TOKEN_PRIVILEGES {
+                PrivilegeCount: 1,
+                Privileges: [LUID_AND_ATTRIBUTES {
+                    Luid: luid,
+                    Attributes: SE_PRIVILEGE_ENABLED,
+                }],
+            };
+            SetLastError(0);
+            if AdjustTokenPrivileges(
+                token,
+                0,
+                &privileges,
+                0,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            ) == 0
+            {
+                return Err(GetLastError());
+            }
+            let error = GetLastError();
+            if error == ERROR_NOT_ALL_ASSIGNED {
+                return Err(error);
+            }
+            Ok(())
+        })();
+        let _ = CloseHandle(token);
+        result
+    })
 }
 
 #[cfg(unix)]

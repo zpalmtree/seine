@@ -1,3 +1,4 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, Condvar, Mutex, OnceLock, RwLock};
 use std::thread::{self, JoinHandle};
@@ -664,10 +665,8 @@ fn resolve_affinity_core_ids(mode: CpuAffinityMode) -> Option<Vec<core_affinity:
     if mode == CpuAffinityMode::Off {
         return None;
     }
-    #[cfg(target_os = "macos")]
     let mut core_ids = core_affinity::get_core_ids().filter(|ids| !ids.is_empty())?;
-    #[cfg(not(target_os = "macos"))]
-    let core_ids = core_affinity::get_core_ids().filter(|ids| !ids.is_empty())?;
+    core_ids = order_core_ids_physical_first(core_ids);
     if mode == CpuAffinityMode::PcoreOnly {
         #[cfg(target_os = "macos")]
         if let Some(pcore_count) = macos_pcore_count() {
@@ -679,6 +678,159 @@ fn resolve_affinity_core_ids(mode: CpuAffinityMode) -> Option<Vec<core_affinity:
     } else {
         Some(core_ids)
     }
+}
+
+/// Orders logical CPUs so one hardware thread from every physical core is used before SMT
+/// siblings. Linux commonly numbers siblings far apart, but WSL numbers them adjacently
+/// (`0-1`, `2-3`, ...); trusting raw OS order can therefore pin half the workers onto the same
+/// cores. Platforms without discoverable sibling topology retain their original order.
+fn order_core_ids_physical_first(
+    core_ids: Vec<core_affinity::CoreId>,
+) -> Vec<core_affinity::CoreId> {
+    let available = core_ids.iter().map(|core| core.id).collect::<BTreeSet<_>>();
+    let Some(groups) = platform_physical_core_groups(&available) else {
+        return core_ids;
+    };
+    order_core_ids_by_groups(core_ids, groups)
+}
+
+fn order_core_ids_by_groups(
+    core_ids: Vec<core_affinity::CoreId>,
+    groups: Vec<Vec<usize>>,
+) -> Vec<core_affinity::CoreId> {
+    let by_id = core_ids
+        .iter()
+        .copied()
+        .map(|core| (core.id, core))
+        .collect::<BTreeMap<_, _>>();
+    let mut normalized = groups
+        .into_iter()
+        .map(|group| {
+            group
+                .into_iter()
+                .filter(|id| by_id.contains_key(id))
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>()
+        })
+        .filter(|group| !group.is_empty())
+        .collect::<Vec<_>>();
+    normalized.sort_by_key(|group| group[0]);
+
+    let mut ordered = Vec::with_capacity(core_ids.len());
+    let mut seen = BTreeSet::new();
+    let max_siblings = normalized.iter().map(Vec::len).max().unwrap_or(0);
+    for sibling_index in 0..max_siblings {
+        for group in &normalized {
+            let Some(id) = group.get(sibling_index) else {
+                continue;
+            };
+            if seen.insert(*id) {
+                if let Some(core) = by_id.get(id) {
+                    ordered.push(*core);
+                }
+            }
+        }
+    }
+
+    // Preserve any logical CPUs omitted by a partial/quirky platform topology query.
+    for core in core_ids {
+        if seen.insert(core.id) {
+            ordered.push(core);
+        }
+    }
+    ordered
+}
+
+#[cfg(target_os = "linux")]
+fn platform_physical_core_groups(available: &BTreeSet<usize>) -> Option<Vec<Vec<usize>>> {
+    let mut unique = BTreeSet::<Vec<usize>>::new();
+    for id in available {
+        let path = format!("/sys/devices/system/cpu/cpu{id}/topology/thread_siblings_list");
+        let value = std::fs::read_to_string(path).ok()?;
+        let group = parse_linux_cpu_list(value.trim())
+            .into_iter()
+            .filter(|cpu| available.contains(cpu))
+            .collect::<Vec<_>>();
+        if group.is_empty() {
+            return None;
+        }
+        unique.insert(group);
+    }
+    (!unique.is_empty()).then(|| unique.into_iter().collect())
+}
+
+#[cfg(target_os = "linux")]
+fn parse_linux_cpu_list(value: &str) -> Vec<usize> {
+    let mut ids = BTreeSet::new();
+    for part in value
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+    {
+        if let Some((start, end)) = part.split_once('-') {
+            let (Ok(start), Ok(end)) = (start.parse::<usize>(), end.parse::<usize>()) else {
+                continue;
+            };
+            if start <= end {
+                ids.extend(start..=end);
+            }
+        } else if let Ok(id) = part.parse::<usize>() {
+            ids.insert(id);
+        }
+    }
+    ids.into_iter().collect()
+}
+
+#[cfg(target_os = "windows")]
+fn platform_physical_core_groups(available: &BTreeSet<usize>) -> Option<Vec<Vec<usize>>> {
+    use std::mem::{size_of, MaybeUninit};
+    use std::ptr;
+    use windows_sys::Win32::System::SystemInformation::{
+        GetLogicalProcessorInformation, RelationProcessorCore, SYSTEM_LOGICAL_PROCESSOR_INFORMATION,
+    };
+
+    let mut byte_len = 0u32;
+    unsafe {
+        // The first call reports the required buffer size.
+        let _ = GetLogicalProcessorInformation(ptr::null_mut(), &mut byte_len);
+    }
+    let entry_size = size_of::<SYSTEM_LOGICAL_PROCESSOR_INFORMATION>();
+    let entry_count = (byte_len as usize).checked_div(entry_size)?;
+    if entry_count == 0 {
+        return None;
+    }
+
+    let mut entries =
+        vec![MaybeUninit::<SYSTEM_LOGICAL_PROCESSOR_INFORMATION>::uninit(); entry_count];
+    let ok = unsafe { GetLogicalProcessorInformation(entries.as_mut_ptr().cast(), &mut byte_len) };
+    if ok == 0 {
+        return None;
+    }
+
+    let initialized_count = (byte_len as usize)
+        .checked_div(entry_size)?
+        .min(entry_count);
+    let mut groups = Vec::new();
+    for entry in &entries[..initialized_count] {
+        let entry = unsafe { entry.assume_init_ref() };
+        if entry.Relationship != RelationProcessorCore {
+            continue;
+        }
+        let group = (0..usize::BITS as usize)
+            .filter(|bit| entry.ProcessorMask & (1usize << bit) != 0)
+            .filter(|bit| available.contains(bit))
+            .collect::<Vec<_>>();
+        if !group.is_empty() {
+            groups.push(group);
+        }
+    }
+    (!groups.is_empty()).then_some(groups)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+fn platform_physical_core_groups(_available: &BTreeSet<usize>) -> Option<Vec<Vec<usize>>> {
+    None
 }
 
 #[cfg(target_os = "macos")]
@@ -1025,7 +1177,7 @@ fn should_flush_hashes(
     pending_hashes >= hash_batch_size.max(1) || now >= next_flush_at
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn emit_warning(shared: &Shared, message: String) {
     events::emit_warning(shared, message);
 }
@@ -1046,7 +1198,8 @@ fn forward_event(shared: &Shared, event: BackendEvent) {
 mod tests {
     use super::{
         emit_error, forward_event, lane_quota_for_chunk, maybe_finalize_assignment,
-        should_flush_hashes, start_assignment, BackendEvent, CpuBackend, DEFAULT_HASH_BATCH_SIZE,
+        order_core_ids_by_groups, should_flush_hashes, start_assignment, BackendEvent, CpuBackend,
+        DEFAULT_HASH_BATCH_SIZE,
     };
     use crate::backend::{MiningSolution, NonceChunk, PowBackend, WorkAssignment, WorkTemplate};
     use crate::config::CpuAffinityMode;
@@ -1069,6 +1222,40 @@ mod tests {
         assert_eq!(lane_quota_for_chunk(5, 1, 4), 1);
         assert_eq!(lane_quota_for_chunk(5, 3, 4), 1);
         assert_eq!(lane_quota_for_chunk(5, 6, 4), 0);
+    }
+
+    #[test]
+    fn affinity_order_spreads_workers_across_physical_cores_before_smt() {
+        let cores = (0..8)
+            .map(|id| core_affinity::CoreId { id })
+            .collect::<Vec<_>>();
+        let groups = vec![vec![0, 1], vec![2, 3], vec![4, 5], vec![6, 7]];
+        let ordered = order_core_ids_by_groups(cores, groups)
+            .into_iter()
+            .map(|core| core.id)
+            .collect::<Vec<_>>();
+        assert_eq!(ordered, vec![0, 2, 4, 6, 1, 3, 5, 7]);
+    }
+
+    #[test]
+    fn affinity_order_preserves_cpus_missing_from_topology_groups() {
+        let cores = (0..5)
+            .map(|id| core_affinity::CoreId { id })
+            .collect::<Vec<_>>();
+        let ordered = order_core_ids_by_groups(cores, vec![vec![0, 1], vec![2, 3]])
+            .into_iter()
+            .map(|core| core.id)
+            .collect::<Vec<_>>();
+        assert_eq!(ordered, vec![0, 2, 1, 3, 4]);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_cpu_list_parser_handles_ranges_and_sparse_ids() {
+        assert_eq!(
+            super::parse_linux_cpu_list("0-3,8,10-11"),
+            vec![0, 1, 2, 3, 8, 10, 11]
+        );
     }
 
     #[test]
