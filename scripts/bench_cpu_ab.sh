@@ -247,13 +247,23 @@ printf "variant\tpair\torder\tavg_hps\tmedian_hps\tcounted_hashes\tlate_hashes\t
 extract_json_number() {
     local key="$1"
     local file="$2"
-    local value
-    value="$(tr -d '\n\r\t ' < "$file" | sed -n "s/.*\"${key}\":\\([-0-9.eE+]*\\).*/\\1/p")"
-    if [[ -z "$value" ]]; then
-        echo "error: key '${key}' not found in ${file}" >&2
-        exit 1
-    fi
-    printf "%s" "$value"
+    python3 - "$key" "$file" <<'PY'
+import json
+import math
+import sys
+
+key, path = sys.argv[1:]
+try:
+    with open(path, "r", encoding="utf-8") as handle:
+        value = json.load(handle)[key]
+except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
+    raise SystemExit(
+        f"error: key {key!r} not found as a top-level JSON field in {path}: {exc}"
+    )
+if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+    raise SystemExit(f"error: key {key!r} in {path} is not a finite JSON number")
+print(value, end="")
+PY
 }
 
 run_single() {
