@@ -131,17 +131,39 @@ fn source_fingerprint(roots: &[PathBuf]) -> Option<String> {
 
     let mut hash = 0xcbf29ce484222325u64;
     for path in files {
-        for byte in path.to_string_lossy().as_bytes() {
-            hash = fnv1a_step(hash, *byte);
-        }
+        hash = hash_source_path(hash, &path);
         hash = fnv1a_step(hash, 0);
         let contents = fs::read(&path).ok()?;
-        for byte in contents {
-            hash = fnv1a_step(hash, byte);
-        }
+        hash = hash_source_contents(hash, &contents);
         hash = fnv1a_step(hash, 0xff);
     }
     Some(format!("{hash:016x}"))
+}
+
+fn hash_source_path(mut hash: u64, path: &Path) -> u64 {
+    // Git may check the same tree out with platform-native separators. Build
+    // identity should describe the source tree, not the host path syntax.
+    for byte in path.to_string_lossy().replace('\\', "/").bytes() {
+        hash = fnv1a_step(hash, byte);
+    }
+    hash
+}
+
+fn hash_source_contents(mut hash: u64, contents: &[u8]) -> u64 {
+    // core.autocrlf can materialize committed LF text as CRLF on Windows.
+    // Normalize only CRLF pairs so identical Git content fingerprints equally
+    // without hiding meaningful standalone carriage returns.
+    let mut index = 0usize;
+    while index < contents.len() {
+        if contents[index] == b'\r' && contents.get(index + 1) == Some(&b'\n') {
+            hash = fnv1a_step(hash, b'\n');
+            index += 2;
+        } else {
+            hash = fnv1a_step(hash, contents[index]);
+            index += 1;
+        }
+    }
+    hash
 }
 
 fn emit_rerun_inputs(roots: &[PathBuf]) {
@@ -212,5 +234,32 @@ fn github_sha_short() -> Option<String> {
         None
     } else {
         Some(short)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const OFFSET_BASIS: u64 = 0xcbf29ce484222325;
+
+    #[test]
+    fn source_path_hash_normalizes_platform_separators() {
+        assert_eq!(
+            hash_source_path(OFFSET_BASIS, Path::new("src/main.rs")),
+            hash_source_path(OFFSET_BASIS, Path::new(r"src\main.rs"))
+        );
+    }
+
+    #[test]
+    fn source_content_hash_normalizes_crlf() {
+        assert_eq!(
+            hash_source_contents(OFFSET_BASIS, b"first\nsecond\n"),
+            hash_source_contents(OFFSET_BASIS, b"first\r\nsecond\r\n")
+        );
+        assert_ne!(
+            hash_source_contents(OFFSET_BASIS, b"first\rsecond\n"),
+            hash_source_contents(OFFSET_BASIS, b"first\nsecond\n")
+        );
     }
 }
