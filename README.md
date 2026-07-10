@@ -257,6 +257,10 @@ they are not hard CPU-ID pinning.
 ### NVIDIA
 
 Requires CUDA driver and NVRTC libraries on the host. Seine compiles kernels at startup via NVRTC.
+The current Windows build uses cudarc's CUDA 12.8 loader feature, so a Windows
+machine with only CUDA 13.x-style DLL names (for example `nvrtc64_130_0.dll`)
+will not be discovered. Install or bundle the CUDA 12.8 NVRTC redistributable;
+it can live beside Seine or in any user-local directory added to `PATH`.
 
 Current Blackwell / RTX 5090 tuning notes and measured benchmark frontier:
 [`docs/NVIDIA_5090_TUNING.md`](docs/NVIDIA_5090_TUNING.md)

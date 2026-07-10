@@ -7,6 +7,29 @@ Measured on March 9, 2026 on this host:
 - VRAM: `32607 MiB`
 - Seine benchmark mode: local `--bench` runs only, no daemon or pool traffic
 
+## July 10, 2026 native Windows validation
+
+The corrected lifecycle-accounting harness was also exercised on the same RTX
+5090 while ordinary desktop/game GPU users remained open. These runs are useful
+for platform direction, not a replacement for the quiet-host frontier below.
+
+- The five-nonce GPU/CPU target-bracket differential passed natively in `23.4s`;
+  the equivalent WSL run took about `147s` under its recorded host conditions.
+- Matching one-lane `208/1`, `10s x 3` backend smoke tests measured:
+  - WSL2, NVRTC 13.1: `0.4835 H/s`
+  - native Windows, NVRTC 12.8: `0.5345 H/s`
+  - native directional delta: **+10.55%**
+- Native Windows was very stable (`0.5332` to `0.5355 H/s`), but both preflights
+  reported about 7 GiB of existing VRAM allocations and nonzero GPU activity.
+  The NVRTC versions also differ, so do not attribute the full delta solely to
+  WSL virtualization.
+
+Packaging finding: the current `cudarc` feature set searches CUDA 12.8 Windows
+DLL names such as `nvrtc64_120_0.dll`; a CUDA 13.1-only archive exposes
+`nvrtc64_130_0.dll` and is not discovered. The native validation therefore used
+NVIDIA's checksum-verified 12.8.61 NVRTC redistributable in a user-local `PATH`,
+without a system installer or reboot.
+
 ## Current Backend Shape
 
 The NVIDIA path is split between the runtime/backend wrapper in `src/backend/nvidia.rs` and the CUDA kernel in `src/backend/nvidia_kernel.cu`.
