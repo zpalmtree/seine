@@ -3009,6 +3009,8 @@ mod tests {
             request_id: 1,
             template: SubmitTemplate::Compact {
                 template_id: "tmpl-unauth".to_string(),
+                fallback_block: Arc::new(sample_template("tmpl-unauth").block),
+                template_expires_at_unix_ms: None,
                 template_height: Some(1),
             },
             solution: MiningSolution {
@@ -3635,7 +3637,8 @@ mod tests {
     fn remember_recent_template_evicts_by_memory_cap() {
         let mut recent = VecDeque::new();
         let mut bytes = 0usize;
-        let max_bytes = 150usize;
+        let max_bytes = 300usize;
+        let fallback_block = Arc::new(sample_template("fallback").block);
 
         remember_recent_template(
             &mut recent,
@@ -3643,6 +3646,8 @@ mod tests {
             1,
             SubmitTemplate::Compact {
                 template_id: "x".repeat(80),
+                fallback_block: Arc::clone(&fallback_block),
+                template_expires_at_unix_ms: None,
                 template_height: Some(1),
             },
             false,
@@ -3656,6 +3661,8 @@ mod tests {
             2,
             SubmitTemplate::Compact {
                 template_id: "y".repeat(80),
+                fallback_block,
+                template_expires_at_unix_ms: None,
                 template_height: Some(2),
             },
             false,
@@ -3806,6 +3813,7 @@ mod tests {
             target: "00".repeat(32),
             header_base: "11".repeat(92),
             template_id: Some(template_id.to_string()),
+            template_expires_at_unix_ms: None,
         }
     }
 

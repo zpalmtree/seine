@@ -310,6 +310,20 @@ pub fn is_invalid_blocktemplate_address_error(err: &anyhow::Error) -> bool {
             .contains("invalid address")
 }
 
+pub fn is_unknown_or_expired_template_error(err: &anyhow::Error) -> bool {
+    let Some(api_err) = err.downcast_ref::<ApiStatusError>() else {
+        return false;
+    };
+    let status = api_err.status();
+    api_err.endpoint() == "submitblock"
+        && (status == StatusCode::BAD_REQUEST || status == StatusCode::NOT_FOUND)
+        && {
+            let message = api_err.message().trim().to_ascii_lowercase();
+            message.contains("unknown or expired template_id")
+                || message.contains("mining_template_expired")
+        }
+}
+
 pub fn is_retryable_api_error(err: &anyhow::Error) -> bool {
     if let Some(api_err) = err.downcast_ref::<ApiStatusError>() {
         let status = api_err.status();
@@ -417,7 +431,9 @@ mod tests {
             then.status(200).json_body(json!({
                 "block": {"header": {"height": 123, "difficulty": 999, "nonce": 0}},
                 "target": expected_target,
-                "header_base": expected_header
+                "header_base": expected_header,
+                "template_id": "tmpl-lease",
+                "template_expires_at_unix_ms": 1_750_000_600_000_i64
             }));
         });
 
@@ -427,6 +443,11 @@ mod tests {
             .expect("block template request should succeed");
         assert_eq!(resp.target.len(), 64);
         assert_eq!(resp.header_base.len(), 184);
+        assert_eq!(resp.template_id.as_deref(), Some("tmpl-lease"));
+        assert_eq!(
+            resp.template_expires_at_unix_ms,
+            Some(1_750_000_600_000_i64)
+        );
         mock.assert();
     }
 
@@ -747,5 +768,29 @@ mod tests {
             message: "bad request".to_string(),
         });
         assert!(!is_invalid_blocktemplate_address_error(&wrong_message));
+    }
+
+    #[test]
+    fn unknown_or_expired_template_error_is_classified() {
+        let legacy = anyhow!(ApiStatusError {
+            endpoint: "submitblock".to_string(),
+            status: StatusCode::BAD_REQUEST,
+            message: "unknown or expired template_id".to_string(),
+        });
+        assert!(is_unknown_or_expired_template_error(&legacy));
+
+        let coded = anyhow!(ApiStatusError {
+            endpoint: "submitblock".to_string(),
+            status: StatusCode::NOT_FOUND,
+            message: "mining_template_expired".to_string(),
+        });
+        assert!(is_unknown_or_expired_template_error(&coded));
+
+        let wrong_endpoint = anyhow!(ApiStatusError {
+            endpoint: "blocktemplate".to_string(),
+            status: StatusCode::BAD_REQUEST,
+            message: "unknown or expired template_id".to_string(),
+        });
+        assert!(!is_unknown_or_expired_template_error(&wrong_endpoint));
     }
 }
