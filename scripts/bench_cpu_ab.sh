@@ -377,12 +377,14 @@ PY
 
 validate_memory_backing() {
     local expected_mode="$1"
-    local file="$2"
-    python3 - "$expected_mode" "$file" <<'PY'
+    local expected_threads="$2"
+    local file="$3"
+    python3 - "$expected_mode" "$expected_threads" "$file" <<'PY'
 import json
 import sys
 
-expected, path = sys.argv[1:]
+expected, expected_threads, path = sys.argv[1:]
+expected_threads = int(expected_threads)
 with open(path, "r", encoding="utf-8") as handle:
     report = json.load(handle)
 
@@ -423,6 +425,21 @@ regular = values["memory_regular_workers"]
 heap = values["memory_heap_workers"]
 if large + thp + regular + heap == 0:
     raise SystemExit(f"error: {path} reports zero CPU workers across all backing classes")
+total_bytes = sum(
+    values[key]
+    for key in (
+        "memory_explicit_large_bytes",
+        "memory_transparent_huge_bytes",
+        "memory_regular_bytes",
+        "memory_heap_bytes",
+    )
+)
+expected_bytes = expected_threads * 2 * 1024 * 1024 * 1024
+if total_bytes != expected_bytes:
+    raise SystemExit(
+        f"error: {path} reports {total_bytes} CPU arena bytes, expected {expected_bytes} "
+        f"for {expected_threads} thread(s)"
+    )
 if expected == "large" and (large == 0 or thp or regular or heap):
     raise SystemExit(f"error: {path} requested large pages but reports {values}")
 if expected == "regular" and (regular == 0 or large or thp or heap):
@@ -544,7 +561,7 @@ run_single() {
     counted_hashes="$(extract_json_number "total_counted_hashes" "$report_file")"
     late_hashes="$(extract_json_number "total_late_hashes" "$report_file")"
     if [[ -n "$run_page_mode" ]]; then
-        backing="$(validate_memory_backing "$run_page_mode" "$report_file")"
+        backing="$(validate_memory_backing "$run_page_mode" "$run_threads" "$report_file")"
     fi
     printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
         "$variant" "$pair" "$order" "$avg_hps" "$median_hps" "$counted_hashes" "$late_hashes" "${run_page_mode:-implicit}" "$backing" "$report_file" \
@@ -632,13 +649,28 @@ for variant, signatures in by_variant.items():
             f"error: {variant} memory backing changed between A/B runs: {sorted(signatures)}"
         )
 
+def normalized(signature):
+    values = dict(part.split("=", 1) for part in signature.split(":"))
+    byte_keys = ("large_bytes", "thp_bytes", "regular_bytes", "heap_bytes")
+    byte_values = tuple(int(values[key]) for key in byte_keys)
+    total_bytes = sum(byte_values)
+    if total_bytes <= 0:
+        raise SystemExit(f"error: invalid zero-byte backing signature: {signature}")
+    page_fractions = tuple(round(value / total_bytes, 9) for value in byte_values)
+    lane_equivalents = total_bytes / (2 * 1024 * 1024 * 1024)
+    failure_rate = round(int(values["failures"]) / lane_equivalents, 9)
+    return page_fractions, failure_rate
+
 if baseline_mode and baseline_mode == candidate_mode:
     baseline = by_variant.get("baseline", set())
     candidate = by_variant.get("candidate", set())
-    if baseline != candidate:
+    baseline_normalized = {normalized(value) for value in baseline}
+    candidate_normalized = {normalized(value) for value in candidate}
+    if baseline_normalized != candidate_normalized:
         raise SystemExit(
             "error: baseline and candidate used different memory backing under the same "
-            f"page mode: baseline={sorted(baseline)} candidate={sorted(candidate)}"
+            f"page mode: baseline={sorted(baseline_normalized)} "
+            f"candidate={sorted(candidate_normalized)}"
         )
 PY
 fi
