@@ -1936,7 +1936,7 @@ fn cpu_affinity_strategy_label(mode: CpuAffinityMode) -> &'static str {
     #[cfg(target_os = "macos")]
     {
         match mode {
-            CpuAffinityMode::PcoreOnly => "macos-limited-affinity-tags-high-qos",
+            CpuAffinityMode::PcoreOnly => "macos-limited-affinity-tags-split-qos",
             CpuAffinityMode::Auto => "macos-affinity-tags-high-qos",
             CpuAffinityMode::Off => "off",
         }
@@ -2362,7 +2362,7 @@ mod tests {
         #[cfg(target_os = "macos")]
         assert_eq!(
             cpu_affinity_strategy_label(CpuAffinityMode::PcoreOnly),
-            "macos-limited-affinity-tags-high-qos"
+            "macos-limited-affinity-tags-split-qos"
         );
     }
 

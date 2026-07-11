@@ -10,11 +10,12 @@ use crate::types::hash_meets_target;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use super::emit_warning;
 use super::{
-    emit_error, emit_event, fixed_argon, flush_hashes, lane_quota_for_chunk, mark_worker_active,
-    mark_worker_inactive, mark_worker_ready, request_shutdown, request_work_pause,
-    set_thread_high_perf, should_flush_hashes, wait_for_work_update, Shared,
+    configure_thread_qos, emit_error, emit_event, fixed_argon, flush_hashes, lane_quota_for_chunk,
+    mark_worker_active, mark_worker_inactive, mark_worker_ready, request_shutdown,
+    request_work_pause, should_flush_hashes, wait_for_work_update, Shared,
     MAX_DEADLINE_CHECK_INTERVAL, SOLVED_MASK,
 };
+use crate::config::CpuAffinityMode;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum SolutionDisposition {
@@ -81,8 +82,9 @@ pub(super) fn cpu_worker_loop(
     shared: Arc<Shared>,
     thread_idx: usize,
     core_id: Option<core_affinity::CoreId>,
+    affinity_mode: CpuAffinityMode,
 ) {
-    set_thread_high_perf();
+    configure_thread_qos(affinity_mode, thread_idx);
     if let Some(core_id) = core_id {
         let _ = core_affinity::set_for_current(core_id);
     }

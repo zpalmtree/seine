@@ -40,22 +40,51 @@ const STARTUP_READY_TIMEOUT_MAX: Duration = Duration::from_secs(180);
 const BYTES_PER_GIB: u64 = 1024 * 1024 * 1024;
 const DEFAULT_EVENT_DISPATCH_CAPACITY: usize = 256;
 
-/// On macOS, request the highest QoS class so the scheduler prefers performance
-/// cores. This is a best-effort scheduling hint, not hard CPU pinning. No-op on
-/// other platforms.
+#[cfg(any(target_os = "macos", test))]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum MacosWorkerQos {
+    UserInteractive,
+    Utility,
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn macos_worker_qos(
+    affinity_mode: CpuAffinityMode,
+    worker_idx: usize,
+    pcore_count: Option<usize>,
+) -> MacosWorkerQos {
+    let is_pcore_spill = affinity_mode == CpuAffinityMode::PcoreOnly
+        && pcore_count.is_some_and(|count| count > 0 && worker_idx >= count);
+    if is_pcore_spill {
+        MacosWorkerQos::Utility
+    } else {
+        MacosWorkerQos::UserInteractive
+    }
+}
+
+/// On macOS, give the primary P-core-sized worker set the highest QoS and route
+/// any `pcore-only` spill workers through Utility QoS so the scheduler can place
+/// them on efficiency cores. This is a best-effort scheduling hint, not hard CPU
+/// pinning. No-op on other platforms.
 #[inline]
-fn set_thread_high_perf() {
+fn configure_thread_qos(affinity_mode: CpuAffinityMode, worker_idx: usize) {
     #[cfg(target_os = "macos")]
     {
         extern "C" {
             fn pthread_set_qos_class_self_np(qos_class: u32, relative_priority: i32) -> i32;
         }
-        // QOS_CLASS_USER_INTERACTIVE = 0x21 — highest-priority scheduler preference.
         const QOS_CLASS_USER_INTERACTIVE: u32 = 0x21;
+        const QOS_CLASS_UTILITY: u32 = 0x11;
+        let qos_class = match macos_worker_qos(affinity_mode, worker_idx, macos_pcore_count()) {
+            MacosWorkerQos::UserInteractive => QOS_CLASS_USER_INTERACTIVE,
+            MacosWorkerQos::Utility => QOS_CLASS_UTILITY,
+        };
         unsafe {
-            let _ = pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+            let _ = pthread_set_qos_class_self_np(qos_class, 0);
         }
     }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (affinity_mode, worker_idx);
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -332,13 +361,14 @@ impl PowBackend for CpuBackend {
         let mut spawn_error = None;
         for thread_idx in 0..self.threads.max(1) {
             let shared = Arc::clone(&self.shared);
+            let affinity_mode = self.affinity_mode;
             let core_id = core_ids
                 .as_ref()
                 .and_then(|ids| ids.get(thread_idx % ids.len()))
                 .copied();
             let handle = thread::Builder::new()
                 .name(format!("seine-cpu-worker-{thread_idx}"))
-                .spawn(move || cpu_worker_loop(shared, thread_idx, core_id));
+                .spawn(move || cpu_worker_loop(shared, thread_idx, core_id, affinity_mode));
             match handle {
                 Ok(handle) => spawned_handles.push(handle),
                 Err(err) => {
@@ -598,12 +628,13 @@ impl BenchBackend for CpuBackend {
                 let setup_barrier = Arc::clone(&setup_barrier);
                 let start_barrier = Arc::clone(&start_barrier);
                 let stop_at = Arc::clone(&stop_at);
+                let affinity_mode = self.affinity_mode;
                 let core_id = core_ids
                     .as_ref()
                     .and_then(|ids| ids.get(lane % ids.len()))
                     .copied();
                 scope.spawn(move || {
-                    set_thread_high_perf();
+                    configure_thread_qos(affinity_mode, lane);
                     if let Some(core_id) = core_id {
                         let _ = core_affinity::set_for_current(core_id);
                     }
@@ -658,8 +689,13 @@ impl BenchBackend for CpuBackend {
     }
 }
 
-fn cpu_worker_loop(shared: Arc<Shared>, thread_idx: usize, core_id: Option<core_affinity::CoreId>) {
-    kernel::cpu_worker_loop(shared, thread_idx, core_id);
+fn cpu_worker_loop(
+    shared: Arc<Shared>,
+    thread_idx: usize,
+    core_id: Option<core_affinity::CoreId>,
+    affinity_mode: CpuAffinityMode,
+) {
+    kernel::cpu_worker_loop(shared, thread_idx, core_id, affinity_mode);
 }
 
 fn resolve_affinity_core_ids(mode: CpuAffinityMode) -> Option<Vec<core_affinity::CoreId>> {
@@ -1171,9 +1207,9 @@ fn forward_event(shared: &Shared, event: BackendEvent) {
 #[cfg(test)]
 mod tests {
     use super::{
-        emit_error, forward_event, lane_quota_for_chunk, maybe_finalize_assignment,
-        order_core_ids_by_groups, should_flush_hashes, start_assignment, BackendEvent, CpuBackend,
-        DEFAULT_HASH_BATCH_SIZE,
+        emit_error, forward_event, lane_quota_for_chunk, macos_worker_qos,
+        maybe_finalize_assignment, order_core_ids_by_groups, should_flush_hashes, start_assignment,
+        BackendEvent, CpuBackend, MacosWorkerQos, DEFAULT_HASH_BATCH_SIZE,
     };
     use crate::backend::{MiningSolution, NonceChunk, PowBackend, WorkAssignment, WorkTemplate};
     use crate::config::CpuAffinityMode;
@@ -1221,6 +1257,26 @@ mod tests {
             .map(|core| core.id)
             .collect::<Vec<_>>();
         assert_eq!(ordered, vec![0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn macos_qos_routes_only_pcore_spill_workers_to_utility() {
+        assert_eq!(
+            macos_worker_qos(CpuAffinityMode::PcoreOnly, 11, Some(12)),
+            MacosWorkerQos::UserInteractive
+        );
+        assert_eq!(
+            macos_worker_qos(CpuAffinityMode::PcoreOnly, 12, Some(12)),
+            MacosWorkerQos::Utility
+        );
+        assert_eq!(
+            macos_worker_qos(CpuAffinityMode::Auto, 12, Some(12)),
+            MacosWorkerQos::UserInteractive
+        );
+        assert_eq!(
+            macos_worker_qos(CpuAffinityMode::PcoreOnly, 12, None),
+            MacosWorkerQos::UserInteractive
+        );
     }
 
     #[test]
