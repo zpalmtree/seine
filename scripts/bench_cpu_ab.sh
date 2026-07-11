@@ -483,6 +483,7 @@ run_single() {
     local run_page_mode="${10}"
     local run_binary="${11}"
     local report_file="$output_dir/${variant}_pair${pair}_${order}.json"
+    local report_arg="$report_file"
     local run_miner_args=()
 
     if ((${#extra_args[@]})); then
@@ -507,6 +508,13 @@ run_single() {
         fi
         cmd+=(--)
     fi
+    # A Windows executable launched by WSL does not consistently receive an
+    # interoperable path for a POSIX /mnt/c report argument. Keep the local
+    # path for harness-side parsing, but hand the executable the equivalent
+    # native path so it can create its JSON report itself.
+    if [[ -n "${WSL_DISTRO_NAME:-}" && "$run_binary" == *.exe ]]; then
+        report_arg="$(wslpath -w "$report_file")"
+    fi
     cmd+=(
         --bench
         --bench-kind "$bench_kind"
@@ -517,7 +525,7 @@ run_single() {
         --bench-rounds "$bench_rounds"
         --bench-warmup-rounds "$bench_warmup_rounds"
         --ui plain
-        --bench-output "$report_file"
+        --bench-output "$report_arg"
     )
     if [[ -n "$run_page_mode" ]]; then
         cmd+=(--cpu-page-mode "$run_page_mode")
