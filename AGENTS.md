@@ -44,6 +44,11 @@ This file preserves the full engineering reference for AI agents doing optimizat
 
 ### CPU Backend Tuning
 
+- `--cpu-page-mode` (`auto`, `regular`, `large`; default `auto`) controls the CPU arena page contract.
+  - `auto` prefers explicit Windows large pages/Linux HugeTLB, then retains the platform fallback chain.
+  - `regular` forces ordinary pages and disables Linux THP for a controlled baseline.
+  - `large` requires every worker to allocate explicit large pages and fails CPU backend startup on any fallback; it is rejected on macOS.
+  - CPU autotune caches and benchmark compatibility are separated by page mode. Schema-12 benchmark reports retain measured backing workers/bytes and allocation failures.
 - `--cpu-profile` (`balanced`, `throughput`, `efficiency`; default `balanced`) applies preset CPU threading/poll/flush defaults.
   - Profile defaults apply when related knobs are omitted; explicit flags still override profile defaults.
 - `--cpu-hash-batch-size` (default `64`) controls per-worker hash counter flush batch size.
@@ -191,6 +196,7 @@ Output goes to `data/bench_cpu_ab_<kind>_<timestamp>/` and includes:
 - `results.tsv` with per-run metrics.
 - `summary.txt` with baseline/candidate means and percent delta.
 - Optional: use `--baseline-profile` / `--candidate-profile` and `--baseline-native` / `--candidate-native` to A/B build profiles or ISA flags in one interleaved run.
+- Optional: use `--page-mode` or `--baseline-page-mode` / `--candidate-page-mode` for verified page-policy comparisons; the harness rejects fallback or inconsistent backing.
 - Optional: use `--no-default-features`, `--baseline-no-default-features`,
   `--candidate-no-default-features`, `--features`, `--baseline-features`, and
   `--candidate-features` to A/B CPU-only or feature-gated builds without

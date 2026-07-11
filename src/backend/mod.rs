@@ -388,6 +388,24 @@ pub enum BackendEvent {
 pub struct BackendTelemetry {
     pub active_lanes: u64,
     pub pending_work: u64,
+    /// CPU workers whose arena is fully backed by explicit HugeTLB/large pages.
+    pub memory_explicit_large_workers: u64,
+    /// CPU workers with at least some measured transparent-huge-page coverage.
+    pub memory_transparent_huge_workers: u64,
+    /// CPU workers with at least some ordinary-page coverage.
+    pub memory_regular_workers: u64,
+    /// CPU workers using the allocator's final heap fallback.
+    pub memory_heap_workers: u64,
+    /// Bytes backed by explicit HugeTLB/large pages.
+    pub memory_explicit_large_bytes: u64,
+    /// Bytes reported as transparent huge pages by the operating system.
+    pub memory_transparent_huge_bytes: u64,
+    /// Bytes backed by ordinary pages.
+    pub memory_regular_bytes: u64,
+    /// Bytes held by heap fallback arenas.
+    pub memory_heap_bytes: u64,
+    /// Failed preferred allocation attempts since the previous telemetry sample.
+    pub memory_allocation_failures: u64,
     pub dropped_events: u64,
     pub completed_assignments: u64,
     pub completed_assignment_hashes: u64,

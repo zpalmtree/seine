@@ -21,7 +21,7 @@ use tower_http::cors::{Any, CorsLayer};
 
 use crate::address::validate_mining_address;
 use crate::config::{
-    read_token_from_cookie_file, BackendKind, BackendSpec, Config, CpuAffinityMode,
+    read_token_from_cookie_file, BackendKind, BackendSpec, Config, CpuAffinityMode, CpuPageMode,
     CpuPerformanceProfile, MiningMode, UiMode, WorkAllocation,
 };
 use crate::dev_fee::{effective_pool_dev_fee_percent, DEV_ADDRESS, DEV_FEE_PERCENT};
@@ -134,6 +134,7 @@ struct ApiConfigView {
     threads: usize,
     cpu_profile: String,
     cpu_affinity: String,
+    cpu_page_mode: String,
     refresh_secs: u64,
     request_timeout_secs: u64,
     events_stream_timeout_secs: u64,
@@ -226,6 +227,7 @@ impl From<&Config> for ApiConfigView {
             threads: cfg.threads,
             cpu_profile: cpu_profile_to_str(cfg.cpu_profile).to_string(),
             cpu_affinity: cpu_affinity_to_str(cfg.cpu_affinity).to_string(),
+            cpu_page_mode: cfg.cpu_page_mode.as_str().to_string(),
             refresh_secs: cfg.refresh_interval.as_secs(),
             request_timeout_secs: cfg.request_timeout.as_secs(),
             events_stream_timeout_secs: cfg.events_stream_timeout.as_secs(),
@@ -925,6 +927,7 @@ struct StartRequest {
     cpu_event_dispatch_capacity: Option<usize>,
     cpu_profile: Option<String>,
     cpu_affinity: Option<String>,
+    cpu_page_mode: Option<String>,
     cpu_autotune_threads: Option<bool>,
     cpu_autotune_min_threads: Option<usize>,
     cpu_autotune_max_threads: Option<usize>,
@@ -1572,6 +1575,9 @@ fn apply_start_patch(cfg: &mut Config, patch: &StartRequest) -> Result<()> {
     if let Some(value) = patch.cpu_affinity.as_deref() {
         cfg.cpu_affinity = parse_cpu_affinity(value)?;
     }
+    if let Some(value) = patch.cpu_page_mode.as_deref() {
+        cfg.cpu_page_mode = parse_cpu_page_mode(value)?;
+    }
     if let Some(value) = patch.cpu_autotune_threads {
         cfg.cpu_autotune_threads = value;
     }
@@ -1729,6 +1735,16 @@ fn apply_start_patch(cfg: &mut Config, patch: &StartRequest) -> Result<()> {
         cfg.ui_mode = parse_ui_mode(value)?;
     }
 
+    if cfg!(target_os = "macos")
+        && cfg.cpu_page_mode == CpuPageMode::Large
+        && cfg
+            .backend_specs
+            .iter()
+            .any(|spec| spec.kind == BackendKind::Cpu)
+    {
+        bail!("cpu_page_mode large is unsupported on macOS; use auto or regular");
+    }
+
     Ok(())
 }
 
@@ -1830,6 +1846,15 @@ fn parse_cpu_affinity(value: &str) -> Result<CpuAffinityMode> {
     }
 }
 
+fn parse_cpu_page_mode(value: &str) -> Result<CpuPageMode> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "auto" => Ok(CpuPageMode::Auto),
+        "regular" => Ok(CpuPageMode::Regular),
+        "large" => Ok(CpuPageMode::Large),
+        other => bail!("invalid cpu_page_mode '{other}' (expected: auto|regular|large)"),
+    }
+}
+
 fn parse_mining_mode(value: &str) -> Result<MiningMode> {
     match value.trim().to_ascii_lowercase().as_str() {
         "pool" => Ok(MiningMode::Pool),
@@ -1927,6 +1952,17 @@ mod tests {
                 .map(|value| value.as_millis()),
             Some(1500)
         );
+    }
+
+    #[test]
+    fn parse_cpu_page_mode_accepts_public_contract_values() {
+        assert_eq!(parse_cpu_page_mode("auto").unwrap(), CpuPageMode::Auto);
+        assert_eq!(
+            parse_cpu_page_mode("regular").unwrap(),
+            CpuPageMode::Regular
+        );
+        assert_eq!(parse_cpu_page_mode("large").unwrap(), CpuPageMode::Large);
+        assert!(parse_cpu_page_mode("transparent").is_err());
     }
 
     #[test]

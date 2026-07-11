@@ -5,6 +5,7 @@ use std::time::Instant;
 use blocknet_pow_spec::{POW_MEMORY_KB, POW_OUTPUT_LEN};
 
 use crate::backend::{BackendEvent, MiningSolution};
+use crate::config::CpuPageMode;
 use crate::types::hash_meets_target;
 
 #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -92,7 +93,29 @@ pub(super) fn cpu_worker_loop(
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     let block_bytes = block_count * std::mem::size_of::<fixed_argon::PowBlock>();
 
-    let mut arena = PowArena::new(block_count);
+    let mut arena = match PowArena::new(block_count, shared.page_mode) {
+        Ok(arena) => arena,
+        Err(err) => {
+            let message = format!(
+                "cpu thread {thread_idx}: {} page-mode arena allocation failed ({err})",
+                shared.page_mode.as_str()
+            );
+            shared
+                .arena_allocation_failures
+                .fetch_add(1, Ordering::AcqRel);
+            if let Ok(mut slot) = shared.startup_error.lock() {
+                if slot.is_none() {
+                    *slot = Some(message.clone());
+                }
+            }
+            shared.startup_failed.store(true, Ordering::Release);
+            emit_error(&shared, message);
+            shared.ready_cv.notify_all();
+            request_shutdown(&shared);
+            return;
+        }
+    };
+    record_arena_backing(&shared, &arena, block_count);
     #[cfg(target_os = "linux")]
     emit_linux_hugepage_diagnostics(&shared, thread_idx, &arena, block_bytes);
     #[cfg(target_os = "windows")]
@@ -274,21 +297,37 @@ pub(super) enum PowArena {
     Mmap(MmapArena),
     #[cfg(target_os = "windows")]
     Virtual(VirtualArena),
-    Heap(Vec<fixed_argon::PowBlock>),
+    Heap {
+        blocks: Vec<fixed_argon::PowBlock>,
+        allocation_failures: u64,
+    },
 }
 
 impl PowArena {
-    pub(super) fn new(block_count: usize) -> Self {
+    pub(super) fn new(block_count: usize, page_mode: CpuPageMode) -> Result<Self, String> {
         let byte_len = block_count.saturating_mul(std::mem::size_of::<fixed_argon::PowBlock>());
         #[cfg(unix)]
-        if let Some(arena) = MmapArena::new(block_count, byte_len) {
-            return Self::Mmap(arena);
+        match MmapArena::new(block_count, byte_len, page_mode) {
+            Ok(arena) => return Ok(Self::Mmap(arena)),
+            Err(err) if page_mode == CpuPageMode::Large => return Err(err),
+            Err(_) => {}
         }
         #[cfg(target_os = "windows")]
-        if let Some(arena) = VirtualArena::new(block_count, byte_len) {
-            return Self::Virtual(arena);
+        match VirtualArena::new(block_count, byte_len, page_mode) {
+            Ok(arena) => return Ok(Self::Virtual(arena)),
+            Err(err) if page_mode == CpuPageMode::Large => return Err(err),
+            Err(_) => {}
         }
-        Self::Heap(vec![fixed_argon::PowBlock::default(); block_count])
+
+        let mut blocks = Vec::new();
+        blocks
+            .try_reserve_exact(block_count)
+            .map_err(|err| format!("heap fallback reserve failed: {err}"))?;
+        blocks.resize_with(block_count, fixed_argon::PowBlock::default);
+        Ok(Self::Heap {
+            blocks,
+            allocation_failures: 1,
+        })
     }
 
     pub(super) fn as_mut_slice(&mut self) -> &mut [fixed_argon::PowBlock] {
@@ -297,7 +336,7 @@ impl PowArena {
             Self::Mmap(arena) => arena.as_mut_slice(),
             #[cfg(target_os = "windows")]
             Self::Virtual(arena) => arena.as_mut_slice(),
-            Self::Heap(blocks) => blocks.as_mut_slice(),
+            Self::Heap { blocks, .. } => blocks.as_mut_slice(),
         }
     }
 
@@ -305,7 +344,7 @@ impl PowArena {
     fn mmap_ref(&self) -> Option<&MmapArena> {
         match self {
             Self::Mmap(arena) => Some(arena),
-            Self::Heap(_) => None,
+            Self::Heap { .. } => None,
         }
     }
 
@@ -313,22 +352,109 @@ impl PowArena {
     fn virtual_ref(&self) -> Option<&VirtualArena> {
         match self {
             Self::Virtual(arena) => Some(arena),
-            Self::Heap(_) => None,
+            Self::Heap { .. } => None,
+        }
+    }
+
+    fn backing_observation(&self, requested_bytes: u64) -> ArenaBackingObservation {
+        match self {
+            #[cfg(unix)]
+            Self::Mmap(arena) => arena.backing_observation(requested_bytes),
+            #[cfg(target_os = "windows")]
+            Self::Virtual(arena) => arena.backing_observation(requested_bytes),
+            Self::Heap {
+                allocation_failures,
+                ..
+            } => ArenaBackingObservation {
+                heap_workers: 1,
+                heap_bytes: requested_bytes,
+                allocation_failures: *allocation_failures,
+                ..ArenaBackingObservation::default()
+            },
         }
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct ArenaBackingObservation {
+    explicit_large_workers: u64,
+    transparent_huge_workers: u64,
+    regular_workers: u64,
+    heap_workers: u64,
+    explicit_large_bytes: u64,
+    transparent_huge_bytes: u64,
+    regular_bytes: u64,
+    heap_bytes: u64,
+    allocation_failures: u64,
+}
+
+pub(super) fn record_arena_backing(shared: &Shared, arena: &PowArena, block_count: usize) {
+    let requested_bytes = block_count
+        .saturating_mul(std::mem::size_of::<fixed_argon::PowBlock>())
+        .min(u64::MAX as usize) as u64;
+    let observation = arena.backing_observation(requested_bytes);
+    shared
+        .arena_explicit_large_workers
+        .fetch_add(observation.explicit_large_workers, Ordering::AcqRel);
+    shared
+        .arena_transparent_huge_workers
+        .fetch_add(observation.transparent_huge_workers, Ordering::AcqRel);
+    shared
+        .arena_regular_workers
+        .fetch_add(observation.regular_workers, Ordering::AcqRel);
+    shared
+        .arena_heap_workers
+        .fetch_add(observation.heap_workers, Ordering::AcqRel);
+    shared
+        .arena_explicit_large_bytes
+        .fetch_add(observation.explicit_large_bytes, Ordering::AcqRel);
+    shared
+        .arena_transparent_huge_bytes
+        .fetch_add(observation.transparent_huge_bytes, Ordering::AcqRel);
+    shared
+        .arena_regular_bytes
+        .fetch_add(observation.regular_bytes, Ordering::AcqRel);
+    shared
+        .arena_heap_bytes
+        .fetch_add(observation.heap_bytes, Ordering::AcqRel);
+    shared
+        .arena_allocation_failures
+        .fetch_add(observation.allocation_failures, Ordering::AcqRel);
+}
+
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "linux")]
+    use super::PowArena;
     use super::{handle_found_solution, SolutionDisposition};
     use crate::backend::cpu::CpuBackend;
     use crate::backend::{BackendEvent, WorkTemplate};
     use crate::config::CpuAffinityMode;
+    #[cfg(target_os = "linux")]
+    use crate::config::CpuPageMode;
     use blocknet_pow_spec::{POW_HEADER_BASE_LEN, POW_OUTPUT_LEN};
     use crossbeam_channel::unbounded;
     use std::sync::atomic::Ordering;
     use std::sync::Arc;
     use std::time::{Duration, Instant};
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn regular_page_mode_reports_measured_regular_backing() {
+        let block_count = 16;
+        let arena = PowArena::new(block_count, CpuPageMode::Regular)
+            .expect("small regular-page arena should allocate");
+        let requested_bytes =
+            (block_count * std::mem::size_of::<blocknet_pow_kernel::PowBlock>()) as u64;
+        let observation = arena.backing_observation(requested_bytes);
+
+        assert_eq!(observation.explicit_large_workers, 0);
+        assert_eq!(observation.transparent_huge_workers, 0);
+        assert_eq!(observation.regular_workers, 1);
+        assert_eq!(observation.heap_workers, 0);
+        assert_eq!(observation.regular_bytes, requested_bytes);
+        assert_eq!(observation.allocation_failures, 0);
+    }
 
     #[test]
     fn non_terminal_solution_emits_event_without_pausing_assignment() {
@@ -379,7 +505,7 @@ fn emit_linux_hugepage_diagnostics(
     arena: &PowArena,
     block_bytes: usize,
 ) {
-    if thread_idx != 0 {
+    if thread_idx != 0 || shared.page_mode != CpuPageMode::Auto {
         return;
     }
 
@@ -443,7 +569,7 @@ fn emit_windows_large_page_diagnostics(
     arena: &PowArena,
     block_bytes: usize,
 ) {
-    if thread_idx != 0 {
+    if thread_idx != 0 || shared.page_mode != CpuPageMode::Auto {
         return;
     }
 
@@ -486,39 +612,65 @@ enum VirtualBacking {
 pub(super) struct VirtualArena {
     ptr: *mut u8,
     block_count: usize,
+    allocation_len: usize,
+    allocation_failures: u64,
     backing: VirtualBacking,
 }
 
 #[cfg(target_os = "windows")]
 impl VirtualArena {
-    fn new(block_count: usize, byte_len: usize) -> Option<Self> {
+    fn new(block_count: usize, byte_len: usize, page_mode: CpuPageMode) -> Result<Self, String> {
         use windows_sys::Win32::Foundation::GetLastError;
         use windows_sys::Win32::System::Memory::{
             GetLargePageMinimum, VirtualAlloc, MEM_COMMIT, MEM_LARGE_PAGES, MEM_RESERVE,
             PAGE_READWRITE,
         };
 
-        let large_page_minimum = unsafe { GetLargePageMinimum() };
-        let privilege = enable_lock_memory_privilege();
-        let mut large_page_error = privilege.err().unwrap_or(0);
-        if large_page_minimum > 0 && privilege.is_ok() {
-            let allocation_len = round_up_to_multiple(byte_len, large_page_minimum)?;
-            let ptr = unsafe {
-                VirtualAlloc(
-                    std::ptr::null(),
-                    allocation_len,
-                    MEM_RESERVE | MEM_COMMIT | MEM_LARGE_PAGES,
-                    PAGE_READWRITE,
-                )
-            };
-            if !ptr.is_null() {
-                return Some(Self {
-                    ptr: ptr.cast(),
-                    block_count,
-                    backing: VirtualBacking::LargePages,
-                });
+        let try_large_pages = page_mode != CpuPageMode::Regular;
+        let mut large_page_error = 0;
+        let mut allocation_failures = 0u64;
+        if try_large_pages {
+            let large_page_minimum = unsafe { GetLargePageMinimum() };
+            if large_page_minimum == 0 {
+                allocation_failures = allocation_failures.saturating_add(1);
+                if page_mode == CpuPageMode::Large {
+                    return Err("GetLargePageMinimum reported no supported large-page size".into());
+                }
+            } else {
+                match enable_lock_memory_privilege() {
+                    Ok(()) => {
+                        let allocation_len = round_up_to_multiple(byte_len, large_page_minimum)
+                            .ok_or_else(|| {
+                                "large-page allocation size overflowed usize".to_owned()
+                            })?;
+                        let ptr = unsafe {
+                            VirtualAlloc(
+                                std::ptr::null(),
+                                allocation_len,
+                                MEM_RESERVE | MEM_COMMIT | MEM_LARGE_PAGES,
+                                PAGE_READWRITE,
+                            )
+                        };
+                        if !ptr.is_null() {
+                            return Ok(Self {
+                                ptr: ptr.cast(),
+                                block_count,
+                                allocation_len,
+                                allocation_failures,
+                                backing: VirtualBacking::LargePages,
+                            });
+                        }
+                        large_page_error = unsafe { GetLastError() };
+                    }
+                    Err(error) => large_page_error = error,
+                }
+                allocation_failures = allocation_failures.saturating_add(1);
+                if page_mode == CpuPageMode::Large {
+                    return Err(format!(
+                        "MEM_LARGE_PAGES VirtualAlloc unavailable (Win32 error {large_page_error})"
+                    ));
+                }
             }
-            large_page_error = unsafe { GetLastError() };
         }
 
         let ptr = unsafe {
@@ -530,11 +682,16 @@ impl VirtualArena {
             )
         };
         if ptr.is_null() {
-            return None;
+            let error = unsafe { GetLastError() };
+            return Err(format!(
+                "regular VirtualAlloc failed for {byte_len} bytes (Win32 error {error})"
+            ));
         }
-        Some(Self {
+        Ok(Self {
             ptr: ptr.cast(),
             block_count,
+            allocation_len: byte_len,
+            allocation_failures,
             backing: VirtualBacking::Regular { large_page_error },
         })
     }
@@ -552,6 +709,24 @@ impl VirtualArena {
         match self.backing {
             VirtualBacking::LargePages => None,
             VirtualBacking::Regular { large_page_error } => Some(large_page_error),
+        }
+    }
+
+    fn backing_observation(&self, _requested_bytes: u64) -> ArenaBackingObservation {
+        let allocation_bytes = self.allocation_len.min(u64::MAX as usize) as u64;
+        match self.backing {
+            VirtualBacking::LargePages => ArenaBackingObservation {
+                explicit_large_workers: 1,
+                explicit_large_bytes: allocation_bytes,
+                allocation_failures: self.allocation_failures,
+                ..ArenaBackingObservation::default()
+            },
+            VirtualBacking::Regular { .. } => ArenaBackingObservation {
+                regular_workers: 1,
+                regular_bytes: allocation_bytes,
+                allocation_failures: self.allocation_failures,
+                ..ArenaBackingObservation::default()
+            },
         }
     }
 }
@@ -650,7 +825,6 @@ enum MmapBacking {
     ExplicitHugeTLB,
     #[cfg(target_os = "linux")]
     TransparentHuge,
-    #[cfg(not(target_os = "linux"))]
     Regular,
 }
 
@@ -662,61 +836,98 @@ pub(super) struct MmapArena {
     block_count: usize,
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     backing: MmapBacking,
+    allocation_failures: u64,
 }
 
 #[cfg(unix)]
 impl MmapArena {
-    pub(super) fn new(block_count: usize, byte_len: usize) -> Option<Self> {
+    pub(super) fn new(
+        block_count: usize,
+        byte_len: usize,
+        page_mode: CpuPageMode,
+    ) -> Result<Self, String> {
         #[cfg(target_os = "linux")]
         {
-            // Attempt 1: MAP_HUGETLB for guaranteed 2 MB pages.
-            let ptr = unsafe {
-                libc::mmap(
-                    std::ptr::null_mut(),
-                    byte_len,
-                    libc::PROT_READ | libc::PROT_WRITE,
-                    libc::MAP_PRIVATE | libc::MAP_ANON | libc::MAP_HUGETLB | libc::MAP_POPULATE,
-                    -1,
-                    0,
-                )
-            };
-            if ptr != libc::MAP_FAILED {
-                return Some(Self {
-                    ptr: ptr as *mut u8,
-                    byte_len,
-                    block_count,
-                    backing: MmapBacking::ExplicitHugeTLB,
-                });
+            let mut allocation_failures = 0u64;
+            if page_mode != CpuPageMode::Regular {
+                // Attempt 1: MAP_HUGETLB for guaranteed 2 MB pages.
+                let ptr = unsafe {
+                    libc::mmap(
+                        std::ptr::null_mut(),
+                        byte_len,
+                        libc::PROT_READ | libc::PROT_WRITE,
+                        libc::MAP_PRIVATE | libc::MAP_ANON | libc::MAP_HUGETLB | libc::MAP_POPULATE,
+                        -1,
+                        0,
+                    )
+                };
+                if ptr != libc::MAP_FAILED {
+                    return Ok(Self {
+                        ptr: ptr as *mut u8,
+                        byte_len,
+                        block_count,
+                        backing: MmapBacking::ExplicitHugeTLB,
+                        allocation_failures,
+                    });
+                }
+                let error = std::io::Error::last_os_error();
+                allocation_failures = allocation_failures.saturating_add(1);
+                if page_mode == CpuPageMode::Large {
+                    return Err(format!(
+                        "MAP_HUGETLB mmap failed for {byte_len} bytes: {error}"
+                    ));
+                }
             }
 
-            // Attempt 2: regular mmap + THP hints.
+            // Attempt 2: a regular mapping with either THP hints or an explicit THP ban.
+            let populate_flag = if page_mode == CpuPageMode::Regular {
+                0
+            } else {
+                libc::MAP_POPULATE
+            };
             let ptr = unsafe {
                 libc::mmap(
                     std::ptr::null_mut(),
                     byte_len,
                     libc::PROT_READ | libc::PROT_WRITE,
-                    libc::MAP_PRIVATE | libc::MAP_ANON | libc::MAP_POPULATE,
+                    libc::MAP_PRIVATE | libc::MAP_ANON | populate_flag,
                     -1,
                     0,
                 )
             };
             if ptr == libc::MAP_FAILED {
-                return None;
+                let error = std::io::Error::last_os_error();
+                return Err(format!("regular mmap failed for {byte_len} bytes: {error}"));
             }
-            unsafe {
-                let _ = libc::madvise(ptr, byte_len, libc::MADV_HUGEPAGE);
-                let _ = libc::madvise(ptr, byte_len, MADV_COLLAPSE);
-            }
-            return Some(Self {
+            let backing = if page_mode == CpuPageMode::Regular {
+                unsafe {
+                    let _ = libc::madvise(ptr, byte_len, libc::MADV_NOHUGEPAGE);
+                    // Apply MADV_NOHUGEPAGE before faulting pages so even hosts using
+                    // THP=always cannot turn the control lane into a hidden THP run.
+                    std::ptr::write_bytes(ptr.cast::<u8>(), 0, byte_len);
+                }
+                MmapBacking::Regular
+            } else {
+                unsafe {
+                    let _ = libc::madvise(ptr, byte_len, libc::MADV_HUGEPAGE);
+                    let _ = libc::madvise(ptr, byte_len, MADV_COLLAPSE);
+                }
+                MmapBacking::TransparentHuge
+            };
+            return Ok(Self {
                 ptr: ptr as *mut u8,
                 byte_len,
                 block_count,
-                backing: MmapBacking::TransparentHuge,
+                backing,
+                allocation_failures,
             });
         }
 
         #[cfg(not(target_os = "linux"))]
         {
+            if page_mode == CpuPageMode::Large {
+                return Err("explicit large pages are unsupported on this Unix target".into());
+            }
             let ptr = unsafe {
                 libc::mmap(
                     std::ptr::null_mut(),
@@ -728,13 +939,15 @@ impl MmapArena {
                 )
             };
             if ptr == libc::MAP_FAILED {
-                return None;
+                let error = std::io::Error::last_os_error();
+                return Err(format!("mmap failed for {byte_len} bytes: {error}"));
             }
-            Some(Self {
+            Ok(Self {
                 ptr: ptr as *mut u8,
                 byte_len,
                 block_count,
                 backing: MmapBacking::Regular,
+                allocation_failures: 0,
             })
         }
     }
@@ -753,6 +966,62 @@ impl MmapArena {
     #[cfg(target_os = "linux")]
     fn anon_huge_kib(&self) -> Option<u64> {
         read_smaps_anon_huge_kib(self.ptr as usize)
+    }
+
+    fn backing_observation(&self, requested_bytes: u64) -> ArenaBackingObservation {
+        #[cfg(target_os = "linux")]
+        {
+            match self.backing {
+                MmapBacking::ExplicitHugeTLB => ArenaBackingObservation {
+                    explicit_large_workers: 1,
+                    explicit_large_bytes: requested_bytes,
+                    allocation_failures: self.allocation_failures,
+                    ..ArenaBackingObservation::default()
+                },
+                MmapBacking::TransparentHuge => {
+                    let transparent_huge_bytes = self
+                        .anon_huge_kib()
+                        .unwrap_or(0)
+                        .saturating_mul(1024)
+                        .min(requested_bytes);
+                    let regular_bytes = requested_bytes.saturating_sub(transparent_huge_bytes);
+                    ArenaBackingObservation {
+                        transparent_huge_workers: u64::from(transparent_huge_bytes > 0),
+                        regular_workers: u64::from(regular_bytes > 0),
+                        transparent_huge_bytes,
+                        regular_bytes,
+                        allocation_failures: self.allocation_failures,
+                        ..ArenaBackingObservation::default()
+                    }
+                }
+                MmapBacking::Regular => {
+                    let transparent_huge_bytes = self
+                        .anon_huge_kib()
+                        .unwrap_or(0)
+                        .saturating_mul(1024)
+                        .min(requested_bytes);
+                    let regular_bytes = requested_bytes.saturating_sub(transparent_huge_bytes);
+                    ArenaBackingObservation {
+                        transparent_huge_workers: u64::from(transparent_huge_bytes > 0),
+                        regular_workers: u64::from(regular_bytes > 0),
+                        transparent_huge_bytes,
+                        regular_bytes,
+                        allocation_failures: self.allocation_failures,
+                        ..ArenaBackingObservation::default()
+                    }
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            ArenaBackingObservation {
+                regular_workers: 1,
+                regular_bytes: requested_bytes,
+                allocation_failures: self.allocation_failures,
+                ..ArenaBackingObservation::default()
+            }
+        }
     }
 }
 

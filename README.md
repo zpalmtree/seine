@@ -145,6 +145,9 @@ machine is already fragmented.
 Runtime checks:
 - Startup warns with exact sizing/commands when HugeTLB is under-provisioned (`hugepages | CPU lanes=... need ...`).
 - Per-backend fallback warnings still appear if a worker falls back from `MAP_HUGETLB` (`MAP_HUGETLB unavailable; hugepage coverage...`).
+- `--cpu-page-mode large` requires every CPU worker to receive `MAP_HUGETLB` and fails CPU backend startup instead of mixing page classes or silently falling back.
+- `--cpu-page-mode regular` disables THP for a controlled base-page benchmark. The default `auto` mode retains the production fallback chain.
+- Benchmark reports record measured HugeTLB, THP, regular-page, and heap bytes per CPU backend so page-backed runs can be verified rather than inferred.
 - In practice, once many CPU lanes are active, hugepage coverage usually matters more than ISA-level tuning for backend throughput.
 
 ## Windows Large Pages
@@ -155,6 +158,12 @@ account to hold **Lock pages in memory** (`SeLockMemoryPrivilege`); changing tha
 user right normally requires signing out and back in before a process can enable
 it. Seine never grants the right or triggers a sign-out itself, and logs the Win32
 fallback reason so benchmark manifests remain interpretable.
+
+Use `--cpu-page-mode large` after granting the right to require large pages for
+every worker, or `--cpu-page-mode regular` for a matched ordinary-page control.
+Required-large startup fails with the Win32 allocation error if the privilege or
+enough large-page memory is unavailable. macOS supports `auto` and `regular`;
+explicit `large` mode is rejected because there is no equivalent allocator contract.
 
 Native Windows `--cpu-affinity auto` also uses complete processor-core topology
 groups before SMT siblings. If Windows returns incomplete or contradictory

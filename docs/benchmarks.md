@@ -43,6 +43,24 @@ For CPU lane-count comparisons, pass `--baseline-threads` and
 `--candidate-threads` to `bench_cpu_ab.sh`. `--threads` remains the shared
 default when either variant-specific value is omitted.
 
+For page-policy comparisons, use `--page-mode` for both variants or
+`--baseline-page-mode` / `--candidate-page-mode` independently. When these
+flags are present, the harness verifies report schema 12 backing telemetry,
+rejects a required-large run that fell back, rejects THP contamination in a
+regular-page control, and rejects backing changes between repeated runs. For
+example, compare the same Windows or Linux binary with ordinary and explicit
+large pages:
+
+```bash
+bash scripts/bench_cpu_ab.sh \
+  --baseline-dir . --candidate-dir . \
+  --baseline-binary /absolute/path/to/seine \
+  --candidate-binary /absolute/path/to/seine \
+  --baseline-page-mode regular \
+  --candidate-page-mode large \
+  --threads 8 --pairs 4 --bench-secs 20 --bench-rounds 3
+```
+
 For same-binary configuration comparisons, repeat `--baseline-miner-arg` and
 `--candidate-miner-arg` once per argument. Arguments after `--` still apply to
 both variants. For example:

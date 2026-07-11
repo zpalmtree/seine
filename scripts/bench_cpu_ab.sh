@@ -11,6 +11,9 @@ Usage:
     [--threads <n>] \
     [--baseline-threads <n>] \
     [--candidate-threads <n>] \
+    [--page-mode auto|regular|large] \
+    [--baseline-page-mode auto|regular|large] \
+    [--candidate-page-mode auto|regular|large] \
     [--bench-secs <n>] \
     [--bench-rounds <n>] \
     [--bench-warmup-rounds <n>] \
@@ -56,6 +59,9 @@ bench_kind="backend"
 threads=1
 baseline_threads=""
 candidate_threads=""
+page_mode=""
+baseline_page_mode=""
+candidate_page_mode=""
 bench_secs=20
 bench_rounds=3
 bench_warmup_rounds=1
@@ -106,6 +112,18 @@ while (($#)); do
             ;;
         --candidate-threads)
             candidate_threads="${2:-}"
+            shift 2
+            ;;
+        --page-mode)
+            page_mode="${2:-}"
+            shift 2
+            ;;
+        --baseline-page-mode)
+            baseline_page_mode="${2:-}"
+            shift 2
+            ;;
+        --candidate-page-mode)
+            candidate_page_mode="${2:-}"
             shift 2
             ;;
         --bench-secs)
@@ -243,6 +261,12 @@ fi
 if [[ -z "$candidate_threads" ]]; then
     candidate_threads="$threads"
 fi
+if [[ -z "$baseline_page_mode" ]]; then
+    baseline_page_mode="$page_mode"
+fi
+if [[ -z "$candidate_page_mode" ]]; then
+    candidate_page_mode="$page_mode"
+fi
 if ((native_override == 0)); then
     baseline_native="$native"
     candidate_native="$native"
@@ -311,6 +335,12 @@ if ! [[ "$cooldown_secs" =~ ^[0-9]+$ ]]; then
     echo "error: --cooldown-secs must be an integer >= 0" >&2
     exit 1
 fi
+for selected_page_mode in "$baseline_page_mode" "$candidate_page_mode"; do
+    if [[ -n "$selected_page_mode" && ! "$selected_page_mode" =~ ^(auto|regular|large)$ ]]; then
+        echo "error: page mode must be auto, regular, or large (got: $selected_page_mode)" >&2
+        exit 1
+    fi
+done
 
 if [[ -z "$output_dir" ]]; then
     stamp="$(date +%Y%m%d_%H%M%S)"
@@ -321,7 +351,7 @@ output_dir="$(cd "$output_dir" && pwd)"
 
 raw_tsv="$output_dir/results.tsv"
 summary_txt="$output_dir/summary.txt"
-printf "variant\tpair\torder\tavg_hps\tmedian_hps\tcounted_hashes\tlate_hashes\treport\n" > "$raw_tsv"
+printf "variant\tpair\torder\tavg_hps\tmedian_hps\tcounted_hashes\tlate_hashes\tpage_mode\tbacking\treport\n" > "$raw_tsv"
 
 extract_json_number() {
     local key="$1"
@@ -345,6 +375,76 @@ print(value, end="")
 PY
 }
 
+validate_memory_backing() {
+    local expected_mode="$1"
+    local file="$2"
+    python3 - "$expected_mode" "$file" <<'PY'
+import json
+import sys
+
+expected, path = sys.argv[1:]
+with open(path, "r", encoding="utf-8") as handle:
+    report = json.load(handle)
+
+actual_mode = report.get("config_fingerprint", {}).get("cpu_page_mode")
+if actual_mode != expected:
+    raise SystemExit(
+        f"error: {path} reports cpu_page_mode={actual_mode!r}, expected {expected!r}"
+    )
+
+keys = (
+    "memory_explicit_large_workers",
+    "memory_transparent_huge_workers",
+    "memory_regular_workers",
+    "memory_heap_workers",
+    "memory_explicit_large_bytes",
+    "memory_transparent_huge_bytes",
+    "memory_regular_bytes",
+    "memory_heap_bytes",
+    "memory_allocation_failures",
+)
+signatures = set()
+for run in report.get("runs", []):
+    cpu_runs = [entry for entry in run.get("backend_runs", []) if entry.get("backend") == "cpu"]
+    if not cpu_runs:
+        raise SystemExit(f"error: {path} has no CPU backing telemetry for round {run.get('round')}")
+    signatures.add(tuple(sum(int(entry.get(key, 0)) for entry in cpu_runs) for key in keys))
+
+if not signatures:
+    raise SystemExit(f"error: {path} has no measured CPU rounds")
+if len(signatures) != 1:
+    raise SystemExit(f"error: {path} changed CPU memory backing between rounds: {sorted(signatures)}")
+
+signature = next(iter(signatures))
+values = dict(zip(keys, signature))
+large = values["memory_explicit_large_workers"]
+thp = values["memory_transparent_huge_workers"]
+regular = values["memory_regular_workers"]
+heap = values["memory_heap_workers"]
+if large + thp + regular + heap == 0:
+    raise SystemExit(f"error: {path} reports zero CPU workers across all backing classes")
+if expected == "large" and (large == 0 or thp or regular or heap):
+    raise SystemExit(f"error: {path} requested large pages but reports {values}")
+if expected == "regular" and (regular == 0 or large or thp or heap):
+    raise SystemExit(f"error: {path} requested regular pages but reports {values}")
+
+print(
+    "large={}:thp={}:regular={}:heap={}:large_bytes={}:thp_bytes={}:regular_bytes={}:heap_bytes={}:failures={}".format(
+        large,
+        thp,
+        regular,
+        heap,
+        values["memory_explicit_large_bytes"],
+        values["memory_transparent_huge_bytes"],
+        values["memory_regular_bytes"],
+        values["memory_heap_bytes"],
+        values["memory_allocation_failures"],
+    ),
+    end="",
+)
+PY
+}
+
 format_shell_args() {
     if (($# == 0)); then
         printf '<none>'
@@ -363,7 +463,8 @@ run_single() {
     local run_native="$7"
     local run_no_default_features="$8"
     local run_features="$9"
-    local run_binary="${10}"
+    local run_page_mode="${10}"
+    local run_binary="${11}"
     local report_file="$output_dir/${variant}_pair${pair}_${order}.json"
     local run_miner_args=()
 
@@ -401,13 +502,16 @@ run_single() {
         --ui plain
         --bench-output "$report_file"
     )
+    if [[ -n "$run_page_mode" ]]; then
+        cmd+=(--cpu-page-mode "$run_page_mode")
+    fi
     if ((${#run_miner_args[@]})); then
         cmd+=("${run_miner_args[@]}")
     fi
 
-    printf '[pair %s/%s] %s:%s | repo=%s binary=%s profile=%s threads=%s native=%s no_default_features=%s features=%s args=' \
+    printf '[pair %s/%s] %s:%s | repo=%s binary=%s profile=%s threads=%s page_mode=%s native=%s no_default_features=%s features=%s args=' \
         "$pair" "$pairs" "$variant" "$order" "$repo_dir" "${run_binary:-<cargo>}" \
-        "$run_profile" "$run_threads" "$run_native" "$run_no_default_features" "${run_features:-<none>}"
+        "$run_profile" "$run_threads" "${run_page_mode:-<implicit>}" "$run_native" "$run_no_default_features" "${run_features:-<none>}"
     if ((${#run_miner_args[@]})); then
         format_shell_args "${run_miner_args[@]}"
     else
@@ -434,15 +538,19 @@ run_single() {
     local median_hps
     local counted_hashes
     local late_hashes
+    local backing="unchecked"
     avg_hps="$(extract_json_number "avg_hps" "$report_file")"
     median_hps="$(extract_json_number "median_hps" "$report_file")"
     counted_hashes="$(extract_json_number "total_counted_hashes" "$report_file")"
     late_hashes="$(extract_json_number "total_late_hashes" "$report_file")"
-    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
-        "$variant" "$pair" "$order" "$avg_hps" "$median_hps" "$counted_hashes" "$late_hashes" "$report_file" \
+    if [[ -n "$run_page_mode" ]]; then
+        backing="$(validate_memory_backing "$run_page_mode" "$report_file")"
+    fi
+    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+        "$variant" "$pair" "$order" "$avg_hps" "$median_hps" "$counted_hashes" "$late_hashes" "${run_page_mode:-implicit}" "$backing" "$report_file" \
         >> "$raw_tsv"
 
-    echo "  avg_hps=${avg_hps} median_hps=${median_hps} counted=${counted_hashes} late=${late_hashes}"
+    echo "  avg_hps=${avg_hps} median_hps=${median_hps} counted=${counted_hashes} late=${late_hashes} backing=${backing}"
 }
 
 total_runs=$((pairs * 2))
@@ -456,6 +564,7 @@ for ((pair = 1; pair <= pairs; pair++)); do
         first_native="$baseline_native"
         first_no_default_features="$baseline_no_default_features"
         first_features="$baseline_features"
+        first_page_mode="$baseline_page_mode"
         first_binary="$baseline_binary"
         second_variant="candidate"
         second_repo="$candidate_dir"
@@ -464,6 +573,7 @@ for ((pair = 1; pair <= pairs; pair++)); do
         second_native="$candidate_native"
         second_no_default_features="$candidate_no_default_features"
         second_features="$candidate_features"
+        second_page_mode="$candidate_page_mode"
         second_binary="$candidate_binary"
     else
         first_variant="candidate"
@@ -473,6 +583,7 @@ for ((pair = 1; pair <= pairs; pair++)); do
         first_native="$candidate_native"
         first_no_default_features="$candidate_no_default_features"
         first_features="$candidate_features"
+        first_page_mode="$candidate_page_mode"
         first_binary="$candidate_binary"
         second_variant="baseline"
         second_repo="$baseline_dir"
@@ -481,23 +592,56 @@ for ((pair = 1; pair <= pairs; pair++)); do
         second_native="$baseline_native"
         second_no_default_features="$baseline_no_default_features"
         second_features="$baseline_features"
+        second_page_mode="$baseline_page_mode"
         second_binary="$baseline_binary"
     fi
 
-    run_single "$first_variant" "$first_repo" "$pair" "first" "$first_profile" "$first_threads" "$first_native" "$first_no_default_features" "$first_features" "$first_binary"
+    run_single "$first_variant" "$first_repo" "$pair" "first" "$first_profile" "$first_threads" "$first_native" "$first_no_default_features" "$first_features" "$first_page_mode" "$first_binary"
     run_idx=$((run_idx + 1))
     if ((cooldown_secs > 0 && run_idx < total_runs)); then
         echo "  cooldown ${cooldown_secs}s"
         sleep "$cooldown_secs"
     fi
 
-    run_single "$second_variant" "$second_repo" "$pair" "second" "$second_profile" "$second_threads" "$second_native" "$second_no_default_features" "$second_features" "$second_binary"
+    run_single "$second_variant" "$second_repo" "$pair" "second" "$second_profile" "$second_threads" "$second_native" "$second_no_default_features" "$second_features" "$second_page_mode" "$second_binary"
     run_idx=$((run_idx + 1))
     if ((cooldown_secs > 0 && run_idx < total_runs)); then
         echo "  cooldown ${cooldown_secs}s"
         sleep "$cooldown_secs"
     fi
 done
+
+if [[ -n "$baseline_page_mode" || -n "$candidate_page_mode" ]]; then
+    python3 - "$raw_tsv" "$baseline_page_mode" "$candidate_page_mode" <<'PY'
+import csv
+import sys
+
+path, baseline_mode, candidate_mode = sys.argv[1:]
+with open(path, "r", encoding="utf-8", newline="") as handle:
+    rows = list(csv.DictReader(handle, delimiter="\t"))
+
+by_variant = {}
+for row in rows:
+    if row["backing"] == "unchecked":
+        continue
+    by_variant.setdefault(row["variant"], set()).add(row["backing"])
+
+for variant, signatures in by_variant.items():
+    if len(signatures) != 1:
+        raise SystemExit(
+            f"error: {variant} memory backing changed between A/B runs: {sorted(signatures)}"
+        )
+
+if baseline_mode and baseline_mode == candidate_mode:
+    baseline = by_variant.get("baseline", set())
+    candidate = by_variant.get("candidate", set())
+    if baseline != candidate:
+        raise SystemExit(
+            "error: baseline and candidate used different memory backing under the same "
+            f"page mode: baseline={sorted(baseline)} candidate={sorted(candidate)}"
+        )
+PY
+fi
 
 baseline_avg="$(awk -F '\t' 'NR>1 && $1=="baseline" {sum+=$4; n+=1} END {if (n>0) printf "%.12f", sum/n; else print "nan"}' "$raw_tsv")"
 candidate_avg="$(awk -F '\t' 'NR>1 && $1=="candidate" {sum+=$4; n+=1} END {if (n>0) printf "%.12f", sum/n; else print "nan"}' "$raw_tsv")"
@@ -508,6 +652,8 @@ delta_pct="$(awk -v b="$baseline_avg" -v c="$candidate_avg" 'BEGIN { if (b == 0 
     echo "threads=$threads"
     echo "baseline_threads=$baseline_threads"
     echo "candidate_threads=$candidate_threads"
+    echo "baseline_page_mode=${baseline_page_mode:-implicit}"
+    echo "candidate_page_mode=${candidate_page_mode:-implicit}"
     echo "bench_secs=$bench_secs"
     echo "bench_rounds=$bench_rounds"
     echo "bench_warmup_rounds=$bench_warmup_rounds"

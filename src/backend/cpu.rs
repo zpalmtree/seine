@@ -15,7 +15,7 @@ use crate::backend::{
     BackendInstanceId, BackendTelemetry, BenchBackend, DeadlineSupport, PowBackend,
     PreemptionGranularity, WorkAssignment, WORK_ID_MAX,
 };
-use crate::config::CpuAffinityMode;
+use crate::config::{CpuAffinityMode, CpuPageMode};
 
 #[path = "cpu/events.rs"]
 mod events;
@@ -64,6 +64,7 @@ pub struct CpuBackendTuning {
     pub control_check_interval_hashes: u64,
     pub hash_flush_interval: Duration,
     pub event_dispatch_capacity: usize,
+    pub page_mode: CpuPageMode,
 }
 
 impl Default for CpuBackendTuning {
@@ -73,6 +74,7 @@ impl Default for CpuBackendTuning {
             control_check_interval_hashes: DEFAULT_CONTROL_CHECK_INTERVAL_HASHES,
             hash_flush_interval: DEFAULT_HASH_FLUSH_INTERVAL,
             event_dispatch_capacity: DEFAULT_EVENT_DISPATCH_CAPACITY,
+            page_mode: CpuPageMode::Auto,
         }
     }
 }
@@ -84,6 +86,7 @@ impl CpuBackendTuning {
             control_check_interval_hashes: self.control_check_interval_hashes.max(1),
             hash_flush_interval: self.hash_flush_interval.max(Duration::from_millis(1)),
             event_dispatch_capacity: self.event_dispatch_capacity.max(1),
+            page_mode: self.page_mode,
         }
     }
 }
@@ -124,6 +127,7 @@ struct Shared {
     active_workers: AtomicUsize,
     ready_workers: AtomicUsize,
     startup_failed: AtomicBool,
+    startup_error: Mutex<Option<String>>,
     work_control: Mutex<ControlState>,
     work_cv: Condvar,
     idle_lock: Mutex<()>,
@@ -139,12 +143,22 @@ struct Shared {
     completed_assignment_hashes: AtomicU64,
     completed_assignment_micros: AtomicU64,
     dropped_events: AtomicU64,
+    arena_explicit_large_workers: AtomicU64,
+    arena_transparent_huge_workers: AtomicU64,
+    arena_regular_workers: AtomicU64,
+    arena_heap_workers: AtomicU64,
+    arena_explicit_large_bytes: AtomicU64,
+    arena_transparent_huge_bytes: AtomicU64,
+    arena_regular_bytes: AtomicU64,
+    arena_heap_bytes: AtomicU64,
+    arena_allocation_failures: AtomicU64,
     event_dispatch_tx: RwLock<Option<Sender<BackendEvent>>>,
     event_sink: RwLock<Option<Sender<BackendEvent>>>,
     hash_batch_size: u64,
     control_check_interval_hashes: u64,
     hash_flush_interval: Duration,
     event_dispatch_capacity: usize,
+    page_mode: CpuPageMode,
 }
 
 pub struct CpuBackend {
@@ -180,6 +194,7 @@ impl CpuBackend {
                 active_workers: AtomicUsize::new(0),
                 ready_workers: AtomicUsize::new(0),
                 startup_failed: AtomicBool::new(false),
+                startup_error: Mutex::new(None),
                 work_control: Mutex::new(ControlState {
                     shutdown: false,
                     generation: 0,
@@ -199,12 +214,22 @@ impl CpuBackend {
                 completed_assignment_hashes: AtomicU64::new(0),
                 completed_assignment_micros: AtomicU64::new(0),
                 dropped_events: AtomicU64::new(0),
+                arena_explicit_large_workers: AtomicU64::new(0),
+                arena_transparent_huge_workers: AtomicU64::new(0),
+                arena_regular_workers: AtomicU64::new(0),
+                arena_heap_workers: AtomicU64::new(0),
+                arena_explicit_large_bytes: AtomicU64::new(0),
+                arena_transparent_huge_bytes: AtomicU64::new(0),
+                arena_regular_bytes: AtomicU64::new(0),
+                arena_heap_bytes: AtomicU64::new(0),
+                arena_allocation_failures: AtomicU64::new(0),
                 event_dispatch_tx: RwLock::new(None),
                 event_sink: RwLock::new(None),
                 hash_batch_size: tuning.hash_batch_size,
                 control_check_interval_hashes: tuning.control_check_interval_hashes,
                 hash_flush_interval: tuning.hash_flush_interval,
                 event_dispatch_capacity: tuning.event_dispatch_capacity,
+                page_mode: tuning.page_mode,
             }),
             worker_handles: Mutex::new(Vec::new()),
             event_forward_handle: Mutex::new(None),
@@ -218,6 +243,9 @@ impl CpuBackend {
         self.shared.active_workers.store(0, Ordering::Release);
         self.shared.ready_workers.store(0, Ordering::Release);
         self.shared.startup_failed.store(false, Ordering::Release);
+        if let Ok(mut startup_error) = self.shared.startup_error.lock() {
+            *startup_error = None;
+        }
         self.shared.assignment_hashes.store(0, Ordering::Release);
         self.shared
             .assignment_generation
@@ -235,6 +263,7 @@ impl CpuBackend {
             .completed_assignment_micros
             .store(0, Ordering::Release);
         self.shared.dropped_events.store(0, Ordering::Release);
+        reset_arena_telemetry(&self.shared);
         reset_hash_slots(&self.shared.hash_slots);
         if let Ok(mut started_at) = self.shared.assignment_started_at.lock() {
             *started_at = None;
@@ -551,6 +580,30 @@ impl PowBackend for CpuBackend {
                 .swap(0, Ordering::AcqRel),
             inflight_assignment_hashes,
             inflight_assignment_micros,
+            memory_explicit_large_workers: self
+                .shared
+                .arena_explicit_large_workers
+                .load(Ordering::Acquire),
+            memory_transparent_huge_workers: self
+                .shared
+                .arena_transparent_huge_workers
+                .load(Ordering::Acquire),
+            memory_regular_workers: self.shared.arena_regular_workers.load(Ordering::Acquire),
+            memory_heap_workers: self.shared.arena_heap_workers.load(Ordering::Acquire),
+            memory_explicit_large_bytes: self
+                .shared
+                .arena_explicit_large_bytes
+                .load(Ordering::Acquire),
+            memory_transparent_huge_bytes: self
+                .shared
+                .arena_transparent_huge_bytes
+                .load(Ordering::Acquire),
+            memory_regular_bytes: self.shared.arena_regular_bytes.load(Ordering::Acquire),
+            memory_heap_bytes: self.shared.arena_heap_bytes.load(Ordering::Acquire),
+            memory_allocation_failures: self
+                .shared
+                .arena_allocation_failures
+                .swap(0, Ordering::AcqRel),
             ..BackendTelemetry::default()
         }
     }
@@ -584,13 +637,16 @@ impl PowBackend for CpuBackend {
 
 impl BenchBackend for CpuBackend {
     fn kernel_bench(&self, seconds: u64, shutdown: &AtomicBool) -> Result<u64> {
+        reset_arena_telemetry(&self.shared);
         let lanes = self.threads.max(1);
         let sample_duration = Duration::from_secs(seconds.max(1));
         let total_hashes = AtomicU64::new(0);
         let setup_barrier = Arc::new(Barrier::new(lanes.saturating_add(1)));
         let start_barrier = Arc::new(Barrier::new(lanes.saturating_add(1)));
         let stop_at = Arc::new(OnceLock::<Instant>::new());
+        let setup_error = Arc::new(Mutex::new(None::<String>));
         let core_ids = resolve_affinity_core_ids(self.affinity_mode);
+        let page_mode = self.shared.page_mode;
 
         thread::scope(|scope| {
             for lane in 0..lanes {
@@ -598,6 +654,7 @@ impl BenchBackend for CpuBackend {
                 let setup_barrier = Arc::clone(&setup_barrier);
                 let start_barrier = Arc::clone(&start_barrier);
                 let stop_at = Arc::clone(&stop_at);
+                let setup_error = Arc::clone(&setup_error);
                 let core_id = core_ids
                     .as_ref()
                     .and_then(|ids| ids.get(lane % ids.len()))
@@ -609,7 +666,23 @@ impl BenchBackend for CpuBackend {
                     }
                     let hasher = fixed_argon::FixedArgon2id::new(POW_MEMORY_KB);
                     let block_count = hasher.block_count();
-                    let mut arena = kernel::PowArena::new(block_count);
+                    let mut arena = match kernel::PowArena::new(block_count, page_mode) {
+                        Ok(arena) => arena,
+                        Err(err) => {
+                            if let Ok(mut slot) = setup_error.lock() {
+                                if slot.is_none() {
+                                    *slot = Some(format!(
+                                        "cpu lane {lane}: {} page-mode arena allocation failed ({err})",
+                                        page_mode.as_str()
+                                    ));
+                                }
+                            }
+                            setup_barrier.wait();
+                            start_barrier.wait();
+                            return;
+                        }
+                    };
+                    kernel::record_arena_backing(&self.shared, &arena, block_count);
                     let memory_blocks = arena.as_mut_slice();
 
                     let mut header_base = [0u8; blocknet_pow_spec::POW_HEADER_BASE_LEN];
@@ -650,9 +723,19 @@ impl BenchBackend for CpuBackend {
             }
 
             setup_barrier.wait();
-            let _ = stop_at.set(Instant::now() + sample_duration);
+            let setup_failed = setup_error.lock().ok().is_some_and(|slot| slot.is_some());
+            let deadline = if setup_failed {
+                Instant::now()
+            } else {
+                Instant::now() + sample_duration
+            };
+            let _ = stop_at.set(deadline);
             start_barrier.wait();
         });
+
+        if let Some(err) = setup_error.lock().ok().and_then(|mut slot| slot.take()) {
+            return Err(anyhow!(err));
+        }
 
         Ok(total_hashes.load(Ordering::Relaxed))
     }
@@ -660,6 +743,26 @@ impl BenchBackend for CpuBackend {
 
 fn cpu_worker_loop(shared: Arc<Shared>, thread_idx: usize, core_id: Option<core_affinity::CoreId>) {
     kernel::cpu_worker_loop(shared, thread_idx, core_id);
+}
+
+fn reset_arena_telemetry(shared: &Shared) {
+    shared
+        .arena_explicit_large_workers
+        .store(0, Ordering::Release);
+    shared
+        .arena_transparent_huge_workers
+        .store(0, Ordering::Release);
+    shared.arena_regular_workers.store(0, Ordering::Release);
+    shared.arena_heap_workers.store(0, Ordering::Release);
+    shared
+        .arena_explicit_large_bytes
+        .store(0, Ordering::Release);
+    shared
+        .arena_transparent_huge_bytes
+        .store(0, Ordering::Release);
+    shared.arena_regular_bytes.store(0, Ordering::Release);
+    shared.arena_heap_bytes.store(0, Ordering::Release);
+    shared.arena_allocation_failures.store(0, Ordering::Release);
 }
 
 fn resolve_affinity_core_ids(mode: CpuAffinityMode) -> Option<Vec<core_affinity::CoreId>> {
@@ -1007,8 +1110,14 @@ fn wait_for_workers_ready(
             return Ok(());
         }
         if shared.startup_failed.load(Ordering::Acquire) {
+            let detail = shared
+                .startup_error
+                .lock()
+                .ok()
+                .and_then(|slot| slot.clone())
+                .unwrap_or_else(|| "unknown worker startup error".to_owned());
             return Err(anyhow!(
-                "CPU worker startup failed before readiness barrier ({ready}/{expected_workers} ready)"
+                "CPU worker startup failed before readiness barrier ({ready}/{expected_workers} ready): {detail}"
             ));
         }
 

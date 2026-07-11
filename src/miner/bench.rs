@@ -33,7 +33,7 @@ use super::{
     BackendRoundTelemetry, BackendSlot, RuntimeBackendEventAction, RuntimeMode,
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct BenchBackendRun {
     backend_id: BackendInstanceId,
     backend: String,
@@ -43,6 +43,24 @@ struct BenchBackendRun {
     peak_active_lanes: u64,
     #[serde(default)]
     peak_pending_work: u64,
+    #[serde(default)]
+    memory_explicit_large_workers: u64,
+    #[serde(default)]
+    memory_transparent_huge_workers: u64,
+    #[serde(default)]
+    memory_regular_workers: u64,
+    #[serde(default)]
+    memory_heap_workers: u64,
+    #[serde(default)]
+    memory_explicit_large_bytes: u64,
+    #[serde(default)]
+    memory_transparent_huge_bytes: u64,
+    #[serde(default)]
+    memory_regular_bytes: u64,
+    #[serde(default)]
+    memory_heap_bytes: u64,
+    #[serde(default)]
+    memory_allocation_failures: u64,
     #[serde(default)]
     peak_inflight_assignment_hashes: u64,
     #[serde(default)]
@@ -173,6 +191,7 @@ struct BenchConfigFingerprint {
     backend_event_capacity: usize,
     hash_poll_ms: u64,
     cpu_profile: String,
+    cpu_page_mode: String,
     cpu_hash_batch_size: u64,
     cpu_control_check_interval_hashes: u64,
     cpu_hash_flush_ms: u64,
@@ -263,8 +282,8 @@ struct WorkerBenchmarkIdentity {
 }
 
 type BackendEventAction = RuntimeBackendEventAction;
-const BENCH_REPORT_SCHEMA_VERSION: u32 = 11;
-const BENCH_REPORT_COMPAT_MIN_SCHEMA_VERSION: u32 = 11;
+const BENCH_REPORT_SCHEMA_VERSION: u32 = 12;
+const BENCH_REPORT_COMPAT_MIN_SCHEMA_VERSION: u32 = 12;
 const BENCH_SHORT_WINDOW_WARN_SECS: u64 = 10;
 const BENCH_FENCE_JITTER_WARN_SECS: f64 = 0.250;
 const BENCH_FENCE_JITTER_WARN_RATIO: f64 = 0.50;
@@ -391,6 +410,7 @@ fn run_kernel_benchmark(
         ("Rounds", cfg.bench_rounds.to_string()),
         ("Warmup Rounds", cfg.bench_warmup_rounds.to_string()),
         ("Seconds/Round", cfg.bench_secs.to_string()),
+        ("CPU Page Mode", cfg.cpu_page_mode.as_str().to_string()),
         (
             "Regress Gate",
             cfg.bench_fail_below_pct
@@ -421,6 +441,7 @@ fn run_kernel_benchmark(
             bench_backend.kernel_bench_effective_samples(total_rounds, cfg.bench_secs, shutdown)?
         }
     };
+    let kernel_telemetry = backend.take_telemetry();
     let mut measured_round = 0u32;
     for (round, sample) in round_samples
         .into_iter()
@@ -493,7 +514,22 @@ fn run_kernel_benchmark(
             teardown_secs: 0.0,
             fence_secs: 0.0,
             hps,
-            backend_runs: Vec::new(),
+            backend_runs: vec![BenchBackendRun {
+                backend_id: 0,
+                backend: backend.name().to_string(),
+                hashes,
+                hps,
+                memory_explicit_large_workers: kernel_telemetry.memory_explicit_large_workers,
+                memory_transparent_huge_workers: kernel_telemetry.memory_transparent_huge_workers,
+                memory_regular_workers: kernel_telemetry.memory_regular_workers,
+                memory_heap_workers: kernel_telemetry.memory_heap_workers,
+                memory_explicit_large_bytes: kernel_telemetry.memory_explicit_large_bytes,
+                memory_transparent_huge_bytes: kernel_telemetry.memory_transparent_huge_bytes,
+                memory_regular_bytes: kernel_telemetry.memory_regular_bytes,
+                memory_heap_bytes: kernel_telemetry.memory_heap_bytes,
+                memory_allocation_failures: kernel_telemetry.memory_allocation_failures,
+                ..BenchBackendRun::default()
+            }],
         });
     }
 
@@ -643,6 +679,7 @@ fn run_worker_benchmark(
         ("Rounds", cfg.bench_rounds.to_string()),
         ("Warmup Rounds", cfg.bench_warmup_rounds.to_string()),
         ("Seconds/Round", cfg.bench_secs.to_string()),
+        ("CPU Page Mode", cfg.cpu_page_mode.as_str().to_string()),
         (
             "Hash Poll",
             format!(
@@ -1351,6 +1388,16 @@ fn baseline_compatibility_issues(
                 ));
             }
         }
+        if baseline.schema_version >= 12 && current.schema_version >= 12 {
+            if baseline.config_fingerprint.cpu_page_mode != current.config_fingerprint.cpu_page_mode
+            {
+                issues.push(format!(
+                    "cpu_page_mode mismatch baseline={} current={}",
+                    baseline.config_fingerprint.cpu_page_mode,
+                    current.config_fingerprint.cpu_page_mode
+                ));
+            }
+        }
         if baseline.schema_version >= 8 && current.schema_version >= 8 {
             if baseline.config_fingerprint.nvidia_autotune_secs
                 != current.config_fingerprint.nvidia_autotune_secs
@@ -1857,6 +1904,7 @@ fn benchmark_config_fingerprint(
         backend_event_capacity: cfg.backend_event_capacity,
         hash_poll_ms: cfg.hash_poll_interval.as_millis() as u64,
         cpu_profile: cpu_profile_label(cfg.cpu_profile).to_string(),
+        cpu_page_mode: cfg.cpu_page_mode.as_str().to_string(),
         cpu_hash_batch_size: cfg.cpu_hash_batch_size,
         cpu_control_check_interval_hashes: cfg.cpu_control_check_interval_hashes,
         cpu_hash_flush_ms: cfg.cpu_hash_flush_interval.as_millis() as u64,
@@ -1975,6 +2023,29 @@ fn merge_round_telemetry(
         .saturating_add(telemetry.completed_assignment_micros);
     entry.peak_active_lanes = entry.peak_active_lanes.max(telemetry.peak_active_lanes);
     entry.peak_pending_work = entry.peak_pending_work.max(telemetry.peak_pending_work);
+    entry.memory_explicit_large_workers = entry
+        .memory_explicit_large_workers
+        .max(telemetry.memory_explicit_large_workers);
+    entry.memory_transparent_huge_workers = entry
+        .memory_transparent_huge_workers
+        .max(telemetry.memory_transparent_huge_workers);
+    entry.memory_regular_workers = entry
+        .memory_regular_workers
+        .max(telemetry.memory_regular_workers);
+    entry.memory_heap_workers = entry.memory_heap_workers.max(telemetry.memory_heap_workers);
+    entry.memory_explicit_large_bytes = entry
+        .memory_explicit_large_bytes
+        .max(telemetry.memory_explicit_large_bytes);
+    entry.memory_transparent_huge_bytes = entry
+        .memory_transparent_huge_bytes
+        .max(telemetry.memory_transparent_huge_bytes);
+    entry.memory_regular_bytes = entry
+        .memory_regular_bytes
+        .max(telemetry.memory_regular_bytes);
+    entry.memory_heap_bytes = entry.memory_heap_bytes.max(telemetry.memory_heap_bytes);
+    entry.memory_allocation_failures = entry
+        .memory_allocation_failures
+        .saturating_add(telemetry.memory_allocation_failures);
     entry.peak_inflight_assignment_hashes = entry
         .peak_inflight_assignment_hashes
         .max(telemetry.peak_inflight_assignment_hashes);
@@ -2059,6 +2130,15 @@ fn build_backend_round_stats(
             hps: hashes as f64 / elapsed_secs,
             peak_active_lanes: telemetry.peak_active_lanes,
             peak_pending_work: telemetry.peak_pending_work,
+            memory_explicit_large_workers: telemetry.memory_explicit_large_workers,
+            memory_transparent_huge_workers: telemetry.memory_transparent_huge_workers,
+            memory_regular_workers: telemetry.memory_regular_workers,
+            memory_heap_workers: telemetry.memory_heap_workers,
+            memory_explicit_large_bytes: telemetry.memory_explicit_large_bytes,
+            memory_transparent_huge_bytes: telemetry.memory_transparent_huge_bytes,
+            memory_regular_bytes: telemetry.memory_regular_bytes,
+            memory_heap_bytes: telemetry.memory_heap_bytes,
+            memory_allocation_failures: telemetry.memory_allocation_failures,
             peak_inflight_assignment_hashes: telemetry.peak_inflight_assignment_hashes,
             peak_inflight_assignment_secs: telemetry.peak_inflight_assignment_micros as f64
                 / 1_000_000.0,
@@ -2104,6 +2184,15 @@ fn build_backend_round_stats(
             hps: *hashes as f64 / elapsed_secs,
             peak_active_lanes: telemetry.peak_active_lanes,
             peak_pending_work: telemetry.peak_pending_work,
+            memory_explicit_large_workers: telemetry.memory_explicit_large_workers,
+            memory_transparent_huge_workers: telemetry.memory_transparent_huge_workers,
+            memory_regular_workers: telemetry.memory_regular_workers,
+            memory_heap_workers: telemetry.memory_heap_workers,
+            memory_explicit_large_bytes: telemetry.memory_explicit_large_bytes,
+            memory_transparent_huge_bytes: telemetry.memory_transparent_huge_bytes,
+            memory_regular_bytes: telemetry.memory_regular_bytes,
+            memory_heap_bytes: telemetry.memory_heap_bytes,
+            memory_allocation_failures: telemetry.memory_allocation_failures,
             peak_inflight_assignment_hashes: telemetry.peak_inflight_assignment_hashes,
             peak_inflight_assignment_secs: telemetry.peak_inflight_assignment_micros as f64
                 / 1_000_000.0,
@@ -2260,6 +2349,7 @@ mod tests {
                 backend_event_capacity: 1024,
                 hash_poll_ms: 200,
                 cpu_profile: "balanced".to_string(),
+                cpu_page_mode: "auto".to_string(),
                 cpu_hash_batch_size: 64,
                 cpu_control_check_interval_hashes: 256,
                 cpu_hash_flush_ms: 50,
@@ -2408,6 +2498,19 @@ mod tests {
         let issues =
             baseline_compatibility_issues(&current, &baseline, BenchBaselinePolicy::Strict);
         assert!(issues.iter().any(|issue| issue.contains("schema mismatch")));
+    }
+
+    #[test]
+    fn baseline_compatibility_detects_cpu_page_mode_mismatch() {
+        let current = sample_report();
+        let mut baseline = sample_report();
+        baseline.config_fingerprint.cpu_page_mode = "regular".to_string();
+
+        let issues =
+            baseline_compatibility_issues(&current, &baseline, BenchBaselinePolicy::Strict);
+        assert!(issues
+            .iter()
+            .any(|issue| issue.contains("cpu_page_mode mismatch")));
     }
 
     #[test]

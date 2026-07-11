@@ -2734,6 +2734,7 @@ mod tests {
             threads: 1,
             cpu_auto_threads_cap: 1,
             cpu_affinity: crate::config::CpuAffinityMode::Off,
+            cpu_page_mode: crate::config::CpuPageMode::Auto,
             cpu_profile: crate::config::CpuPerformanceProfile::Balanced,
             refresh_interval: Duration::from_secs(20),
             request_timeout: Duration::from_secs(10),

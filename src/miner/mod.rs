@@ -42,6 +42,8 @@ use crate::backend::{
     BackendInstanceId, BackendTelemetry, BenchBackend, DeadlineSupport, DynamicShareTarget,
     MiningSolution, PowBackend, PreemptionGranularity, WORK_ID_MAX,
 };
+#[cfg(any(target_os = "linux", test))]
+use crate::config::CpuPageMode;
 use crate::config::{
     BackendKind, BackendSpec, Config, CpuPerformanceProfile, MiningMode, UiMode, WorkAllocation,
 };
@@ -54,7 +56,7 @@ use ui::{info, warn};
 const TEMPLATE_RETRY_DELAY: Duration = Duration::from_secs(2);
 const MIN_EVENT_WAIT: Duration = Duration::from_millis(1);
 const BACKEND_EVENT_SOURCE_CAPACITY_MAX: usize = 256;
-const CPU_AUTOTUNE_RECORD_SCHEMA_VERSION: u32 = 6;
+const CPU_AUTOTUNE_RECORD_SCHEMA_VERSION: u32 = 7;
 const CPU_AUTOTUNE_RECORD_MAX_AGE_SECS: u64 = 14 * 24 * 60 * 60;
 const CPU_AUTOTUNE_LINEAR_SCAN_MAX_CANDIDATES: usize = 8;
 const CPU_AUTOTUNE_FINAL_SWEEP_RADIUS: usize = 2;
@@ -127,6 +129,15 @@ pub(super) struct BackendRoundTelemetry {
     completed_assignment_micros: u64,
     peak_active_lanes: u64,
     peak_pending_work: u64,
+    memory_explicit_large_workers: u64,
+    memory_transparent_huge_workers: u64,
+    memory_regular_workers: u64,
+    memory_heap_workers: u64,
+    memory_explicit_large_bytes: u64,
+    memory_transparent_huge_bytes: u64,
+    memory_regular_bytes: u64,
+    memory_heap_bytes: u64,
+    memory_allocation_failures: u64,
     peak_inflight_assignment_hashes: u64,
     peak_inflight_assignment_micros: u64,
     assignment_enqueue_timeouts: u64,
@@ -167,6 +178,7 @@ struct CpuAutotuneRecord {
     schema_version: u32,
     profile: String,
     affinity: String,
+    page_mode: String,
     cpu_instances: usize,
     min_threads: usize,
     max_threads: usize,
@@ -445,6 +457,7 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
                         control_check_interval_hashes: cfg.cpu_control_check_interval_hashes,
                         hash_flush_interval: cfg.cpu_hash_flush_interval,
                         event_dispatch_capacity: cfg.cpu_event_dispatch_capacity,
+                        page_mode: cfg.cpu_page_mode,
                     },
                 )) as Arc<dyn PowBackend>,
                 BackendKind::Metal => Arc::new(MetalBackend::new(
@@ -649,8 +662,9 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
     info(
         "MINER",
         format!(
-            "cpu-profile | {} | auto-cap={} | autotune={} range={}..{} secs={}",
+            "cpu-profile | {} | page_mode={} | auto-cap={} | autotune={} range={}..{} secs={}",
             cpu_profile_label(cfg.cpu_profile),
+            cfg.cpu_page_mode.as_str(),
             cfg.cpu_auto_threads_cap,
             if cfg.cpu_autotune_threads {
                 "on"
@@ -950,8 +964,9 @@ fn maybe_autotune_cpu_threads(
     info(
         tag,
         format!(
-            "cpu-autotune | finding the fastest thread count for your CPU (profile={}, testing {}..{} threads, ~{}s per candidate)",
+            "cpu-autotune | finding the fastest thread count for your CPU (profile={}, page_mode={}, testing {}..{} threads, ~{}s per candidate)",
             cpu_profile_label(cfg.cpu_profile),
+            cfg.cpu_page_mode.as_str(),
             min_threads,
             max_threads,
             autotune_secs,
@@ -1554,6 +1569,7 @@ fn bench_cpu_autotune_candidate(
             control_check_interval_hashes: cfg.cpu_control_check_interval_hashes,
             hash_flush_interval: cfg.cpu_hash_flush_interval,
             event_dispatch_capacity: cfg.cpu_event_dispatch_capacity,
+            page_mode: cfg.cpu_page_mode,
         },
     );
 
@@ -1678,19 +1694,37 @@ fn load_cpu_autotune_record(
         return None;
     }
 
-    if record.profile != cpu_profile_label(cfg.cpu_profile)
-        || record.affinity != cpu_affinity_label(cfg.cpu_affinity)
-        || record.cpu_instances != cpu_instance_count
-        || record.min_threads != min_threads
-        || record.max_threads != max_threads
-        || record.autotune_secs != autotune_secs
-        || record.selected_threads < min_threads
-        || record.selected_threads > max_threads
-    {
+    if !cpu_autotune_record_matches_config(
+        &record,
+        cfg,
+        cpu_instance_count,
+        min_threads,
+        max_threads,
+        autotune_secs,
+    ) {
         return None;
     }
 
     Some(record)
+}
+
+fn cpu_autotune_record_matches_config(
+    record: &CpuAutotuneRecord,
+    cfg: &Config,
+    cpu_instance_count: usize,
+    min_threads: usize,
+    max_threads: usize,
+    autotune_secs: u64,
+) -> bool {
+    record.profile == cpu_profile_label(cfg.cpu_profile)
+        && record.affinity == cpu_affinity_label(cfg.cpu_affinity)
+        && record.page_mode == cfg.cpu_page_mode.as_str()
+        && record.cpu_instances == cpu_instance_count
+        && record.min_threads == min_threads
+        && record.max_threads == max_threads
+        && record.autotune_secs == autotune_secs
+        && record.selected_threads >= min_threads
+        && record.selected_threads <= max_threads
 }
 
 fn persist_cpu_autotune_record(
@@ -1712,6 +1746,7 @@ fn persist_cpu_autotune_record(
         schema_version: CPU_AUTOTUNE_RECORD_SCHEMA_VERSION,
         profile: cpu_profile_label(cfg.cpu_profile).to_string(),
         affinity: cpu_affinity_label(cfg.cpu_affinity).to_string(),
+        page_mode: cfg.cpu_page_mode.as_str().to_string(),
         cpu_instances: cpu_instance_count,
         min_threads,
         max_threads,
@@ -1782,6 +1817,9 @@ struct LinuxHugepagesMeminfo {
 
 #[cfg(target_os = "linux")]
 fn maybe_warn_linux_hugepages_setup(cfg: &Config, mode: RuntimeMode) {
+    if cfg.cpu_page_mode == CpuPageMode::Regular {
+        return;
+    }
     let cpu_lanes = cfg
         .backend_specs
         .iter()
@@ -1911,6 +1949,7 @@ fn build_backend_instances(cfg: &Config) -> Vec<(BackendSpec, Arc<dyn PowBackend
                         control_check_interval_hashes: cfg.cpu_control_check_interval_hashes,
                         hash_flush_interval: cfg.cpu_hash_flush_interval,
                         event_dispatch_capacity: cfg.cpu_event_dispatch_capacity,
+                        page_mode: cfg.cpu_page_mode,
                     },
                 )) as Arc<dyn PowBackend>,
                 BackendKind::Nvidia => Arc::new(NvidiaBackend::new(
@@ -2346,6 +2385,15 @@ fn merge_backend_telemetry(
         && telemetry.completed_assignments == 0
         && telemetry.completed_assignment_hashes == 0
         && telemetry.completed_assignment_micros == 0
+        && telemetry.memory_explicit_large_workers == 0
+        && telemetry.memory_transparent_huge_workers == 0
+        && telemetry.memory_regular_workers == 0
+        && telemetry.memory_heap_workers == 0
+        && telemetry.memory_explicit_large_bytes == 0
+        && telemetry.memory_transparent_huge_bytes == 0
+        && telemetry.memory_regular_bytes == 0
+        && telemetry.memory_heap_bytes == 0
+        && telemetry.memory_allocation_failures == 0
         && telemetry.peak_inflight_assignment_hashes == 0
         && telemetry.peak_inflight_assignment_micros == 0
         && telemetry.assignment_enqueue_timeouts == 0
@@ -2384,6 +2432,29 @@ fn merge_backend_telemetry(
         .saturating_add(telemetry.completed_assignment_micros);
     entry.peak_active_lanes = entry.peak_active_lanes.max(telemetry.peak_active_lanes);
     entry.peak_pending_work = entry.peak_pending_work.max(telemetry.peak_pending_work);
+    entry.memory_explicit_large_workers = entry
+        .memory_explicit_large_workers
+        .max(telemetry.memory_explicit_large_workers);
+    entry.memory_transparent_huge_workers = entry
+        .memory_transparent_huge_workers
+        .max(telemetry.memory_transparent_huge_workers);
+    entry.memory_regular_workers = entry
+        .memory_regular_workers
+        .max(telemetry.memory_regular_workers);
+    entry.memory_heap_workers = entry.memory_heap_workers.max(telemetry.memory_heap_workers);
+    entry.memory_explicit_large_bytes = entry
+        .memory_explicit_large_bytes
+        .max(telemetry.memory_explicit_large_bytes);
+    entry.memory_transparent_huge_bytes = entry
+        .memory_transparent_huge_bytes
+        .max(telemetry.memory_transparent_huge_bytes);
+    entry.memory_regular_bytes = entry
+        .memory_regular_bytes
+        .max(telemetry.memory_regular_bytes);
+    entry.memory_heap_bytes = entry.memory_heap_bytes.max(telemetry.memory_heap_bytes);
+    entry.memory_allocation_failures = entry
+        .memory_allocation_failures
+        .saturating_add(telemetry.memory_allocation_failures);
     entry.peak_inflight_assignment_hashes = entry
         .peak_inflight_assignment_hashes
         .max(telemetry.peak_inflight_assignment_hashes);
@@ -2451,6 +2522,15 @@ pub(super) fn backend_round_telemetry_delta(telemetry: BackendTelemetry) -> Back
         completed_assignment_micros: telemetry.completed_assignment_micros,
         peak_active_lanes: telemetry.active_lanes,
         peak_pending_work: telemetry.pending_work,
+        memory_explicit_large_workers: telemetry.memory_explicit_large_workers,
+        memory_transparent_huge_workers: telemetry.memory_transparent_huge_workers,
+        memory_regular_workers: telemetry.memory_regular_workers,
+        memory_heap_workers: telemetry.memory_heap_workers,
+        memory_explicit_large_bytes: telemetry.memory_explicit_large_bytes,
+        memory_transparent_huge_bytes: telemetry.memory_transparent_huge_bytes,
+        memory_regular_bytes: telemetry.memory_regular_bytes,
+        memory_heap_bytes: telemetry.memory_heap_bytes,
+        memory_allocation_failures: telemetry.memory_allocation_failures,
         peak_inflight_assignment_hashes: telemetry.inflight_assignment_hashes,
         peak_inflight_assignment_micros: telemetry.inflight_assignment_micros,
         assignment_enqueue_timeouts: telemetry.assignment_enqueue_timeouts,
@@ -2883,6 +2963,15 @@ fn format_round_backend_telemetry(
             && telemetry.completed_assignments == 0
             && telemetry.peak_active_lanes == 0
             && telemetry.peak_pending_work == 0
+            && telemetry.memory_explicit_large_workers == 0
+            && telemetry.memory_transparent_huge_workers == 0
+            && telemetry.memory_regular_workers == 0
+            && telemetry.memory_heap_workers == 0
+            && telemetry.memory_explicit_large_bytes == 0
+            && telemetry.memory_transparent_huge_bytes == 0
+            && telemetry.memory_regular_bytes == 0
+            && telemetry.memory_heap_bytes == 0
+            && telemetry.memory_allocation_failures == 0
             && telemetry.peak_inflight_assignment_hashes == 0
             && telemetry.peak_inflight_assignment_micros == 0
             && telemetry.assignment_enqueue_timeouts == 0
@@ -2907,9 +2996,18 @@ fn format_round_backend_telemetry(
         }
         let backend_name = backend_names.get(backend_id).copied().unwrap_or("unknown");
         parts.push(format!(
-            "{backend_name}#{backend_id}:active_peak={} pending_peak={} inflight_hashes_peak={} inflight_secs_peak={:.3} drops={} assignments={} assignment_hashes={} assignment_secs={:.3} assign_timeout_enq={} assign_timeout_exec={} control_timeout_enq={} control_timeout_exec={} assign_timeout_strike_peak={} assign_enq_lat_samples={} assign_enq_lat_p95_us={} assign_enq_lat_max_us={} assign_exec_lat_samples={} assign_exec_lat_p95_us={} assign_exec_lat_max_us={} control_enq_lat_samples={} control_enq_lat_p95_us={} control_enq_lat_max_us={} control_exec_lat_samples={} control_exec_lat_p95_us={} control_exec_lat_max_us={}",
+            "{backend_name}#{backend_id}:active_peak={} pending_peak={} memory_workers=large:{}/thp:{}/regular:{}/heap:{} memory_mib=large:{:.1}/thp:{:.1}/regular:{:.1}/heap:{:.1} memory_alloc_failures={} inflight_hashes_peak={} inflight_secs_peak={:.3} drops={} assignments={} assignment_hashes={} assignment_secs={:.3} assign_timeout_enq={} assign_timeout_exec={} control_timeout_enq={} control_timeout_exec={} assign_timeout_strike_peak={} assign_enq_lat_samples={} assign_enq_lat_p95_us={} assign_enq_lat_max_us={} assign_exec_lat_samples={} assign_exec_lat_p95_us={} assign_exec_lat_max_us={} control_enq_lat_samples={} control_enq_lat_p95_us={} control_enq_lat_max_us={} control_exec_lat_samples={} control_exec_lat_p95_us={} control_exec_lat_max_us={}",
             telemetry.peak_active_lanes,
             telemetry.peak_pending_work,
+            telemetry.memory_explicit_large_workers,
+            telemetry.memory_transparent_huge_workers,
+            telemetry.memory_regular_workers,
+            telemetry.memory_heap_workers,
+            telemetry.memory_explicit_large_bytes as f64 / (1024.0 * 1024.0),
+            telemetry.memory_transparent_huge_bytes as f64 / (1024.0 * 1024.0),
+            telemetry.memory_regular_bytes as f64 / (1024.0 * 1024.0),
+            telemetry.memory_heap_bytes as f64 / (1024.0 * 1024.0),
+            telemetry.memory_allocation_failures,
             telemetry.peak_inflight_assignment_hashes,
             telemetry.peak_inflight_assignment_micros as f64 / 1_000_000.0,
             telemetry.dropped_events,
@@ -3311,6 +3409,7 @@ mod tests {
             threads: 1,
             cpu_auto_threads_cap: 1,
             cpu_affinity: crate::config::CpuAffinityMode::Off,
+            cpu_page_mode: crate::config::CpuPageMode::Auto,
             cpu_profile: crate::config::CpuPerformanceProfile::Balanced,
             refresh_interval: Duration::from_secs(20),
             request_timeout: Duration::from_secs(10),
@@ -3404,6 +3503,33 @@ mod tests {
         assert!(!fingerprint.runtime_environment.is_empty());
         assert!(fingerprint.build_fingerprint.contains("source="));
         assert!(fingerprint.build_fingerprint.contains("rustc="));
+    }
+
+    #[test]
+    fn cpu_autotune_cache_is_separated_by_page_mode() {
+        let mut cfg = test_config();
+        let record = CpuAutotuneRecord {
+            schema_version: CPU_AUTOTUNE_RECORD_SCHEMA_VERSION,
+            profile: cpu_profile_label(cfg.cpu_profile).to_string(),
+            affinity: cpu_affinity_label(cfg.cpu_affinity).to_string(),
+            page_mode: cfg.cpu_page_mode.as_str().to_string(),
+            cpu_instances: 1,
+            min_threads: 1,
+            max_threads: 4,
+            selected_threads: 2,
+            measured_hps: 1.0,
+            autotune_secs: 6,
+            host_fingerprint: CpuAutotuneHostFingerprint::default(),
+            timestamp_unix_secs: 0,
+        };
+
+        assert!(cpu_autotune_record_matches_config(
+            &record, &cfg, 1, 1, 4, 6
+        ));
+        cfg.cpu_page_mode = CpuPageMode::Regular;
+        assert!(!cpu_autotune_record_matches_config(
+            &record, &cfg, 1, 1, 4, 6
+        ));
     }
 
     #[test]

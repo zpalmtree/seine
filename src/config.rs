@@ -53,6 +53,26 @@ pub enum CpuAffinityMode {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+pub enum CpuPageMode {
+    /// Prefer explicit large pages, then transparently fall back to ordinary mappings.
+    Auto,
+    /// Require ordinary pages and disable transparent huge pages where supported.
+    Regular,
+    /// Require explicit large pages and fail CPU backend startup when unavailable.
+    Large,
+}
+
+impl CpuPageMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Regular => "regular",
+            Self::Large => "large",
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
 pub enum CpuPerformanceProfile {
     Balanced,
     Throughput,
@@ -348,6 +368,10 @@ struct Cli {
     /// Default: `pcore-only` on macOS Apple Silicon, otherwise `auto`.
     #[arg(long, value_enum, default_value_t = DEFAULT_CPU_AFFINITY)]
     cpu_affinity: CpuAffinityMode,
+
+    /// CPU arena page policy: auto fallback, forced regular pages, or required large pages.
+    #[arg(long = "cpu-page-mode", value_enum, default_value_t = CpuPageMode::Auto)]
+    cpu_page_mode: CpuPageMode,
 
     /// CPU mining profile preset; applies default threads/poll/flush knobs unless explicitly set.
     #[arg(long = "cpu-profile", value_enum, default_value_t = CpuPerformanceProfile::Balanced)]
@@ -675,6 +699,7 @@ pub struct Config {
     pub threads: usize,
     pub cpu_auto_threads_cap: usize,
     pub cpu_affinity: CpuAffinityMode,
+    pub cpu_page_mode: CpuPageMode,
     pub cpu_profile: CpuPerformanceProfile,
     pub refresh_interval: Duration,
     pub request_timeout: Duration,
@@ -962,9 +987,20 @@ impl Config {
             .iter()
             .filter(|kind| matches!(kind, BackendKind::Cpu))
             .count();
+        if cfg!(target_os = "macos")
+            && cpu_backend_instances > 0
+            && cli.cpu_page_mode == CpuPageMode::Large
+        {
+            bail!("--cpu-page-mode large is unsupported on macOS; use auto or regular");
+        }
         let auto_threads_cap = match cpu_backend_instances {
             0 => 1,
-            instances => auto_cpu_threads(instances, gpu_memory_reservation, cli.cpu_affinity),
+            instances => auto_cpu_threads(
+                instances,
+                gpu_memory_reservation,
+                cli.cpu_affinity,
+                cli.cpu_page_mode,
+            ),
         };
         let profile_defaults = cpu_profile_defaults(cli.cpu_profile, auto_threads_cap);
         let resolved_threads = cli.threads.unwrap_or(profile_defaults.threads);
@@ -1016,6 +1052,7 @@ impl Config {
             resolved_threads,
             cli.allow_oversubscribe,
             gpu_memory_reservation,
+            cli.cpu_page_mode,
         )?;
 
         let mode = cli.mode.unwrap_or(MiningMode::Pool);
@@ -1087,6 +1124,7 @@ impl Config {
             threads: resolved_threads,
             cpu_auto_threads_cap: auto_threads_cap,
             cpu_affinity: cli.cpu_affinity,
+            cpu_page_mode: cli.cpu_page_mode,
             cpu_profile: cli.cpu_profile,
             refresh_interval: Duration::from_secs(cli.refresh_secs.max(1)),
             request_timeout: Duration::from_secs(cli.request_timeout_secs.max(1)),
@@ -2464,9 +2502,10 @@ fn auto_cpu_threads(
     cpu_backend_instances: usize,
     gpu_memory_reservation: u64,
     affinity: CpuAffinityMode,
+    page_mode: CpuPageMode,
 ) -> usize {
     let cpu_parallelism = cpu_parallelism_cap(affinity);
-    let memory_cap_total = detect_memory_budget_bytes()
+    let memory_cap_total = detect_memory_budget_bytes(page_mode)
         .map(|budget| {
             let available = budget
                 .effective_available
@@ -2490,6 +2529,7 @@ fn validate_cpu_memory(
     threads: usize,
     allow_oversubscribe: bool,
     gpu_memory_reservation: u64,
+    page_mode: CpuPageMode,
 ) -> Result<()> {
     let cpu_lane_configs = backend_specs
         .iter()
@@ -2505,7 +2545,7 @@ fn validate_cpu_memory(
         .fold(0u64, |acc, lanes| acc.saturating_add(*lanes));
     let cpu_required = CPU_LANE_MEMORY_BYTES.saturating_mul(total_cpu_lanes);
     let required = cpu_required.saturating_add(gpu_memory_reservation);
-    let Some(budget) = detect_memory_budget_bytes() else {
+    let Some(budget) = detect_memory_budget_bytes(page_mode) else {
         return Ok(());
     };
 
@@ -2548,7 +2588,7 @@ struct MemoryBudgetBytes {
     effective_available: u64,
 }
 
-fn detect_memory_budget_bytes() -> Option<MemoryBudgetBytes> {
+fn detect_memory_budget_bytes(page_mode: CpuPageMode) -> Option<MemoryBudgetBytes> {
     let mut sys = sysinfo::System::new();
     sys.refresh_memory();
 
@@ -2561,11 +2601,13 @@ fn detect_memory_budget_bytes() -> Option<MemoryBudgetBytes> {
         if effective_available == 0 {
             effective_available = total;
         }
-        if let Some(hugetlb_unreserved_bytes) = linux_hugetlb_unreserved_bytes() {
-            // HugeTLB pools are typically excluded from MemAvailable even though CPU workers
-            // can map them via MAP_HUGETLB. Add unreserved HugeTLB bytes back to avoid
-            // under-capping CPU autotune when users pre-reserve hugepages.
-            effective_available = effective_available.saturating_add(hugetlb_unreserved_bytes);
+        if page_mode != CpuPageMode::Regular {
+            if let Some(hugetlb_unreserved_bytes) = linux_hugetlb_unreserved_bytes() {
+                // HugeTLB pools are typically excluded from MemAvailable even though CPU workers
+                // can map them via MAP_HUGETLB. Add unreserved HugeTLB bytes back to avoid
+                // under-capping CPU autotune when users pre-reserve hugepages.
+                effective_available = effective_available.saturating_add(hugetlb_unreserved_bytes);
+            }
         }
 
         if let Some(cgroup) = sys.cgroup_limits() {
@@ -2675,6 +2717,7 @@ mod tests {
             nvidia_devices: Vec::new(),
             threads: Some(1),
             cpu_affinity: CpuAffinityMode::Auto,
+            cpu_page_mode: CpuPageMode::Auto,
             cpu_profile: CpuPerformanceProfile::Balanced,
             cpu_threads_per_instance: Vec::new(),
             cpu_affinity_per_instance: Vec::new(),
@@ -3212,8 +3255,8 @@ HugePages_Rsvd:          0
 
     #[test]
     fn auto_cpu_threads_is_never_zero_and_scales_per_instance() {
-        let single_instance = auto_cpu_threads(1, 0, CpuAffinityMode::Auto);
-        let dual_instance = auto_cpu_threads(2, 0, CpuAffinityMode::Auto);
+        let single_instance = auto_cpu_threads(1, 0, CpuAffinityMode::Auto, CpuPageMode::Auto);
+        let dual_instance = auto_cpu_threads(2, 0, CpuAffinityMode::Auto, CpuPageMode::Auto);
 
         assert!(single_instance >= 1);
         assert!(dual_instance >= 1);
@@ -3222,8 +3265,13 @@ HugePages_Rsvd:          0
 
     #[test]
     fn auto_cpu_threads_reduced_by_gpu_reservation() {
-        let without_gpu = auto_cpu_threads(1, 0, CpuAffinityMode::Auto);
-        let with_gpu = auto_cpu_threads(1, 4 * CPU_LANE_MEMORY_BYTES, CpuAffinityMode::Auto);
+        let without_gpu = auto_cpu_threads(1, 0, CpuAffinityMode::Auto, CpuPageMode::Auto);
+        let with_gpu = auto_cpu_threads(
+            1,
+            4 * CPU_LANE_MEMORY_BYTES,
+            CpuAffinityMode::Auto,
+            CpuPageMode::Auto,
+        );
 
         assert!(with_gpu >= 1);
         // With a 4-lane GPU reservation, the CPU should get fewer (or equal) lanes
@@ -3268,7 +3316,12 @@ HugePages_Rsvd:          0
             .iter()
             .filter(|kind| matches!(kind, BackendKind::Cpu))
             .count();
-        let auto_threads_cap = auto_cpu_threads(cpu_backend_instances, 0, cli.cpu_affinity);
+        let auto_threads_cap = auto_cpu_threads(
+            cpu_backend_instances,
+            0,
+            cli.cpu_affinity,
+            cli.cpu_page_mode,
+        );
         let defaults = cpu_profile_defaults(cli.cpu_profile, auto_threads_cap);
         let cpu_autotune_default_enabled = cli.threads.is_none() && cpu_backend_instances > 0;
         let cpu_autotune_threads = if cli.disable_cpu_autotune_threads {
