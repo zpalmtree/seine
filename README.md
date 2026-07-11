@@ -169,6 +169,12 @@ Native Windows `--cpu-affinity auto` also uses complete processor-core topology
 groups before SMT siblings. If Windows returns incomplete or contradictory
 topology data, Seine retains the original logical-CPU order.
 
+`--cpu-affinity cache-balanced` is an opt-in Windows policy for multi-cache CPUs.
+It interleaves physical cores across complete L3-cache domains (typically CCDs on
+recent AMD desktop CPUs), then uses SMT siblings. Incomplete cache/core topology
+safely falls back to the `auto` physical-core-first order; Linux and macOS retain
+their normal `auto` policy.
+
 ## Configuration
 
 All miner flags are documented in [`docs/MINER_FLAGS.md`](docs/MINER_FLAGS.md).

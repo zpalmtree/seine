@@ -111,9 +111,10 @@ This file preserves the full engineering reference for AI agents doing optimizat
 
 - Late-solution template retention is timeout-aware (derived from refresh/control/assign/prefetch timing) with time-based eviction and a bounded cache (entry and memory caps) to reduce stale drops during backend lag/spiky tip churn.
 - Deferred solution submission deduplicates by `(epoch, nonce)` across backends and suppresses repeat submit attempts across later rounds.
-- `--cpu-affinity` (`auto`, `pcore-only`, or `off`) controls CPU worker affinity/scheduler hints.
+- `--cpu-affinity` (`auto`, `cache-balanced`, `pcore-only`, or `off`) controls CPU worker affinity/scheduler hints.
   - Default is `pcore-only` on macOS Apple Silicon (`auto` on other platforms).
   - Native Windows `auto` spreads workers across complete physical-core topology groups before using SMT siblings; Linux/WSL retain the OS order because WSL topology and page coverage produced unstable results.
+  - Native Windows `cache-balanced` is opt-in and interleaves physical cores across complete L3-cache domains before SMT, falling back to `auto` ordering if either topology view is incomplete.
   - On macOS, `core_affinity` uses Mach affinity tags rather than hard CPU IDs. `pcore-only` limits the tag set using the perflevel0 count and combines it with a high-QoS preference, but cannot guarantee P-core placement.
 - `--ui` (`auto`, `tui`, `plain`) controls rendering mode. `auto` enables TUI only when stdout/stderr are terminals.
 - A backend runtime fault quarantines only that backend; mining continues on remaining active backends when possible.

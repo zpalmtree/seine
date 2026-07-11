@@ -49,6 +49,9 @@ pub enum MiningMode {
 pub enum CpuAffinityMode {
     Off,
     Auto,
+    /// On Windows, spread physical cores across complete L3-cache domains before
+    /// filling additional cores in either domain. Other platforms retain auto policy.
+    CacheBalanced,
     PcoreOnly,
 }
 

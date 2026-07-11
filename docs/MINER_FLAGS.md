@@ -31,11 +31,11 @@ For the raw CLI output, run:
 | `--backend` | `cpu`, `nvidia`, `metal`; repeatable / comma-separated; default auto | Selects mining backends. Auto mode selects CPU and NVIDIA (when available). |
 | `--nvidia-devices` | comma-separated GPU indices | Creates one NVIDIA backend instance per listed device index. Requires NVIDIA backend selected. |
 | `--threads` | integer `>=1`; alias: `--cpu-threads` | CPU threads per CPU backend instance. If omitted, auto-sized by CPU/RAM/profile. |
-| `--cpu-affinity` | `off`, `auto`, `pcore-only`; default `pcore-only` on macOS, `auto` elsewhere | CPU worker affinity policy. Native Windows `auto` uses complete physical-core topology before SMT; Linux/WSL keep OS order. macOS modes use best-effort Mach affinity tags/QoS, not hard CPU IDs. |
+| `--cpu-affinity` | `off`, `auto`, `cache-balanced`, `pcore-only`; default `pcore-only` on macOS, `auto` elsewhere | CPU worker affinity policy. Native Windows `auto` uses complete physical-core topology before SMT; `cache-balanced` interleaves physical cores across complete L3-cache domains and otherwise falls back to that order. Linux/WSL keep OS order. macOS modes use best-effort Mach affinity tags/QoS, not hard CPU IDs. |
 | `--cpu-page-mode` | `auto`, `regular`, `large`; default `auto` | CPU arena page contract. `auto` prefers explicit large pages and falls back; `regular` forces ordinary pages and disables Linux THP; `large` requires every worker to use Windows large pages or Linux HugeTLB and fails closed. `large` is unsupported on macOS. |
 | `--cpu-profile` | `balanced`, `throughput`, `efficiency`; default `balanced` | Profile presets for CPU defaults (threads/poll/flush/event batching). |
 | `--cpu-threads-per-instance` | comma-separated integers `>=1` | Per-CPU-backend thread counts; length must match CPU instances. |
-| `--cpu-affinity-per-instance` | comma-separated `off|auto|pcore-only` | Per-CPU-backend affinity; length must match CPU instances. |
+| `--cpu-affinity-per-instance` | comma-separated `off|auto|cache-balanced|pcore-only` | Per-CPU-backend affinity; length must match CPU instances. |
 | `--allow-oversubscribe` | bool flag (default `false`) | Allows start even when configured CPU lanes exceed detected RAM budget. |
 
 ## Runtime Loop, Scheduling, and Nonce Space

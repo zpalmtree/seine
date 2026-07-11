@@ -10,7 +10,7 @@
         "kind": { "type": "string", "enum": ["cpu", "nvidia", "metal"] },
         "device_index": { "type": "integer", "minimum": 0 },
         "cpu_threads": { "type": "integer", "minimum": 1 },
-        "cpu_affinity": { "type": "string", "enum": ["off", "auto", "pcore-only"] },
+        "cpu_affinity": { "type": "string", "enum": ["off", "auto", "cache-balanced", "pcore-only"] },
         "assign_timeout_ms_override": { "type": "integer", "minimum": 1 },
         "control_timeout_ms_override": { "type": "integer", "minimum": 1 },
         "assign_timeout_strikes_override": { "type": "integer", "minimum": 1 }
@@ -46,7 +46,7 @@
         "cpu_hash_flush_ms": { "type": "integer", "minimum": 1 },
         "cpu_event_dispatch_capacity": { "type": "integer", "minimum": 1 },
         "cpu_profile": { "type": "string", "enum": ["balanced", "throughput", "efficiency"] },
-        "cpu_affinity": { "type": "string", "enum": ["off", "auto", "pcore-only"] },
+        "cpu_affinity": { "type": "string", "enum": ["off", "auto", "cache-balanced", "pcore-only"] },
         "cpu_autotune_threads": { "type": "boolean" },
         "cpu_autotune_min_threads": { "type": "integer", "minimum": 1 },
         "cpu_autotune_max_threads": { "type": "integer", "minimum": 1 },

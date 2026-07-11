@@ -1841,8 +1841,11 @@ fn parse_cpu_affinity(value: &str) -> Result<CpuAffinityMode> {
     match value.trim().to_ascii_lowercase().as_str() {
         "off" => Ok(CpuAffinityMode::Off),
         "auto" => Ok(CpuAffinityMode::Auto),
+        "cache-balanced" => Ok(CpuAffinityMode::CacheBalanced),
         "pcore-only" => Ok(CpuAffinityMode::PcoreOnly),
-        other => bail!("invalid cpu_affinity '{other}' (expected: off|auto|pcore-only)"),
+        other => {
+            bail!("invalid cpu_affinity '{other}' (expected: off|auto|cache-balanced|pcore-only)")
+        }
     }
 }
 
@@ -1891,6 +1894,7 @@ fn cpu_affinity_to_str(value: CpuAffinityMode) -> &'static str {
     match value {
         CpuAffinityMode::Off => "off",
         CpuAffinityMode::Auto => "auto",
+        CpuAffinityMode::CacheBalanced => "cache-balanced",
         CpuAffinityMode::PcoreOnly => "pcore-only",
     }
 }
