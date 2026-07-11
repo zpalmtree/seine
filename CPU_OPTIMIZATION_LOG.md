@@ -12,6 +12,7 @@ This log tracks CPU backend/hash-kernel tuning attempts and measured outcomes.
 ## Newest-first index
 
 - `Updated summary of cumulative adopted optimizations`
+- `2026-07-11 1 GiB explicit hugepages on WSL Zen 5 (adopted, pending boot pool)`
 - `2026-07-11 verifiable page modes, native Windows, and WSL HugeTLB confirmation`
 - `2026-07-10 Apple Silicon scheduler, SME2, PGO, and autotuner follow-up`
 - `2026-07-10 cross-host affinity, memory-pressure, and native Windows validation`
@@ -126,6 +127,34 @@ Cumulative AArch64: from ~1.37 H/s (scalar) to ~2.88 H/s, **~110% total improvem
   roughly +6% at 16T native backend throughput, while a subsequent AVX-512
   diagonal-permute micro-tweak improved the 1T kernel by ~1% but regressed the
   16T native backend and was rejected.
+
+## 2026-07-11 1 GiB explicit hugepages on WSL Zen 5 (adopted, pending boot pool)
+
+`--cpu-page-mode large-1g` (added in `2ba6617`) maps each 2 GiB arena as two
+1 GiB HugeTLB pages via `MAP_HUGETLB | MAP_HUGE_1GB`, fail-closed like `large`.
+
+- Host: Ryzen 9 9950X3D, WSL2 (48 GiB VM). Runtime reservation on the booted
+  system materialized only `5/18` one-GiB pages even after explicit compaction
+  passes, so the measurement used 2 threads (4 pages) with the 2 MiB pool
+  (9,677 pages) untouched as the baseline side.
+- Kernel A/B, same `release-native` binary both sides, three alternating
+  pairs, 12 s x 3 rounds + warmup, 10 s cooldowns:
+  `large` (2 MiB) `4.5045 H/s` vs `large-1g` `4.5997 H/s`.
+- Paired geometric gain: **+2.121%** (95% bootstrap CI **+0.832% to
+  +3.756%**), faster in 3/3 pairs. Backing telemetry recorded exactly two
+  explicit arenas per class with zero fallback on both sides.
+- Interpretation: with 2 MiB pages one lane's 2 GiB arena needs 1,024 dTLB
+  entries; with 1 GiB pages it needs two. The residual dTLB pressure that
+  survived Attempt 25's 2 MiB pool is measurable and now mostly recoverable.
+- Adoption: boot-time pool configured (`.wslconfig` `kernelCommandLine =
+  hugepagesz=1G hugepages=19`), the 2 MiB sysctl reservation commented out;
+  both effective at the next WSL restart. Mine with `--cpu-page-mode
+  large-1g` afterwards. Rollback: `sudo sysctl vm.nr_hugepages=9677` plus
+  `--cpu-page-mode large`.
+- Open confirmation: repeat at the 9-lane production profile once the boot
+  pool exists — bandwidth saturation at 9 lanes may compress the per-lane
+  TLB gain below the 2-thread figure.
+- Artifacts: `perf-results/2026-07-11/wsl-1g-hugepage-kernel/`.
 
 ## 2026-07-11 verifiable page modes, native Windows, and WSL HugeTLB confirmation
 
