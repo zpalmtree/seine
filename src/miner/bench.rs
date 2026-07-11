@@ -46,6 +46,8 @@ struct BenchBackendRun {
     #[serde(default)]
     memory_explicit_large_workers: u64,
     #[serde(default)]
+    memory_explicit_large_1g_workers: u64,
+    #[serde(default)]
     memory_transparent_huge_workers: u64,
     #[serde(default)]
     memory_regular_workers: u64,
@@ -53,6 +55,8 @@ struct BenchBackendRun {
     memory_heap_workers: u64,
     #[serde(default)]
     memory_explicit_large_bytes: u64,
+    #[serde(default)]
+    memory_explicit_large_1g_bytes: u64,
     #[serde(default)]
     memory_transparent_huge_bytes: u64,
     #[serde(default)]
@@ -520,10 +524,12 @@ fn run_kernel_benchmark(
                 hashes,
                 hps,
                 memory_explicit_large_workers: kernel_telemetry.memory_explicit_large_workers,
+                memory_explicit_large_1g_workers: kernel_telemetry.memory_explicit_large_1g_workers,
                 memory_transparent_huge_workers: kernel_telemetry.memory_transparent_huge_workers,
                 memory_regular_workers: kernel_telemetry.memory_regular_workers,
                 memory_heap_workers: kernel_telemetry.memory_heap_workers,
                 memory_explicit_large_bytes: kernel_telemetry.memory_explicit_large_bytes,
+                memory_explicit_large_1g_bytes: kernel_telemetry.memory_explicit_large_1g_bytes,
                 memory_transparent_huge_bytes: kernel_telemetry.memory_transparent_huge_bytes,
                 memory_regular_bytes: kernel_telemetry.memory_regular_bytes,
                 memory_heap_bytes: kernel_telemetry.memory_heap_bytes,
@@ -2052,6 +2058,9 @@ fn merge_round_telemetry(
     entry.memory_explicit_large_workers = entry
         .memory_explicit_large_workers
         .max(telemetry.memory_explicit_large_workers);
+    entry.memory_explicit_large_1g_workers = entry
+        .memory_explicit_large_1g_workers
+        .max(telemetry.memory_explicit_large_1g_workers);
     entry.memory_transparent_huge_workers = entry
         .memory_transparent_huge_workers
         .max(telemetry.memory_transparent_huge_workers);
@@ -2062,6 +2071,9 @@ fn merge_round_telemetry(
     entry.memory_explicit_large_bytes = entry
         .memory_explicit_large_bytes
         .max(telemetry.memory_explicit_large_bytes);
+    entry.memory_explicit_large_1g_bytes = entry
+        .memory_explicit_large_1g_bytes
+        .max(telemetry.memory_explicit_large_1g_bytes);
     entry.memory_transparent_huge_bytes = entry
         .memory_transparent_huge_bytes
         .max(telemetry.memory_transparent_huge_bytes);
@@ -2157,10 +2169,12 @@ fn build_backend_round_stats(
             peak_active_lanes: telemetry.peak_active_lanes,
             peak_pending_work: telemetry.peak_pending_work,
             memory_explicit_large_workers: telemetry.memory_explicit_large_workers,
+            memory_explicit_large_1g_workers: telemetry.memory_explicit_large_1g_workers,
             memory_transparent_huge_workers: telemetry.memory_transparent_huge_workers,
             memory_regular_workers: telemetry.memory_regular_workers,
             memory_heap_workers: telemetry.memory_heap_workers,
             memory_explicit_large_bytes: telemetry.memory_explicit_large_bytes,
+            memory_explicit_large_1g_bytes: telemetry.memory_explicit_large_1g_bytes,
             memory_transparent_huge_bytes: telemetry.memory_transparent_huge_bytes,
             memory_regular_bytes: telemetry.memory_regular_bytes,
             memory_heap_bytes: telemetry.memory_heap_bytes,
@@ -2211,10 +2225,12 @@ fn build_backend_round_stats(
             peak_active_lanes: telemetry.peak_active_lanes,
             peak_pending_work: telemetry.peak_pending_work,
             memory_explicit_large_workers: telemetry.memory_explicit_large_workers,
+            memory_explicit_large_1g_workers: telemetry.memory_explicit_large_1g_workers,
             memory_transparent_huge_workers: telemetry.memory_transparent_huge_workers,
             memory_regular_workers: telemetry.memory_regular_workers,
             memory_heap_workers: telemetry.memory_heap_workers,
             memory_explicit_large_bytes: telemetry.memory_explicit_large_bytes,
+            memory_explicit_large_1g_bytes: telemetry.memory_explicit_large_1g_bytes,
             memory_transparent_huge_bytes: telemetry.memory_transparent_huge_bytes,
             memory_regular_bytes: telemetry.memory_regular_bytes,
             memory_heap_bytes: telemetry.memory_heap_bytes,

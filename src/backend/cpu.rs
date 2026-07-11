@@ -144,10 +144,12 @@ struct Shared {
     completed_assignment_micros: AtomicU64,
     dropped_events: AtomicU64,
     arena_explicit_large_workers: AtomicU64,
+    arena_explicit_large_1g_workers: AtomicU64,
     arena_transparent_huge_workers: AtomicU64,
     arena_regular_workers: AtomicU64,
     arena_heap_workers: AtomicU64,
     arena_explicit_large_bytes: AtomicU64,
+    arena_explicit_large_1g_bytes: AtomicU64,
     arena_transparent_huge_bytes: AtomicU64,
     arena_regular_bytes: AtomicU64,
     arena_heap_bytes: AtomicU64,
@@ -215,10 +217,12 @@ impl CpuBackend {
                 completed_assignment_micros: AtomicU64::new(0),
                 dropped_events: AtomicU64::new(0),
                 arena_explicit_large_workers: AtomicU64::new(0),
+                arena_explicit_large_1g_workers: AtomicU64::new(0),
                 arena_transparent_huge_workers: AtomicU64::new(0),
                 arena_regular_workers: AtomicU64::new(0),
                 arena_heap_workers: AtomicU64::new(0),
                 arena_explicit_large_bytes: AtomicU64::new(0),
+                arena_explicit_large_1g_bytes: AtomicU64::new(0),
                 arena_transparent_huge_bytes: AtomicU64::new(0),
                 arena_regular_bytes: AtomicU64::new(0),
                 arena_heap_bytes: AtomicU64::new(0),
@@ -584,6 +588,10 @@ impl PowBackend for CpuBackend {
                 .shared
                 .arena_explicit_large_workers
                 .load(Ordering::Acquire),
+            memory_explicit_large_1g_workers: self
+                .shared
+                .arena_explicit_large_1g_workers
+                .load(Ordering::Acquire),
             memory_transparent_huge_workers: self
                 .shared
                 .arena_transparent_huge_workers
@@ -593,6 +601,10 @@ impl PowBackend for CpuBackend {
             memory_explicit_large_bytes: self
                 .shared
                 .arena_explicit_large_bytes
+                .load(Ordering::Acquire),
+            memory_explicit_large_1g_bytes: self
+                .shared
+                .arena_explicit_large_1g_bytes
                 .load(Ordering::Acquire),
             memory_transparent_huge_bytes: self
                 .shared
@@ -750,12 +762,18 @@ fn reset_arena_telemetry(shared: &Shared) {
         .arena_explicit_large_workers
         .store(0, Ordering::Release);
     shared
+        .arena_explicit_large_1g_workers
+        .store(0, Ordering::Release);
+    shared
         .arena_transparent_huge_workers
         .store(0, Ordering::Release);
     shared.arena_regular_workers.store(0, Ordering::Release);
     shared.arena_heap_workers.store(0, Ordering::Release);
     shared
         .arena_explicit_large_bytes
+        .store(0, Ordering::Release);
+    shared
+        .arena_explicit_large_1g_bytes
         .store(0, Ordering::Release);
     shared
         .arena_transparent_huge_bytes

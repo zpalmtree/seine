@@ -130,10 +130,12 @@ pub(super) struct BackendRoundTelemetry {
     peak_active_lanes: u64,
     peak_pending_work: u64,
     memory_explicit_large_workers: u64,
+    memory_explicit_large_1g_workers: u64,
     memory_transparent_huge_workers: u64,
     memory_regular_workers: u64,
     memory_heap_workers: u64,
     memory_explicit_large_bytes: u64,
+    memory_explicit_large_1g_bytes: u64,
     memory_transparent_huge_bytes: u64,
     memory_regular_bytes: u64,
     memory_heap_bytes: u64,
@@ -1830,6 +1832,11 @@ fn maybe_warn_linux_hugepages_setup(cfg: &Config, mode: RuntimeMode) {
         return;
     }
 
+    if cfg.cpu_page_mode == CpuPageMode::Large1G {
+        maybe_warn_linux_1g_hugepages_setup(cpu_lanes, mode);
+        return;
+    }
+
     let Some(meminfo) = read_linux_hugepages_meminfo() else {
         return;
     };
@@ -1886,6 +1893,60 @@ fn maybe_warn_linux_hugepages_setup(cfg: &Config, mode: RuntimeMode) {
     info(
         tag,
         "hugepages | if allocation is partial, run: echo 3 | sudo tee /proc/sys/vm/drop_caches && echo 1 | sudo tee /proc/sys/vm/compact_memory",
+    );
+}
+
+/// Sizing guidance for `--cpu-page-mode large-1g`: each 2 GiB worker arena
+/// needs two 1 GiB HugeTLB pages. 1 GiB pools are a non-default hugepage size
+/// on most hosts, so they are read from sysfs rather than /proc/meminfo.
+#[cfg(target_os = "linux")]
+fn maybe_warn_linux_1g_hugepages_setup(cpu_lanes: u64, mode: RuntimeMode) {
+    const HUGE_1G_POOL: &str = "/sys/kernel/mm/hugepages/hugepages-1048576kB";
+    let per_lane_pages = div_ceil_u64(CPU_LANE_MEMORY_BYTES, 1024 * 1024 * 1024).max(1);
+    let required_pages = per_lane_pages.saturating_mul(cpu_lanes);
+    let tag = runtime_mode_tag(mode);
+
+    let read_pool = |name: &str| -> Option<u64> {
+        fs::read_to_string(format!("{HUGE_1G_POOL}/{name}"))
+            .ok()?
+            .trim()
+            .parse::<u64>()
+            .ok()
+    };
+    let Some(total_pages) = read_pool("nr_hugepages") else {
+        warn(
+            tag,
+            "hugepages-1g | kernel does not expose a 1 GiB HugeTLB pool; --cpu-page-mode large-1g will fail closed (requires x86_64 with 1 GiB page support)",
+        );
+        return;
+    };
+    let free_pages = read_pool("free_hugepages").unwrap_or(0);
+    let reserved_pages = read_pool("resv_hugepages").unwrap_or(0);
+    let unreserved_pages = free_pages.saturating_sub(reserved_pages);
+    if total_pages >= required_pages && unreserved_pages >= required_pages {
+        return;
+    }
+
+    warn(
+        tag,
+        format!(
+            "hugepages-1g | CPU lanes={} need {} x 1 GiB HugeTLB pages ({} per lane), but current pool is total={} free={} rsvd={}.",
+            cpu_lanes, required_pages, per_lane_pages, total_pages, free_pages, reserved_pages,
+        ),
+    );
+    warn(
+        tag,
+        format!(
+            "hugepages-1g | setup: echo {required_pages} | sudo tee {HUGE_1G_POOL}/nr_hugepages  (or boot with hugepagesz=1G hugepages={required_pages})"
+        ),
+    );
+    info(
+        tag,
+        "hugepages-1g | WSL2: set kernelCommandLine=hugepagesz=1G hugepages=<N> in %UserProfile%\\.wslconfig, then restart WSL",
+    );
+    info(
+        tag,
+        "hugepages-1g | docs: see README.md -> \"WSL/Linux HugeTLB provisioning\"",
     );
 }
 
@@ -2386,10 +2447,12 @@ fn merge_backend_telemetry(
         && telemetry.completed_assignment_hashes == 0
         && telemetry.completed_assignment_micros == 0
         && telemetry.memory_explicit_large_workers == 0
+        && telemetry.memory_explicit_large_1g_workers == 0
         && telemetry.memory_transparent_huge_workers == 0
         && telemetry.memory_regular_workers == 0
         && telemetry.memory_heap_workers == 0
         && telemetry.memory_explicit_large_bytes == 0
+        && telemetry.memory_explicit_large_1g_bytes == 0
         && telemetry.memory_transparent_huge_bytes == 0
         && telemetry.memory_regular_bytes == 0
         && telemetry.memory_heap_bytes == 0
@@ -2435,6 +2498,9 @@ fn merge_backend_telemetry(
     entry.memory_explicit_large_workers = entry
         .memory_explicit_large_workers
         .max(telemetry.memory_explicit_large_workers);
+    entry.memory_explicit_large_1g_workers = entry
+        .memory_explicit_large_1g_workers
+        .max(telemetry.memory_explicit_large_1g_workers);
     entry.memory_transparent_huge_workers = entry
         .memory_transparent_huge_workers
         .max(telemetry.memory_transparent_huge_workers);
@@ -2445,6 +2511,9 @@ fn merge_backend_telemetry(
     entry.memory_explicit_large_bytes = entry
         .memory_explicit_large_bytes
         .max(telemetry.memory_explicit_large_bytes);
+    entry.memory_explicit_large_1g_bytes = entry
+        .memory_explicit_large_1g_bytes
+        .max(telemetry.memory_explicit_large_1g_bytes);
     entry.memory_transparent_huge_bytes = entry
         .memory_transparent_huge_bytes
         .max(telemetry.memory_transparent_huge_bytes);
@@ -2523,10 +2592,12 @@ pub(super) fn backend_round_telemetry_delta(telemetry: BackendTelemetry) -> Back
         peak_active_lanes: telemetry.active_lanes,
         peak_pending_work: telemetry.pending_work,
         memory_explicit_large_workers: telemetry.memory_explicit_large_workers,
+        memory_explicit_large_1g_workers: telemetry.memory_explicit_large_1g_workers,
         memory_transparent_huge_workers: telemetry.memory_transparent_huge_workers,
         memory_regular_workers: telemetry.memory_regular_workers,
         memory_heap_workers: telemetry.memory_heap_workers,
         memory_explicit_large_bytes: telemetry.memory_explicit_large_bytes,
+        memory_explicit_large_1g_bytes: telemetry.memory_explicit_large_1g_bytes,
         memory_transparent_huge_bytes: telemetry.memory_transparent_huge_bytes,
         memory_regular_bytes: telemetry.memory_regular_bytes,
         memory_heap_bytes: telemetry.memory_heap_bytes,
@@ -2974,10 +3045,12 @@ fn format_round_backend_telemetry(
             && telemetry.peak_active_lanes == 0
             && telemetry.peak_pending_work == 0
             && telemetry.memory_explicit_large_workers == 0
+            && telemetry.memory_explicit_large_1g_workers == 0
             && telemetry.memory_transparent_huge_workers == 0
             && telemetry.memory_regular_workers == 0
             && telemetry.memory_heap_workers == 0
             && telemetry.memory_explicit_large_bytes == 0
+            && telemetry.memory_explicit_large_1g_bytes == 0
             && telemetry.memory_transparent_huge_bytes == 0
             && telemetry.memory_regular_bytes == 0
             && telemetry.memory_heap_bytes == 0
@@ -3006,14 +3079,16 @@ fn format_round_backend_telemetry(
         }
         let backend_name = backend_names.get(backend_id).copied().unwrap_or("unknown");
         parts.push(format!(
-            "{backend_name}#{backend_id}:active_peak={} pending_peak={} memory_workers=large:{}/thp:{}/regular:{}/heap:{} memory_mib=large:{:.1}/thp:{:.1}/regular:{:.1}/heap:{:.1} memory_alloc_failures={} inflight_hashes_peak={} inflight_secs_peak={:.3} drops={} assignments={} assignment_hashes={} assignment_secs={:.3} assign_timeout_enq={} assign_timeout_exec={} control_timeout_enq={} control_timeout_exec={} assign_timeout_strike_peak={} assign_enq_lat_samples={} assign_enq_lat_p95_us={} assign_enq_lat_max_us={} assign_exec_lat_samples={} assign_exec_lat_p95_us={} assign_exec_lat_max_us={} control_enq_lat_samples={} control_enq_lat_p95_us={} control_enq_lat_max_us={} control_exec_lat_samples={} control_exec_lat_p95_us={} control_exec_lat_max_us={}",
+            "{backend_name}#{backend_id}:active_peak={} pending_peak={} memory_workers=large:{}/large1g:{}/thp:{}/regular:{}/heap:{} memory_mib=large:{:.1}/large1g:{:.1}/thp:{:.1}/regular:{:.1}/heap:{:.1} memory_alloc_failures={} inflight_hashes_peak={} inflight_secs_peak={:.3} drops={} assignments={} assignment_hashes={} assignment_secs={:.3} assign_timeout_enq={} assign_timeout_exec={} control_timeout_enq={} control_timeout_exec={} assign_timeout_strike_peak={} assign_enq_lat_samples={} assign_enq_lat_p95_us={} assign_enq_lat_max_us={} assign_exec_lat_samples={} assign_exec_lat_p95_us={} assign_exec_lat_max_us={} control_enq_lat_samples={} control_enq_lat_p95_us={} control_enq_lat_max_us={} control_exec_lat_samples={} control_exec_lat_p95_us={} control_exec_lat_max_us={}",
             telemetry.peak_active_lanes,
             telemetry.peak_pending_work,
             telemetry.memory_explicit_large_workers,
+            telemetry.memory_explicit_large_1g_workers,
             telemetry.memory_transparent_huge_workers,
             telemetry.memory_regular_workers,
             telemetry.memory_heap_workers,
             telemetry.memory_explicit_large_bytes as f64 / (1024.0 * 1024.0),
+            telemetry.memory_explicit_large_1g_bytes as f64 / (1024.0 * 1024.0),
             telemetry.memory_transparent_huge_bytes as f64 / (1024.0 * 1024.0),
             telemetry.memory_regular_bytes as f64 / (1024.0 * 1024.0),
             telemetry.memory_heap_bytes as f64 / (1024.0 * 1024.0),
@@ -3540,6 +3615,24 @@ mod tests {
         assert!(!cpu_autotune_record_matches_config(
             &record, &cfg, 1, 1, 4, 6
         ));
+    }
+
+    #[test]
+    fn round_backend_telemetry_line_reports_1g_backing_separately() {
+        let mut telemetry_map = BTreeMap::new();
+        telemetry_map.insert(
+            7u64,
+            BackendRoundTelemetry {
+                memory_explicit_large_1g_workers: 9,
+                memory_explicit_large_1g_bytes: 9 * 2 * 1024 * 1024 * 1024,
+                ..BackendRoundTelemetry::default()
+            },
+        );
+
+        let line =
+            format_round_backend_telemetry(&[], &telemetry_map).expect("telemetry line expected");
+        assert!(line.contains("memory_workers=large:0/large1g:9/thp:0/regular:0/heap:0"));
+        assert!(line.contains("memory_mib=large:0.0/large1g:18432.0/thp:0.0/regular:0.0/heap:0.0"));
     }
 
     #[test]

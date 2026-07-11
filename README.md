@@ -146,6 +146,7 @@ Runtime checks:
 - Startup warns with exact sizing/commands when HugeTLB is under-provisioned (`hugepages | CPU lanes=... need ...`).
 - Per-backend fallback warnings still appear if a worker falls back from `MAP_HUGETLB` (`MAP_HUGETLB unavailable; hugepage coverage...`).
 - `--cpu-page-mode large` requires every CPU worker to receive `MAP_HUGETLB` and fails CPU backend startup instead of mixing page classes or silently falling back.
+- `--cpu-page-mode large-1g` does the same with explicit 1 GiB pages (`MAP_HUGETLB|MAP_HUGE_1GB`, x86_64 Linux/WSL only); see "WSL/Linux HugeTLB provisioning" below for reserving the 1 GiB pool.
 - `--cpu-page-mode regular` disables THP for a controlled base-page benchmark. The default `auto` mode retains the production fallback chain.
 - Benchmark reports record measured HugeTLB, THP, regular-page, and heap bytes per CPU backend so page-backed runs can be verified rather than inferred.
 - In practice, once many CPU lanes are active, hugepage coverage usually matters more than ISA-level tuning for backend throughput.
@@ -162,8 +163,9 @@ fallback reason so benchmark manifests remain interpretable.
 Use `--cpu-page-mode large` after granting the right to require large pages for
 every worker, or `--cpu-page-mode regular` for a matched ordinary-page control.
 Required-large startup fails with the Win32 allocation error if the privilege or
-enough large-page memory is unavailable. macOS supports `auto` and `regular`;
-explicit `large` mode is rejected because there is no equivalent allocator contract.
+enough large-page memory is unavailable. The Linux-only `large-1g` mode is
+rejected on Windows. macOS supports `auto` and `regular`; explicit `large` and
+`large-1g` modes are rejected because there is no equivalent allocator contract.
 
 Native Windows `--cpu-affinity auto` also uses complete processor-core topology
 groups before SMT siblings. If Windows returns incomplete or contradictory
@@ -185,6 +187,26 @@ fragmented, for example in `/etc/sysctl.d/99-seine-hugepages.conf`:
 ```text
 vm.nr_hugepages = 9677
 ```
+
+`--cpu-page-mode large-1g` is the 1 GiB variant (x86_64 Linux/WSL only): every
+worker arena is mapped with `MAP_HUGETLB|MAP_HUGE_1GB` from the explicit 1 GiB
+pool and startup fails closed on any shortfall. Each 2 GiB worker arena needs
+exactly two 1 GiB pages, so no fractional headroom is required:
+
+```bash
+# 9 workers * 2 pages/worker = 18 x 1 GiB pages
+echo 18 | sudo tee /sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages
+```
+
+1 GiB pages usually cannot be assembled after boot on a fragmented host; prefer
+reserving them at boot with the `hugepagesz=1G hugepages=18` kernel parameters.
+On WSL2 set them in `%UserProfile%\.wslconfig`, e.g.
+`kernelCommandLine = hugepagesz=1G hugepages=18`, then restart WSL. Verify the
+pool with `cat /sys/kernel/mm/hugepages/hugepages-1048576kB/free_hugepages`
+(the `HugePages_*` lines in `/proc/meminfo` cover only the default 2 MiB size).
+Benchmark telemetry reports 1 GiB backing separately (`large1g=`/`large1g_bytes=`),
+and `scripts/bench_cpu_ab.sh --page-mode large-1g` rejects any run that fell
+back or mixed page classes.
 
 On WSL2, the VM must also have enough ordinary headroom for Windows/WSL services.
 The validated 64-GiB host used `%UserProfile%\.wslconfig` with `memory=48GB`,

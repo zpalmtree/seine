@@ -1736,13 +1736,16 @@ fn apply_start_patch(cfg: &mut Config, patch: &StartRequest) -> Result<()> {
     }
 
     if cfg!(target_os = "macos")
-        && cfg.cpu_page_mode == CpuPageMode::Large
+        && cfg.cpu_page_mode.requires_explicit_large_pages()
         && cfg
             .backend_specs
             .iter()
             .any(|spec| spec.kind == BackendKind::Cpu)
     {
-        bail!("cpu_page_mode large is unsupported on macOS; use auto or regular");
+        bail!(
+            "cpu_page_mode {} is unsupported on macOS; use auto or regular",
+            cfg.cpu_page_mode.as_str()
+        );
     }
 
     Ok(())
@@ -1851,7 +1854,8 @@ fn parse_cpu_page_mode(value: &str) -> Result<CpuPageMode> {
         "auto" => Ok(CpuPageMode::Auto),
         "regular" => Ok(CpuPageMode::Regular),
         "large" => Ok(CpuPageMode::Large),
-        other => bail!("invalid cpu_page_mode '{other}' (expected: auto|regular|large)"),
+        "large-1g" => Ok(CpuPageMode::Large1G),
+        other => bail!("invalid cpu_page_mode '{other}' (expected: auto|regular|large|large-1g)"),
     }
 }
 
@@ -1962,7 +1966,12 @@ mod tests {
             CpuPageMode::Regular
         );
         assert_eq!(parse_cpu_page_mode("large").unwrap(), CpuPageMode::Large);
+        assert_eq!(
+            parse_cpu_page_mode("large-1g").unwrap(),
+            CpuPageMode::Large1G
+        );
         assert!(parse_cpu_page_mode("transparent").is_err());
+        assert!(parse_cpu_page_mode("large1g").is_err());
     }
 
     #[test]

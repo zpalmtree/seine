@@ -390,6 +390,8 @@ pub struct BackendTelemetry {
     pub pending_work: u64,
     /// CPU workers whose arena is fully backed by explicit HugeTLB/large pages.
     pub memory_explicit_large_workers: u64,
+    /// CPU workers whose arena is fully backed by explicit 1 GiB HugeTLB pages.
+    pub memory_explicit_large_1g_workers: u64,
     /// CPU workers with at least some measured transparent-huge-page coverage.
     pub memory_transparent_huge_workers: u64,
     /// CPU workers with at least some ordinary-page coverage.
@@ -398,6 +400,8 @@ pub struct BackendTelemetry {
     pub memory_heap_workers: u64,
     /// Bytes backed by explicit HugeTLB/large pages.
     pub memory_explicit_large_bytes: u64,
+    /// Bytes backed by explicit 1 GiB HugeTLB pages.
+    pub memory_explicit_large_1g_bytes: u64,
     /// Bytes reported as transparent huge pages by the operating system.
     pub memory_transparent_huge_bytes: u64,
     /// Bytes backed by ordinary pages.

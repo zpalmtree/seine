@@ -60,6 +60,10 @@ pub enum CpuPageMode {
     Regular,
     /// Require explicit large pages and fail CPU backend startup when unavailable.
     Large,
+    /// Require explicit 1 GiB HugeTLB pages (x86_64 Linux only) and fail CPU
+    /// backend startup when unavailable.
+    #[value(name = "large-1g")]
+    Large1G,
 }
 
 impl CpuPageMode {
@@ -68,7 +72,14 @@ impl CpuPageMode {
             Self::Auto => "auto",
             Self::Regular => "regular",
             Self::Large => "large",
+            Self::Large1G => "large-1g",
         }
+    }
+
+    /// Modes that require every worker arena to be explicitly large-page
+    /// backed and therefore fail closed instead of falling back.
+    pub const fn requires_explicit_large_pages(self) -> bool {
+        matches!(self, Self::Large | Self::Large1G)
     }
 }
 
@@ -369,7 +380,8 @@ struct Cli {
     #[arg(long, value_enum, default_value_t = DEFAULT_CPU_AFFINITY)]
     cpu_affinity: CpuAffinityMode,
 
-    /// CPU arena page policy: auto fallback, forced regular pages, or required large pages.
+    /// CPU arena page policy: auto fallback, forced regular pages, required large pages,
+    /// or required 1 GiB HugeTLB pages (`large-1g`, x86_64 Linux only).
     #[arg(long = "cpu-page-mode", value_enum, default_value_t = CpuPageMode::Auto)]
     cpu_page_mode: CpuPageMode,
 
@@ -989,9 +1001,12 @@ impl Config {
             .count();
         if cfg!(target_os = "macos")
             && cpu_backend_instances > 0
-            && cli.cpu_page_mode == CpuPageMode::Large
+            && cli.cpu_page_mode.requires_explicit_large_pages()
         {
-            bail!("--cpu-page-mode large is unsupported on macOS; use auto or regular");
+            bail!(
+                "--cpu-page-mode {} is unsupported on macOS; use auto or regular",
+                cli.cpu_page_mode.as_str()
+            );
         }
         let auto_threads_cap = match cpu_backend_instances {
             0 => 1,
@@ -2608,6 +2623,14 @@ fn detect_memory_budget_bytes(page_mode: CpuPageMode) -> Option<MemoryBudgetByte
                 // under-capping CPU autotune when users pre-reserve hugepages.
                 effective_available = effective_available.saturating_add(hugetlb_unreserved_bytes);
             }
+            if page_mode == CpuPageMode::Large1G {
+                if let Some(hugetlb_1g_unreserved_bytes) = linux_hugetlb_1g_unreserved_bytes() {
+                    // 1 GiB pools are usually a non-default hugepage size, so the
+                    // /proc/meminfo credit above (default size only) misses them.
+                    effective_available =
+                        effective_available.saturating_add(hugetlb_1g_unreserved_bytes);
+                }
+            }
         }
 
         if let Some(cgroup) = sys.cgroup_limits() {
@@ -2635,6 +2658,45 @@ fn linux_hugetlb_unreserved_bytes() -> Option<u64> {
 
 #[cfg(not(target_os = "linux"))]
 fn linux_hugetlb_unreserved_bytes() -> Option<u64> {
+    None
+}
+
+/// Unreserved bytes in the explicit 1 GiB HugeTLB pool. `/proc/meminfo` only
+/// reports the default hugepage size, so when the default is not 1 GiB the
+/// pool is read from sysfs; when it is 1 GiB, `linux_hugetlb_unreserved_bytes`
+/// already accounts for it and this returns `None` to avoid double counting.
+#[cfg(target_os = "linux")]
+fn linux_hugetlb_1g_unreserved_bytes() -> Option<u64> {
+    const HUGE_1G_KIB: u64 = 1024 * 1024;
+    let meminfo = fs::read_to_string("/proc/meminfo").ok()?;
+    let default_page_size_kib = meminfo
+        .lines()
+        .find_map(|line| line.strip_prefix("Hugepagesize:"))
+        .and_then(parse_meminfo_u64_field)?;
+    if default_page_size_kib == HUGE_1G_KIB {
+        return None;
+    }
+
+    let pool = "/sys/kernel/mm/hugepages/hugepages-1048576kB";
+    let read_pages = |name: &str| -> Option<u64> {
+        fs::read_to_string(format!("{pool}/{name}"))
+            .ok()?
+            .trim()
+            .parse::<u64>()
+            .ok()
+    };
+    let free_pages = read_pages("free_hugepages")?;
+    let reserved_pages = read_pages("resv_hugepages").unwrap_or(0);
+    Some(
+        free_pages
+            .saturating_sub(reserved_pages)
+            .saturating_mul(HUGE_1G_KIB)
+            .saturating_mul(1024),
+    )
+}
+
+#[cfg(not(target_os = "linux"))]
+fn linux_hugetlb_1g_unreserved_bytes() -> Option<u64> {
     None
 }
 
@@ -3245,6 +3307,32 @@ HugePages_Rsvd:          0
         );
         assert_eq!(out[0].assign_timeout_strikes_override, Some(2));
         assert_eq!(out[1].assign_timeout_strikes_override, Some(4));
+    }
+
+    #[test]
+    fn cpu_page_mode_labels_and_cli_values_round_trip() {
+        assert_eq!(CpuPageMode::Auto.as_str(), "auto");
+        assert_eq!(CpuPageMode::Regular.as_str(), "regular");
+        assert_eq!(CpuPageMode::Large.as_str(), "large");
+        assert_eq!(CpuPageMode::Large1G.as_str(), "large-1g");
+
+        for mode in [
+            CpuPageMode::Auto,
+            CpuPageMode::Regular,
+            CpuPageMode::Large,
+            CpuPageMode::Large1G,
+        ] {
+            assert_eq!(
+                <CpuPageMode as ValueEnum>::from_str(mode.as_str(), false).unwrap(),
+                mode
+            );
+        }
+        assert!(<CpuPageMode as ValueEnum>::from_str("large1g", false).is_err());
+
+        assert!(CpuPageMode::Large.requires_explicit_large_pages());
+        assert!(CpuPageMode::Large1G.requires_explicit_large_pages());
+        assert!(!CpuPageMode::Auto.requires_explicit_large_pages());
+        assert!(!CpuPageMode::Regular.requires_explicit_large_pages());
     }
 
     #[test]

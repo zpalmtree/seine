@@ -11,9 +11,9 @@ Usage:
     [--threads <n>] \
     [--baseline-threads <n>] \
     [--candidate-threads <n>] \
-    [--page-mode auto|regular|large] \
-    [--baseline-page-mode auto|regular|large] \
-    [--candidate-page-mode auto|regular|large] \
+    [--page-mode auto|regular|large|large-1g] \
+    [--baseline-page-mode auto|regular|large|large-1g] \
+    [--candidate-page-mode auto|regular|large|large-1g] \
     [--bench-secs <n>] \
     [--bench-rounds <n>] \
     [--bench-warmup-rounds <n>] \
@@ -336,8 +336,8 @@ if ! [[ "$cooldown_secs" =~ ^[0-9]+$ ]]; then
     exit 1
 fi
 for selected_page_mode in "$baseline_page_mode" "$candidate_page_mode"; do
-    if [[ -n "$selected_page_mode" && ! "$selected_page_mode" =~ ^(auto|regular|large)$ ]]; then
-        echo "error: page mode must be auto, regular, or large (got: $selected_page_mode)" >&2
+    if [[ -n "$selected_page_mode" && ! "$selected_page_mode" =~ ^(auto|regular|large|large-1g)$ ]]; then
+        echo "error: page mode must be auto, regular, large, or large-1g (got: $selected_page_mode)" >&2
         exit 1
     fi
 done
@@ -396,10 +396,12 @@ if actual_mode != expected:
 
 keys = (
     "memory_explicit_large_workers",
+    "memory_explicit_large_1g_workers",
     "memory_transparent_huge_workers",
     "memory_regular_workers",
     "memory_heap_workers",
     "memory_explicit_large_bytes",
+    "memory_explicit_large_1g_bytes",
     "memory_transparent_huge_bytes",
     "memory_regular_bytes",
     "memory_heap_bytes",
@@ -420,15 +422,17 @@ if len(signatures) != 1:
 signature = next(iter(signatures))
 values = dict(zip(keys, signature))
 large = values["memory_explicit_large_workers"]
+large1g = values["memory_explicit_large_1g_workers"]
 thp = values["memory_transparent_huge_workers"]
 regular = values["memory_regular_workers"]
 heap = values["memory_heap_workers"]
-if large + thp + regular + heap == 0:
+if large + large1g + thp + regular + heap == 0:
     raise SystemExit(f"error: {path} reports zero CPU workers across all backing classes")
 total_bytes = sum(
     values[key]
     for key in (
         "memory_explicit_large_bytes",
+        "memory_explicit_large_1g_bytes",
         "memory_transparent_huge_bytes",
         "memory_regular_bytes",
         "memory_heap_bytes",
@@ -440,18 +444,22 @@ if total_bytes != expected_bytes:
         f"error: {path} reports {total_bytes} CPU arena bytes, expected {expected_bytes} "
         f"for {expected_threads} thread(s)"
     )
-if expected == "large" and (large == 0 or thp or regular or heap):
+if expected == "large" and (large == 0 or large1g or thp or regular or heap):
     raise SystemExit(f"error: {path} requested large pages but reports {values}")
-if expected == "regular" and (regular == 0 or large or thp or heap):
+if expected == "large-1g" and (large1g == 0 or large or thp or regular or heap):
+    raise SystemExit(f"error: {path} requested 1 GiB pages but reports {values}")
+if expected == "regular" and (regular == 0 or large or large1g or thp or heap):
     raise SystemExit(f"error: {path} requested regular pages but reports {values}")
 
 print(
-    "large={}:thp={}:regular={}:heap={}:large_bytes={}:thp_bytes={}:regular_bytes={}:heap_bytes={}:failures={}".format(
+    "large={}:large1g={}:thp={}:regular={}:heap={}:large_bytes={}:large1g_bytes={}:thp_bytes={}:regular_bytes={}:heap_bytes={}:failures={}".format(
         large,
+        large1g,
         thp,
         regular,
         heap,
         values["memory_explicit_large_bytes"],
+        values["memory_explicit_large_1g_bytes"],
         values["memory_transparent_huge_bytes"],
         values["memory_regular_bytes"],
         values["memory_heap_bytes"],

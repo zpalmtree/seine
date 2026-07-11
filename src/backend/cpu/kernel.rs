@@ -285,6 +285,8 @@ pub(super) fn cpu_worker_loop(
 
 #[cfg(target_os = "linux")]
 const HUGEPAGE_BYTES: usize = 2 * 1024 * 1024;
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const HUGEPAGE_1G_BYTES: usize = 1024 * 1024 * 1024;
 #[cfg(target_os = "linux")]
 const MADV_COLLAPSE: libc::c_int = 25;
 
@@ -309,13 +311,13 @@ impl PowArena {
         #[cfg(unix)]
         match MmapArena::new(block_count, byte_len, page_mode) {
             Ok(arena) => return Ok(Self::Mmap(arena)),
-            Err(err) if page_mode == CpuPageMode::Large => return Err(err),
+            Err(err) if page_mode.requires_explicit_large_pages() => return Err(err),
             Err(_) => {}
         }
         #[cfg(target_os = "windows")]
         match VirtualArena::new(block_count, byte_len, page_mode) {
             Ok(arena) => return Ok(Self::Virtual(arena)),
-            Err(err) if page_mode == CpuPageMode::Large => return Err(err),
+            Err(err) if page_mode.requires_explicit_large_pages() => return Err(err),
             Err(_) => {}
         }
 
@@ -378,10 +380,12 @@ impl PowArena {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct ArenaBackingObservation {
     explicit_large_workers: u64,
+    explicit_large_1g_workers: u64,
     transparent_huge_workers: u64,
     regular_workers: u64,
     heap_workers: u64,
     explicit_large_bytes: u64,
+    explicit_large_1g_bytes: u64,
     transparent_huge_bytes: u64,
     regular_bytes: u64,
     heap_bytes: u64,
@@ -397,6 +401,9 @@ pub(super) fn record_arena_backing(shared: &Shared, arena: &PowArena, block_coun
         .arena_explicit_large_workers
         .fetch_add(observation.explicit_large_workers, Ordering::AcqRel);
     shared
+        .arena_explicit_large_1g_workers
+        .fetch_add(observation.explicit_large_1g_workers, Ordering::AcqRel);
+    shared
         .arena_transparent_huge_workers
         .fetch_add(observation.transparent_huge_workers, Ordering::AcqRel);
     shared
@@ -408,6 +415,9 @@ pub(super) fn record_arena_backing(shared: &Shared, arena: &PowArena, block_coun
     shared
         .arena_explicit_large_bytes
         .fetch_add(observation.explicit_large_bytes, Ordering::AcqRel);
+    shared
+        .arena_explicit_large_1g_bytes
+        .fetch_add(observation.explicit_large_1g_bytes, Ordering::AcqRel);
     shared
         .arena_transparent_huge_bytes
         .fetch_add(observation.transparent_huge_bytes, Ordering::AcqRel);
@@ -449,10 +459,34 @@ mod tests {
         let observation = arena.backing_observation(requested_bytes);
 
         assert_eq!(observation.explicit_large_workers, 0);
+        assert_eq!(observation.explicit_large_1g_workers, 0);
         assert_eq!(observation.transparent_huge_workers, 0);
         assert_eq!(observation.regular_workers, 1);
         assert_eq!(observation.heap_workers, 0);
         assert_eq!(observation.regular_bytes, requested_bytes);
+        assert_eq!(observation.allocation_failures, 0);
+    }
+
+    // Allocation needs a pre-reserved 1 GiB HugeTLB pool, e.g.:
+    //   echo 2 | sudo tee /sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages
+    // so this test is ignored by default; run with `cargo test -- --ignored`.
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    #[test]
+    #[ignore = "requires a pre-reserved 1 GiB HugeTLB pool"]
+    fn large_1g_page_mode_reports_measured_1g_backing() {
+        let block_count = 16;
+        let arena = PowArena::new(block_count, CpuPageMode::Large1G)
+            .expect("1 GiB hugepage arena should allocate from a reserved pool");
+        let requested_bytes =
+            (block_count * std::mem::size_of::<blocknet_pow_kernel::PowBlock>()) as u64;
+        let observation = arena.backing_observation(requested_bytes);
+
+        assert_eq!(observation.explicit_large_1g_workers, 1);
+        assert_eq!(observation.explicit_large_1g_bytes, requested_bytes);
+        assert_eq!(observation.explicit_large_workers, 0);
+        assert_eq!(observation.transparent_huge_workers, 0);
+        assert_eq!(observation.regular_workers, 0);
+        assert_eq!(observation.heap_workers, 0);
         assert_eq!(observation.allocation_failures, 0);
     }
 
@@ -626,6 +660,12 @@ impl VirtualArena {
             PAGE_READWRITE,
         };
 
+        if page_mode == CpuPageMode::Large1G {
+            return Err(
+                "--cpu-page-mode large-1g is only supported on x86_64 Linux (1 GiB HugeTLB pages)"
+                    .into(),
+            );
+        }
         let try_large_pages = page_mode != CpuPageMode::Regular;
         let mut large_page_error = 0;
         let mut allocation_failures = 0u64;
@@ -747,7 +787,10 @@ unsafe impl Send for VirtualArena {}
 #[cfg(target_os = "windows")]
 unsafe impl Sync for VirtualArena {}
 
-#[cfg(target_os = "windows")]
+#[cfg(any(
+    target_os = "windows",
+    all(target_os = "linux", target_arch = "x86_64")
+))]
 fn round_up_to_multiple(value: usize, multiple: usize) -> Option<usize> {
     if multiple == 0 {
         return None;
@@ -823,6 +866,8 @@ fn enable_lock_memory_privilege() -> Result<(), u32> {
 enum MmapBacking {
     #[cfg(target_os = "linux")]
     ExplicitHugeTLB,
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    ExplicitHugeTLB1G,
     #[cfg(target_os = "linux")]
     TransparentHuge,
     Regular,
@@ -848,6 +893,9 @@ impl MmapArena {
     ) -> Result<Self, String> {
         #[cfg(target_os = "linux")]
         {
+            if page_mode == CpuPageMode::Large1G {
+                return Self::new_hugetlb_1g(block_count, byte_len);
+            }
             let mut allocation_failures = 0u64;
             if page_mode != CpuPageMode::Regular {
                 // Attempt 1: MAP_HUGETLB for guaranteed 2 MB pages.
@@ -925,8 +973,11 @@ impl MmapArena {
 
         #[cfg(not(target_os = "linux"))]
         {
-            if page_mode == CpuPageMode::Large {
-                return Err("explicit large pages are unsupported on this Unix target".into());
+            if page_mode.requires_explicit_large_pages() {
+                return Err(format!(
+                    "explicit large pages (--cpu-page-mode {}) are unsupported on this Unix target",
+                    page_mode.as_str()
+                ));
             }
             let ptr = unsafe {
                 libc::mmap(
@@ -947,6 +998,53 @@ impl MmapArena {
                 byte_len,
                 block_count,
                 backing: MmapBacking::Regular,
+                allocation_failures: 0,
+            })
+        }
+    }
+
+    /// Maps the arena from the pre-reserved 1 GiB HugeTLB pool and fails
+    /// closed: `large-1g` never falls back to another page class.
+    #[cfg(target_os = "linux")]
+    fn new_hugetlb_1g(block_count: usize, byte_len: usize) -> Result<Self, String> {
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            let _ = (block_count, byte_len);
+            Err("--cpu-page-mode large-1g requires x86_64 Linux (1 GiB HugeTLB pages)".to_owned())
+        }
+
+        #[cfg(target_arch = "x86_64")]
+        {
+            // HugeTLB mapping lengths must be page-size multiples. Worker
+            // arenas are exactly 2 GiB (two 1 GiB pages); round up defensively.
+            let map_len = round_up_to_multiple(byte_len, HUGEPAGE_1G_BYTES)
+                .ok_or_else(|| "1 GiB hugepage allocation size overflowed usize".to_owned())?;
+            let ptr = unsafe {
+                libc::mmap(
+                    std::ptr::null_mut(),
+                    map_len,
+                    libc::PROT_READ | libc::PROT_WRITE,
+                    libc::MAP_PRIVATE
+                        | libc::MAP_ANON
+                        | libc::MAP_HUGETLB
+                        | libc::MAP_HUGE_1GB
+                        | libc::MAP_POPULATE,
+                    -1,
+                    0,
+                )
+            };
+            if ptr == libc::MAP_FAILED {
+                let error = std::io::Error::last_os_error();
+                return Err(format!(
+                    "MAP_HUGETLB|MAP_HUGE_1GB mmap failed for {map_len} bytes: {error}; reserve \
+                     1 GiB pages via /sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages"
+                ));
+            }
+            Ok(Self {
+                ptr: ptr as *mut u8,
+                byte_len: map_len,
+                block_count,
+                backing: MmapBacking::ExplicitHugeTLB1G,
                 allocation_failures: 0,
             })
         }
@@ -975,6 +1073,13 @@ impl MmapArena {
                 MmapBacking::ExplicitHugeTLB => ArenaBackingObservation {
                     explicit_large_workers: 1,
                     explicit_large_bytes: requested_bytes,
+                    allocation_failures: self.allocation_failures,
+                    ..ArenaBackingObservation::default()
+                },
+                #[cfg(target_arch = "x86_64")]
+                MmapBacking::ExplicitHugeTLB1G => ArenaBackingObservation {
+                    explicit_large_1g_workers: 1,
+                    explicit_large_1g_bytes: requested_bytes,
                     allocation_failures: self.allocation_failures,
                     ..ArenaBackingObservation::default()
                 },
