@@ -47,6 +47,10 @@ const NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_AMPERE_PLUS: &[u32] =
     &[240, 224, 208, 192, 176, 160, 144, 128];
 const NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_LEGACY: &[u32] =
     &[224, 208, 192, 176, 160, 144, 128, 112, 96];
+// Repeated RTX 5090 sweeps put every competitive profile on this frontier.
+// Keep the exhaustive Ampere+ set for other Blackwell devices until they have
+// equivalent hardware evidence; this shortlist is intentionally device-scoped.
+const NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_RTX_5090: &[u32] = &[240, 224, 208];
 // Retained for reference; the staged autotune no longer iterates this axis.
 const _NVIDIA_AUTOTUNE_LOOP_UNROLL_CANDIDATES: &[bool] = &[false];
 const DEFAULT_NVIDIA_AUTOTUNE_SAMPLES: u32 = 2;
@@ -3270,8 +3274,14 @@ fn build_autotune_hash_depth_candidates(max_hashes_per_launch_per_lane: u32) -> 
     candidates
 }
 
-fn nvidia_autotune_regcap_candidates(compute_cap_major: u32) -> &'static [u32] {
-    if compute_cap_major == 0 {
+fn nvidia_autotune_regcap_candidates(compute_cap_major: u32, device_name: &str) -> &'static [u32] {
+    if compute_cap_major == 12
+        && device_name
+            .trim()
+            .eq_ignore_ascii_case("NVIDIA GeForce RTX 5090")
+    {
+        NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_RTX_5090
+    } else if compute_cap_major == 0 {
         NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_LEGACY
     } else if compute_cap_major >= 8 {
         NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_AMPERE_PLUS
@@ -3317,7 +3327,7 @@ fn autotune_nvidia_kernel_tuning(
     let cubin_cache_dir = derive_nvidia_cubin_cache_dir(cache_path);
     let sample_count = autotune_samples.max(1);
     let (compute_cap_major, _) = query_cuda_compute_capability(selected.index).unwrap_or((0, 0));
-    let regcap_candidates = nvidia_autotune_regcap_candidates(compute_cap_major);
+    let regcap_candidates = nvidia_autotune_regcap_candidates(compute_cap_major, &selected.name);
     let (m_cost_kib, _) = pow_params()
         .map(|params| (params.m_cost(), params.t_cost()))
         .unwrap_or((0, 0));
@@ -3979,6 +3989,42 @@ mod tests {
     fn pre_blackwell_default_launch_depth_stays_unchanged() {
         assert_eq!(effective_hashes_per_launch_per_lane_cap(2, false, 8), 2);
         assert_eq!(effective_hashes_per_launch_per_lane_cap(2, false, 9), 2);
+    }
+
+    #[test]
+    fn rtx_5090_autotune_uses_measured_regcap_frontier() {
+        assert_eq!(
+            nvidia_autotune_regcap_candidates(12, "NVIDIA GeForce RTX 5090"),
+            NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_RTX_5090
+        );
+        assert_eq!(
+            nvidia_autotune_regcap_candidates(12, " nvidia geforce rtx 5090 "),
+            NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_RTX_5090
+        );
+    }
+
+    #[test]
+    fn regcap_shortlist_does_not_leak_to_other_devices() {
+        assert_eq!(
+            nvidia_autotune_regcap_candidates(12, "NVIDIA GeForce RTX 5080"),
+            NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_AMPERE_PLUS
+        );
+        assert_eq!(
+            nvidia_autotune_regcap_candidates(12, "NVIDIA GeForce RTX 5090 Laptop GPU"),
+            NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_AMPERE_PLUS
+        );
+        assert_eq!(
+            nvidia_autotune_regcap_candidates(12, "NVIDIA GeForce RTX 5090 D"),
+            NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_AMPERE_PLUS
+        );
+        assert_eq!(
+            nvidia_autotune_regcap_candidates(8, "NVIDIA GeForce RTX 5090"),
+            NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_AMPERE_PLUS
+        );
+        assert_eq!(
+            nvidia_autotune_regcap_candidates(7, "NVIDIA GeForce RTX 5090"),
+            NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_LEGACY
+        );
     }
 
     fn autotune_score(
