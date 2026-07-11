@@ -12,6 +12,7 @@ This log tracks CPU backend/hash-kernel tuning attempts and measured outcomes.
 ## Newest-first index
 
 - `Updated summary of cumulative adopted optimizations`
+- `2026-07-11 verifiable page modes, native Windows, and WSL HugeTLB confirmation`
 - `2026-07-10 Apple Silicon scheduler, SME2, PGO, and autotuner follow-up`
 - `2026-07-10 cross-host affinity, memory-pressure, and native Windows validation`
 - `2026-03-13 Zen 5 AVX-512 column gather/scatter + MaybeUninit`
@@ -125,6 +126,63 @@ Cumulative AArch64: from ~1.37 H/s (scalar) to ~2.88 H/s, **~110% total improvem
   roughly +6% at 16T native backend throughput, while a subsequent AVX-512
   diagonal-permute micro-tweak improved the 1T kernel by ~1% but regressed the
   16T native backend and was rejected.
+
+## 2026-07-11 verifiable page modes, native Windows, and WSL HugeTLB confirmation
+
+The miner now exposes `--cpu-page-mode auto|regular|large` and records actual
+arena backing per worker and byte in benchmark reports. Required-large mode
+fails closed instead of silently comparing fallback pages. The CPU A/B harness
+validates schema-12 backing telemetry, exact two-GiB arenas, zero fallback for
+`large`, no THP contamination for `regular`, and stable backing between runs.
+
+### WSL2 explicit HugeTLB (adopted operationally)
+
+- Host: Ryzen 9 9950X3D, 32 visible logical CPUs, WSL2 configured for 48 GiB
+  RAM and 8 GiB swap.
+- Reserved `9677` two-MiB HugeTLB pages: nine two-GiB arenas plus 5% headroom.
+- Four alternating 9-lane backend pairs, 20 seconds x 3 measured rounds plus
+  one warmup and 15-second cooldowns.
+- Regular pages: `7.83867 H/s`; explicit HugeTLB: `8.15861 H/s`.
+- Paired geometric gain: **+4.096%** (95% bootstrap CI **+2.904% to +5.766%**),
+  all four pairs faster.
+- Every candidate report recorded exactly nine / 18 GiB explicit-large arenas,
+  zero fallback/failures, and no swap growth.
+
+This is the retained recommendation for WSL/Linux hosts that can reserve the
+full pool before fragmentation. The reservation permanently removes roughly
+18.9 GiB from ordinary memory on this configuration, so it remains an explicit
+operator choice rather than an automatic system mutation.
+
+### Native Windows large pages (supported, not a performance recommendation)
+
+After assigning `SeLockMemoryPrivilege`, native Windows successfully allocated
+all nine two-GiB arenas with large pages. A matched four-pair test measured
+`7.85859 H/s` regular versus `7.85163 H/s` large: paired delta **-0.074%**
+(95% CI **-1.124% to +1.780%**), with only one of four pairs faster. Keep the
+portable allocator and fail-closed mode, but do not recommend large pages for
+this Windows/9950X3D profile based on hashrate.
+
+### Rejected follow-ups
+
+- Windows L3/CCD-balanced affinity: implemented with complete-topology checks
+  and physical-first fallback, then measured at `+0.438%` (95% CI `-1.000%` to
+  `+1.425%`, two of three pairs faster). It failed the 0.75%/consistency gate
+  and was reverted.
+- x86 prefetch coverage reduced from all sixteen cache lines to offsets 0/512:
+  two reverse-order one-lane HugeTLB kernel pairs regressed by **13.8%** and
+  **15.5%**. The third pair was cancelled and full-block coverage retained.
+
+### Cross-target checks
+
+- macOS M4 Max schema-12 smoke: 16 `auto` workers recorded exactly 32 GiB of
+  regular backing with zero failures and averaged `29.242 H/s` in the short
+  validation; swap increased by about 659 MiB. This confirms the existing
+  recommendation: 14 `pcore-only` for balanced use, 16 `auto` only for maximum
+  throughput (the longer prior run reached `30.938 H/s`).
+- The existing native-Windows mixed profile remains valid: 9 CPU lanes plus 14
+  RTX 5090 lanes measured `17.353 H/s`, with separate system RAM and VRAM. Page
+  mode does not change the backend/Stratum contract, and native Windows large
+  pages were neutral, so the known regular-page mixed profile remains preferred.
 
 ## 2026-07-10 Apple Silicon scheduler, SME2, PGO, and autotuner follow-up
 

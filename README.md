@@ -169,6 +169,30 @@ Native Windows `--cpu-affinity auto` also uses complete processor-core topology
 groups before SMT siblings. If Windows returns incomplete or contradictory
 topology data, Seine retains the original logical-CPU order.
 
+### WSL/Linux HugeTLB provisioning
+
+`--cpu-page-mode large` uses only a pre-reserved HugeTLB pool on Linux/WSL and
+fails closed when the full arena set is unavailable. Each CPU worker needs 1024
+two-MiB huge pages. A practical reservation with 5% headroom is:
+
+```text
+vm.nr_hugepages = ceil(cpu_threads * 1024 * 1.05)
+```
+
+For nine workers, reserve `9677` pages (about 18.9 GiB) before memory becomes
+fragmented, for example in `/etc/sysctl.d/99-seine-hugepages.conf`:
+
+```text
+vm.nr_hugepages = 9677
+```
+
+On WSL2, the VM must also have enough ordinary headroom for Windows/WSL services.
+The validated 64-GiB host used `%UserProfile%\.wslconfig` with `memory=48GB`,
+`processors=32`, and `swap=8GB`. Restart WSL only when convenient, then verify
+`HugePages_Free` can cover every requested arena before mining. This reservation
+is unavailable to ordinary applications until reduced; size it for the profile
+you actually run.
+
 ## Configuration
 
 All miner flags are documented in [`docs/MINER_FLAGS.md`](docs/MINER_FLAGS.md).
