@@ -40,6 +40,10 @@ by the NVIDIA backend. An up-to-date NVIDIA display driver is still required;
 no separate CUDA Toolkit installation or `PATH` change should be necessary for
 the pre-built archive.
 
+Tagged release archives also include the Seine license, this README, and an
+internal checksum manifest. The GitHub release publishes a separate
+`SHA256SUMS.txt` covering every platform archive.
+
 **Option B — Build from source:**
 
 ```bash
