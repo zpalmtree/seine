@@ -43,6 +43,19 @@ For CPU lane-count comparisons, pass `--baseline-threads` and
 `--candidate-threads` to `bench_cpu_ab.sh`. `--threads` remains the shared
 default when either variant-specific value is omitted.
 
+For same-binary configuration comparisons, repeat `--baseline-miner-arg` and
+`--candidate-miner-arg` once per argument. Arguments after `--` still apply to
+both variants. For example:
+
+```bash
+bash scripts/bench_cpu_ab.sh \
+  --baseline-dir . --candidate-dir . --threads 14 \
+  --baseline-miner-arg '--cpu-affinity' \
+  --baseline-miner-arg pcore-only \
+  --candidate-miner-arg '--cpu-affinity' \
+  --candidate-miner-arg off
+```
+
 The comparison rejects missing, duplicate, non-positive, malformed, or
 unpaired rows. Three complete pairs are required by default; change this only
 with `--min-pairs`. It reports:

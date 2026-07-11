@@ -28,6 +28,8 @@ Usage:
     [--features <cargo-features>] \
     [--baseline-features <cargo-features>] \
     [--candidate-features <cargo-features>] \
+    [--baseline-miner-arg <arg>]... \
+    [--candidate-miner-arg <arg>]... \
     [--output-dir <path>] \
     [-- <extra miner args>]
 
@@ -73,6 +75,8 @@ baseline_features=""
 candidate_features=""
 output_dir=""
 extra_args=()
+baseline_miner_args=()
+candidate_miner_args=()
 
 while (($#)); do
     case "$1" in
@@ -174,6 +178,22 @@ while (($#)); do
             ;;
         --candidate-features)
             candidate_features="${2:-}"
+            shift 2
+            ;;
+        --baseline-miner-arg)
+            if (($# < 2)); then
+                echo "error: --baseline-miner-arg requires a value" >&2
+                exit 1
+            fi
+            baseline_miner_args+=("$2")
+            shift 2
+            ;;
+        --candidate-miner-arg)
+            if (($# < 2)); then
+                echo "error: --candidate-miner-arg requires a value" >&2
+                exit 1
+            fi
+            candidate_miner_args+=("$2")
             shift 2
             ;;
         -h|--help)
@@ -292,6 +312,14 @@ print(value, end="")
 PY
 }
 
+format_shell_args() {
+    if (($# == 0)); then
+        printf '<none>'
+        return
+    fi
+    printf '%q ' "$@"
+}
+
 run_single() {
     local variant="$1"
     local repo_dir="$2"
@@ -303,6 +331,13 @@ run_single() {
     local run_no_default_features="$8"
     local run_features="$9"
     local report_file="$output_dir/${variant}_pair${pair}_${order}.json"
+    local run_miner_args=("${extra_args[@]}")
+
+    if [[ "$variant" == "baseline" ]] && ((${#baseline_miner_args[@]})); then
+        run_miner_args+=("${baseline_miner_args[@]}")
+    elif [[ "$variant" == "candidate" ]] && ((${#candidate_miner_args[@]})); then
+        run_miner_args+=("${candidate_miner_args[@]}")
+    fi
 
     local cmd=(
         cargo run
@@ -327,11 +362,15 @@ run_single() {
         --ui plain
         --bench-output "$report_file"
     )
-    if ((${#extra_args[@]})); then
-        cmd+=("${extra_args[@]}")
+    if ((${#run_miner_args[@]})); then
+        cmd+=("${run_miner_args[@]}")
     fi
 
-    echo "[pair ${pair}/${pairs}] ${variant}:${order} | repo=${repo_dir} profile=${run_profile} threads=${run_threads} native=${run_native} no_default_features=${run_no_default_features} features=${run_features:-<none>}"
+    printf '[pair %s/%s] %s:%s | repo=%s profile=%s threads=%s native=%s no_default_features=%s features=%s args=' \
+        "$pair" "$pairs" "$variant" "$order" "$repo_dir" "$run_profile" "$run_threads" \
+        "$run_native" "$run_no_default_features" "${run_features:-<none>}"
+    format_shell_args "${run_miner_args[@]}"
+    printf '\n'
     if ((run_native)); then
         (
             cd "$repo_dir"
@@ -437,6 +476,15 @@ delta_pct="$(awk -v b="$baseline_avg" -v c="$candidate_avg" 'BEGIN { if (b == 0 
     echo "candidate_no_default_features=$candidate_no_default_features"
     echo "baseline_features=$baseline_features"
     echo "candidate_features=$candidate_features"
+    printf 'common_miner_args='
+    format_shell_args "${extra_args[@]}"
+    printf '\n'
+    printf 'baseline_miner_args='
+    format_shell_args "${baseline_miner_args[@]}"
+    printf '\n'
+    printf 'candidate_miner_args='
+    format_shell_args "${candidate_miner_args[@]}"
+    printf '\n'
     echo "baseline_dir=$baseline_dir"
     echo "candidate_dir=$candidate_dir"
     echo "baseline_avg_hps=$baseline_avg"
