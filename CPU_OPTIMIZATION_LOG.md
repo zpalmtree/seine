@@ -91,8 +91,8 @@ step on this machine.
 | 28 | Mid-compress prefetch for data-dep slices | +8.1% | +8.0% | Adopted |
 | 35 | Interleaved lo/hi BLAMKA half-rounds | +0.95% | — | Adopted |
 | 37 | 2-column Phase 3+4 interleave | +1.56% | — | Adopted |
-| 38 | 2-row Phase 1+2 interleave | +4.31% | +5.94% | Adopted |
-| 38 | AArch64 `PowBlock` 128-byte alignment | ~0% (1T) | +0.44% short, +0.10% long (12T backend) | Adopted |
+| 38 (row) | 2-row Phase 1+2 interleave | +4.31% | +5.94% | Adopted |
+| 38 (alignment) | AArch64 `PowBlock` 128-byte alignment | ~0% (1T) | +0.44% short, +0.10% long (12T backend) | Adopted |
 | 47 | macOS `pcore-only` affinity-tag/QoS default | ~0% | +0.94% at 14T in 2026-07 paired retest | Retained |
 | 52 | Balanced-autotuner finalist confirmation | — | protects +2.57% from a noisy 13T choice on this host | Adopted |
 
@@ -206,7 +206,7 @@ The adopted design confirms close balanced candidates before caching:
 Final native validation initially measured 13 at 28.970 and 14 at 29.003 H/s.
 Reversed 12-second confirmations produced combined rates of 27.977 and 28.751
 H/s respectively, and the tuner correctly cached 14. The native macOS
-CPU-only suite passed all 352 tests.
+CPU-only suite passed all 352 tests. Implemented in `14e23e5`.
 
 ## 2026-07-10 cross-host affinity, memory-pressure, and native Windows validation
 
