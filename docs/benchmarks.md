@@ -56,6 +56,11 @@ bash scripts/bench_cpu_ab.sh \
   --candidate-miner-arg off
 ```
 
+For prebuilt or differently instrumented builds, pass absolute executable paths
+with `--baseline-binary` and `--candidate-binary`. The harness runs those files
+directly, so Cargo-only options such as `--native`, `--no-default-features`, and
+`--features` are intentionally rejected for that side.
+
 The comparison rejects missing, duplicate, non-positive, malformed, or
 unpaired rows. Three complete pairs are required by default; change this only
 with `--min-pairs`. It reports:

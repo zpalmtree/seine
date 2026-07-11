@@ -19,6 +19,8 @@ Usage:
     [--profile <cargo-profile>] \
     [--baseline-profile <cargo-profile>] \
     [--candidate-profile <cargo-profile>] \
+    [--baseline-binary <path>] \
+    [--candidate-binary <path>] \
     [--native] \
     [--baseline-native] \
     [--candidate-native] \
@@ -63,6 +65,8 @@ profile="release"
 native=0
 baseline_profile=""
 candidate_profile=""
+baseline_binary=""
+candidate_binary=""
 baseline_native=0
 candidate_native=0
 native_override=0
@@ -134,6 +138,14 @@ while (($#)); do
             ;;
         --candidate-profile)
             candidate_profile="${2:-}"
+            shift 2
+            ;;
+        --baseline-binary)
+            baseline_binary="${2:-}"
+            shift 2
+            ;;
+        --candidate-binary)
+            candidate_binary="${2:-}"
             shift 2
             ;;
         --output-dir)
@@ -246,6 +258,27 @@ if [[ -z "$candidate_features" ]]; then
     candidate_features="$features"
 fi
 
+if [[ -n "$baseline_binary" && ! -x "$baseline_binary" ]]; then
+    echo "error: --baseline-binary is not executable: $baseline_binary" >&2
+    exit 1
+fi
+if [[ -n "$candidate_binary" && ! -x "$candidate_binary" ]]; then
+    echo "error: --candidate-binary is not executable: $candidate_binary" >&2
+    exit 1
+fi
+if [[ -n "$baseline_binary" ]]; then
+    if ((baseline_native || baseline_no_default_features)) || [[ -n "$baseline_features" ]]; then
+        echo "error: baseline cargo build flags cannot be combined with --baseline-binary" >&2
+        exit 1
+    fi
+fi
+if [[ -n "$candidate_binary" ]]; then
+    if ((candidate_native || candidate_no_default_features)) || [[ -n "$candidate_features" ]]; then
+        echo "error: candidate cargo build flags cannot be combined with --candidate-binary" >&2
+        exit 1
+    fi
+fi
+
 if ! [[ "$pairs" =~ ^[0-9]+$ ]] || ((pairs < 1)); then
     echo "error: --pairs must be an integer >= 1" >&2
     exit 1
@@ -330,6 +363,7 @@ run_single() {
     local run_native="$7"
     local run_no_default_features="$8"
     local run_features="$9"
+    local run_binary="${10}"
     local report_file="$output_dir/${variant}_pair${pair}_${order}.json"
     local run_miner_args=()
 
@@ -342,18 +376,20 @@ run_single() {
         run_miner_args+=("${candidate_miner_args[@]}")
     fi
 
-    local cmd=(
-        cargo run
-        --profile "$run_profile"
-    )
-    if ((run_no_default_features)); then
-        cmd+=(--no-default-features)
-    fi
-    if [[ -n "$run_features" ]]; then
-        cmd+=(--features "$run_features")
+    local cmd=()
+    if [[ -n "$run_binary" ]]; then
+        cmd+=("$run_binary")
+    else
+        cmd+=(cargo run --profile "$run_profile")
+        if ((run_no_default_features)); then
+            cmd+=(--no-default-features)
+        fi
+        if [[ -n "$run_features" ]]; then
+            cmd+=(--features "$run_features")
+        fi
+        cmd+=(--)
     fi
     cmd+=(
-        --
         --bench
         --bench-kind "$bench_kind"
         --backend cpu
@@ -369,9 +405,9 @@ run_single() {
         cmd+=("${run_miner_args[@]}")
     fi
 
-    printf '[pair %s/%s] %s:%s | repo=%s profile=%s threads=%s native=%s no_default_features=%s features=%s args=' \
-        "$pair" "$pairs" "$variant" "$order" "$repo_dir" "$run_profile" "$run_threads" \
-        "$run_native" "$run_no_default_features" "${run_features:-<none>}"
+    printf '[pair %s/%s] %s:%s | repo=%s binary=%s profile=%s threads=%s native=%s no_default_features=%s features=%s args=' \
+        "$pair" "$pairs" "$variant" "$order" "$repo_dir" "${run_binary:-<cargo>}" \
+        "$run_profile" "$run_threads" "$run_native" "$run_no_default_features" "${run_features:-<none>}"
     if ((${#run_miner_args[@]})); then
         format_shell_args "${run_miner_args[@]}"
     else
@@ -420,6 +456,7 @@ for ((pair = 1; pair <= pairs; pair++)); do
         first_native="$baseline_native"
         first_no_default_features="$baseline_no_default_features"
         first_features="$baseline_features"
+        first_binary="$baseline_binary"
         second_variant="candidate"
         second_repo="$candidate_dir"
         second_profile="$candidate_profile"
@@ -427,6 +464,7 @@ for ((pair = 1; pair <= pairs; pair++)); do
         second_native="$candidate_native"
         second_no_default_features="$candidate_no_default_features"
         second_features="$candidate_features"
+        second_binary="$candidate_binary"
     else
         first_variant="candidate"
         first_repo="$candidate_dir"
@@ -435,6 +473,7 @@ for ((pair = 1; pair <= pairs; pair++)); do
         first_native="$candidate_native"
         first_no_default_features="$candidate_no_default_features"
         first_features="$candidate_features"
+        first_binary="$candidate_binary"
         second_variant="baseline"
         second_repo="$baseline_dir"
         second_profile="$baseline_profile"
@@ -442,16 +481,17 @@ for ((pair = 1; pair <= pairs; pair++)); do
         second_native="$baseline_native"
         second_no_default_features="$baseline_no_default_features"
         second_features="$baseline_features"
+        second_binary="$baseline_binary"
     fi
 
-    run_single "$first_variant" "$first_repo" "$pair" "first" "$first_profile" "$first_threads" "$first_native" "$first_no_default_features" "$first_features"
+    run_single "$first_variant" "$first_repo" "$pair" "first" "$first_profile" "$first_threads" "$first_native" "$first_no_default_features" "$first_features" "$first_binary"
     run_idx=$((run_idx + 1))
     if ((cooldown_secs > 0 && run_idx < total_runs)); then
         echo "  cooldown ${cooldown_secs}s"
         sleep "$cooldown_secs"
     fi
 
-    run_single "$second_variant" "$second_repo" "$pair" "second" "$second_profile" "$second_threads" "$second_native" "$second_no_default_features" "$second_features"
+    run_single "$second_variant" "$second_repo" "$pair" "second" "$second_profile" "$second_threads" "$second_native" "$second_no_default_features" "$second_features" "$second_binary"
     run_idx=$((run_idx + 1))
     if ((cooldown_secs > 0 && run_idx < total_runs)); then
         echo "  cooldown ${cooldown_secs}s"
@@ -477,6 +517,8 @@ delta_pct="$(awk -v b="$baseline_avg" -v c="$candidate_avg" 'BEGIN { if (b == 0 
     echo "default_native=$native"
     echo "baseline_profile=$baseline_profile"
     echo "candidate_profile=$candidate_profile"
+    echo "baseline_binary=${baseline_binary:-<cargo>}"
+    echo "candidate_binary=${candidate_binary:-<cargo>}"
     echo "baseline_native=$baseline_native"
     echo "candidate_native=$candidate_native"
     echo "baseline_no_default_features=$baseline_no_default_features"
