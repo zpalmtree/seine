@@ -59,6 +59,7 @@ This file preserves the full engineering reference for AI agents doing optimizat
   - Autotune uses a binary-style peak search for larger thread ranges, then locally sweeps neighboring candidates for final selection.
   - Final thread selection is profile-aware: `throughput` picks peak H/s, while `balanced` and `efficiency` bias toward lower thread counts when they remain close to peak throughput (reducing RAM pressure).
   - Candidate sampling auto-extends up to an internal cap to collect a minimum hash count on very slow lanes (reduces variance vs fixed very short windows).
+  - When balanced-profile finalists are close, the tuner remeasures them with a longer window in descending thread order before caching. This reduces short-window and ascending-ramp bias without changing the profile's memory-saving threshold.
   - `--cpu-autotune-config` overrides the persisted autotune config path.
 
 ### NVIDIA Backend Tuning

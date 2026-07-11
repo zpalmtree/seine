@@ -68,7 +68,7 @@ For the raw CLI output, run:
 | `--disable-cpu-autotune-threads` | bool flag | Disables CPU thread autotune. |
 | `--cpu-autotune-min-threads` | integer `>=1`, default `1` | Lower bound for CPU autotune thread search. |
 | `--cpu-autotune-max-threads` | integer `>=1` | Upper bound for CPU autotune thread search. |
-| `--cpu-autotune-secs` | integer `>=1`, default `6` | Base sample window per CPU autotune candidate. |
+| `--cpu-autotune-secs` | integer `>=1`, default `6` | Base sample window per CPU autotune candidate. Close balanced-profile finalists are confirmed with a longer reversed-order window before caching. |
 | `--cpu-autotune-config` | path | CPU autotune cache file (default under `--data-dir`). |
 
 ## NVIDIA Backend Tuning

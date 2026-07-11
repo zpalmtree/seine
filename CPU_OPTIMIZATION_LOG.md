@@ -12,6 +12,7 @@ This log tracks CPU backend/hash-kernel tuning attempts and measured outcomes.
 ## Newest-first index
 
 - `Updated summary of cumulative adopted optimizations`
+- `2026-07-10 Apple Silicon scheduler, SME2, PGO, and autotuner follow-up`
 - `2026-07-10 cross-host affinity, memory-pressure, and native Windows validation`
 - `2026-03-13 Zen 5 AVX-512 column gather/scatter + MaybeUninit`
 - `2026-03-09 Zen 5 hugepage reservation + AVX-512 vpermq retest`
@@ -90,10 +91,12 @@ step on this machine.
 | 28 | Mid-compress prefetch for data-dep slices | +8.1% | +8.0% | Adopted |
 | 35 | Interleaved lo/hi BLAMKA half-rounds | +0.95% | — | Adopted |
 | 37 | 2-column Phase 3+4 interleave | +1.56% | — | Adopted |
+| 38 | 2-row Phase 1+2 interleave | +4.31% | +5.94% | Adopted |
 | 38 | AArch64 `PowBlock` 128-byte alignment | ~0% (1T) | +0.44% short, +0.10% long (12T backend) | Adopted |
 | 47 | macOS `pcore-only` affinity-tag/QoS default | ~0% | +0.94% at 14T in 2026-07 paired retest | Retained |
+| 52 | Balanced-autotuner finalist confirmation | — | protects +2.57% from a noisy 13T choice on this host | Adopted |
 
-Cumulative AArch64: from ~1.37 H/s (scalar) to ~2.73 H/s, **~99% total improvement**.
+Cumulative AArch64: from ~1.37 H/s (scalar) to ~2.88 H/s, **~110% total improvement**.
 
 ### Cross-platform insights
 
@@ -122,6 +125,88 @@ Cumulative AArch64: from ~1.37 H/s (scalar) to ~2.73 H/s, **~99% total improveme
   roughly +6% at 16T native backend throughput, while a subsequent AVX-512
   diagonal-permute micro-tweak improved the 1T kernel by ~1% but regressed the
   16T native backend and was rejected.
+
+## 2026-07-10 Apple Silicon scheduler, SME2, PGO, and autotuner follow-up
+
+Host: Apple M4 Max, 12 performance + 4 efficiency cores, 48 GiB unified
+memory, macOS 26.5, Rust 1.93.0. Unless noted otherwise, comparisons used the
+CPU-only release build, 14 persistent backend workers, `pcore-only`, three
+alternating pairs, one 15-second warmup plus two measured 15-second rounds per
+leg, and ten-second cooldowns.
+
+### Scheduler and build retests (not adopted)
+
+| Candidate | Baseline mean | Candidate mean | Paired geometric delta | 95% CI | Result |
+|---|---:|---:|---:|---:|---|
+| Utility QoS only for workers 12+ | 29.0528 | 29.0979 | +0.148% | -1.053% to +1.555% | Reject; slower in 2/3 pairs |
+| Affinity tags off | 29.0217 | 28.7079 | -1.085% | -2.267% to +0.130% | Reject; retain `pcore-only` |
+| LLVM PGO trained on a 60-second 14-lane backend run | 28.8322 | 28.6717 | -0.545% | -1.284% to +0.402% | Reject; slower in 2/3 pairs |
+| Pair DD columns 0+1 before next-reference prefetch | 29.0345 | 28.6865 | -1.207% | -2.031% to +0.086% | Reject; earlier prefetch is worth more than added ILP |
+
+The PGO profile was produced with the Rust 1.93-matched LLVM 21.1.8 tools and
+contained 734 functions / 24,392 blocks. Exact-source binary identities and
+profile checksums are preserved under
+`perf-results/2026-07-10/mac-pgo/`.
+
+Powermetrics showed why splitting QoS did not help. The existing 14-worker
+process already consumed approximately 11.99 P-core CPU equivalents plus 2.0
+E-core equivalents while every worker reported User Interactive QoS. The E
+cluster was active at 2592 MHz and the P cores were saturated. macOS was already
+placing the two spill workers as intended.
+
+### SME2 feasibility (not adopted)
+
+The M4 exposes SME/SME2 with a 64-byte streaming vector length. Isolated
+`SMSTART`, predicate, load/store, add, and widening-multiply probes executed
+successfully. A 512-bit implementation then packed two independent Blamka
+rounds into eight u64 lanes and matched the scalar reference.
+
+Two ABI/toolchain details were required: Clang's locally-streaming prologue
+issued `RDSVL` before `SMSTART` and faulted, so a fixed-width wrapper entered
+streaming mode first; that wrapper also had to preserve non-streaming
+callee-saved `d8`–`d15` around the mode transition.
+
+Even after replacing full-width multiplies with SVE2 widening `UMLALB`, the
+amortized result was decisively slower. Eight round pairs under one streaming
+transition took about 338.6 ns versus 102.3 ns for tuned NEON. Apple executes
+the wide streaming operations over multiple cycles, while the current NEON
+schedule already exposes equivalent lane parallelism to the wide OOO core.
+No Seine SME code was added.
+
+### Attempt 52 (Apple): confirm close balanced-autotuner finalists (adopted)
+
+A fresh 1..14 default-style autotune measured 13 lanes at 27.300 H/s and 14 at
+27.452 H/s. The balanced profile therefore cached 13 because it appeared within
+the intended 99%-of-peak floor. A longer direct A/B showed that decision was
+wrong:
+
+- 13 lanes: 28.3329 H/s arithmetic mean.
+- 14 lanes: 29.0609 H/s arithmetic mean.
+- Paired geometric gain: **+2.572%** (95% CI **+1.914% to +2.920%**), 14 faster
+  in all three pairs.
+- Swap did not increase during the comparison.
+
+The root cause was finalist sampling variance, not the 99% balanced policy.
+Six-second scans could also swap the apparent peak outright; one validation
+reported 13 at 29.105 and 14 at 28.828 H/s. An initial fix that only confirmed a
+lower selection against a distinct measured peak was therefore insufficient.
+
+The adopted design confirms close balanced candidates before caching:
+
+- A runner-up within 97% of the provisional peak triggers confirmation, as
+  does any balanced selection below the provisional peak.
+- The confirmation window is twice `--cpu-autotune-secs`, bounded to 6..30
+  seconds.
+- Initial and confirmation samples combine actual hashes and wall time.
+- Finalists run in descending thread order, reversing the ascending ramp to
+  reduce thermal/run-position bias.
+- Clear peaks skip the extra work; the 99% memory-saving selection rule remains
+  unchanged.
+
+Final native validation initially measured 13 at 28.970 and 14 at 29.003 H/s.
+Reversed 12-second confirmations produced combined rates of 27.977 and 28.751
+H/s respectively, and the tuner correctly cached 14. The native macOS
+CPU-only suite passed all 352 tests.
 
 ## 2026-07-10 cross-host affinity, memory-pressure, and native Windows validation
 

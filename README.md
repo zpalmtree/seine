@@ -250,6 +250,11 @@ run, 16-lane `auto` reached `30.94 H/s`, but the 32 GiB arena set caused macOS t
 create and use roughly 3 GiB of swap. Treat that as a throughput setting, not a
 general balanced default.
 
+An exact-binary 13-versus-14 follow-up measured 14 lanes **2.57% faster** (95%
+paired interval `+1.91%` to `+2.92%`, all three pairs faster). CPU autotuning now
+confirms close balanced-profile finalists with longer reversed-order samples so
+a noisy first-run scan does not cache the slower 13-lane choice.
+
 Examples:
 
 ```bash

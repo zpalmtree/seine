@@ -65,6 +65,9 @@ const CPU_AUTOTUNE_RAMP_EARLY_STOP_STREAK: usize = 2;
 const CPU_AUTOTUNE_RAMP_EARLY_STOP_FLOOR_FRAC: f64 = 0.985;
 const CPU_AUTOTUNE_BALANCED_PEAK_FLOOR_FRAC: f64 = 0.99;
 const CPU_AUTOTUNE_EFFICIENCY_PEAK_FLOOR_FRAC: f64 = 0.75;
+const CPU_AUTOTUNE_FINAL_CONFIRM_CLOSE_FRAC: f64 = 0.97;
+const CPU_AUTOTUNE_FINAL_CONFIRM_MIN_SECS: u64 = 6;
+const CPU_AUTOTUNE_FINAL_CONFIRM_WINDOW_MULTIPLIER: u64 = 2;
 
 #[derive(Debug, Clone, Copy)]
 struct BackendRuntimePolicy {
@@ -1141,6 +1144,51 @@ fn maybe_autotune_cpu_threads(
         return Ok(());
     }
 
+    if let Some(provisional) = select_cpu_autotune_candidate(cfg.cpu_profile, &measurements) {
+        let finalists =
+            cpu_autotune_confirmation_threads(cfg.cpu_profile, provisional, &measurements);
+        if !finalists.is_empty() {
+            let confirmation_secs = cpu_autotune_confirmation_window_secs(autotune_secs);
+            info(
+                tag,
+                format!(
+                    "cpu-autotune | close balanced finalists need confirmation; rechecking {} for ~{}s each (descending thread order)",
+                    finalists
+                        .iter()
+                        .map(usize::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    confirmation_secs,
+                ),
+            );
+            for threads in finalists {
+                match remeasure_cpu_autotune_candidate(
+                    cfg,
+                    tag,
+                    shutdown,
+                    threads,
+                    confirmation_secs,
+                    &mut measurements,
+                )? {
+                    CpuAutotuneMeasureOutcome::Measured => {}
+                    CpuAutotuneMeasureOutcome::Interrupted => {
+                        interrupted = true;
+                        break;
+                    }
+                    CpuAutotuneMeasureOutcome::MemoryLimited => break,
+                }
+            }
+        }
+    }
+
+    if interrupted {
+        warn(
+            tag,
+            "cpu-autotune | interrupted during finalist confirmation",
+        );
+        return Ok(());
+    }
+
     let selection = select_cpu_autotune_candidate(cfg.cpu_profile, &measurements).unwrap_or(
         CpuAutotuneSelection {
             selected_threads: cfg.threads.max(1),
@@ -1214,6 +1262,56 @@ fn cpu_autotune_peak_floor_frac(profile: CpuPerformanceProfile) -> f64 {
         CpuPerformanceProfile::Balanced => CPU_AUTOTUNE_BALANCED_PEAK_FLOOR_FRAC,
         CpuPerformanceProfile::Efficiency => CPU_AUTOTUNE_EFFICIENCY_PEAK_FLOOR_FRAC,
     }
+}
+
+fn cpu_autotune_confirmation_window_secs(autotune_secs: u64) -> u64 {
+    autotune_secs
+        .max(1)
+        .saturating_mul(CPU_AUTOTUNE_FINAL_CONFIRM_WINDOW_MULTIPLIER)
+        .max(CPU_AUTOTUNE_FINAL_CONFIRM_MIN_SECS)
+        .min(CPU_AUTOTUNE_MAX_SAMPLE_SECS_PER_CANDIDATE)
+}
+
+fn cpu_autotune_confirmation_threads(
+    profile: CpuPerformanceProfile,
+    selection: CpuAutotuneSelection,
+    measurements: &BTreeMap<usize, CpuAutotuneMeasurement>,
+) -> Vec<usize> {
+    if profile != CpuPerformanceProfile::Balanced || measurements.len() < 2 {
+        return Vec::new();
+    }
+
+    let runner_up = measurements
+        .iter()
+        .filter(|(threads, _)| **threads != selection.peak_threads)
+        .max_by(|(left_threads, left), (right_threads, right)| {
+            left.hps
+                .total_cmp(&right.hps)
+                .then_with(|| right_threads.cmp(left_threads))
+        })
+        .map(|(threads, measurement)| (*threads, *measurement));
+
+    let runner_up_is_close = runner_up.is_some_and(|(_, measurement)| {
+        selection.peak_hps > 0.0
+            && measurement.hps + f64::EPSILON
+                >= selection.peak_hps * CPU_AUTOTUNE_FINAL_CONFIRM_CLOSE_FRAC
+    });
+    if selection.selected_threads == selection.peak_threads && !runner_up_is_close {
+        return Vec::new();
+    }
+
+    let mut finalists = vec![selection.peak_threads, selection.selected_threads];
+    if runner_up_is_close {
+        if let Some((threads, _)) = runner_up {
+            finalists.push(threads);
+        }
+    }
+    // The initial ramp measures ascending thread counts. Reverse that order for
+    // confirmation so temperature and run position do not consistently favor
+    // either the lower-memory candidate or the higher-throughput candidate.
+    finalists.sort_unstable_by(|left, right| right.cmp(left));
+    finalists.dedup();
+    finalists
 }
 
 fn select_peak_autotune_candidate(
@@ -1377,6 +1475,64 @@ fn measure_cpu_autotune_candidate(
         ),
     );
     measurements.insert(threads, measurement);
+    Ok(CpuAutotuneMeasureOutcome::Measured)
+}
+
+fn merge_cpu_autotune_measurements(
+    initial: CpuAutotuneMeasurement,
+    confirmation: CpuAutotuneMeasurement,
+) -> CpuAutotuneMeasurement {
+    let hashes = initial.hashes.saturating_add(confirmation.hashes);
+    let wall_secs = initial.wall_secs + confirmation.wall_secs;
+    CpuAutotuneMeasurement {
+        hashes,
+        wall_secs,
+        hps: hashes as f64 / wall_secs.max(f64::EPSILON),
+    }
+}
+
+fn remeasure_cpu_autotune_candidate(
+    cfg: &Config,
+    tag: &str,
+    shutdown: &AtomicBool,
+    threads: usize,
+    window_secs: u64,
+    measurements: &mut BTreeMap<usize, CpuAutotuneMeasurement>,
+) -> Result<CpuAutotuneMeasureOutcome> {
+    let confirmation = match bench_cpu_autotune_candidate(cfg, shutdown, threads, window_secs) {
+        Ok(Some(measurement)) => measurement,
+        Ok(None) => return Ok(CpuAutotuneMeasureOutcome::Interrupted),
+        Err(err) => {
+            if cpu_autotune_is_memory_limit_error(&err) {
+                warn(
+                    tag,
+                    format!(
+                        "cpu-autotune | finalist confirmation at {} threads exceeded memory headroom ({err:#}); keeping completed measurements",
+                        threads
+                    ),
+                );
+                return Ok(CpuAutotuneMeasureOutcome::MemoryLimited);
+            }
+            return Err(err);
+        }
+    };
+
+    let combined = measurements
+        .get(&threads)
+        .copied()
+        .map(|initial| merge_cpu_autotune_measurements(initial, confirmation))
+        .unwrap_or(confirmation);
+    measurements.insert(threads, combined);
+    info(
+        tag,
+        format!(
+            "cpu-autotune |   -> {} threads confirmed at {} (combined {} hashes in {:.1}s)",
+            threads,
+            format_hashrate(combined.hps),
+            combined.hashes,
+            combined.wall_secs,
+        ),
+    );
     Ok(CpuAutotuneMeasureOutcome::Measured)
 }
 
@@ -3275,6 +3431,95 @@ mod tests {
         assert_eq!(cpu_autotune_next_sample_chunk_secs(6, 0, 0, 0.0), 6);
         assert_eq!(cpu_autotune_next_sample_chunk_secs(6, 6, 15, 6.0), 2);
         assert_eq!(cpu_autotune_next_sample_chunk_secs(6, 29, 19, 8.0), 1);
+    }
+
+    #[test]
+    fn autotune_confirmation_window_is_longer_and_bounded() {
+        assert_eq!(cpu_autotune_confirmation_window_secs(1), 6);
+        assert_eq!(cpu_autotune_confirmation_window_secs(6), 12);
+        assert_eq!(cpu_autotune_confirmation_window_secs(20), 30);
+        assert_eq!(cpu_autotune_confirmation_window_secs(30), 30);
+    }
+
+    #[test]
+    fn autotune_balanced_confirmation_runs_peak_first() {
+        let measurements = autotune_measurements(&[(13, 27.3), (14, 27.45)]);
+        let selection = CpuAutotuneSelection {
+            selected_threads: 13,
+            selected_hps: 27.3,
+            peak_threads: 14,
+            peak_hps: 27.45,
+            peak_floor_frac: CPU_AUTOTUNE_BALANCED_PEAK_FLOOR_FRAC,
+        };
+        assert_eq!(
+            cpu_autotune_confirmation_threads(
+                CpuPerformanceProfile::Balanced,
+                selection,
+                &measurements
+            ),
+            vec![14, 13]
+        );
+        assert_eq!(
+            cpu_autotune_confirmation_threads(
+                CpuPerformanceProfile::Throughput,
+                selection,
+                &measurements
+            ),
+            Vec::<usize>::new()
+        );
+    }
+
+    #[test]
+    fn autotune_balanced_confirmation_catches_close_runner_up_after_peak_swap() {
+        let measurements = autotune_measurements(&[(12, 27.9), (13, 29.1), (14, 28.83)]);
+        let selection =
+            select_cpu_autotune_candidate(CpuPerformanceProfile::Balanced, &measurements)
+                .expect("selection should exist");
+        assert_eq!(selection.selected_threads, 13);
+        assert_eq!(selection.peak_threads, 13);
+        assert_eq!(
+            cpu_autotune_confirmation_threads(
+                CpuPerformanceProfile::Balanced,
+                selection,
+                &measurements
+            ),
+            vec![14, 13]
+        );
+    }
+
+    #[test]
+    fn autotune_balanced_skips_confirmation_for_clear_peak() {
+        let measurements = autotune_measurements(&[(12, 26.0), (13, 27.0), (14, 29.0)]);
+        let selection =
+            select_cpu_autotune_candidate(CpuPerformanceProfile::Balanced, &measurements)
+                .expect("selection should exist");
+        assert_eq!(
+            cpu_autotune_confirmation_threads(
+                CpuPerformanceProfile::Balanced,
+                selection,
+                &measurements
+            ),
+            Vec::<usize>::new()
+        );
+    }
+
+    #[test]
+    fn autotune_confirmation_combines_hashes_and_wall_time() {
+        let combined = merge_cpu_autotune_measurements(
+            CpuAutotuneMeasurement {
+                hashes: 100,
+                wall_secs: 4.0,
+                hps: 25.0,
+            },
+            CpuAutotuneMeasurement {
+                hashes: 300,
+                wall_secs: 10.0,
+                hps: 30.0,
+            },
+        );
+        assert_eq!(combined.hashes, 400);
+        assert_eq!(combined.wall_secs, 14.0);
+        assert!((combined.hps - (400.0 / 14.0)).abs() < 1e-9);
     }
 
     #[test]
