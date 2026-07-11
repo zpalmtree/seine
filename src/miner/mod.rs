@@ -1783,7 +1783,6 @@ fn cpu_affinity_label(affinity: crate::config::CpuAffinityMode) -> &'static str 
     match affinity {
         crate::config::CpuAffinityMode::Off => "off",
         crate::config::CpuAffinityMode::Auto => "auto",
-        crate::config::CpuAffinityMode::CacheBalanced => "cache-balanced",
         crate::config::CpuAffinityMode::PcoreOnly => "pcore-only",
     }
 }

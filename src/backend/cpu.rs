@@ -775,10 +775,7 @@ fn resolve_affinity_core_ids(mode: CpuAffinityMode) -> Option<Vec<core_affinity:
     // the OS/core_affinity order: WSL topology experiments were unstable and transparent
     // huge-page coverage dominated the measured affinity delta.
     #[cfg(target_os = "windows")]
-    let core_ids = match mode {
-        CpuAffinityMode::CacheBalanced => order_core_ids_cache_balanced(core_ids),
-        _ => order_core_ids_physical_first(core_ids),
-    };
+    let core_ids = order_core_ids_physical_first(core_ids);
     #[cfg(target_os = "macos")]
     let core_ids = {
         let mut core_ids = core_ids;
@@ -810,25 +807,6 @@ fn order_core_ids_physical_first(
         return core_ids;
     };
     order_core_ids_by_groups(core_ids, groups)
-}
-
-/// On Windows, interleave primary hardware threads from independent L3-cache
-/// domains before filling the next core in either domain. This matters on CPUs
-/// whose last-level cache follows a CCD/tile boundary. Any incomplete cache or
-/// core topology falls back to the established physical-core-first order.
-#[cfg(target_os = "windows")]
-fn order_core_ids_cache_balanced(
-    core_ids: Vec<core_affinity::CoreId>,
-) -> Vec<core_affinity::CoreId> {
-    let available = core_ids.iter().map(|core| core.id).collect::<BTreeSet<_>>();
-    let Some(physical_groups) = platform_physical_core_groups(&available) else {
-        return order_core_ids_physical_first(core_ids);
-    };
-    let Some(cache_groups) = platform_l3_cache_groups(&available) else {
-        return order_core_ids_by_groups(core_ids, physical_groups);
-    };
-    let fallback = order_core_ids_by_groups(core_ids.clone(), physical_groups.clone());
-    order_core_ids_by_cache_domains(core_ids, physical_groups, cache_groups).unwrap_or(fallback)
 }
 
 #[cfg(any(target_os = "windows", test))]
@@ -886,84 +864,6 @@ fn order_core_ids_by_groups(
     ordered
 }
 
-/// Returns `None` unless both input partitions completely describe every
-/// available logical CPU and every physical-core sibling group belongs to one
-/// cache domain. The output visits one physical core per cache domain in turn,
-/// then repeats for SMT siblings.
-#[cfg(any(target_os = "windows", test))]
-fn order_core_ids_by_cache_domains(
-    core_ids: Vec<core_affinity::CoreId>,
-    physical_groups: Vec<Vec<usize>>,
-    cache_groups: Vec<Vec<usize>>,
-) -> Option<Vec<core_affinity::CoreId>> {
-    let available = core_ids.iter().map(|core| core.id).collect::<BTreeSet<_>>();
-    let mut cache_for_cpu = BTreeMap::new();
-    for (cache_idx, group) in cache_groups.iter().enumerate() {
-        if group.is_empty() {
-            return None;
-        }
-        for id in group {
-            if !available.contains(id) || cache_for_cpu.insert(*id, cache_idx).is_some() {
-                return None;
-            }
-        }
-    }
-    if cache_for_cpu.len() != available.len() {
-        return None;
-    }
-
-    let mut physical_seen = BTreeSet::new();
-    let mut domains = vec![Vec::<Vec<usize>>::new(); cache_groups.len()];
-    for mut group in physical_groups {
-        if group.is_empty() {
-            return None;
-        }
-        group.sort_unstable();
-        let cache_idx = *cache_for_cpu.get(&group[0])?;
-        if group.iter().any(|id| {
-            !available.contains(id)
-                || !physical_seen.insert(*id)
-                || cache_for_cpu.get(id) != Some(&cache_idx)
-        }) {
-            return None;
-        }
-        domains[cache_idx].push(group);
-    }
-    if physical_seen != available || domains.iter().any(Vec::is_empty) {
-        return None;
-    }
-    for domain in &mut domains {
-        domain.sort_by_key(|group| group[0]);
-    }
-
-    let by_id = core_ids
-        .iter()
-        .copied()
-        .map(|core| (core.id, core))
-        .collect::<BTreeMap<_, _>>();
-    let max_siblings = domains
-        .iter()
-        .flat_map(|domain| domain.iter().map(Vec::len))
-        .max()
-        .unwrap_or(0);
-    let max_cores_per_domain = domains.iter().map(Vec::len).max().unwrap_or(0);
-    let mut ordered = Vec::with_capacity(core_ids.len());
-    for sibling_idx in 0..max_siblings {
-        for core_idx in 0..max_cores_per_domain {
-            for domain in &domains {
-                let Some(group) = domain.get(core_idx) else {
-                    continue;
-                };
-                let Some(id) = group.get(sibling_idx) else {
-                    continue;
-                };
-                ordered.push(*by_id.get(id)?);
-            }
-        }
-    }
-    (ordered.len() == core_ids.len()).then_some(ordered)
-}
-
 #[cfg(target_os = "windows")]
 fn platform_physical_core_groups(available: &BTreeSet<usize>) -> Option<Vec<Vec<usize>>> {
     use std::mem::{size_of, MaybeUninit};
@@ -1006,96 +906,6 @@ fn platform_physical_core_groups(available: &BTreeSet<usize>) -> Option<Vec<Vec<
         if !group.is_empty() {
             groups.push(group);
         }
-    }
-    (!groups.is_empty()).then_some(groups)
-}
-
-#[cfg(target_os = "windows")]
-fn platform_l3_cache_groups(available: &BTreeSet<usize>) -> Option<Vec<Vec<usize>>> {
-    use std::mem::{offset_of, size_of, MaybeUninit};
-    use std::ptr;
-    use windows_sys::Win32::System::SystemInformation::{
-        GetLogicalProcessorInformationEx, RelationCache, GROUP_AFFINITY,
-        SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX,
-    };
-
-    let mut byte_len = 0u32;
-    unsafe {
-        let _ = GetLogicalProcessorInformationEx(RelationCache, ptr::null_mut(), &mut byte_len);
-    }
-    let word_size = size_of::<usize>();
-    let word_count = (byte_len as usize)
-        .checked_add(word_size - 1)?
-        .checked_div(word_size)?;
-    if word_count == 0 {
-        return None;
-    }
-    let mut buffer = vec![MaybeUninit::<usize>::uninit(); word_count];
-    let ok = unsafe {
-        GetLogicalProcessorInformationEx(RelationCache, buffer.as_mut_ptr().cast(), &mut byte_len)
-    };
-    if ok == 0 {
-        return None;
-    }
-
-    let base = buffer.as_ptr().cast::<u8>();
-    let mut offset = 0usize;
-    let mut groups = Vec::new();
-    let header_size = offset_of!(SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX, Anonymous);
-    let cache_masks_offset = header_size.checked_add(offset_of!(
-        windows_sys::Win32::System::SystemInformation::CACHE_RELATIONSHIP,
-        Anonymous
-    ))?;
-    while offset < byte_len as usize {
-        if byte_len as usize - offset < header_size {
-            return None;
-        }
-        let entry = unsafe {
-            ptr::read_unaligned(
-                base.add(offset)
-                    .cast::<SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(),
-            )
-        };
-        let entry_size = entry.Size as usize;
-        if entry_size < header_size || entry_size > byte_len as usize - offset {
-            return None;
-        }
-        if entry.Relationship == RelationCache {
-            let cache = unsafe { entry.Anonymous.Cache };
-            if cache.Level == 3 {
-                let masks_size =
-                    (cache.GroupCount as usize).checked_mul(size_of::<GROUP_AFFINITY>())?;
-                if cache.GroupCount == 0 || cache_masks_offset.checked_add(masks_size)? > entry_size
-                {
-                    return None;
-                }
-                let mut group = Vec::new();
-                for mask_idx in 0..cache.GroupCount as usize {
-                    let mask = unsafe {
-                        ptr::read_unaligned(
-                            base.add(
-                                offset
-                                    + cache_masks_offset
-                                    + mask_idx * size_of::<GROUP_AFFINITY>(),
-                            )
-                            .cast::<GROUP_AFFINITY>(),
-                        )
-                    };
-                    if mask.Group != 0 {
-                        return None;
-                    }
-                    group.extend(
-                        (0..usize::BITS as usize)
-                            .filter(|bit| mask.Mask & (1usize << bit) != 0)
-                            .filter(|bit| available.contains(bit)),
-                    );
-                }
-                if !group.is_empty() {
-                    groups.push(group);
-                }
-            }
-        }
-        offset = offset.checked_add(entry_size)?;
     }
     (!groups.is_empty()).then_some(groups)
 }
@@ -1471,8 +1281,8 @@ fn forward_event(shared: &Shared, event: BackendEvent) {
 mod tests {
     use super::{
         emit_error, forward_event, lane_quota_for_chunk, maybe_finalize_assignment,
-        order_core_ids_by_cache_domains, order_core_ids_by_groups, should_flush_hashes,
-        start_assignment, BackendEvent, CpuBackend, DEFAULT_HASH_BATCH_SIZE,
+        order_core_ids_by_groups, should_flush_hashes, start_assignment, BackendEvent, CpuBackend,
+        DEFAULT_HASH_BATCH_SIZE,
     };
     use crate::backend::{MiningSolution, NonceChunk, PowBackend, WorkAssignment, WorkTemplate};
     use crate::config::CpuAffinityMode;
@@ -1544,34 +1354,6 @@ mod tests {
             .map(|core| core.id)
             .collect::<Vec<_>>();
         assert_eq!(ordered, vec![0, 1, 2, 3]);
-    }
-
-    #[test]
-    fn cache_balanced_affinity_interleaves_physical_cores_across_domains() {
-        let cores = (0..8)
-            .map(|id| core_affinity::CoreId { id })
-            .collect::<Vec<_>>();
-        let physical = vec![vec![0, 1], vec![2, 3], vec![4, 5], vec![6, 7]];
-        let caches = vec![vec![0, 1, 2, 3], vec![4, 5, 6, 7]];
-        let ordered = order_core_ids_by_cache_domains(cores, physical, caches)
-            .expect("complete topology")
-            .into_iter()
-            .map(|core| core.id)
-            .collect::<Vec<_>>();
-        assert_eq!(ordered, vec![0, 4, 2, 6, 1, 5, 3, 7]);
-    }
-
-    #[test]
-    fn cache_balanced_affinity_rejects_cross_domain_sibling_group() {
-        let cores = (0..4)
-            .map(|id| core_affinity::CoreId { id })
-            .collect::<Vec<_>>();
-        assert!(order_core_ids_by_cache_domains(
-            cores,
-            vec![vec![0, 2], vec![1, 3]],
-            vec![vec![0, 1], vec![2, 3]],
-        )
-        .is_none());
     }
 
     #[test]

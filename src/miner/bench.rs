@@ -1965,7 +1965,6 @@ fn cpu_affinity_label(mode: CpuAffinityMode) -> &'static str {
     match mode {
         CpuAffinityMode::Off => "off",
         CpuAffinityMode::Auto => "auto",
-        CpuAffinityMode::CacheBalanced => "cache-balanced",
         CpuAffinityMode::PcoreOnly => "pcore-only",
     }
 }
@@ -1976,10 +1975,7 @@ fn cpu_affinity_strategy_label(mode: CpuAffinityMode) -> &'static str {
     }
     #[cfg(target_os = "windows")]
     {
-        match mode {
-            CpuAffinityMode::CacheBalanced => "windows-l3-cache-balanced-if-complete",
-            _ => "windows-physical-first-if-complete",
-        }
+        "windows-physical-first-if-complete"
     }
     #[cfg(target_os = "linux")]
     {
@@ -1989,9 +1985,7 @@ fn cpu_affinity_strategy_label(mode: CpuAffinityMode) -> &'static str {
     {
         match mode {
             CpuAffinityMode::PcoreOnly => "macos-limited-affinity-tags-high-qos",
-            CpuAffinityMode::Auto | CpuAffinityMode::CacheBalanced => {
-                "macos-affinity-tags-high-qos"
-            }
+            CpuAffinityMode::Auto => "macos-affinity-tags-high-qos",
             CpuAffinityMode::Off => "off",
         }
     }
