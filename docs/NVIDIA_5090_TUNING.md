@@ -169,6 +169,12 @@ Follow-up work should validate this frontier when the driver/NVRTC toolchain
 changes materially. Do not extend the shortlist to another 5090 variant or
 Blackwell SKU without a fresh exhaustive control on that hardware.
 
+Fresh autotune records now preserve every evaluated tuning tuple, raw counted
+and throughput samples, failed-sample count, per-candidate elapsed time, and
+total autotune duration. This is the generalization path: collect the same
+evidence on other cards, then replay coarse/refined search policies against the
+actual exhaustive winners instead of extrapolating a 5090 product profile.
+
 ### 2. Reduce fence/control tail without regressing throughput
 
 The backend still loses time at round-end fence/cancel boundaries. The historical log already showed that simply changing the in-kernel cancel-check cadence is usually a regression, so the better target is launch-shaping rather than inner-loop polling.

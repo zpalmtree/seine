@@ -175,7 +175,27 @@ struct NvidiaAutotuneRecord {
     autotune_secs: u64,
     #[serde(default)]
     autotune_samples: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    candidate_trace: Vec<NvidiaAutotuneCandidateTrace>,
+    #[serde(default)]
+    autotune_elapsed_millis: u64,
     timestamp_unix_secs: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+struct NvidiaAutotuneCandidateTrace {
+    tuning: NvidiaKernelTuning,
+    samples: Vec<NvidiaAutotuneSampleScore>,
+    failed_samples: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    counted_median_hps: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    counted_mean_hps: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    throughput_median_hps: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    throughput_mean_hps: Option<f64>,
+    elapsed_millis: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -3032,6 +3052,8 @@ fn persist_nvidia_autotune_record(
     measured_hps: f64,
     autotune_secs: u64,
     autotune_samples: u32,
+    candidate_trace: Vec<NvidiaAutotuneCandidateTrace>,
+    autotune_elapsed_millis: u64,
 ) -> Result<()> {
     let mut cache = load_nvidia_autotune_cache(path).unwrap_or_else(empty_nvidia_autotune_cache);
     if cache.schema_version != NVIDIA_AUTOTUNE_SCHEMA_VERSION {
@@ -3055,6 +3077,8 @@ fn persist_nvidia_autotune_record(
         },
         autotune_secs: autotune_secs.max(1),
         autotune_samples: autotune_samples.max(1),
+        candidate_trace,
+        autotune_elapsed_millis,
         timestamp_unix_secs,
     };
     if let Some(existing) = cache.records.iter_mut().find(|record| record.key == key) {
@@ -3077,10 +3101,11 @@ fn persist_nvidia_autotune_record(
     Ok(())
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 struct NvidiaAutotuneSampleScore {
     throughput_hps: f64,
     counted_hps: f64,
+    elapsed_secs: f64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -3163,6 +3188,7 @@ fn measure_nvidia_kernel_tuning_hps(
     Ok(NvidiaAutotuneSampleScore {
         throughput_hps: total_hashes as f64 / elapsed,
         counted_hps: counted_hashes / elapsed,
+        elapsed_secs: elapsed,
     })
 }
 
@@ -3324,6 +3350,7 @@ fn autotune_nvidia_kernel_tuning(
     max_lanes_override: Option<usize>,
     hashes_per_launch_per_lane: u32,
 ) -> Result<NvidiaKernelTuning> {
+    let autotune_started = Instant::now();
     let cubin_cache_dir = derive_nvidia_cubin_cache_dir(cache_path);
     let sample_count = autotune_samples.max(1);
     let (compute_cap_major, _) = query_cuda_compute_capability(selected.index).unwrap_or((0, 0));
@@ -3338,12 +3365,14 @@ fn autotune_nvidia_kernel_tuning(
     // Stage 1: sweep regcap with default hash depth and lane hint.
     let default_depth = hashes_per_launch_per_lane.max(1);
     let mut best: Option<NvidiaAutotuneCandidateScore> = None;
+    let mut candidate_trace = Vec::new();
 
-    let evaluate_candidate = |candidate: NvidiaKernelTuning,
-                              best: &mut Option<NvidiaAutotuneCandidateScore>|
+    let mut evaluate_candidate = |candidate: NvidiaKernelTuning,
+                                  best: &mut Option<NvidiaAutotuneCandidateScore>|
      -> bool {
-        let mut counted_samples = Vec::with_capacity(sample_count as usize);
-        let mut throughput_samples = Vec::with_capacity(sample_count as usize);
+        let candidate_started = Instant::now();
+        let mut samples = Vec::with_capacity(sample_count as usize);
+        let mut failed_samples = 0u32;
         for _ in 0..sample_count {
             let measured = match measure_nvidia_kernel_tuning_hps(
                 selected,
@@ -3354,14 +3383,40 @@ fn autotune_nvidia_kernel_tuning(
                 Ok(score) if score.counted_hps.is_finite() && score.throughput_hps.is_finite() => {
                     score
                 }
-                _ => continue,
+                _ => {
+                    failed_samples = failed_samples.saturating_add(1);
+                    continue;
+                }
             };
-            counted_samples.push(measured.counted_hps.max(0.0));
-            throughput_samples.push(measured.throughput_hps.max(0.0));
+            samples.push(NvidiaAutotuneSampleScore {
+                counted_hps: measured.counted_hps.max(0.0),
+                throughput_hps: measured.throughput_hps.max(0.0),
+                elapsed_secs: measured.elapsed_secs.max(0.0),
+            });
         }
-        if counted_samples.is_empty() {
+        let elapsed_millis =
+            u64::try_from(candidate_started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        if samples.is_empty() {
+            candidate_trace.push(NvidiaAutotuneCandidateTrace {
+                tuning: candidate,
+                samples,
+                failed_samples,
+                counted_median_hps: None,
+                counted_mean_hps: None,
+                throughput_median_hps: None,
+                throughput_mean_hps: None,
+                elapsed_millis,
+            });
             return false;
         }
+        let mut counted_samples = samples
+            .iter()
+            .map(|sample| sample.counted_hps)
+            .collect::<Vec<_>>();
+        let mut throughput_samples = samples
+            .iter()
+            .map(|sample| sample.throughput_hps)
+            .collect::<Vec<_>>();
         counted_samples.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         throughput_samples.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let counted_median = median_from_sorted(&counted_samples);
@@ -3376,6 +3431,16 @@ fn autotune_nvidia_kernel_tuning(
             throughput_median,
             throughput_mean,
         };
+        candidate_trace.push(NvidiaAutotuneCandidateTrace {
+            tuning: candidate,
+            samples,
+            failed_samples,
+            counted_median_hps: Some(counted_median),
+            counted_mean_hps: Some(counted_mean),
+            throughput_median_hps: Some(throughput_median),
+            throughput_mean_hps: Some(throughput_mean),
+            elapsed_millis,
+        });
         let should_replace = match best {
             None => true,
             Some(best_score) => {
@@ -3474,6 +3539,8 @@ fn autotune_nvidia_kernel_tuning(
         selected_score.counted_median,
         autotune_secs,
         sample_count,
+        candidate_trace,
+        u64::try_from(autotune_started.elapsed().as_millis()).unwrap_or(u64::MAX),
     );
     Ok(selected_tuning)
 }
@@ -3593,8 +3660,36 @@ mod tests {
             0.8,
             2,
             2,
+            Vec::new(),
+            0,
         )
         .expect("first record should persist");
+        let candidate_trace = vec![NvidiaAutotuneCandidateTrace {
+            tuning: NvidiaKernelTuning {
+                max_rregcount: 224,
+                block_loop_unroll: true,
+                hashes_per_launch_per_lane: 2,
+                max_lanes_hint: None,
+            },
+            samples: vec![
+                NvidiaAutotuneSampleScore {
+                    throughput_hps: 1.1,
+                    counted_hps: 1.0,
+                    elapsed_secs: 2.1,
+                },
+                NvidiaAutotuneSampleScore {
+                    throughput_hps: 1.2,
+                    counted_hps: 1.1,
+                    elapsed_secs: 2.2,
+                },
+            ],
+            failed_samples: 0,
+            counted_median_hps: Some(1.05),
+            counted_mean_hps: Some(1.05),
+            throughput_median_hps: Some(1.15),
+            throughput_mean_hps: Some(1.15),
+            elapsed_millis: 4_300,
+        }];
         persist_nvidia_autotune_record(
             &path,
             key.clone(),
@@ -3607,6 +3702,8 @@ mod tests {
             1.0,
             2,
             2,
+            candidate_trace.clone(),
+            4_500,
         )
         .expect("second record should persist");
 
@@ -3614,6 +3711,21 @@ mod tests {
             load_nvidia_cached_tuning(&path, &key).expect("cached tuning should be available");
         assert_eq!(loaded.max_rregcount, 224);
         assert!(loaded.block_loop_unroll);
+        let cache = load_nvidia_autotune_cache(&path).expect("cache should parse");
+        assert_eq!(cache.records.len(), 1);
+        assert_eq!(cache.records[0].candidate_trace, candidate_trace);
+        assert_eq!(cache.records[0].autotune_elapsed_millis, 4_500);
+
+        let mut legacy_json = serde_json::to_value(&cache).expect("cache should serialize");
+        let legacy_record = legacy_json["records"][0]
+            .as_object_mut()
+            .expect("record should be an object");
+        legacy_record.remove("candidate_trace");
+        legacy_record.remove("autotune_elapsed_millis");
+        let legacy_cache: NvidiaAutotuneCache =
+            serde_json::from_value(legacy_json).expect("older cache records should still parse");
+        assert!(legacy_cache.records[0].candidate_trace.is_empty());
+        assert_eq!(legacy_cache.records[0].autotune_elapsed_millis, 0);
         let _ = fs::remove_file(path);
     }
 
@@ -3661,6 +3773,8 @@ mod tests {
             1.0,
             2,
             2,
+            Vec::new(),
+            0,
         )
         .expect("closer record should persist");
         persist_nvidia_autotune_record(
@@ -3675,6 +3789,8 @@ mod tests {
             1.0,
             2,
             2,
+            Vec::new(),
+            0,
         )
         .expect("farther record should persist");
 
@@ -3722,6 +3838,8 @@ mod tests {
             1.0,
             2,
             2,
+            Vec::new(),
+            0,
         )
         .expect("cap-1 record should persist");
 

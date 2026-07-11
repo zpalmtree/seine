@@ -67,6 +67,7 @@ This file preserves the full engineering reference for AI agents doing optimizat
 - `--nvidia-autotune-secs` (default `5`) controls per-candidate benchmark window for regcap autotune.
 - `--nvidia-autotune-samples` (default `2`) runs multiple samples per candidate; autotune prioritizes median deadline-window counted H/s (then mean counted H/s, then throughput tie-breaks).
 - `--nvidia-autotune-config` overrides the persisted NVIDIA autotune cache path (`<seine-data-dir>/seine.nvidia-autotune.json` by default).
+  - New records retain the complete candidate trace (raw counted/throughput samples, failures, per-candidate elapsed time, and total autotune elapsed time) so future search policies can be replayed across hardware. Older winner-only records remain readable.
 - `--nvidia-max-rregcount` forces a fixed register cap and skips autotune/cache lookup.
 - `--nvidia-max-lanes` caps active NVIDIA lanes per device instance.
 - `--nvidia-dispatch-iters-per-lane` and `--nvidia-allocation-iters-per-lane` override scheduler/allocator lane-iteration hints.
