@@ -2686,6 +2686,16 @@ fn drain_runtime_backend_events(
     )
 }
 
+/// Stable "name#instance_id" labels used for degraded-run tracking. Unlike
+/// `backend_display_names`, these never renumber when a backend is
+/// quarantined, so they stay consistent with quarantine log lines.
+fn backend_instance_labels(backends: &[BackendSlot]) -> Vec<String> {
+    backends
+        .iter()
+        .map(|slot| format!("{}#{}", slot.backend.name(), slot.id))
+        .collect()
+}
+
 fn backend_name_list(backends: &[BackendSlot]) -> Vec<String> {
     let display_names = backend_display_names(backends);
     backends

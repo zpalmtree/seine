@@ -1063,6 +1063,8 @@ fn execute_round_phase(phase: ExecuteRoundPhase<'_, '_>) -> Result<()> {
             backend_executor,
         )?;
     }
+    // Round-end control and event draining may have quarantined backends.
+    stats.update_backend_degradation(&super::backend_instance_labels(backends));
     let mut enqueued_solution = None;
     if let Some(solution) = pending_solution.take() {
         let key = (solution.epoch, solution.nonce);
@@ -1260,6 +1262,7 @@ pub(super) fn run_mining_loop(
         super::maybe_warn_linux_hugepages_setup(cfg, RuntimeMode::Mining);
     }
     let mut backend_weights = seed_backend_weights(backends);
+    stats.register_expected_backends(&super::backend_instance_labels(backends));
     let mut control_plane = MiningControlPlane::new(client, cfg, Arc::clone(&shutdown), tip_signal);
     let mut dev_fee_tracker = DevFeeTracker::new();
     let mut recent_template_retention = recent_template_retention_for_backends(cfg, backends);
@@ -1334,6 +1337,11 @@ pub(super) fn run_mining_loop(
                             ),
                         );
                         backend_weights.insert(slot.id, slot.lanes.max(1) as f64);
+                        stats.register_expected_backends(&[format!(
+                            "{}#{}",
+                            slot.backend.name(),
+                            slot.id
+                        )]);
                         backends.push(slot);
                         // Recompute template retention to account for the new
                         // backend's potentially different timeout profile.
@@ -1358,6 +1366,9 @@ pub(super) fn run_mining_loop(
                 &mut nvidia_pending_long_wait_logged,
             );
         }
+        // Keep the recurring degraded-run warning current: quarantines from the
+        // previous round and deferred hot-adds both change the active set.
+        stats.update_backend_degradation(&super::backend_instance_labels(backends));
         control_plane.maybe_refresh_tui_wallet_overview(&mut tui, false);
 
         let mode_changed = dev_fee_tracker.begin_round();
@@ -1998,6 +2009,8 @@ impl<'a> RoundRuntime<'a> {
         )? == BackendEventAction::TopologyChanged
         {
             rebalance.topology_changed = true;
+            self.stats
+                .update_backend_degradation(&super::backend_instance_labels(self.backends));
         }
         Ok(())
     }

@@ -709,6 +709,7 @@ pub(super) fn run_pool_mining_loop(
     let stats = Stats::new();
     let mut last_stats_print = Instant::now();
     let mut backend_weights = seed_backend_weights(backends);
+    stats.register_expected_backends(&super::backend_instance_labels(backends));
     let mut work_id_cursor = 1u64;
     let mut epoch = 0u64;
     let mut last_hash_poll = Instant::now();
@@ -1059,6 +1060,11 @@ pub(super) fn run_pool_mining_loop(
                             ),
                         );
                         backend_weights.insert(slot.id, slot.lanes.max(1) as f64);
+                        stats.register_expected_backends(&[format!(
+                            "{}#{}",
+                            slot.backend.name(),
+                            slot.id
+                        )]);
                         backends.push(slot);
                         deferred_backend_activated = true;
                     }
@@ -1352,6 +1358,9 @@ pub(super) fn run_pool_mining_loop(
             }
         }
 
+        // Recompute before the periodic stats emission so quarantines picked up
+        // anywhere in this iteration surface as a recurring WARN.
+        stats.update_backend_degradation(&super::backend_instance_labels(backends));
         maybe_print_stats(
             &stats,
             &mut last_stats_print,

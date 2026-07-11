@@ -25,7 +25,7 @@ use super::runtime::{
     WeightUpdateInputs,
 };
 use super::scheduler::NonceScheduler;
-use super::stats::{format_hashrate, median};
+use super::stats::{degraded_backends_warning, format_hashrate, median};
 use super::ui::{info, startup_banner, success, warn};
 use super::{
     activate_backends, collect_backend_hashes, distribute_work, format_round_backend_telemetry,
@@ -647,6 +647,10 @@ fn run_worker_benchmark(
         info("HINT", hint);
     }
     let initial_startup_started = Instant::now();
+    let requested_backend_kinds: Vec<String> = instances
+        .iter()
+        .map(|(_, backend)| backend.name().to_string())
+        .collect();
     let (mut backends, backend_events) = activate_backends(
         instances,
         cfg.backend_event_capacity,
@@ -660,6 +664,19 @@ fn run_worker_benchmark(
         RuntimeMode::Bench,
         backend_executor,
     )?;
+    // The benchmark proceeds with the surviving backends; make a missing
+    // requested backend impossible to overlook in the results.
+    let degraded_warning = degraded_backends_warning(
+        &backends
+            .iter()
+            .map(|slot| slot.backend.name().to_string())
+            .collect::<Vec<_>>(),
+        &requested_backend_kinds,
+        "missing",
+    );
+    if let Some(warning) = degraded_warning.as_deref() {
+        warn("BENCH", warning);
+    }
     let initial_startup_secs = initial_startup_started.elapsed().as_secs_f64();
     let identity = worker_benchmark_identity(&backends, initial_startup_secs);
     let bench_kind = if restart_each_round {
@@ -742,6 +759,7 @@ fn run_worker_benchmark(
         restart_each_round,
         &identity,
         backend_executor,
+        degraded_warning.as_deref(),
     );
     stop_backend_slots(
         &mut backends,
@@ -752,6 +770,7 @@ fn run_worker_benchmark(
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_worker_benchmark_inner(
     cfg: &Config,
     shutdown: &AtomicBool,
@@ -760,6 +779,7 @@ fn run_worker_benchmark_inner(
     restart_each_round: bool,
     identity: &WorkerBenchmarkIdentity,
     backend_executor: &super::backend_executor::BackendExecutor,
+    degraded_warning: Option<&str>,
 ) -> Result<()> {
     let impossible_target = [0u8; 32];
     let mut runs = Vec::with_capacity(cfg.bench_rounds as usize);
@@ -992,6 +1012,9 @@ fn run_worker_benchmark_inner(
                     backend_rates,
                 ),
             );
+            if let Some(warning) = degraded_warning {
+                warn("BENCH", warning);
+            }
             if let Some(telemetry_line) = &telemetry_line {
                 info("BENCH", format!("warmup telemetry | {telemetry_line}"));
             }
@@ -1017,6 +1040,9 @@ fn run_worker_benchmark_inner(
                     backend_rates,
                 ),
             );
+            if let Some(warning) = degraded_warning {
+                warn("BENCH", warning);
+            }
             if let Some(telemetry_line) = &telemetry_line {
                 info("BENCH", format!("telemetry | {telemetry_line}"));
             }
