@@ -331,8 +331,11 @@ run_single() {
     local run_no_default_features="$8"
     local run_features="$9"
     local report_file="$output_dir/${variant}_pair${pair}_${order}.json"
-    local run_miner_args=("${extra_args[@]}")
+    local run_miner_args=()
 
+    if ((${#extra_args[@]})); then
+        run_miner_args+=("${extra_args[@]}")
+    fi
     if [[ "$variant" == "baseline" ]] && ((${#baseline_miner_args[@]})); then
         run_miner_args+=("${baseline_miner_args[@]}")
     elif [[ "$variant" == "candidate" ]] && ((${#candidate_miner_args[@]})); then
@@ -369,7 +372,11 @@ run_single() {
     printf '[pair %s/%s] %s:%s | repo=%s profile=%s threads=%s native=%s no_default_features=%s features=%s args=' \
         "$pair" "$pairs" "$variant" "$order" "$repo_dir" "$run_profile" "$run_threads" \
         "$run_native" "$run_no_default_features" "${run_features:-<none>}"
-    format_shell_args "${run_miner_args[@]}"
+    if ((${#run_miner_args[@]})); then
+        format_shell_args "${run_miner_args[@]}"
+    else
+        format_shell_args
+    fi
     printf '\n'
     if ((run_native)); then
         (
@@ -477,13 +484,25 @@ delta_pct="$(awk -v b="$baseline_avg" -v c="$candidate_avg" 'BEGIN { if (b == 0 
     echo "baseline_features=$baseline_features"
     echo "candidate_features=$candidate_features"
     printf 'common_miner_args='
-    format_shell_args "${extra_args[@]}"
+    if ((${#extra_args[@]})); then
+        format_shell_args "${extra_args[@]}"
+    else
+        format_shell_args
+    fi
     printf '\n'
     printf 'baseline_miner_args='
-    format_shell_args "${baseline_miner_args[@]}"
+    if ((${#baseline_miner_args[@]})); then
+        format_shell_args "${baseline_miner_args[@]}"
+    else
+        format_shell_args
+    fi
     printf '\n'
     printf 'candidate_miner_args='
-    format_shell_args "${candidate_miner_args[@]}"
+    if ((${#candidate_miner_args[@]})); then
+        format_shell_args "${candidate_miner_args[@]}"
+    else
+        format_shell_args
+    fi
     printf '\n'
     echo "baseline_dir=$baseline_dir"
     echo "candidate_dir=$candidate_dir"
