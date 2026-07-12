@@ -116,6 +116,7 @@ struct PoolSubmit {
     job_id: String,
     nonce: u64,
     claimed_hash: Option<[u8; 32]>,
+    backend: Option<String>,
 }
 
 #[derive(Debug)]
@@ -165,17 +166,29 @@ impl PoolClient {
         })
     }
 
+    #[cfg(test)]
     pub fn submit_share(
         &self,
         job_id: String,
         nonce: u64,
         claimed_hash: Option<[u8; 32]>,
     ) -> Result<()> {
+        self.submit_share_with_backend(job_id, nonce, claimed_hash, None)
+    }
+
+    pub fn submit_share_with_backend(
+        &self,
+        job_id: String,
+        nonce: u64,
+        claimed_hash: Option<[u8; 32]>,
+        backend: Option<&str>,
+    ) -> Result<()> {
         self.submit_tx
             .send(PoolSubmit {
                 job_id,
                 nonce,
                 claimed_hash,
+                backend: backend.map(str::to_string),
             })
             .map_err(|_| anyhow!("pool submit channel closed"))
     }
@@ -232,6 +245,9 @@ struct SubmitParams<'a> {
     nonce: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     claimed_hash: Option<&'a str>,
+    miner_version: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    backend: Option<&'a str>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -827,6 +843,8 @@ fn submit_payload(
             job_id: &submit.job_id,
             nonce: submit.nonce,
             claimed_hash: claimed_hash_hex.as_deref(),
+            miner_version: env!("CARGO_PKG_VERSION"),
+            backend: submit.backend.as_deref(),
         },
     };
     serde_json::to_string(&request).context("failed to serialize stratum submit payload")
@@ -1250,6 +1268,7 @@ mod tests {
                 job_id: "job-1".to_string(),
                 nonce: 42,
                 claimed_hash: Some([0xAB; 32]),
+                backend: Some("nvidia#1".to_string()),
             },
             99,
             true,
@@ -1282,6 +1301,20 @@ mod tests {
                 .and_then(Value::as_str),
             Some(expected_hash.as_str())
         );
+        assert_eq!(
+            payload
+                .get("params")
+                .and_then(|params| params.get("miner_version"))
+                .and_then(Value::as_str),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+        assert_eq!(
+            payload
+                .get("params")
+                .and_then(|params| params.get("backend"))
+                .and_then(Value::as_str),
+            Some("nvidia#1")
+        );
     }
 
     #[test]
@@ -1291,6 +1324,7 @@ mod tests {
                 job_id: "job-2".to_string(),
                 nonce: 7,
                 claimed_hash: Some([0xCD; 32]),
+                backend: None,
             },
             100,
             false,
@@ -1393,6 +1427,7 @@ mod tests {
                 job_id: "job-123".to_string(),
                 nonce: 17,
                 claimed_hash: None,
+                backend: None,
             },
         );
         let raw = r#"{"id":42,"status":"ok","result":{"accepted":true,"difficulty":128}}"#;
@@ -1454,6 +1489,7 @@ mod tests {
                 job_id: "job-ambiguous".to_string(),
                 nonce: 88,
                 claimed_hash: None,
+                backend: None,
             },
         );
         let raw = r#"{"id":9,"result":{}}"#;

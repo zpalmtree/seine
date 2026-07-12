@@ -30,6 +30,7 @@ use crate::backend::{
     DeadlineSupport, KernelBenchSample, MiningSolution, PowBackend, PreemptionGranularity,
     WorkAssignment, WorkTemplate,
 };
+use crate::types::hash_meets_target;
 const BACKEND_NAME: &str = "nvidia";
 const CUDA_KERNEL_SRC: &str = include_str!("nvidia_kernel.cu");
 const MAX_LANES_HARD_LIMIT: usize = 1024;
@@ -630,6 +631,16 @@ impl CudaArgon2Engine {
         nonces: &[u64],
         target: Option<&[u8; POW_OUTPUT_LEN]>,
     ) -> Result<FillBatchResult> {
+        self.run_fill_batch_preserving_candidate(header_base, nonces, target, None)
+    }
+
+    fn run_fill_batch_preserving_candidate(
+        &mut self,
+        header_base: &[u8],
+        nonces: &[u64],
+        target: Option<&[u8; POW_OUTPUT_LEN]>,
+        network_target: Option<&[u8; POW_OUTPUT_LEN]>,
+    ) -> Result<FillBatchResult> {
         if header_base.len() != POW_HEADER_BASE_LEN {
             bail!(
                 "invalid header base length: expected {} bytes, got {}",
@@ -894,6 +905,19 @@ impl CudaArgon2Engine {
                 if idx < hashes_done {
                     solved_nonce = Some(nonces[idx]);
                     solved_hash = Some(self.read_last_block_hash(idx)?);
+                }
+            }
+        }
+
+        if solved_nonce.is_some() {
+            if let Some(network_target) = network_target {
+                for (idx, nonce) in nonces.iter().take(hashes_done).enumerate() {
+                    let hash = self.read_last_block_hash(idx)?;
+                    if hash_meets_target(&hash, network_target) {
+                        solved_nonce = Some(*nonce);
+                        solved_hash = Some(hash);
+                        break;
+                    }
                 }
             }
         }
@@ -2048,10 +2072,12 @@ fn worker_loop(
 
         let target_snapshot = current.work.template.target_snapshot();
         let launch_started = Instant::now();
-        let done = match engine.run_fill_batch(
+        let network_target = current.work.template.network_target();
+        let done = match engine.run_fill_batch_preserving_candidate(
             current.work.template.header_base.as_ref(),
             &nonce_buf[..hashes_per_batch],
             Some(&target_snapshot.target),
+            network_target.as_ref(),
         ) {
             Ok(done) => {
                 transient_retries = 0;

@@ -245,10 +245,15 @@ pub struct DynamicShareTarget {
     version: AtomicU64,
     share_binding_id: AtomicU64,
     target_words: [AtomicU64; 4],
+    network_target: Option<[u8; 32]>,
 }
 
 impl DynamicShareTarget {
-    pub fn new(target: [u8; 32], share_binding_id: ShareBindingId) -> Self {
+    pub fn new(
+        target: [u8; 32],
+        share_binding_id: ShareBindingId,
+        network_target: Option<[u8; 32]>,
+    ) -> Self {
         Self {
             version: AtomicU64::new(0),
             share_binding_id: AtomicU64::new(share_binding_id),
@@ -258,7 +263,12 @@ impl DynamicShareTarget {
                 bytes.copy_from_slice(&target[start..start + 8]);
                 AtomicU64::new(u64::from_le_bytes(bytes))
             }),
+            network_target,
         }
+    }
+
+    pub fn network_target(&self) -> Option<[u8; 32]> {
+        self.network_target
     }
 
     pub fn snapshot(&self) -> TargetSnapshot {
@@ -323,6 +333,12 @@ impl WorkTemplate {
                 target: self.target,
                 share_binding_id: 0,
             })
+    }
+
+    pub fn network_target(&self) -> Option<[u8; 32]> {
+        self.dynamic_share_target
+            .as_ref()
+            .and_then(|state| state.network_target())
     }
 }
 
@@ -650,6 +666,18 @@ mod tests {
             normalized.nonblocking_poll_max,
             Some(Duration::from_millis(3))
         );
+    }
+
+    #[test]
+    fn dynamic_share_target_keeps_network_target_across_share_rebinds() {
+        let network_target = [0x11; 32];
+        let target = DynamicShareTarget::new([0xAA; 32], 7, Some(network_target));
+
+        target.update([0xBB; 32], 8);
+
+        assert_eq!(target.snapshot().target, [0xBB; 32]);
+        assert_eq!(target.snapshot().share_binding_id, 8);
+        assert_eq!(target.network_target(), Some(network_target));
     }
 }
 

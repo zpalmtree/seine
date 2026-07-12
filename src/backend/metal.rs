@@ -16,6 +16,7 @@ use crate::backend::{
     BackendExecutionModel, BackendInstanceId, BackendTelemetry, BenchBackend, DeadlineSupport,
     MiningSolution, PowBackend, PreemptionGranularity, WorkAssignment,
 };
+use crate::types::hash_meets_target;
 
 const BACKEND_NAME: &str = "metal";
 const METAL_KERNEL_SRC: &str = include_str!("metal_kernel.metal");
@@ -318,6 +319,16 @@ impl MetalArgon2Engine {
         nonces: &[u64],
         target: Option<&[u8; 32]>,
     ) -> Result<FillBatchResult> {
+        self.run_fill_batch_preserving_candidate(header_base, nonces, target, None)
+    }
+
+    fn run_fill_batch_preserving_candidate(
+        &self,
+        header_base: &[u8],
+        nonces: &[u64],
+        target: Option<&[u8; 32]>,
+        network_target: Option<&[u8; 32]>,
+    ) -> Result<FillBatchResult> {
         let requested_hashes = nonces.len() as u32;
         if requested_hashes == 0 {
             return Ok(FillBatchResult {
@@ -450,7 +461,7 @@ impl MetalArgon2Engine {
             .saturating_mul(active_lanes as u64)
             .min(requested_hashes as u64);
 
-        let (solved_nonce, solved_hash) =
+        let (mut solved_nonce, mut solved_hash) =
             if found_index_one_based != u32::MAX && found_index_one_based > 0 {
                 let idx = (found_index_one_based - 1) as usize;
                 if idx < nonces.len() {
@@ -461,6 +472,19 @@ impl MetalArgon2Engine {
             } else {
                 (None, None)
             };
+
+        if solved_nonce.is_some() {
+            if let Some(network_target) = network_target {
+                for (idx, nonce) in nonces.iter().take(hashes_done as usize).enumerate() {
+                    let hash = self.read_last_block_hash(idx)?;
+                    if hash_meets_target(&hash, network_target) {
+                        solved_nonce = Some(*nonce);
+                        solved_hash = Some(hash);
+                        break;
+                    }
+                }
+            }
+        }
 
         Ok(FillBatchResult {
             hashes_done,
@@ -918,10 +942,12 @@ fn metal_worker_loop(
             );
 
             let target_snapshot = assignment.work.template.target_snapshot();
-            match engine.run_fill_batch(
+            let network_target = assignment.work.template.network_target();
+            match engine.run_fill_batch_preserving_candidate(
                 &assignment.work.template.header_base,
                 &nonces,
                 Some(&target_snapshot.target),
+                network_target.as_ref(),
             ) {
                 Ok(result) => {
                     let done = result.hashes_done;

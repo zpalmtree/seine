@@ -248,8 +248,11 @@ impl ActivePoolJob {
         let dispatch_nonce = next_nonce;
         let share_difficulty = job.difficulty;
         let current_share_binding_id = 1;
-        let dynamic_share_target =
-            Arc::new(DynamicShareTarget::new(target, current_share_binding_id));
+        let dynamic_share_target = Arc::new(DynamicShareTarget::new(
+            target,
+            current_share_binding_id,
+            network_target,
+        ));
         let template_id = job.template_id.clone();
         let mut share_bindings = HashMap::new();
         share_bindings.insert(
@@ -2202,8 +2205,13 @@ fn service_pool_submit_backlog(
         mode,
         job,
         stats,
-        |job_id, nonce, claimed_hash| {
-            pool_client.submit_share(job_id.to_string(), nonce, claimed_hash)
+        |job_id, nonce, claimed_hash, backend_label| {
+            pool_client.submit_share_with_backend(
+                job_id.to_string(),
+                nonce,
+                claimed_hash,
+                Some(backend_label),
+            )
         },
         recent_submit_lookup,
     );
@@ -2216,7 +2224,7 @@ fn service_pool_submit_backlog_with_submitter<F>(
     mut submitter: F,
     recent_submit_lookup: &mut RecentPendingSubmitLookup,
 ) where
-    F: FnMut(&str, u64, Option<[u8; 32]>) -> Result<()>,
+    F: FnMut(&str, u64, Option<[u8; 32]>, &str) -> Result<()>,
 {
     let now = Instant::now();
     let timed_out = reap_timed_out_pending_submits(job, now);
@@ -2297,7 +2305,7 @@ fn flush_deferred_pool_submits<F>(
     recent_submit_lookup: &mut RecentPendingSubmitLookup,
 ) -> (u64, bool)
 where
-    F: FnMut(&str, u64, Option<[u8; 32]>) -> Result<()>,
+    F: FnMut(&str, u64, Option<[u8; 32]>, &str) -> Result<()>,
 {
     let mut flushed = 0u64;
     let mut submit_failed = false;
@@ -2313,6 +2321,7 @@ where
             binding.job_id.as_str(),
             deferred.nonce,
             deferred.claimed_hash,
+            &deferred.backend_label,
         ) {
             Ok(()) => {
                 job.pending_submit_nonces.insert(
@@ -2361,8 +2370,13 @@ fn submit_pool_solution(
         solution,
         backend_label,
         stats,
-        |job_id, nonce, claimed_hash| {
-            pool_client.submit_share(job_id.to_string(), nonce, claimed_hash)
+        |job_id, nonce, claimed_hash, backend_label| {
+            pool_client.submit_share_with_backend(
+                job_id.to_string(),
+                nonce,
+                claimed_hash,
+                Some(backend_label),
+            )
         },
         recent_submit_lookup,
     )
@@ -2378,7 +2392,7 @@ fn submit_pool_solution_with_submitter<F>(
     recent_submit_lookup: &mut RecentPendingSubmitLookup,
 ) -> PoolShareSubmitOutcome
 where
-    F: FnMut(&str, u64, Option<[u8; 32]>) -> Result<()>,
+    F: FnMut(&str, u64, Option<[u8; 32]>, &str) -> Result<()>,
 {
     let Some(job) = active_job.as_mut() else {
         return PoolShareSubmitOutcome::StaleEpoch;
@@ -2396,7 +2410,9 @@ where
         mode,
         job,
         stats,
-        |job_id, nonce, claimed_hash| submitter(job_id, nonce, claimed_hash),
+        |job_id, nonce, claimed_hash, backend_label| {
+            submitter(job_id, nonce, claimed_hash, backend_label)
+        },
         recent_submit_lookup,
     );
     if !job.submitted_nonces.insert(solution.nonce) {
@@ -2419,7 +2435,14 @@ where
         return PoolShareSubmitOutcome::Deferred;
     }
 
-    if submitter(binding.job_id.as_str(), solution.nonce, solution.hash).is_ok() {
+    if submitter(
+        binding.job_id.as_str(),
+        solution.nonce,
+        solution.hash,
+        backend_label,
+    )
+    .is_ok()
+    {
         stats.bump_submitted();
         if mode.is_user() {
             info("SHARE", format!("submitted (backend={backend_label})"));
@@ -3129,7 +3152,7 @@ mod tests {
             &test_solution(7, 99),
             "cpu#1",
             &stats,
-            |_job_id, _nonce, _hash| {
+            |_job_id, _nonce, _hash, _backend| {
                 submit_calls = submit_calls.saturating_add(1);
                 Ok(())
             },
@@ -3162,7 +3185,7 @@ mod tests {
             &test_solution(9, 42),
             "cpu#1",
             &stats,
-            |_job_id, nonce, _hash| {
+            |_job_id, nonce, _hash, _backend| {
                 submitted_nonces.push(nonce);
                 Ok(())
             },
@@ -3174,7 +3197,7 @@ mod tests {
             &test_solution(9, 42),
             "cpu#1",
             &stats,
-            |_job_id, nonce, _hash| {
+            |_job_id, nonce, _hash, _backend| {
                 submitted_nonces.push(nonce);
                 Ok(())
             },
@@ -3255,7 +3278,7 @@ mod tests {
             PoolConnectionMode::Dev,
             &mut job,
             &stats,
-            |_job_id, nonce, _hash| {
+            |_job_id, nonce, _hash, _backend| {
                 submitted.push(nonce);
                 Ok(())
             },
