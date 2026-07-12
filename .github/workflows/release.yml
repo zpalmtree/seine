@@ -113,6 +113,8 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
@@ -120,9 +122,23 @@ jobs:
       - name: Generate archive checksums
         run: sha256sum seine-*.tar.gz seine-*.zip > SHA256SUMS.txt
 
+      - name: Extract changelog section for this tag
+        run: |
+          awk -v tag="$GITHUB_REF_NAME" '
+            $0 ~ "^## " tag "([[:space:]]|$)" { found = 1; next }
+            /^## v/ { if (found) exit }
+            found { print }
+          ' CHANGELOG.md > RELEASE_NOTES.md
+          if [ -s RELEASE_NOTES.md ]; then
+            echo "Using CHANGELOG.md section for $GITHUB_REF_NAME"
+          else
+            echo "::warning::No CHANGELOG.md section for $GITHUB_REF_NAME; release body will only have generated notes"
+          fi
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
+          body_path: RELEASE_NOTES.md
           files: |
             SHA256SUMS.txt
             seine-*.tar.gz

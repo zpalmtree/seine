@@ -4,17 +4,18 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  scripts/release_tag.sh <version-or-tag>
+  scripts/release_tag.sh <version-or-tag> [--allow-missing-changelog]
 
 Examples:
   scripts/release_tag.sh 0.1.10
   scripts/release_tag.sh v0.1.10
 
 What it does:
-  1) Updates [package].version in Cargo.toml
-  2) Updates the root package version entry in Cargo.lock
-  3) Creates a commit: "release: vX.Y.Z"
-  4) Creates an annotated tag: vX.Y.Z
+  1) Verifies CHANGELOG.md has a "## vX.Y.Z" section (used as the release body)
+  2) Updates [package].version in Cargo.toml
+  3) Updates the root package version entry in Cargo.lock
+  4) Creates a commit: "release: vX.Y.Z"
+  5) Creates an annotated tag: vX.Y.Z
 EOF
 }
 
@@ -23,12 +24,25 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   exit 0
 fi
 
-if [[ $# -ne 1 ]]; then
+allow_missing_changelog=0
+args=()
+for arg in "$@"; do
+  case "$arg" in
+    --allow-missing-changelog)
+      allow_missing_changelog=1
+      ;;
+    *)
+      args+=("$arg")
+      ;;
+  esac
+done
+
+if [[ ${#args[@]} -ne 1 ]]; then
   usage
   exit 1
 fi
 
-input="$1"
+input="${args[0]}"
 if [[ "$input" == v* || "$input" == V* ]]; then
   version="${input:1}"
 else
@@ -54,6 +68,14 @@ fi
 if [[ -n "$(git status --porcelain)" ]]; then
   echo "error: working tree is not clean; commit or stash changes first" >&2
   exit 1
+fi
+
+if [[ "$allow_missing_changelog" != "1" ]]; then
+  if ! grep -qE "^## ${tag}([[:space:]]|$)" CHANGELOG.md 2>/dev/null; then
+    echo "error: CHANGELOG.md has no \"## ${tag}\" section." >&2
+    echo "Write brief, user-focused notes first, or pass --allow-missing-changelog." >&2
+    exit 1
+  fi
 fi
 
 tmp_toml="$(mktemp)"
