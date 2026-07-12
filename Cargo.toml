@@ -41,6 +41,10 @@ tower-http = { version = "0.5", features = ["cors"] }
 default = ["nvidia"]
 nvidia = ["dep:cudarc"]
 metal = ["dep:metal"]
+# HIP/ROCm backend for AMD GPUs. OFF by default. Compiles on stable Rust
+# without ROCm headers/toolkit installed: all HIP/hipRTC FFI is hand-declared
+# and resolved at runtime via dlopen (libamdhip64.so / libhiprtc.so).
+amd = []
 
 [target.'cfg(target_os = "macos")'.dependencies]
 metal = { version = "0.33", optional = true }
