@@ -42,12 +42,16 @@ const SEED_KERNEL_THREADS: u32 = 64;
 const EVAL_KERNEL_THREADS: u32 = 64;
 const DEFAULT_WARPS_PER_BLOCK: u32 = 1;
 const DEFAULT_NVIDIA_MAX_RREGCOUNT: u32 = 240;
-const NVIDIA_AUTOTUNE_SCHEMA_VERSION: u32 = 9;
-const NVIDIA_CUBIN_CACHE_SCHEMA_VERSION: u32 = 1;
+const NVIDIA_AUTOTUNE_SCHEMA_VERSION: u32 = 10;
+const NVIDIA_CUBIN_CACHE_SCHEMA_VERSION: u32 = 2;
 const NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_AMPERE_PLUS: &[u32] =
     &[240, 224, 208, 192, 176, 160, 144, 128];
 const NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_LEGACY: &[u32] =
     &[224, 208, 192, 176, 160, 144, 128, 112, 96];
+// Repeated RTX 5090 sweeps put every competitive profile on this frontier.
+// Keep the exhaustive Ampere+ set for other Blackwell devices until they have
+// equivalent hardware evidence; this shortlist is intentionally device-scoped.
+const NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_RTX_5090: &[u32] = &[240, 224, 208];
 // Retained for reference; the staged autotune no longer iterates this axis.
 const _NVIDIA_AUTOTUNE_LOOP_UNROLL_CANDIDATES: &[bool] = &[false];
 const DEFAULT_NVIDIA_AUTOTUNE_SAMPLES: u32 = 2;
@@ -144,6 +148,18 @@ struct NvidiaAutotuneKey {
     t_cost: u32,
     kernel_threads: u32,
     hashes_per_launch_per_lane_cap: u32,
+    #[serde(default)]
+    os: String,
+    #[serde(default)]
+    kernel_version: String,
+    #[serde(default)]
+    runtime_environment: String,
+    #[serde(default)]
+    build_fingerprint: String,
+    #[serde(default)]
+    cuda_kernel_fingerprint: String,
+    #[serde(default)]
+    nvrtc_version: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -160,7 +176,27 @@ struct NvidiaAutotuneRecord {
     autotune_secs: u64,
     #[serde(default)]
     autotune_samples: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    candidate_trace: Vec<NvidiaAutotuneCandidateTrace>,
+    #[serde(default)]
+    autotune_elapsed_millis: u64,
     timestamp_unix_secs: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+struct NvidiaAutotuneCandidateTrace {
+    tuning: NvidiaKernelTuning,
+    samples: Vec<NvidiaAutotuneSampleScore>,
+    failed_samples: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    counted_median_hps: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    counted_mean_hps: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    throughput_median_hps: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    throughput_mean_hps: Option<f64>,
+    elapsed_millis: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -422,7 +458,13 @@ impl CudaArgon2Engine {
             options
         };
         let program_name = "seine_argon2id_fill.cu";
-        let cache_key = build_cubin_cache_key(CUDA_KERNEL_SRC, program_name, &nvrtc_cubin_options);
+        let nvrtc_version = nvrtc_compiler_identity();
+        let cache_key = build_cubin_cache_key(
+            CUDA_KERNEL_SRC,
+            program_name,
+            &nvrtc_cubin_options,
+            &nvrtc_version,
+        );
         let cache_path = cubin_cache_file_path(cubin_cache_dir, &cache_key);
         let module = if let Some(cached) = load_cached_cubin(&cache_path) {
             match ctx.load_module(Ptx::from_binary(cached)) {
@@ -1754,9 +1796,11 @@ impl BenchBackend for NvidiaBackend {
                 total = total.saturating_add(done.hashes_done as u64);
             }
 
+            let elapsed_secs = round_started.elapsed().as_secs_f64().max(0.001);
             samples.push(KernelBenchSample {
                 hashes: total,
-                elapsed_secs: round_started.elapsed().as_secs_f64().max(0.001),
+                elapsed_secs,
+                wall_elapsed_secs: elapsed_secs,
             });
         }
 
@@ -2529,10 +2573,17 @@ fn compile_ptx_with_nvrtc(source: &str, program_name: &str, options: &[String]) 
     Ok(ptx)
 }
 
-fn build_cubin_cache_key(source: &str, program_name: &str, options: &[String]) -> String {
+fn build_cubin_cache_key(
+    source: &str,
+    program_name: &str,
+    options: &[String],
+    compiler_identity: &str,
+) -> String {
     let mut hasher = Blake2b512::new();
     hasher.update(NVIDIA_CUBIN_CACHE_SCHEMA_VERSION.to_le_bytes());
     hasher.update(program_name.as_bytes());
+    hasher.update([0u8]);
+    hasher.update(compiler_identity.as_bytes());
     hasher.update([0u8]);
     for option in options {
         hasher.update(option.as_bytes());
@@ -2540,6 +2591,28 @@ fn build_cubin_cache_key(source: &str, program_name: &str, options: &[String]) -
     }
     hasher.update(source.as_bytes());
     hex::encode(hasher.finalize())
+}
+
+fn cuda_kernel_fingerprint() -> String {
+    let mut hasher = Blake2b512::new();
+    hasher.update(CUDA_KERNEL_SRC.as_bytes());
+    hex::encode(hasher.finalize())
+}
+
+fn nvrtc_compiler_identity() -> String {
+    let available = unsafe { nvrtc_sys::is_culib_present() };
+    if !available {
+        return "unavailable".to_string();
+    }
+
+    let mut major = 0;
+    let mut minor = 0;
+    let result = unsafe { nvrtc_sys::nvrtcVersion(&mut major, &mut minor) };
+    if result.result().is_ok() {
+        format!("nvrtc-{major}.{minor}")
+    } else {
+        "unknown".to_string()
+    }
 }
 
 fn cubin_cache_file_path(cache_dir: &Path, cache_key: &str) -> PathBuf {
@@ -2898,6 +2971,12 @@ fn build_nvidia_autotune_key(
         t_cost,
         kernel_threads: KERNEL_THREADS,
         hashes_per_launch_per_lane_cap: hashes_per_launch_per_lane_cap.max(1),
+        os: std::env::consts::OS.to_string(),
+        kernel_version: crate::runtime_identity::runtime_kernel_version().unwrap_or_default(),
+        runtime_environment: crate::runtime_identity::runtime_environment(),
+        build_fingerprint: crate::runtime_identity::build_fingerprint(),
+        cuda_kernel_fingerprint: cuda_kernel_fingerprint(),
+        nvrtc_version: nvrtc_compiler_identity(),
     }
 }
 
@@ -2980,6 +3059,12 @@ fn nvidia_autotune_key_compatible(lhs: &NvidiaAutotuneKey, rhs: &NvidiaAutotuneK
         && lhs.t_cost == rhs.t_cost
         && lhs.kernel_threads == rhs.kernel_threads
         && lhs.hashes_per_launch_per_lane_cap == rhs.hashes_per_launch_per_lane_cap
+        && lhs.os == rhs.os
+        && lhs.kernel_version == rhs.kernel_version
+        && lhs.runtime_environment == rhs.runtime_environment
+        && lhs.build_fingerprint == rhs.build_fingerprint
+        && lhs.cuda_kernel_fingerprint == rhs.cuda_kernel_fingerprint
+        && lhs.nvrtc_version == rhs.nvrtc_version
 }
 
 fn memory_budget_distance(lhs: u64, rhs: u64) -> u64 {
@@ -2993,6 +3078,8 @@ fn persist_nvidia_autotune_record(
     measured_hps: f64,
     autotune_secs: u64,
     autotune_samples: u32,
+    candidate_trace: Vec<NvidiaAutotuneCandidateTrace>,
+    autotune_elapsed_millis: u64,
 ) -> Result<()> {
     let mut cache = load_nvidia_autotune_cache(path).unwrap_or_else(empty_nvidia_autotune_cache);
     if cache.schema_version != NVIDIA_AUTOTUNE_SCHEMA_VERSION {
@@ -3016,6 +3103,8 @@ fn persist_nvidia_autotune_record(
         },
         autotune_secs: autotune_secs.max(1),
         autotune_samples: autotune_samples.max(1),
+        candidate_trace,
+        autotune_elapsed_millis,
         timestamp_unix_secs,
     };
     if let Some(existing) = cache.records.iter_mut().find(|record| record.key == key) {
@@ -3038,10 +3127,11 @@ fn persist_nvidia_autotune_record(
     Ok(())
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 struct NvidiaAutotuneSampleScore {
     throughput_hps: f64,
     counted_hps: f64,
+    elapsed_secs: f64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -3124,6 +3214,7 @@ fn measure_nvidia_kernel_tuning_hps(
     Ok(NvidiaAutotuneSampleScore {
         throughput_hps: total_hashes as f64 / elapsed,
         counted_hps: counted_hashes / elapsed,
+        elapsed_secs: elapsed,
     })
 }
 
@@ -3235,8 +3326,14 @@ fn build_autotune_hash_depth_candidates(max_hashes_per_launch_per_lane: u32) -> 
     candidates
 }
 
-fn nvidia_autotune_regcap_candidates(compute_cap_major: u32) -> &'static [u32] {
-    if compute_cap_major == 0 {
+fn nvidia_autotune_regcap_candidates(compute_cap_major: u32, device_name: &str) -> &'static [u32] {
+    if compute_cap_major == 12
+        && device_name
+            .trim()
+            .eq_ignore_ascii_case("NVIDIA GeForce RTX 5090")
+    {
+        NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_RTX_5090
+    } else if compute_cap_major == 0 {
         NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_LEGACY
     } else if compute_cap_major >= 8 {
         NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_AMPERE_PLUS
@@ -3279,10 +3376,11 @@ fn autotune_nvidia_kernel_tuning(
     max_lanes_override: Option<usize>,
     hashes_per_launch_per_lane: u32,
 ) -> Result<NvidiaKernelTuning> {
+    let autotune_started = Instant::now();
     let cubin_cache_dir = derive_nvidia_cubin_cache_dir(cache_path);
     let sample_count = autotune_samples.max(1);
     let (compute_cap_major, _) = query_cuda_compute_capability(selected.index).unwrap_or((0, 0));
-    let regcap_candidates = nvidia_autotune_regcap_candidates(compute_cap_major);
+    let regcap_candidates = nvidia_autotune_regcap_candidates(compute_cap_major, &selected.name);
     let (m_cost_kib, _) = pow_params()
         .map(|params| (params.m_cost(), params.t_cost()))
         .unwrap_or((0, 0));
@@ -3293,12 +3391,14 @@ fn autotune_nvidia_kernel_tuning(
     // Stage 1: sweep regcap with default hash depth and lane hint.
     let default_depth = hashes_per_launch_per_lane.max(1);
     let mut best: Option<NvidiaAutotuneCandidateScore> = None;
+    let mut candidate_trace = Vec::new();
 
-    let evaluate_candidate = |candidate: NvidiaKernelTuning,
-                              best: &mut Option<NvidiaAutotuneCandidateScore>|
+    let mut evaluate_candidate = |candidate: NvidiaKernelTuning,
+                                  best: &mut Option<NvidiaAutotuneCandidateScore>|
      -> bool {
-        let mut counted_samples = Vec::with_capacity(sample_count as usize);
-        let mut throughput_samples = Vec::with_capacity(sample_count as usize);
+        let candidate_started = Instant::now();
+        let mut samples = Vec::with_capacity(sample_count as usize);
+        let mut failed_samples = 0u32;
         for _ in 0..sample_count {
             let measured = match measure_nvidia_kernel_tuning_hps(
                 selected,
@@ -3309,14 +3409,40 @@ fn autotune_nvidia_kernel_tuning(
                 Ok(score) if score.counted_hps.is_finite() && score.throughput_hps.is_finite() => {
                     score
                 }
-                _ => continue,
+                _ => {
+                    failed_samples = failed_samples.saturating_add(1);
+                    continue;
+                }
             };
-            counted_samples.push(measured.counted_hps.max(0.0));
-            throughput_samples.push(measured.throughput_hps.max(0.0));
+            samples.push(NvidiaAutotuneSampleScore {
+                counted_hps: measured.counted_hps.max(0.0),
+                throughput_hps: measured.throughput_hps.max(0.0),
+                elapsed_secs: measured.elapsed_secs.max(0.0),
+            });
         }
-        if counted_samples.is_empty() {
+        let elapsed_millis =
+            u64::try_from(candidate_started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        if samples.is_empty() {
+            candidate_trace.push(NvidiaAutotuneCandidateTrace {
+                tuning: candidate,
+                samples,
+                failed_samples,
+                counted_median_hps: None,
+                counted_mean_hps: None,
+                throughput_median_hps: None,
+                throughput_mean_hps: None,
+                elapsed_millis,
+            });
             return false;
         }
+        let mut counted_samples = samples
+            .iter()
+            .map(|sample| sample.counted_hps)
+            .collect::<Vec<_>>();
+        let mut throughput_samples = samples
+            .iter()
+            .map(|sample| sample.throughput_hps)
+            .collect::<Vec<_>>();
         counted_samples.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         throughput_samples.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let counted_median = median_from_sorted(&counted_samples);
@@ -3331,6 +3457,16 @@ fn autotune_nvidia_kernel_tuning(
             throughput_median,
             throughput_mean,
         };
+        candidate_trace.push(NvidiaAutotuneCandidateTrace {
+            tuning: candidate,
+            samples,
+            failed_samples,
+            counted_median_hps: Some(counted_median),
+            counted_mean_hps: Some(counted_mean),
+            throughput_median_hps: Some(throughput_median),
+            throughput_mean_hps: Some(throughput_mean),
+            elapsed_millis,
+        });
         let should_replace = match best {
             None => true,
             Some(best_score) => {
@@ -3429,6 +3565,8 @@ fn autotune_nvidia_kernel_tuning(
         selected_score.counted_median,
         autotune_secs,
         sample_count,
+        candidate_trace,
+        u64::try_from(autotune_started.elapsed().as_millis()).unwrap_or(u64::MAX),
     );
     Ok(selected_tuning)
 }
@@ -3529,6 +3667,12 @@ mod tests {
             t_cost: 1,
             kernel_threads: KERNEL_THREADS,
             hashes_per_launch_per_lane_cap: 2,
+            os: "linux".to_string(),
+            kernel_version: "test-kernel".to_string(),
+            runtime_environment: "native".to_string(),
+            build_fingerprint: "test-build".to_string(),
+            cuda_kernel_fingerprint: "test-cuda-kernel".to_string(),
+            nvrtc_version: "nvrtc-test".to_string(),
         };
         persist_nvidia_autotune_record(
             &path,
@@ -3542,8 +3686,36 @@ mod tests {
             0.8,
             2,
             2,
+            Vec::new(),
+            0,
         )
         .expect("first record should persist");
+        let candidate_trace = vec![NvidiaAutotuneCandidateTrace {
+            tuning: NvidiaKernelTuning {
+                max_rregcount: 224,
+                block_loop_unroll: true,
+                hashes_per_launch_per_lane: 2,
+                max_lanes_hint: None,
+            },
+            samples: vec![
+                NvidiaAutotuneSampleScore {
+                    throughput_hps: 1.1,
+                    counted_hps: 1.0,
+                    elapsed_secs: 2.1,
+                },
+                NvidiaAutotuneSampleScore {
+                    throughput_hps: 1.2,
+                    counted_hps: 1.1,
+                    elapsed_secs: 2.2,
+                },
+            ],
+            failed_samples: 0,
+            counted_median_hps: Some(1.05),
+            counted_mean_hps: Some(1.05),
+            throughput_median_hps: Some(1.15),
+            throughput_mean_hps: Some(1.15),
+            elapsed_millis: 4_300,
+        }];
         persist_nvidia_autotune_record(
             &path,
             key.clone(),
@@ -3556,6 +3728,8 @@ mod tests {
             1.0,
             2,
             2,
+            candidate_trace.clone(),
+            4_500,
         )
         .expect("second record should persist");
 
@@ -3563,6 +3737,21 @@ mod tests {
             load_nvidia_cached_tuning(&path, &key).expect("cached tuning should be available");
         assert_eq!(loaded.max_rregcount, 224);
         assert!(loaded.block_loop_unroll);
+        let cache = load_nvidia_autotune_cache(&path).expect("cache should parse");
+        assert_eq!(cache.records.len(), 1);
+        assert_eq!(cache.records[0].candidate_trace, candidate_trace);
+        assert_eq!(cache.records[0].autotune_elapsed_millis, 4_500);
+
+        let mut legacy_json = serde_json::to_value(&cache).expect("cache should serialize");
+        let legacy_record = legacy_json["records"][0]
+            .as_object_mut()
+            .expect("record should be an object");
+        legacy_record.remove("candidate_trace");
+        legacy_record.remove("autotune_elapsed_millis");
+        let legacy_cache: NvidiaAutotuneCache =
+            serde_json::from_value(legacy_json).expect("older cache records should still parse");
+        assert!(legacy_cache.records[0].candidate_trace.is_empty());
+        assert_eq!(legacy_cache.records[0].autotune_elapsed_millis, 0);
         let _ = fs::remove_file(path);
     }
 
@@ -3580,6 +3769,12 @@ mod tests {
             t_cost: 1,
             kernel_threads: KERNEL_THREADS,
             hashes_per_launch_per_lane_cap: 2,
+            os: "linux".to_string(),
+            kernel_version: "test-kernel".to_string(),
+            runtime_environment: "native".to_string(),
+            build_fingerprint: "test-build".to_string(),
+            cuda_kernel_fingerprint: "test-cuda-kernel".to_string(),
+            nvrtc_version: "nvrtc-test".to_string(),
         };
         let closer_key = NvidiaAutotuneKey {
             memory_budget_mib: 8_192,
@@ -3604,6 +3799,8 @@ mod tests {
             1.0,
             2,
             2,
+            Vec::new(),
+            0,
         )
         .expect("closer record should persist");
         persist_nvidia_autotune_record(
@@ -3618,6 +3815,8 @@ mod tests {
             1.0,
             2,
             2,
+            Vec::new(),
+            0,
         )
         .expect("farther record should persist");
 
@@ -3641,6 +3840,12 @@ mod tests {
             t_cost: 1,
             kernel_threads: KERNEL_THREADS,
             hashes_per_launch_per_lane_cap: 2,
+            os: "linux".to_string(),
+            kernel_version: "test-kernel".to_string(),
+            runtime_environment: "native".to_string(),
+            build_fingerprint: "test-build".to_string(),
+            cuda_kernel_fingerprint: "test-cuda-kernel".to_string(),
+            nvrtc_version: "nvrtc-test".to_string(),
         };
         let cap1_key = NvidiaAutotuneKey {
             hashes_per_launch_per_lane_cap: 1,
@@ -3659,6 +3864,8 @@ mod tests {
             1.0,
             2,
             2,
+            Vec::new(),
+            0,
         )
         .expect("cap-1 record should persist");
 
@@ -3672,12 +3879,62 @@ mod tests {
     }
 
     #[test]
+    fn nvidia_autotune_compatibility_does_not_cross_build_or_runtime() {
+        let key = NvidiaAutotuneKey {
+            device_name: "NVIDIA GeForce RTX 5090".to_string(),
+            memory_total_mib: 32_768,
+            memory_budget_mib: 30_720,
+            lane_capacity_tier: 14,
+            compute_cap_major: 12,
+            compute_cap_minor: 0,
+            m_cost_kib: 2_097_152,
+            t_cost: 1,
+            kernel_threads: KERNEL_THREADS,
+            hashes_per_launch_per_lane_cap: 2,
+            os: "linux".to_string(),
+            kernel_version: "6.6.0".to_string(),
+            runtime_environment: "wsl2".to_string(),
+            build_fingerprint: "build-a".to_string(),
+            cuda_kernel_fingerprint: "kernel-a".to_string(),
+            nvrtc_version: "nvrtc-12.8".to_string(),
+        };
+        let different_build = NvidiaAutotuneKey {
+            build_fingerprint: "build-b".to_string(),
+            ..key.clone()
+        };
+        let different_runtime = NvidiaAutotuneKey {
+            runtime_environment: "native".to_string(),
+            ..key.clone()
+        };
+
+        assert!(!nvidia_autotune_key_compatible(&key, &different_build));
+        assert!(!nvidia_autotune_key_compatible(&key, &different_runtime));
+    }
+
+    #[test]
     fn cubin_cache_key_changes_with_compile_options() {
         let source = "__global__ void k() {}";
-        let key_a =
-            build_cubin_cache_key(source, "k.cu", &["--gpu-architecture=sm_86".to_string()]);
-        let key_b =
-            build_cubin_cache_key(source, "k.cu", &["--gpu-architecture=sm_89".to_string()]);
+        let key_a = build_cubin_cache_key(
+            source,
+            "k.cu",
+            &["--gpu-architecture=sm_86".to_string()],
+            "nvrtc-12.8",
+        );
+        let key_b = build_cubin_cache_key(
+            source,
+            "k.cu",
+            &["--gpu-architecture=sm_89".to_string()],
+            "nvrtc-12.8",
+        );
+        assert_ne!(key_a, key_b);
+    }
+
+    #[test]
+    fn cubin_cache_key_changes_with_nvrtc_version() {
+        let source = "__global__ void k() {}";
+        let options = ["--gpu-architecture=sm_86".to_string()];
+        let key_a = build_cubin_cache_key(source, "k.cu", &options, "nvrtc-12.8");
+        let key_b = build_cubin_cache_key(source, "k.cu", &options, "nvrtc-13.0");
         assert_ne!(key_a, key_b);
     }
 
@@ -3876,6 +4133,42 @@ mod tests {
     fn pre_blackwell_default_launch_depth_stays_unchanged() {
         assert_eq!(effective_hashes_per_launch_per_lane_cap(2, false, 8), 2);
         assert_eq!(effective_hashes_per_launch_per_lane_cap(2, false, 9), 2);
+    }
+
+    #[test]
+    fn rtx_5090_autotune_uses_measured_regcap_frontier() {
+        assert_eq!(
+            nvidia_autotune_regcap_candidates(12, "NVIDIA GeForce RTX 5090"),
+            NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_RTX_5090
+        );
+        assert_eq!(
+            nvidia_autotune_regcap_candidates(12, " nvidia geforce rtx 5090 "),
+            NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_RTX_5090
+        );
+    }
+
+    #[test]
+    fn regcap_shortlist_does_not_leak_to_other_devices() {
+        assert_eq!(
+            nvidia_autotune_regcap_candidates(12, "NVIDIA GeForce RTX 5080"),
+            NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_AMPERE_PLUS
+        );
+        assert_eq!(
+            nvidia_autotune_regcap_candidates(12, "NVIDIA GeForce RTX 5090 Laptop GPU"),
+            NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_AMPERE_PLUS
+        );
+        assert_eq!(
+            nvidia_autotune_regcap_candidates(12, "NVIDIA GeForce RTX 5090 D"),
+            NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_AMPERE_PLUS
+        );
+        assert_eq!(
+            nvidia_autotune_regcap_candidates(8, "NVIDIA GeForce RTX 5090"),
+            NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_AMPERE_PLUS
+        );
+        assert_eq!(
+            nvidia_autotune_regcap_candidates(7, "NVIDIA GeForce RTX 5090"),
+            NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_LEGACY
+        );
     }
 
     fn autotune_score(

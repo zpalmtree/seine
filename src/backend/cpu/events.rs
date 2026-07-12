@@ -8,7 +8,7 @@ use super::{Shared, CRITICAL_EVENT_RETRY_MAX_WAIT, CRITICAL_EVENT_RETRY_WAIT};
 
 const MAX_EVENT_SEND_RETRIES: u32 = 10;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 pub(super) fn emit_warning(shared: &Shared, message: String) {
     emit_event(
         shared,

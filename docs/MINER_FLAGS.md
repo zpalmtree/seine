@@ -31,7 +31,8 @@ For the raw CLI output, run:
 | `--backend` | `cpu`, `nvidia`, `metal`; repeatable / comma-separated; default auto | Selects mining backends. Auto mode selects CPU and NVIDIA (when available). |
 | `--nvidia-devices` | comma-separated GPU indices | Creates one NVIDIA backend instance per listed device index. Requires NVIDIA backend selected. |
 | `--threads` | integer `>=1`; alias: `--cpu-threads` | CPU threads per CPU backend instance. If omitted, auto-sized by CPU/RAM/profile. |
-| `--cpu-affinity` | `off`, `auto`, `pcore-only`; default platform-dependent | CPU worker pinning policy. |
+| `--cpu-affinity` | `off`, `auto`, `pcore-only`; default `pcore-only` on macOS, `auto` elsewhere | CPU worker affinity policy. Native Windows `auto` uses complete physical-core topology before SMT; Linux/WSL keep OS order. macOS modes use best-effort Mach affinity tags/QoS, not hard CPU IDs. |
+| `--cpu-page-mode` | `auto`, `regular`, `large`, `large-1g`; default `auto` | CPU arena page contract. `auto` prefers explicit large pages and falls back; `regular` forces ordinary pages and disables Linux THP; `large` requires every worker to use Windows large pages or Linux HugeTLB and fails closed; `large-1g` requires explicit 1 GiB HugeTLB pages (x86_64 Linux/WSL only, two 1 GiB pages per worker, reserve via `/sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages` or the `hugepagesz=1G` boot parameter) and fails closed. `large` and `large-1g` are unsupported on macOS. |
 | `--cpu-profile` | `balanced`, `throughput`, `efficiency`; default `balanced` | Profile presets for CPU defaults (threads/poll/flush/event batching). |
 | `--cpu-threads-per-instance` | comma-separated integers `>=1` | Per-CPU-backend thread counts; length must match CPU instances. |
 | `--cpu-affinity-per-instance` | comma-separated `off|auto|pcore-only` | Per-CPU-backend affinity; length must match CPU instances. |
@@ -68,7 +69,7 @@ For the raw CLI output, run:
 | `--disable-cpu-autotune-threads` | bool flag | Disables CPU thread autotune. |
 | `--cpu-autotune-min-threads` | integer `>=1`, default `1` | Lower bound for CPU autotune thread search. |
 | `--cpu-autotune-max-threads` | integer `>=1` | Upper bound for CPU autotune thread search. |
-| `--cpu-autotune-secs` | integer `>=1`, default `6` | Base sample window per CPU autotune candidate. |
+| `--cpu-autotune-secs` | integer `>=1`, default `6` | Base sample window per CPU autotune candidate. Close balanced-profile finalists are confirmed with a longer reversed-order window before caching. |
 | `--cpu-autotune-config` | path | CPU autotune cache file (default under `--data-dir`). |
 
 ## NVIDIA Backend Tuning
@@ -77,7 +78,7 @@ For the raw CLI output, run:
 |---|---|---|
 | `--nvidia-autotune-secs` | integer `>=1`, default `5` | Base sample window per NVIDIA autotune candidate. |
 | `--nvidia-autotune-samples` | integer `>=1`, default `2` | Sample count per NVIDIA autotune candidate (median-priority scoring). |
-| `--nvidia-autotune-config` | path | NVIDIA autotune cache file (default under `--data-dir`). |
+| `--nvidia-autotune-config` | path | NVIDIA autotune cache file (default under `--data-dir`). New winner records also retain the complete candidate/sample/timing trace for cross-hardware analysis; older winner-only records remain compatible. |
 | `--nvidia-max-rregcount` | integer `>=1` | Forces register cap and skips NVIDIA autotune/cache lookup. |
 | `--nvidia-max-lanes` | integer `>=1` | Caps active NVIDIA lanes per device instance. |
 | `--nvidia-dispatch-iters-per-lane` | integer `>=1` | Overrides NVIDIA scheduler dispatch hint (iters/lane). |

@@ -9,6 +9,8 @@ pub struct BlockTemplateResponse {
     pub header_base: String,
     #[serde(default)]
     pub template_id: Option<String>,
+    #[serde(default)]
+    pub template_expires_at_unix_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

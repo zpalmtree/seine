@@ -2352,6 +2352,7 @@ dependencies = [
  "sysinfo",
  "tokio",
  "tower-http 0.5.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

@@ -39,7 +39,6 @@ Example:
     --cooldown-secs 20 \
     --nvidia-devices 0 \
     --nvidia-max-rregcount 208 \
-    --nvidia-hashes-per-launch-per-lane 2 \
     --profile release
 USAGE
 }
@@ -63,7 +62,7 @@ output_dir=""
 
 nvidia_devices="0"
 nvidia_max_rregcount=""
-nvidia_hashes_per_launch_per_lane=2
+nvidia_hashes_per_launch_per_lane=""
 nvidia_fused_target_check=0
 nvidia_no_adaptive_launch_depth=0
 
@@ -207,8 +206,15 @@ if ! [[ "$cooldown_secs" =~ ^[0-9]+$ ]]; then
     echo "error: --cooldown-secs must be an integer >= 0" >&2
     exit 1
 fi
-if ! [[ "$nvidia_hashes_per_launch_per_lane" =~ ^[0-9]+$ ]] || ((nvidia_hashes_per_launch_per_lane < 1)); then
-    echo "error: --nvidia-hashes-per-launch-per-lane must be an integer >= 1" >&2
+if [[ -n "$nvidia_hashes_per_launch_per_lane" ]]; then
+    if ! [[ "$nvidia_hashes_per_launch_per_lane" =~ ^[0-9]+$ ]] || ((nvidia_hashes_per_launch_per_lane < 1)); then
+        echo "error: --nvidia-hashes-per-launch-per-lane must be an integer >= 1" >&2
+        exit 1
+    fi
+fi
+
+if ! command -v jq >/dev/null 2>&1; then
+    echo "error: jq is required to parse benchmark reports" >&2
     exit 1
 fi
 if [[ -n "$nvidia_max_rregcount" ]]; then
@@ -235,9 +241,10 @@ extract_json_number() {
     local key="$1"
     local file="$2"
     local value
-    value="$(tr -d '\n\r\t ' < "$file" | sed -n "s/.*\"${key}\":\\([-0-9.eE+]*\\).*/\\1/p")"
-    if [[ -z "$value" ]]; then
-        echo "error: key '${key}' not found in ${file}" >&2
+    if ! value="$(jq -er --arg key "$key" \
+        'if (.[$key] | type) == "number" then .[$key] else error("missing or non-numeric field: \($key)") end' \
+        "$file")"; then
+        echo "error: numeric key '${key}' not found in ${file}" >&2
         exit 1
     fi
     printf "%s" "$value"
@@ -280,13 +287,15 @@ run_single() {
         --bench-secs "$bench_secs"
         --bench-rounds "$bench_rounds"
         --bench-warmup-rounds "$bench_warmup_rounds"
-        --nvidia-hashes-per-launch-per-lane "$nvidia_hashes_per_launch_per_lane"
         --ui plain
         --bench-output "$report_file"
     )
 
     if [[ -n "$nvidia_max_rregcount" ]]; then
         cmd+=(--nvidia-max-rregcount "$nvidia_max_rregcount")
+    fi
+    if [[ -n "$nvidia_hashes_per_launch_per_lane" ]]; then
+        cmd+=(--nvidia-hashes-per-launch-per-lane "$nvidia_hashes_per_launch_per_lane")
     fi
     if ((nvidia_fused_target_check)); then
         cmd+=(--nvidia-fused-target-check)
@@ -302,7 +311,7 @@ run_single() {
     local gpu_end
     gpu_start="$(gpu_snapshot "$gpu_query_id")"
 
-    echo "[pair ${pair}/${pairs}] ${variant}:${order} | repo=${repo_dir} profile=${run_profile} native=${run_native} devices=${nvidia_devices} rreg=${nvidia_max_rregcount:-auto} depth=${nvidia_hashes_per_launch_per_lane}"
+    echo "[pair ${pair}/${pairs}] ${variant}:${order} | repo=${repo_dir} profile=${run_profile} native=${run_native} devices=${nvidia_devices} rreg=${nvidia_max_rregcount:-auto} depth=${nvidia_hashes_per_launch_per_lane:-shipping-default}"
     if ((run_native)); then
         (
             cd "$repo_dir"
@@ -399,7 +408,7 @@ candidate_late_pct="$(awk -F '\t' 'NR>1 && $1=="candidate" {sum+=$8; n+=1} END {
     echo "candidate_native=$candidate_native"
     echo "nvidia_devices=$nvidia_devices"
     echo "nvidia_max_rregcount=${nvidia_max_rregcount:-auto}"
-    echo "nvidia_hashes_per_launch_per_lane=$nvidia_hashes_per_launch_per_lane"
+    echo "nvidia_hashes_per_launch_per_lane=${nvidia_hashes_per_launch_per_lane:-shipping-default}"
     echo "nvidia_fused_target_check=$nvidia_fused_target_check"
     echo "nvidia_no_adaptive_launch_depth=$nvidia_no_adaptive_launch_depth"
     echo "baseline_dir=$baseline_dir"

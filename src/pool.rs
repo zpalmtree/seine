@@ -2003,6 +2003,12 @@ mod tests {
 
             for attempt in 0..2 {
                 let mut socket = accept_next();
+                // Windows accepts can inherit the listener's nonblocking mode. This server
+                // side of the test uses blocking reads with timeouts, so normalize it
+                // explicitly instead of depending on platform-specific inheritance.
+                socket
+                    .set_nonblocking(false)
+                    .expect("accepted test socket should allow blocking mode");
                 let mut reader =
                     BufReader::new(socket.try_clone().expect("socket clone should succeed"));
                 reader

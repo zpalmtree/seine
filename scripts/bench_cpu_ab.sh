@@ -9,6 +9,11 @@ Usage:
     --candidate-dir <path> \
     [--bench-kind kernel|kernel-effective|backend|end-to-end] \
     [--threads <n>] \
+    [--baseline-threads <n>] \
+    [--candidate-threads <n>] \
+    [--page-mode auto|regular|large|large-1g] \
+    [--baseline-page-mode auto|regular|large|large-1g] \
+    [--candidate-page-mode auto|regular|large|large-1g] \
     [--bench-secs <n>] \
     [--bench-rounds <n>] \
     [--bench-warmup-rounds <n>] \
@@ -17,6 +22,8 @@ Usage:
     [--profile <cargo-profile>] \
     [--baseline-profile <cargo-profile>] \
     [--candidate-profile <cargo-profile>] \
+    [--baseline-binary <path>] \
+    [--candidate-binary <path>] \
     [--native] \
     [--baseline-native] \
     [--candidate-native] \
@@ -26,6 +33,8 @@ Usage:
     [--features <cargo-features>] \
     [--baseline-features <cargo-features>] \
     [--candidate-features <cargo-features>] \
+    [--baseline-miner-arg <arg>]... \
+    [--candidate-miner-arg <arg>]... \
     [--output-dir <path>] \
     [-- <extra miner args>]
 
@@ -48,6 +57,11 @@ baseline_dir=""
 candidate_dir=""
 bench_kind="backend"
 threads=1
+baseline_threads=""
+candidate_threads=""
+page_mode=""
+baseline_page_mode=""
+candidate_page_mode=""
 bench_secs=20
 bench_rounds=3
 bench_warmup_rounds=1
@@ -57,6 +71,8 @@ profile="release"
 native=0
 baseline_profile=""
 candidate_profile=""
+baseline_binary=""
+candidate_binary=""
 baseline_native=0
 candidate_native=0
 native_override=0
@@ -69,6 +85,8 @@ baseline_features=""
 candidate_features=""
 output_dir=""
 extra_args=()
+baseline_miner_args=()
+candidate_miner_args=()
 
 while (($#)); do
     case "$1" in
@@ -86,6 +104,26 @@ while (($#)); do
             ;;
         --threads)
             threads="${2:-}"
+            shift 2
+            ;;
+        --baseline-threads)
+            baseline_threads="${2:-}"
+            shift 2
+            ;;
+        --candidate-threads)
+            candidate_threads="${2:-}"
+            shift 2
+            ;;
+        --page-mode)
+            page_mode="${2:-}"
+            shift 2
+            ;;
+        --baseline-page-mode)
+            baseline_page_mode="${2:-}"
+            shift 2
+            ;;
+        --candidate-page-mode)
+            candidate_page_mode="${2:-}"
             shift 2
             ;;
         --bench-secs)
@@ -118,6 +156,14 @@ while (($#)); do
             ;;
         --candidate-profile)
             candidate_profile="${2:-}"
+            shift 2
+            ;;
+        --baseline-binary)
+            baseline_binary="${2:-}"
+            shift 2
+            ;;
+        --candidate-binary)
+            candidate_binary="${2:-}"
             shift 2
             ;;
         --output-dir)
@@ -164,6 +210,22 @@ while (($#)); do
             candidate_features="${2:-}"
             shift 2
             ;;
+        --baseline-miner-arg)
+            if (($# < 2)); then
+                echo "error: --baseline-miner-arg requires a value" >&2
+                exit 1
+            fi
+            baseline_miner_args+=("$2")
+            shift 2
+            ;;
+        --candidate-miner-arg)
+            if (($# < 2)); then
+                echo "error: --candidate-miner-arg requires a value" >&2
+                exit 1
+            fi
+            candidate_miner_args+=("$2")
+            shift 2
+            ;;
         -h|--help)
             usage
             exit 0
@@ -193,6 +255,18 @@ fi
 if [[ -z "$candidate_profile" ]]; then
     candidate_profile="$profile"
 fi
+if [[ -z "$baseline_threads" ]]; then
+    baseline_threads="$threads"
+fi
+if [[ -z "$candidate_threads" ]]; then
+    candidate_threads="$threads"
+fi
+if [[ -z "$baseline_page_mode" ]]; then
+    baseline_page_mode="$page_mode"
+fi
+if [[ -z "$candidate_page_mode" ]]; then
+    candidate_page_mode="$page_mode"
+fi
 if ((native_override == 0)); then
     baseline_native="$native"
     candidate_native="$native"
@@ -208,12 +282,41 @@ if [[ -z "$candidate_features" ]]; then
     candidate_features="$features"
 fi
 
+if [[ -n "$baseline_binary" && ! -x "$baseline_binary" ]]; then
+    echo "error: --baseline-binary is not executable: $baseline_binary" >&2
+    exit 1
+fi
+if [[ -n "$candidate_binary" && ! -x "$candidate_binary" ]]; then
+    echo "error: --candidate-binary is not executable: $candidate_binary" >&2
+    exit 1
+fi
+if [[ -n "$baseline_binary" ]]; then
+    if ((baseline_native || baseline_no_default_features)) || [[ -n "$baseline_features" ]]; then
+        echo "error: baseline cargo build flags cannot be combined with --baseline-binary" >&2
+        exit 1
+    fi
+fi
+if [[ -n "$candidate_binary" ]]; then
+    if ((candidate_native || candidate_no_default_features)) || [[ -n "$candidate_features" ]]; then
+        echo "error: candidate cargo build flags cannot be combined with --candidate-binary" >&2
+        exit 1
+    fi
+fi
+
 if ! [[ "$pairs" =~ ^[0-9]+$ ]] || ((pairs < 1)); then
     echo "error: --pairs must be an integer >= 1" >&2
     exit 1
 fi
 if ! [[ "$threads" =~ ^[0-9]+$ ]] || ((threads < 1)); then
     echo "error: --threads must be an integer >= 1" >&2
+    exit 1
+fi
+if ! [[ "$baseline_threads" =~ ^[0-9]+$ ]] || ((baseline_threads < 1)); then
+    echo "error: --baseline-threads must be an integer >= 1" >&2
+    exit 1
+fi
+if ! [[ "$candidate_threads" =~ ^[0-9]+$ ]] || ((candidate_threads < 1)); then
+    echo "error: --candidate-threads must be an integer >= 1" >&2
     exit 1
 fi
 if ! [[ "$bench_secs" =~ ^[0-9]+$ ]] || ((bench_secs < 1)); then
@@ -232,6 +335,12 @@ if ! [[ "$cooldown_secs" =~ ^[0-9]+$ ]]; then
     echo "error: --cooldown-secs must be an integer >= 0" >&2
     exit 1
 fi
+for selected_page_mode in "$baseline_page_mode" "$candidate_page_mode"; do
+    if [[ -n "$selected_page_mode" && ! "$selected_page_mode" =~ ^(auto|regular|large|large-1g)$ ]]; then
+        echo "error: page mode must be auto, regular, large, or large-1g (got: $selected_page_mode)" >&2
+        exit 1
+    fi
+done
 
 if [[ -z "$output_dir" ]]; then
     stamp="$(date +%Y%m%d_%H%M%S)"
@@ -242,18 +351,131 @@ output_dir="$(cd "$output_dir" && pwd)"
 
 raw_tsv="$output_dir/results.tsv"
 summary_txt="$output_dir/summary.txt"
-printf "variant\tpair\torder\tavg_hps\tmedian_hps\tcounted_hashes\tlate_hashes\treport\n" > "$raw_tsv"
+printf "variant\tpair\torder\tavg_hps\tmedian_hps\tcounted_hashes\tlate_hashes\tpage_mode\tbacking\treport\n" > "$raw_tsv"
 
 extract_json_number() {
     local key="$1"
     local file="$2"
-    local value
-    value="$(tr -d '\n\r\t ' < "$file" | sed -n "s/.*\"${key}\":\\([-0-9.eE+]*\\).*/\\1/p")"
-    if [[ -z "$value" ]]; then
-        echo "error: key '${key}' not found in ${file}" >&2
-        exit 1
+    python3 - "$key" "$file" <<'PY'
+import json
+import math
+import sys
+
+key, path = sys.argv[1:]
+try:
+    with open(path, "r", encoding="utf-8") as handle:
+        value = json.load(handle)[key]
+except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
+    raise SystemExit(
+        f"error: key {key!r} not found as a top-level JSON field in {path}: {exc}"
+    )
+if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+    raise SystemExit(f"error: key {key!r} in {path} is not a finite JSON number")
+print(value, end="")
+PY
+}
+
+validate_memory_backing() {
+    local expected_mode="$1"
+    local expected_threads="$2"
+    local file="$3"
+    python3 - "$expected_mode" "$expected_threads" "$file" <<'PY'
+import json
+import sys
+
+expected, expected_threads, path = sys.argv[1:]
+expected_threads = int(expected_threads)
+with open(path, "r", encoding="utf-8") as handle:
+    report = json.load(handle)
+
+actual_mode = report.get("config_fingerprint", {}).get("cpu_page_mode")
+if actual_mode != expected:
+    raise SystemExit(
+        f"error: {path} reports cpu_page_mode={actual_mode!r}, expected {expected!r}"
+    )
+
+keys = (
+    "memory_explicit_large_workers",
+    "memory_explicit_large_1g_workers",
+    "memory_transparent_huge_workers",
+    "memory_regular_workers",
+    "memory_heap_workers",
+    "memory_explicit_large_bytes",
+    "memory_explicit_large_1g_bytes",
+    "memory_transparent_huge_bytes",
+    "memory_regular_bytes",
+    "memory_heap_bytes",
+    "memory_allocation_failures",
+)
+signatures = set()
+for run in report.get("runs", []):
+    cpu_runs = [entry for entry in run.get("backend_runs", []) if entry.get("backend") == "cpu"]
+    if not cpu_runs:
+        raise SystemExit(f"error: {path} has no CPU backing telemetry for round {run.get('round')}")
+    signatures.add(tuple(sum(int(entry.get(key, 0)) for entry in cpu_runs) for key in keys))
+
+if not signatures:
+    raise SystemExit(f"error: {path} has no measured CPU rounds")
+if len(signatures) != 1:
+    raise SystemExit(f"error: {path} changed CPU memory backing between rounds: {sorted(signatures)}")
+
+signature = next(iter(signatures))
+values = dict(zip(keys, signature))
+large = values["memory_explicit_large_workers"]
+large1g = values["memory_explicit_large_1g_workers"]
+thp = values["memory_transparent_huge_workers"]
+regular = values["memory_regular_workers"]
+heap = values["memory_heap_workers"]
+if large + large1g + thp + regular + heap == 0:
+    raise SystemExit(f"error: {path} reports zero CPU workers across all backing classes")
+total_bytes = sum(
+    values[key]
+    for key in (
+        "memory_explicit_large_bytes",
+        "memory_explicit_large_1g_bytes",
+        "memory_transparent_huge_bytes",
+        "memory_regular_bytes",
+        "memory_heap_bytes",
+    )
+)
+expected_bytes = expected_threads * 2 * 1024 * 1024 * 1024
+if total_bytes != expected_bytes:
+    raise SystemExit(
+        f"error: {path} reports {total_bytes} CPU arena bytes, expected {expected_bytes} "
+        f"for {expected_threads} thread(s)"
+    )
+if expected == "large" and (large == 0 or large1g or thp or regular or heap):
+    raise SystemExit(f"error: {path} requested large pages but reports {values}")
+if expected == "large-1g" and (large1g == 0 or large or thp or regular or heap):
+    raise SystemExit(f"error: {path} requested 1 GiB pages but reports {values}")
+if expected == "regular" and (regular == 0 or large or large1g or thp or heap):
+    raise SystemExit(f"error: {path} requested regular pages but reports {values}")
+
+print(
+    "large={}:large1g={}:thp={}:regular={}:heap={}:large_bytes={}:large1g_bytes={}:thp_bytes={}:regular_bytes={}:heap_bytes={}:failures={}".format(
+        large,
+        large1g,
+        thp,
+        regular,
+        heap,
+        values["memory_explicit_large_bytes"],
+        values["memory_explicit_large_1g_bytes"],
+        values["memory_transparent_huge_bytes"],
+        values["memory_regular_bytes"],
+        values["memory_heap_bytes"],
+        values["memory_allocation_failures"],
+    ),
+    end="",
+)
+PY
+}
+
+format_shell_args() {
+    if (($# == 0)); then
+        printf '<none>'
+        return
     fi
-    printf "%s" "$value"
+    printf '%q ' "$@"
 }
 
 run_single() {
@@ -262,39 +484,73 @@ run_single() {
     local pair="$3"
     local order="$4"
     local run_profile="$5"
-    local run_native="$6"
-    local run_no_default_features="$7"
-    local run_features="$8"
+    local run_threads="$6"
+    local run_native="$7"
+    local run_no_default_features="$8"
+    local run_features="$9"
+    local run_page_mode="${10}"
+    local run_binary="${11}"
     local report_file="$output_dir/${variant}_pair${pair}_${order}.json"
+    local report_arg="$report_file"
+    local run_miner_args=()
 
-    local cmd=(
-        cargo run
-        --profile "$run_profile"
-    )
-    if ((run_no_default_features)); then
-        cmd+=(--no-default-features)
+    if ((${#extra_args[@]})); then
+        run_miner_args+=("${extra_args[@]}")
     fi
-    if [[ -n "$run_features" ]]; then
-        cmd+=(--features "$run_features")
+    if [[ "$variant" == "baseline" ]] && ((${#baseline_miner_args[@]})); then
+        run_miner_args+=("${baseline_miner_args[@]}")
+    elif [[ "$variant" == "candidate" ]] && ((${#candidate_miner_args[@]})); then
+        run_miner_args+=("${candidate_miner_args[@]}")
+    fi
+
+    local cmd=()
+    if [[ -n "$run_binary" ]]; then
+        cmd+=("$run_binary")
+    else
+        cmd+=(cargo run --profile "$run_profile")
+        if ((run_no_default_features)); then
+            cmd+=(--no-default-features)
+        fi
+        if [[ -n "$run_features" ]]; then
+            cmd+=(--features "$run_features")
+        fi
+        cmd+=(--)
+    fi
+    # A Windows executable launched by WSL does not consistently receive an
+    # interoperable path for a POSIX /mnt/c report argument. Keep the local
+    # path for harness-side parsing, but hand the executable the equivalent
+    # native path so it can create its JSON report itself.
+    if [[ -n "${WSL_DISTRO_NAME:-}" && "$run_binary" == *.exe ]]; then
+        report_arg="$(wslpath -w "$report_file")"
     fi
     cmd+=(
-        --
         --bench
         --bench-kind "$bench_kind"
         --backend cpu
-        --threads "$threads"
+        --threads "$run_threads"
         --disable-cpu-autotune-threads
         --bench-secs "$bench_secs"
         --bench-rounds "$bench_rounds"
         --bench-warmup-rounds "$bench_warmup_rounds"
         --ui plain
-        --bench-output "$report_file"
+        --bench-output "$report_arg"
     )
-    if ((${#extra_args[@]})); then
-        cmd+=("${extra_args[@]}")
+    if [[ -n "$run_page_mode" ]]; then
+        cmd+=(--cpu-page-mode "$run_page_mode")
+    fi
+    if ((${#run_miner_args[@]})); then
+        cmd+=("${run_miner_args[@]}")
     fi
 
-    echo "[pair ${pair}/${pairs}] ${variant}:${order} | repo=${repo_dir} profile=${run_profile} native=${run_native} no_default_features=${run_no_default_features} features=${run_features:-<none>}"
+    printf '[pair %s/%s] %s:%s | repo=%s binary=%s profile=%s threads=%s page_mode=%s native=%s no_default_features=%s features=%s args=' \
+        "$pair" "$pairs" "$variant" "$order" "$repo_dir" "${run_binary:-<cargo>}" \
+        "$run_profile" "$run_threads" "${run_page_mode:-<implicit>}" "$run_native" "$run_no_default_features" "${run_features:-<none>}"
+    if ((${#run_miner_args[@]})); then
+        format_shell_args "${run_miner_args[@]}"
+    else
+        format_shell_args
+    fi
+    printf '\n'
     if ((run_native)); then
         (
             cd "$repo_dir"
@@ -315,15 +571,19 @@ run_single() {
     local median_hps
     local counted_hashes
     local late_hashes
+    local backing="unchecked"
     avg_hps="$(extract_json_number "avg_hps" "$report_file")"
     median_hps="$(extract_json_number "median_hps" "$report_file")"
     counted_hashes="$(extract_json_number "total_counted_hashes" "$report_file")"
     late_hashes="$(extract_json_number "total_late_hashes" "$report_file")"
-    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
-        "$variant" "$pair" "$order" "$avg_hps" "$median_hps" "$counted_hashes" "$late_hashes" "$report_file" \
+    if [[ -n "$run_page_mode" ]]; then
+        backing="$(validate_memory_backing "$run_page_mode" "$run_threads" "$report_file")"
+    fi
+    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+        "$variant" "$pair" "$order" "$avg_hps" "$median_hps" "$counted_hashes" "$late_hashes" "${run_page_mode:-implicit}" "$backing" "$report_file" \
         >> "$raw_tsv"
 
-    echo "  avg_hps=${avg_hps} median_hps=${median_hps} counted=${counted_hashes} late=${late_hashes}"
+    echo "  avg_hps=${avg_hps} median_hps=${median_hps} counted=${counted_hashes} late=${late_hashes} backing=${backing}"
 }
 
 total_runs=$((pairs * 2))
@@ -333,44 +593,103 @@ for ((pair = 1; pair <= pairs; pair++)); do
         first_variant="baseline"
         first_repo="$baseline_dir"
         first_profile="$baseline_profile"
+        first_threads="$baseline_threads"
         first_native="$baseline_native"
         first_no_default_features="$baseline_no_default_features"
         first_features="$baseline_features"
+        first_page_mode="$baseline_page_mode"
+        first_binary="$baseline_binary"
         second_variant="candidate"
         second_repo="$candidate_dir"
         second_profile="$candidate_profile"
+        second_threads="$candidate_threads"
         second_native="$candidate_native"
         second_no_default_features="$candidate_no_default_features"
         second_features="$candidate_features"
+        second_page_mode="$candidate_page_mode"
+        second_binary="$candidate_binary"
     else
         first_variant="candidate"
         first_repo="$candidate_dir"
         first_profile="$candidate_profile"
+        first_threads="$candidate_threads"
         first_native="$candidate_native"
         first_no_default_features="$candidate_no_default_features"
         first_features="$candidate_features"
+        first_page_mode="$candidate_page_mode"
+        first_binary="$candidate_binary"
         second_variant="baseline"
         second_repo="$baseline_dir"
         second_profile="$baseline_profile"
+        second_threads="$baseline_threads"
         second_native="$baseline_native"
         second_no_default_features="$baseline_no_default_features"
         second_features="$baseline_features"
+        second_page_mode="$baseline_page_mode"
+        second_binary="$baseline_binary"
     fi
 
-    run_single "$first_variant" "$first_repo" "$pair" "first" "$first_profile" "$first_native" "$first_no_default_features" "$first_features"
+    run_single "$first_variant" "$first_repo" "$pair" "first" "$first_profile" "$first_threads" "$first_native" "$first_no_default_features" "$first_features" "$first_page_mode" "$first_binary"
     run_idx=$((run_idx + 1))
     if ((cooldown_secs > 0 && run_idx < total_runs)); then
         echo "  cooldown ${cooldown_secs}s"
         sleep "$cooldown_secs"
     fi
 
-    run_single "$second_variant" "$second_repo" "$pair" "second" "$second_profile" "$second_native" "$second_no_default_features" "$second_features"
+    run_single "$second_variant" "$second_repo" "$pair" "second" "$second_profile" "$second_threads" "$second_native" "$second_no_default_features" "$second_features" "$second_page_mode" "$second_binary"
     run_idx=$((run_idx + 1))
     if ((cooldown_secs > 0 && run_idx < total_runs)); then
         echo "  cooldown ${cooldown_secs}s"
         sleep "$cooldown_secs"
     fi
 done
+
+if [[ -n "$baseline_page_mode" || -n "$candidate_page_mode" ]]; then
+    python3 - "$raw_tsv" "$baseline_page_mode" "$candidate_page_mode" <<'PY'
+import csv
+import sys
+
+path, baseline_mode, candidate_mode = sys.argv[1:]
+with open(path, "r", encoding="utf-8", newline="") as handle:
+    rows = list(csv.DictReader(handle, delimiter="\t"))
+
+by_variant = {}
+for row in rows:
+    if row["backing"] == "unchecked":
+        continue
+    by_variant.setdefault(row["variant"], set()).add(row["backing"])
+
+for variant, signatures in by_variant.items():
+    if len(signatures) != 1:
+        raise SystemExit(
+            f"error: {variant} memory backing changed between A/B runs: {sorted(signatures)}"
+        )
+
+def normalized(signature):
+    values = dict(part.split("=", 1) for part in signature.split(":"))
+    byte_keys = ("large_bytes", "thp_bytes", "regular_bytes", "heap_bytes")
+    byte_values = tuple(int(values[key]) for key in byte_keys)
+    total_bytes = sum(byte_values)
+    if total_bytes <= 0:
+        raise SystemExit(f"error: invalid zero-byte backing signature: {signature}")
+    page_fractions = tuple(round(value / total_bytes, 9) for value in byte_values)
+    lane_equivalents = total_bytes / (2 * 1024 * 1024 * 1024)
+    failure_rate = round(int(values["failures"]) / lane_equivalents, 9)
+    return page_fractions, failure_rate
+
+if baseline_mode and baseline_mode == candidate_mode:
+    baseline = by_variant.get("baseline", set())
+    candidate = by_variant.get("candidate", set())
+    baseline_normalized = {normalized(value) for value in baseline}
+    candidate_normalized = {normalized(value) for value in candidate}
+    if baseline_normalized != candidate_normalized:
+        raise SystemExit(
+            "error: baseline and candidate used different memory backing under the same "
+            f"page mode: baseline={sorted(baseline_normalized)} "
+            f"candidate={sorted(candidate_normalized)}"
+        )
+PY
+fi
 
 baseline_avg="$(awk -F '\t' 'NR>1 && $1=="baseline" {sum+=$4; n+=1} END {if (n>0) printf "%.12f", sum/n; else print "nan"}' "$raw_tsv")"
 candidate_avg="$(awk -F '\t' 'NR>1 && $1=="candidate" {sum+=$4; n+=1} END {if (n>0) printf "%.12f", sum/n; else print "nan"}' "$raw_tsv")"
@@ -379,6 +698,10 @@ delta_pct="$(awk -v b="$baseline_avg" -v c="$candidate_avg" 'BEGIN { if (b == 0 
 {
     echo "bench_kind=$bench_kind"
     echo "threads=$threads"
+    echo "baseline_threads=$baseline_threads"
+    echo "candidate_threads=$candidate_threads"
+    echo "baseline_page_mode=${baseline_page_mode:-implicit}"
+    echo "candidate_page_mode=${candidate_page_mode:-implicit}"
     echo "bench_secs=$bench_secs"
     echo "bench_rounds=$bench_rounds"
     echo "bench_warmup_rounds=$bench_warmup_rounds"
@@ -388,12 +711,35 @@ delta_pct="$(awk -v b="$baseline_avg" -v c="$candidate_avg" 'BEGIN { if (b == 0 
     echo "default_native=$native"
     echo "baseline_profile=$baseline_profile"
     echo "candidate_profile=$candidate_profile"
+    echo "baseline_binary=${baseline_binary:-<cargo>}"
+    echo "candidate_binary=${candidate_binary:-<cargo>}"
     echo "baseline_native=$baseline_native"
     echo "candidate_native=$candidate_native"
     echo "baseline_no_default_features=$baseline_no_default_features"
     echo "candidate_no_default_features=$candidate_no_default_features"
     echo "baseline_features=$baseline_features"
     echo "candidate_features=$candidate_features"
+    printf 'common_miner_args='
+    if ((${#extra_args[@]})); then
+        format_shell_args "${extra_args[@]}"
+    else
+        format_shell_args
+    fi
+    printf '\n'
+    printf 'baseline_miner_args='
+    if ((${#baseline_miner_args[@]})); then
+        format_shell_args "${baseline_miner_args[@]}"
+    else
+        format_shell_args
+    fi
+    printf '\n'
+    printf 'candidate_miner_args='
+    if ((${#candidate_miner_args[@]})); then
+        format_shell_args "${candidate_miner_args[@]}"
+    else
+        format_shell_args
+    fi
+    printf '\n'
     echo "baseline_dir=$baseline_dir"
     echo "candidate_dir=$candidate_dir"
     echo "baseline_avg_hps=$baseline_avg"

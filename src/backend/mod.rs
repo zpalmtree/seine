@@ -404,6 +404,28 @@ pub enum BackendEvent {
 pub struct BackendTelemetry {
     pub active_lanes: u64,
     pub pending_work: u64,
+    /// CPU workers whose arena is fully backed by explicit HugeTLB/large pages.
+    pub memory_explicit_large_workers: u64,
+    /// CPU workers whose arena is fully backed by explicit 1 GiB HugeTLB pages.
+    pub memory_explicit_large_1g_workers: u64,
+    /// CPU workers with at least some measured transparent-huge-page coverage.
+    pub memory_transparent_huge_workers: u64,
+    /// CPU workers with at least some ordinary-page coverage.
+    pub memory_regular_workers: u64,
+    /// CPU workers using the allocator's final heap fallback.
+    pub memory_heap_workers: u64,
+    /// Bytes backed by explicit HugeTLB/large pages.
+    pub memory_explicit_large_bytes: u64,
+    /// Bytes backed by explicit 1 GiB HugeTLB pages.
+    pub memory_explicit_large_1g_bytes: u64,
+    /// Bytes reported as transparent huge pages by the operating system.
+    pub memory_transparent_huge_bytes: u64,
+    /// Bytes backed by ordinary pages.
+    pub memory_regular_bytes: u64,
+    /// Bytes held by heap fallback arenas.
+    pub memory_heap_bytes: u64,
+    /// Failed preferred allocation attempts since the previous telemetry sample.
+    pub memory_allocation_failures: u64,
     pub dropped_events: u64,
     pub completed_assignments: u64,
     pub completed_assignment_hashes: u64,
@@ -697,9 +719,11 @@ pub trait BenchBackend: Send {
             }
             let started = Instant::now();
             let hashes = self.kernel_bench(seconds, shutdown)?;
+            let elapsed_secs = started.elapsed().as_secs_f64().max(0.001);
             samples.push(KernelBenchSample {
                 hashes,
-                elapsed_secs: started.elapsed().as_secs_f64().max(0.001),
+                elapsed_secs,
+                wall_elapsed_secs: elapsed_secs,
             });
         }
         Ok(samples)
@@ -722,9 +746,11 @@ pub trait BenchBackend: Send {
             }
             let started = Instant::now();
             let hashes = self.kernel_bench_effective(seconds, shutdown)?;
+            let elapsed_secs = started.elapsed().as_secs_f64().max(0.001);
             samples.push(KernelBenchSample {
                 hashes,
-                elapsed_secs: started.elapsed().as_secs_f64().max(0.001),
+                elapsed_secs,
+                wall_elapsed_secs: elapsed_secs,
             });
         }
         Ok(samples)
@@ -734,7 +760,10 @@ pub trait BenchBackend: Send {
 #[derive(Debug, Clone, Copy)]
 pub struct KernelBenchSample {
     pub hashes: u64,
+    /// Actual elapsed time for the hashes counted in this sample.
     pub elapsed_secs: f64,
+    /// Full wall time attributed to the sample, including any backend lifecycle overhead.
+    pub wall_elapsed_secs: f64,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]

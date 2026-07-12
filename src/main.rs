@@ -6,6 +6,7 @@ mod daemon_api;
 mod dev_fee;
 mod miner;
 mod pool;
+mod runtime_identity;
 mod types;
 mod user_config;
 mod version;

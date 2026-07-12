@@ -12,6 +12,10 @@ This log tracks CPU backend/hash-kernel tuning attempts and measured outcomes.
 ## Newest-first index
 
 - `Updated summary of cumulative adopted optimizations`
+- `2026-07-11 1 GiB explicit hugepages on WSL Zen 5 (adopted, pending boot pool)`
+- `2026-07-11 verifiable page modes, native Windows, and WSL HugeTLB confirmation`
+- `2026-07-10 Apple Silicon scheduler, SME2, PGO, and autotuner follow-up`
+- `2026-07-10 cross-host affinity, memory-pressure, and native Windows validation`
 - `2026-03-13 Zen 5 AVX-512 column gather/scatter + MaybeUninit`
 - `2026-03-09 Zen 5 hugepage reservation + AVX-512 vpermq retest`
 - `2026-03-09 Zen 5 (Ryzen 9 9950X3D) AVX-512 dispatch audit + native retest`
@@ -89,10 +93,12 @@ step on this machine.
 | 28 | Mid-compress prefetch for data-dep slices | +8.1% | +8.0% | Adopted |
 | 35 | Interleaved lo/hi BLAMKA half-rounds | +0.95% | — | Adopted |
 | 37 | 2-column Phase 3+4 interleave | +1.56% | — | Adopted |
-| 38 | AArch64 `PowBlock` 128-byte alignment | ~0% (1T) | +0.44% short, +0.10% long (12T backend) | Adopted |
-| 47 | macOS `pcore-only` CPU affinity default | ~0% | +0.15% (12T), +2-5% directional (16T) | Adopted |
+| 38 (row) | 2-row Phase 1+2 interleave | +4.31% | +5.94% | Adopted |
+| 38 (alignment) | AArch64 `PowBlock` 128-byte alignment | ~0% (1T) | +0.44% short, +0.10% long (12T backend) | Adopted |
+| 47 | macOS `pcore-only` affinity-tag/QoS default | ~0% | +0.94% at 14T in 2026-07 paired retest | Retained |
+| 52 | Balanced-autotuner finalist confirmation | — | protects +2.57% from a noisy 13T choice on this host | Adopted |
 
-Cumulative AArch64: from ~1.37 H/s (scalar) to ~2.73 H/s, **~99% total improvement**.
+Cumulative AArch64: from ~1.37 H/s (scalar) to ~2.88 H/s, **~110% total improvement**.
 
 ### Cross-platform insights
 
@@ -121,6 +127,266 @@ Cumulative AArch64: from ~1.37 H/s (scalar) to ~2.73 H/s, **~99% total improveme
   roughly +6% at 16T native backend throughput, while a subsequent AVX-512
   diagonal-permute micro-tweak improved the 1T kernel by ~1% but regressed the
   16T native backend and was rejected.
+
+## 2026-07-11 1 GiB explicit hugepages on WSL Zen 5 (adopted, pending boot pool)
+
+`--cpu-page-mode large-1g` (added in `2ba6617`) maps each 2 GiB arena as two
+1 GiB HugeTLB pages via `MAP_HUGETLB | MAP_HUGE_1GB`, fail-closed like `large`.
+
+- Host: Ryzen 9 9950X3D, WSL2 (48 GiB VM). Runtime reservation on the booted
+  system materialized only `5/18` one-GiB pages even after explicit compaction
+  passes, so the measurement used 2 threads (4 pages) with the 2 MiB pool
+  (9,677 pages) untouched as the baseline side.
+- Kernel A/B, same `release-native` binary both sides, three alternating
+  pairs, 12 s x 3 rounds + warmup, 10 s cooldowns:
+  `large` (2 MiB) `4.5045 H/s` vs `large-1g` `4.5997 H/s`.
+- Paired geometric gain: **+2.121%** (95% bootstrap CI **+0.832% to
+  +3.756%**), faster in 3/3 pairs. Backing telemetry recorded exactly two
+  explicit arenas per class with zero fallback on both sides.
+- Interpretation: with 2 MiB pages one lane's 2 GiB arena needs 1,024 dTLB
+  entries; with 1 GiB pages it needs two. The residual dTLB pressure that
+  survived Attempt 25's 2 MiB pool is measurable and now mostly recoverable.
+- Adoption: boot-time pool configured (`.wslconfig` `kernelCommandLine =
+  hugepagesz=1G hugepages=19`), the 2 MiB sysctl reservation commented out;
+  both effective at the next WSL restart. Mine with `--cpu-page-mode
+  large-1g` afterwards. Rollback: `sudo sysctl vm.nr_hugepages=9677` plus
+  `--cpu-page-mode large`.
+- Open confirmation: repeat at the 9-lane production profile once the boot
+  pool exists — bandwidth saturation at 9 lanes may compress the per-lane
+  TLB gain below the 2-thread figure.
+- Artifacts: `perf-results/2026-07-11/wsl-1g-hugepage-kernel/`.
+
+## 2026-07-11 verifiable page modes, native Windows, and WSL HugeTLB confirmation
+
+The miner now exposes `--cpu-page-mode auto|regular|large` and records actual
+arena backing per worker and byte in benchmark reports. Required-large mode
+fails closed instead of silently comparing fallback pages. The CPU A/B harness
+validates schema-12 backing telemetry, exact two-GiB arenas, zero fallback for
+`large`, no THP contamination for `regular`, and stable backing between runs.
+
+### WSL2 explicit HugeTLB (adopted operationally)
+
+- Host: Ryzen 9 9950X3D, 32 visible logical CPUs, WSL2 configured for 48 GiB
+  RAM and 8 GiB swap.
+- Reserved `9677` two-MiB HugeTLB pages: nine two-GiB arenas plus 5% headroom.
+- Four alternating 9-lane backend pairs, 20 seconds x 3 measured rounds plus
+  one warmup and 15-second cooldowns.
+- Regular pages: `7.83867 H/s`; explicit HugeTLB: `8.15861 H/s`.
+- Paired geometric gain: **+4.096%** (95% bootstrap CI **+2.904% to +5.766%**),
+  all four pairs faster.
+- Every candidate report recorded exactly nine / 18 GiB explicit-large arenas,
+  zero fallback/failures, and no swap growth.
+
+This is the retained recommendation for WSL/Linux hosts that can reserve the
+full pool before fragmentation. The reservation permanently removes roughly
+18.9 GiB from ordinary memory on this configuration, so it remains an explicit
+operator choice rather than an automatic system mutation.
+
+### Native Windows large pages (supported, not a performance recommendation)
+
+After assigning `SeLockMemoryPrivilege`, native Windows successfully allocated
+all nine two-GiB arenas with large pages. A matched four-pair test measured
+`7.85859 H/s` regular versus `7.85163 H/s` large: paired delta **-0.074%**
+(95% CI **-1.124% to +1.780%**), with only one of four pairs faster. Keep the
+portable allocator and fail-closed mode, but do not recommend large pages for
+this Windows/9950X3D profile based on hashrate.
+
+### Rejected follow-ups
+
+- Windows L3/CCD-balanced affinity: implemented with complete-topology checks
+  and physical-first fallback, then measured at `+0.438%` (95% CI `-1.000%` to
+  `+1.425%`, two of three pairs faster). It failed the 0.75%/consistency gate
+  and was reverted.
+- x86 prefetch coverage reduced from all sixteen cache lines to offsets 0/512:
+  two reverse-order one-lane HugeTLB kernel pairs regressed by **13.8%** and
+  **15.5%**. The third pair was cancelled and full-block coverage retained.
+
+### Cross-target checks
+
+- macOS M4 Max schema-12 smoke: 16 `auto` workers recorded exactly 32 GiB of
+  regular backing with zero failures and averaged `29.242 H/s` in the short
+  validation; swap increased by about 659 MiB. This confirms the existing
+  recommendation: 14 `pcore-only` for balanced use, 16 `auto` only for maximum
+  throughput (the longer prior run reached `30.938 H/s`).
+- The existing native-Windows mixed profile remains valid: 9 CPU lanes plus 14
+  RTX 5090 lanes measured `17.353 H/s`, with separate system RAM and VRAM. Page
+  mode does not change the backend/Stratum contract, and native Windows large
+  pages were neutral, so the known regular-page mixed profile remains preferred.
+
+## 2026-07-10 Apple Silicon scheduler, SME2, PGO, and autotuner follow-up
+
+Host: Apple M4 Max, 12 performance + 4 efficiency cores, 48 GiB unified
+memory, macOS 26.5, Rust 1.93.0. Unless noted otherwise, comparisons used the
+CPU-only release build, 14 persistent backend workers, `pcore-only`, three
+alternating pairs, one 15-second warmup plus two measured 15-second rounds per
+leg, and ten-second cooldowns.
+
+### Scheduler and build retests (not adopted)
+
+| Candidate | Baseline mean | Candidate mean | Paired geometric delta | 95% CI | Result |
+|---|---:|---:|---:|---:|---|
+| Utility QoS only for workers 12+ | 29.0528 | 29.0979 | +0.148% | -1.053% to +1.555% | Reject; slower in 2/3 pairs |
+| Affinity tags off | 29.0217 | 28.7079 | -1.085% | -2.267% to +0.130% | Reject; retain `pcore-only` |
+| LLVM PGO trained on a 60-second 14-lane backend run | 28.8322 | 28.6717 | -0.545% | -1.284% to +0.402% | Reject; slower in 2/3 pairs |
+| Pair DD columns 0+1 before next-reference prefetch | 29.0345 | 28.6865 | -1.207% | -2.031% to +0.086% | Reject; earlier prefetch is worth more than added ILP |
+
+The PGO profile was produced with the Rust 1.93-matched LLVM 21.1.8 tools and
+contained 734 functions / 24,392 blocks. Exact-source binary identities and
+profile checksums are preserved under
+`perf-results/2026-07-10/mac-pgo/`.
+
+Powermetrics showed why splitting QoS did not help. The existing 14-worker
+process already consumed approximately 11.99 P-core CPU equivalents plus 2.0
+E-core equivalents while every worker reported User Interactive QoS. The E
+cluster was active at 2592 MHz and the P cores were saturated. macOS was already
+placing the two spill workers as intended.
+
+### SME2 feasibility (not adopted)
+
+The M4 exposes SME/SME2 with a 64-byte streaming vector length. Isolated
+`SMSTART`, predicate, load/store, add, and widening-multiply probes executed
+successfully. A 512-bit implementation then packed two independent Blamka
+rounds into eight u64 lanes and matched the scalar reference.
+
+Two ABI/toolchain details were required: Clang's locally-streaming prologue
+issued `RDSVL` before `SMSTART` and faulted, so a fixed-width wrapper entered
+streaming mode first; that wrapper also had to preserve non-streaming
+callee-saved `d8`–`d15` around the mode transition.
+
+Even after replacing full-width multiplies with SVE2 widening `UMLALB`, the
+amortized result was decisively slower. Eight round pairs under one streaming
+transition took about 338.6 ns versus 102.3 ns for tuned NEON. Apple executes
+the wide streaming operations over multiple cycles, while the current NEON
+schedule already exposes equivalent lane parallelism to the wide OOO core.
+No Seine SME code was added.
+
+### Attempt 52 (Apple): confirm close balanced-autotuner finalists (adopted)
+
+A fresh 1..14 default-style autotune measured 13 lanes at 27.300 H/s and 14 at
+27.452 H/s. The balanced profile therefore cached 13 because it appeared within
+the intended 99%-of-peak floor. A longer direct A/B showed that decision was
+wrong:
+
+- 13 lanes: 28.3329 H/s arithmetic mean.
+- 14 lanes: 29.0609 H/s arithmetic mean.
+- Paired geometric gain: **+2.572%** (95% CI **+1.914% to +2.920%**), 14 faster
+  in all three pairs.
+- Swap did not increase during the comparison.
+
+The root cause was finalist sampling variance, not the 99% balanced policy.
+Six-second scans could also swap the apparent peak outright; one validation
+reported 13 at 29.105 and 14 at 28.828 H/s. An initial fix that only confirmed a
+lower selection against a distinct measured peak was therefore insufficient.
+
+The adopted design confirms close balanced candidates before caching:
+
+- A runner-up within 97% of the provisional peak triggers confirmation, as
+  does any balanced selection below the provisional peak.
+- The confirmation window is twice `--cpu-autotune-secs`, bounded to 6..30
+  seconds.
+- Initial and confirmation samples combine actual hashes and wall time.
+- Finalists run in descending thread order, reversing the ascending ramp to
+  reduce thermal/run-position bias.
+- Clear peaks skip the extra work; the 99% memory-saving selection rule remains
+  unchanged.
+
+Final native validation initially measured 13 at 28.970 and 14 at 29.003 H/s.
+Reversed 12-second confirmations produced combined rates of 27.977 and 28.751
+H/s respectively, and the tuner correctly cached 14. The native macOS
+CPU-only suite passed all 352 tests. Implemented in `14e23e5`.
+
+## 2026-07-10 cross-host affinity, memory-pressure, and native Windows validation
+
+The benchmark report now accounts for the measured wall interval and lifecycle
+overhead, and `benchctl` captures host/build identity around paired runs. Absolute
+rates below should therefore not be compared directly with older reports that used
+nominal windows or different lifecycle accounting.
+
+### Native Windows (Ryzen 9 9950X3D)
+
+- Host: Windows 11, 16 physical / 32 logical CPUs, 64 GiB, native Rust 1.93 MSVC.
+- Four 2 GiB lanes, High Performance selected only during each experiment and the
+  original Balanced plan restored in `finally`.
+- `auto` physical-core-first versus no affinity:
+  - `5.6725` -> `6.8009 H/s`
+  - paired geometric delta **+20.01%** (95% bootstrap CI **+12.16% to +27.03%**).
+- Exact same-source binary isolation, old raw logical order versus complete
+  physical-core-first topology:
+  - `5.7912` -> `6.6980 H/s`
+  - paired geometric delta **+15.81%** (95% CI **+8.34% to +20.00%**), all three
+    pairs faster and candidate CV `0.78%`.
+- Adopted only for native Windows. Incomplete, overlapping, or unknown topology
+  groups fail closed to the original order.
+- The new `VirtualAlloc` arena path safely fell back to regular pages because the
+  account lacked `SeLockMemoryPrivilege` (Win32 1300). No privilege or reboot was
+  applied during this validation.
+
+### WSL2 (same Ryzen host)
+
+- WSL exposed 10 physical / 20 logical CPUs and a 16 GiB memory limit.
+- A same-code raw-order versus physical-first A/B measured `5.7894` versus
+  `5.7245 H/s`: **-1.14%**, with a wide **-7.20% to +2.21%** confidence interval
+  and mixed pair signs.
+- Transparent-hugepage coverage varied from `0.2%` to `39.9%` between legs, and
+  earlier interleaved work measured a significant `-8.21%` physical-first
+  regression. Affinity cannot be isolated reliably under those conditions.
+- Conclusion: retain legacy OS/core_affinity ordering on Linux and WSL. Revisit
+  native Linux separately with a fixed HugeTLB reservation; do not infer native
+  Linux policy from WSL's virtual topology.
+
+### Apple M4 Max (12P + 4E, 48 GiB)
+
+CPU-only steady backend results (`5 x 20s`, one warmup unless noted):
+
+| Lanes / affinity | Average H/s | Memory observation |
+|---|---:|---|
+| 10 / `pcore-only` | 23.856 | no swap pressure observed |
+| 12 / `pcore-only` | 27.348 | no swap pressure observed |
+| 14 / `auto` | 29.323 | no swap created |
+| 16 / `auto` | 30.938 | created/used about 3 GiB swap |
+| 16 / `pcore-only` | 30.000 | began with swap already in use |
+
+The shipping 14-lane affinity decision used a separate three-pair interleaved A/B:
+
+- `pcore-only`: `29.2556 H/s`
+- `auto`: `28.9809 H/s`
+- `auto` paired geometric delta **-0.94%** (95% CI **-1.22% to -0.45%**), all
+  three pairs slower.
+
+Retain `pcore-only` as the balanced macOS default. A dedicated 48 GiB M4 Max can
+explicitly use `--threads 16 --cpu-affinity auto` for the highest observed rate,
+but it trades another ~5.7% over the paired 14-lane baseline for substantial OS
+memory pressure.
+
+### 15-lane follow-up (not recommended)
+
+The missing point between the balanced 14-lane setting and the pressured
+16-lane maximum was measured at commit `90a57da` with the CPU-only release build.
+Three alternating `pcore-only` pairs used one 15-second warmup plus two measured
+15-second rounds per leg and ten-second cooldowns:
+
+- 14 lanes: `29.1262 H/s` arithmetic mean.
+- 15 lanes: `29.4098 H/s` arithmetic mean.
+- Paired geometric delta: **+0.968%** (95% bootstrap CI **-0.465% to +2.086%**),
+  with two of three pairs faster.
+- Swap used increased by `951,383,491` bytes (`907.31 MiB`) over the wrapped
+  sequence, and macOS expanded total swap by exactly `1 GiB`.
+
+The gain is small, uncertain, and costs measurable swap activity, so 15 lanes is
+not a worthwhile operating point. Retain 14 lanes for balanced use and reserve
+16 lanes for an explicit maximum-throughput choice. The CPU A/B harness now
+accepts separate `--baseline-threads` and `--candidate-threads` values so future
+lane-count comparisons remain interleaved and reproducible.
+
+Semantic correction: `core_affinity` on macOS maps its values to Mach
+`THREAD_AFFINITY_POLICY` tags, not hard logical CPU IDs. `pcore-only` limits the
+tag set using the perflevel0 count and combines that with a high-QoS scheduler
+preference; it does not guarantee P-core placement. Historical sections below
+describe the original hypothesis and are retained as experiment history.
+
+Metal remains explicit opt-in. Prior M4 Max measurements (`24.3 H/s` CPU-only,
+`2.32 H/s` Metal-only, `4.61 H/s` combined under the older harness) and the new
+CPU scaling results do not justify active Metal optimization on unified memory.
 
 ## 2026-03-13 Zen 5 AVX-512 column gather/scatter + MaybeUninit
 

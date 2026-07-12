@@ -44,6 +44,12 @@ This file preserves the full engineering reference for AI agents doing optimizat
 
 ### CPU Backend Tuning
 
+- `--cpu-page-mode` (`auto`, `regular`, `large`, `large-1g`; default `auto`) controls the CPU arena page contract.
+  - `auto` prefers explicit Windows large pages/Linux HugeTLB, then retains the platform fallback chain.
+  - `regular` forces ordinary pages and disables Linux THP for a controlled baseline.
+  - `large` requires every worker to allocate explicit large pages and fails CPU backend startup on any fallback; it is rejected on macOS.
+  - `large-1g` requires explicit 1 GiB HugeTLB pages (`MAP_HUGETLB|MAP_HUGE_1GB`, two pages per 2 GiB worker arena) and also fails closed; x86_64 Linux/WSL only. Telemetry reports it as `large1g`/`large1g_bytes`, separate from 2 MiB `large`.
+  - CPU autotune caches and benchmark compatibility are separated by page mode. Schema-12 benchmark reports retain measured backing workers/bytes and allocation failures.
 - `--cpu-profile` (`balanced`, `throughput`, `efficiency`; default `balanced`) applies preset CPU threading/poll/flush defaults.
   - Profile defaults apply when related knobs are omitted; explicit flags still override profile defaults.
 - `--cpu-hash-batch-size` (default `64`) controls per-worker hash counter flush batch size.
@@ -59,6 +65,7 @@ This file preserves the full engineering reference for AI agents doing optimizat
   - Autotune uses a binary-style peak search for larger thread ranges, then locally sweeps neighboring candidates for final selection.
   - Final thread selection is profile-aware: `throughput` picks peak H/s, while `balanced` and `efficiency` bias toward lower thread counts when they remain close to peak throughput (reducing RAM pressure).
   - Candidate sampling auto-extends up to an internal cap to collect a minimum hash count on very slow lanes (reduces variance vs fixed very short windows).
+  - When balanced-profile finalists are close, the tuner remeasures them with a longer window in descending thread order before caching. This reduces short-window and ascending-ramp bias without changing the profile's memory-saving threshold.
   - `--cpu-autotune-config` overrides the persisted autotune config path.
 
 ### NVIDIA Backend Tuning
@@ -66,12 +73,14 @@ This file preserves the full engineering reference for AI agents doing optimizat
 - `--nvidia-autotune-secs` (default `5`) controls per-candidate benchmark window for regcap autotune.
 - `--nvidia-autotune-samples` (default `2`) runs multiple samples per candidate; autotune prioritizes median deadline-window counted H/s (then mean counted H/s, then throughput tie-breaks).
 - `--nvidia-autotune-config` overrides the persisted NVIDIA autotune cache path (`<seine-data-dir>/seine.nvidia-autotune.json` by default).
+  - New records retain the complete candidate trace (raw counted/throughput samples, failures, per-candidate elapsed time, and total autotune elapsed time) so future search policies can be replayed across hardware. Older winner-only records remain readable.
 - `--nvidia-max-rregcount` forces a fixed register cap and skips autotune/cache lookup.
 - `--nvidia-max-lanes` caps active NVIDIA lanes per device instance.
 - `--nvidia-dispatch-iters-per-lane` and `--nvidia-allocation-iters-per-lane` override scheduler/allocator lane-iteration hints.
 - `--nvidia-hashes-per-launch-per-lane` (default `2`) controls CUDA launch depth per lane (`higher => fewer launches`, often higher H/s on this workload, but coarser cancel/fence preemption).
   - On Blackwell, if the flag is left unset and a cached/default tuning record resolves to depth `2`, Seine clamps the runtime depth to `1` for finer preemption. Explicit CLI overrides keep the requested depth.
   - Blackwell fresh autotune also re-probes regcap+depth jointly and breaks near ties toward shallower full-lane profiles, with a soft preference for the measured `rreg=208` frontier.
+  - The exact desktop `NVIDIA GeForce RTX 5090` on compute capability 12 uses the repeatedly measured `[240, 224, 208]` regcap frontier during fresh autotune. Other devices, including 5090 laptop/regional variants, retain the exhaustive architecture-wide candidate set.
 - `--nvidia-no-adaptive-launch-depth` disables backend pressure/deadline-based launch-depth shaping.
 - `--nvidia-fused-target-check` enables in-fill-kernel target checking (disabled by default; can regress throughput on some GPUs).
 - `--nvidia-template-stop-policy` (`auto`, `on`, `off`) controls whether NVIDIA workers enforce template `stop_at`; `auto` follows `--strict-round-accounting`.
@@ -103,9 +112,10 @@ This file preserves the full engineering reference for AI agents doing optimizat
 
 - Late-solution template retention is timeout-aware (derived from refresh/control/assign/prefetch timing) with time-based eviction and a bounded cache (entry and memory caps) to reduce stale drops during backend lag/spiky tip churn.
 - Deferred solution submission deduplicates by `(epoch, nonce)` across backends and suppresses repeat submit attempts across later rounds.
-- `--cpu-affinity` (`auto`, `pcore-only`, or `off`) controls CPU worker pinning policy.
+- `--cpu-affinity` (`auto`, `pcore-only`, or `off`) controls CPU worker affinity/scheduler hints.
   - Default is `pcore-only` on macOS Apple Silicon (`auto` on other platforms).
-  - `pcore-only` pins CPU hashing workers to the perflevel0 logical CPU set (P-core logical IDs) and can help at higher lane counts on Apple Silicon.
+  - Native Windows `auto` spreads workers across complete physical-core topology groups before using SMT siblings; Linux/WSL retain the OS order because WSL topology and page coverage produced unstable results.
+  - On macOS, `core_affinity` uses Mach affinity tags rather than hard CPU IDs. `pcore-only` limits the tag set using the perflevel0 count and combines it with a high-QoS preference, but cannot guarantee P-core placement.
 - `--ui` (`auto`, `tui`, `plain`) controls rendering mode. `auto` enables TUI only when stdout/stderr are terminals.
 - A backend runtime fault quarantines only that backend; mining continues on remaining active backends when possible.
 - CPU backend runtime errors are latched per assignment so only the first fault event is emitted, avoiding queue saturation during shutdown.
@@ -118,8 +128,9 @@ Run deterministic local benchmarking (no API connection needed):
 - `--bench-kind kernel`: hash kernel only (single backend).
 - `--bench-kind kernel-effective`: kernel path with wall-time accounting and target/eval enabled (single backend), useful for isolating backend orchestration overhead.
 - `--bench-kind backend`: persistent backend workers (steady-state throughput).
-- `--bench-kind end-to-end`: includes backend start/stop per round.
-- Kernel benchmarks report both `elapsed` (steady benchmark window, from `--bench-secs`) and `wall` (full runtime including startup/teardown) per round.
+- `--bench-kind end-to-end`: lifecycle throughput including backend start, measured work/fence, and backend teardown per round.
+- With `--bench-warmup-rounds 0`, the first end-to-end round includes cold backend initialization such as autotune and NVRTC/cache loading; warmups intentionally consume that cold-start cost before measured rounds.
+- Kernel benchmarks calculate H/s from actual elapsed time (including completed-batch overrun), not the configured duration. Reports retain configured, actual, overrun, and wall timing per round.
 - Worker benchmarks always apply a round-end measurement fence so round H/s is comparable across strict/relaxed accounting modes.
   - Worker benchmarks now honor `--work-allocation` (`adaptive`/`static`) so scheduler tuning can be measured without mining mode.
   - Benchmark reports now expose `counted_hashes`, `late_hashes`, and `late_hash_pct` per round plus aggregate late-hash accounting in the summary; throughput uses measured elapsed + fence time to avoid inflation when backend preemption is coarse.
@@ -186,6 +197,7 @@ Output goes to `data/bench_cpu_ab_<kind>_<timestamp>/` and includes:
 - `results.tsv` with per-run metrics.
 - `summary.txt` with baseline/candidate means and percent delta.
 - Optional: use `--baseline-profile` / `--candidate-profile` and `--baseline-native` / `--candidate-native` to A/B build profiles or ISA flags in one interleaved run.
+- Optional: use `--page-mode` or `--baseline-page-mode` / `--candidate-page-mode` for verified page-policy comparisons; the harness rejects fallback or inconsistent backing.
 - Optional: use `--no-default-features`, `--baseline-no-default-features`,
   `--candidate-no-default-features`, `--features`, `--baseline-features`, and
   `--candidate-features` to A/B CPU-only or feature-gated builds without
@@ -207,11 +219,11 @@ Run interleaved baseline/candidate NVIDIA benchmarks with cooldown gaps to reduc
   --cooldown-secs 20 \
   --nvidia-devices 0 \
   --nvidia-max-rregcount 208 \
-  --nvidia-hashes-per-launch-per-lane 2 \
   --profile release
 ```
 
 Output goes to `data/bench_nvidia_ab_<kind>_<timestamp>/` and includes:
 - `results.tsv` with per-run benchmark metrics plus GPU start/end snapshots (`temp/sm_clock/mem_clock/power/util`).
 - `summary.txt` with baseline/candidate means, percent delta, and averaged late-hash percentage.
+- Launch depth is omitted by default so both variants exercise their shipping defaults (including Blackwell's implicit depth handling); pass `--nvidia-hashes-per-launch-per-lane` only for an explicit depth experiment.
 - Optional: use `--nvidia-fused-target-check`, `--nvidia-no-adaptive-launch-depth`, and trailing `-- <extra miner args>` for controlled A/B sweeps.

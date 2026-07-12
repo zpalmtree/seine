@@ -7,6 +7,59 @@ Measured on March 9, 2026 on this host:
 - VRAM: `32607 MiB`
 - Seine benchmark mode: local `--bench` runs only, no daemon or pool traffic
 
+## July 10, 2026 native Windows validation
+
+The corrected lifecycle-accounting harness was also exercised on the same RTX
+5090 while ordinary desktop/game GPU users remained open. These runs are useful
+for platform direction, not a replacement for the quiet-host frontier below.
+
+- The five-nonce GPU/CPU target-bracket differential passed natively in `23.4s`;
+  the equivalent WSL run took about `147s` under its recorded host conditions.
+- Matching one-lane `208/1`, `10s x 3` backend smoke tests measured:
+  - WSL2, NVRTC 13.1: `0.4835 H/s`
+  - native Windows, NVRTC 12.8: `0.5345 H/s`
+  - native directional delta: **+10.55%**
+- Native Windows was very stable (`0.5332` to `0.5355 H/s`), but both preflights
+  reported about 7 GiB of existing VRAM allocations and nonzero GPU activity.
+  The NVRTC versions also differ, so do not attribute the full delta solely to
+  WSL virtualization.
+
+Packaging finding: the current `cudarc` feature set searches CUDA 12.8 Windows
+DLL names such as `nvrtc64_120_0.dll`; a CUDA 13.1-only archive exposes
+`nvrtc64_130_0.dll` and is not discovered. The native validation therefore used
+NVIDIA's checksum-verified 12.8.61 NVRTC redistributable in a user-local `PATH`,
+without a system installer or reboot. The tagged-release workflow now downloads
+that exact archive, verifies its SHA-256, and bundles `nvrtc64_120_0.dll` plus
+`nvrtc-builtins64_128.dll` beside `seine.exe`, so release users do not need the
+manual `PATH` setup.
+
+## July 11, 2026 WSL2 cold-start validation
+
+The fresh autotuner now uses the repeatedly measured `240/224/208` register-cap
+frontier on the exact desktop `NVIDIA GeForce RTX 5090` (compute capability 12).
+It deliberately does not apply to 5090 Laptop, 5090 D, other Blackwell cards, or
+older architectures; those devices retain the exhaustive candidate set until
+we have equivalent hardware evidence.
+
+On the same RTX 5090 with driver `610.47`, NVRTC `13.1`, 14 lanes, default
+five-second/two-sample autotune, and empty data directories:
+
+| Fresh path | Regcap candidates compiled | Selected profile | Ready | Whole captured run |
+| --- | ---: | --- | ---: | ---: |
+| exhaustive control | 8 | `208/2` | `283.4s` | `337.821s` |
+| exact-5090 shortlist | 3 | `208/1` | `134.0s` | `184.614s` |
+
+That saves `149.4s` to readiness (`52.7%`) and `153.207s` across the complete
+captured run (`45.4%`). The different fresh-run H/s values are not treated as a
+throughput result because WSL fence latency varied materially between runs.
+
+A three-pair interleaved cached check initialized both builds in `1.0-1.1s` and
+ran both at effective depth 1. Baseline averaged `7.8591 H/s`; the shortlist
+build averaged `8.0938 H/s`. The paired geometric delta was `+2.960%`, but its
+95% bootstrap interval was `-2.591%` to `+5.881%` and one of three pairs
+reversed. The correct conclusion is steady-state parity/no regression, not a
+hashrate gain. The GPU/CPU solution-target bracket differential also passed.
+
 ## Current Backend Shape
 
 The NVIDIA path is split between the runtime/backend wrapper in `src/backend/nvidia.rs` and the CUDA kernel in `src/backend/nvidia_kernel.cu`.
@@ -23,6 +76,7 @@ Current design, in practical terms:
   - unrolled cooperative loads/stores to raise memory-level parallelism
   - warp-shuffle fused G-round handoff instead of extra shared-memory round trips
   - Blackwell-specific autotune tie-breaks and cached depth clamping
+  - an exact-desktop-5090 fresh-autotune shortlist for the measured regcap frontier
 
 ## Benchmark Method
 
@@ -95,7 +149,9 @@ This card still shows meaningful thermal/boost variance, so the exact percentage
 ## What To Do On A 5090
 
 - Leave the default cached/autotuned NVIDIA profile alone.
-  - On this host, that means `14` lanes and an autotuned `224/1` record.
+  - Driver `590.48.01` selected `224/1`; the later `610.47` fresh validation
+    selected `208/1`. Let the cache track the current build/driver instead of
+    hard-coding one of those close frontier points.
 - Do not enable `--nvidia-fused-target-check` by default on Blackwell.
 - Do not force depth `2` globally.
   - With adaptive depth disabled, late work jumped from `14.29%` to `25.00%`.
@@ -104,15 +160,20 @@ This card still shows meaningful thermal/boost variance, so the exact percentage
 
 ## Where The Next Gains Are Most Likely
 
-### 1. Cut Blackwell cold-start time
+### 1. Maintain the shorter desktop-5090 cold start
 
-The biggest practical pain point is startup, not steady-state throughput. Fresh-cache initialization took `246.6s` here.
+The exact-device shortlist implemented the highest-value startup improvement:
+the latest empty-cache readiness measurement fell from `283.4s` to `134.0s`.
 
-High-value directions:
+Follow-up work should validate this frontier when the driver/NVRTC toolchain
+changes materially. Do not extend the shortlist to another 5090 variant or
+Blackwell SKU without a fresh exhaustive control on that hardware.
 
-- narrow the Blackwell regcap/depth search using the already-observed frontier
-- persist and trust more of the fresh-autotune decision path when the device identity is unchanged
-- consider a faster first-pass heuristic followed by background re-tune instead of blocking startup on the full search
+Fresh autotune records now preserve every evaluated tuning tuple, raw counted
+and throughput samples, failed-sample count, per-candidate elapsed time, and
+total autotune duration. This is the generalization path: collect the same
+evidence on other cards, then replay coarse/refined search policies against the
+actual exhaustive winners instead of extrapolating a 5090 product profile.
 
 ### 2. Reduce fence/control tail without regressing throughput
 
@@ -136,4 +197,4 @@ Inference: this workload is not power-limited on the 5090. Bigger wins are more 
 
 ## Bottom Line
 
-The 5090 is already using the current NVIDIA backend effectively. The right default on this host is still the cached autotuned path, not a manually forced regcap/depth override. The most useful next optimization target is Blackwell startup/autotune time; the most useful steady-state target is fence/cancel tail reduction without increasing late work.
+The 5090 is already using the current NVIDIA backend effectively. The right default on this host is still the cached autotuned path, not a manually forced regcap/depth override. Fresh startup is now materially shorter on the exact desktop 5090; the most useful steady-state target is fence/cancel tail reduction without increasing late work.

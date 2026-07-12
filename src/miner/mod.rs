@@ -42,6 +42,8 @@ use crate::backend::{
     BackendInstanceId, BackendTelemetry, BenchBackend, DeadlineSupport, DynamicShareTarget,
     MiningSolution, PowBackend, PreemptionGranularity, WORK_ID_MAX,
 };
+#[cfg(any(target_os = "linux", test))]
+use crate::config::CpuPageMode;
 use crate::config::{
     BackendKind, BackendSpec, Config, CpuPerformanceProfile, MiningMode, UiMode, WorkAllocation,
 };
@@ -54,7 +56,7 @@ use ui::{info, warn};
 const TEMPLATE_RETRY_DELAY: Duration = Duration::from_secs(2);
 const MIN_EVENT_WAIT: Duration = Duration::from_millis(1);
 const BACKEND_EVENT_SOURCE_CAPACITY_MAX: usize = 256;
-const CPU_AUTOTUNE_RECORD_SCHEMA_VERSION: u32 = 5;
+const CPU_AUTOTUNE_RECORD_SCHEMA_VERSION: u32 = 7;
 const CPU_AUTOTUNE_RECORD_MAX_AGE_SECS: u64 = 14 * 24 * 60 * 60;
 const CPU_AUTOTUNE_LINEAR_SCAN_MAX_CANDIDATES: usize = 8;
 const CPU_AUTOTUNE_FINAL_SWEEP_RADIUS: usize = 2;
@@ -65,6 +67,9 @@ const CPU_AUTOTUNE_RAMP_EARLY_STOP_STREAK: usize = 2;
 const CPU_AUTOTUNE_RAMP_EARLY_STOP_FLOOR_FRAC: f64 = 0.985;
 const CPU_AUTOTUNE_BALANCED_PEAK_FLOOR_FRAC: f64 = 0.99;
 const CPU_AUTOTUNE_EFFICIENCY_PEAK_FLOOR_FRAC: f64 = 0.75;
+const CPU_AUTOTUNE_FINAL_CONFIRM_CLOSE_FRAC: f64 = 0.97;
+const CPU_AUTOTUNE_FINAL_CONFIRM_MIN_SECS: u64 = 6;
+const CPU_AUTOTUNE_FINAL_CONFIRM_WINDOW_MULTIPLIER: u64 = 2;
 
 #[derive(Debug, Clone, Copy)]
 struct BackendRuntimePolicy {
@@ -124,6 +129,17 @@ pub(super) struct BackendRoundTelemetry {
     completed_assignment_micros: u64,
     peak_active_lanes: u64,
     peak_pending_work: u64,
+    memory_explicit_large_workers: u64,
+    memory_explicit_large_1g_workers: u64,
+    memory_transparent_huge_workers: u64,
+    memory_regular_workers: u64,
+    memory_heap_workers: u64,
+    memory_explicit_large_bytes: u64,
+    memory_explicit_large_1g_bytes: u64,
+    memory_transparent_huge_bytes: u64,
+    memory_regular_bytes: u64,
+    memory_heap_bytes: u64,
+    memory_allocation_failures: u64,
     peak_inflight_assignment_hashes: u64,
     peak_inflight_assignment_micros: u64,
     assignment_enqueue_timeouts: u64,
@@ -149,9 +165,14 @@ pub(super) struct BackendRoundTelemetry {
 #[serde(default)]
 struct CpuAutotuneHostFingerprint {
     cpu_brand: Option<String>,
+    cpu_arch: Option<String>,
     logical_cores: usize,
     physical_cores: Option<usize>,
     total_memory_bytes: u64,
+    os: String,
+    kernel_version: Option<String>,
+    runtime_environment: String,
+    build_fingerprint: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -159,6 +180,7 @@ struct CpuAutotuneRecord {
     schema_version: u32,
     profile: String,
     affinity: String,
+    page_mode: String,
     cpu_instances: usize,
     min_threads: usize,
     max_threads: usize,
@@ -437,6 +459,7 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
                         control_check_interval_hashes: cfg.cpu_control_check_interval_hashes,
                         hash_flush_interval: cfg.cpu_hash_flush_interval,
                         event_dispatch_capacity: cfg.cpu_event_dispatch_capacity,
+                        page_mode: cfg.cpu_page_mode,
                     },
                 )) as Arc<dyn PowBackend>,
                 BackendKind::Metal => Arc::new(MetalBackend::new(
@@ -641,8 +664,9 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
     info(
         "MINER",
         format!(
-            "cpu-profile | {} | auto-cap={} | autotune={} range={}..{} secs={}",
+            "cpu-profile | {} | page_mode={} | auto-cap={} | autotune={} range={}..{} secs={}",
             cpu_profile_label(cfg.cpu_profile),
+            cfg.cpu_page_mode.as_str(),
             cfg.cpu_auto_threads_cap,
             if cfg.cpu_autotune_threads {
                 "on"
@@ -942,8 +966,9 @@ fn maybe_autotune_cpu_threads(
     info(
         tag,
         format!(
-            "cpu-autotune | finding the fastest thread count for your CPU (profile={}, testing {}..{} threads, ~{}s per candidate)",
+            "cpu-autotune | finding the fastest thread count for your CPU (profile={}, page_mode={}, testing {}..{} threads, ~{}s per candidate)",
             cpu_profile_label(cfg.cpu_profile),
+            cfg.cpu_page_mode.as_str(),
             min_threads,
             max_threads,
             autotune_secs,
@@ -1136,6 +1161,51 @@ fn maybe_autotune_cpu_threads(
         return Ok(());
     }
 
+    if let Some(provisional) = select_cpu_autotune_candidate(cfg.cpu_profile, &measurements) {
+        let finalists =
+            cpu_autotune_confirmation_threads(cfg.cpu_profile, provisional, &measurements);
+        if !finalists.is_empty() {
+            let confirmation_secs = cpu_autotune_confirmation_window_secs(autotune_secs);
+            info(
+                tag,
+                format!(
+                    "cpu-autotune | close balanced finalists need confirmation; rechecking {} for ~{}s each (descending thread order)",
+                    finalists
+                        .iter()
+                        .map(usize::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    confirmation_secs,
+                ),
+            );
+            for threads in finalists {
+                match remeasure_cpu_autotune_candidate(
+                    cfg,
+                    tag,
+                    shutdown,
+                    threads,
+                    confirmation_secs,
+                    &mut measurements,
+                )? {
+                    CpuAutotuneMeasureOutcome::Measured => {}
+                    CpuAutotuneMeasureOutcome::Interrupted => {
+                        interrupted = true;
+                        break;
+                    }
+                    CpuAutotuneMeasureOutcome::MemoryLimited => break,
+                }
+            }
+        }
+    }
+
+    if interrupted {
+        warn(
+            tag,
+            "cpu-autotune | interrupted during finalist confirmation",
+        );
+        return Ok(());
+    }
+
     let selection = select_cpu_autotune_candidate(cfg.cpu_profile, &measurements).unwrap_or(
         CpuAutotuneSelection {
             selected_threads: cfg.threads.max(1),
@@ -1209,6 +1279,56 @@ fn cpu_autotune_peak_floor_frac(profile: CpuPerformanceProfile) -> f64 {
         CpuPerformanceProfile::Balanced => CPU_AUTOTUNE_BALANCED_PEAK_FLOOR_FRAC,
         CpuPerformanceProfile::Efficiency => CPU_AUTOTUNE_EFFICIENCY_PEAK_FLOOR_FRAC,
     }
+}
+
+fn cpu_autotune_confirmation_window_secs(autotune_secs: u64) -> u64 {
+    autotune_secs
+        .max(1)
+        .saturating_mul(CPU_AUTOTUNE_FINAL_CONFIRM_WINDOW_MULTIPLIER)
+        .max(CPU_AUTOTUNE_FINAL_CONFIRM_MIN_SECS)
+        .min(CPU_AUTOTUNE_MAX_SAMPLE_SECS_PER_CANDIDATE)
+}
+
+fn cpu_autotune_confirmation_threads(
+    profile: CpuPerformanceProfile,
+    selection: CpuAutotuneSelection,
+    measurements: &BTreeMap<usize, CpuAutotuneMeasurement>,
+) -> Vec<usize> {
+    if profile != CpuPerformanceProfile::Balanced || measurements.len() < 2 {
+        return Vec::new();
+    }
+
+    let runner_up = measurements
+        .iter()
+        .filter(|(threads, _)| **threads != selection.peak_threads)
+        .max_by(|(left_threads, left), (right_threads, right)| {
+            left.hps
+                .total_cmp(&right.hps)
+                .then_with(|| right_threads.cmp(left_threads))
+        })
+        .map(|(threads, measurement)| (*threads, *measurement));
+
+    let runner_up_is_close = runner_up.is_some_and(|(_, measurement)| {
+        selection.peak_hps > 0.0
+            && measurement.hps + f64::EPSILON
+                >= selection.peak_hps * CPU_AUTOTUNE_FINAL_CONFIRM_CLOSE_FRAC
+    });
+    if selection.selected_threads == selection.peak_threads && !runner_up_is_close {
+        return Vec::new();
+    }
+
+    let mut finalists = vec![selection.peak_threads, selection.selected_threads];
+    if runner_up_is_close {
+        if let Some((threads, _)) = runner_up {
+            finalists.push(threads);
+        }
+    }
+    // The initial ramp measures ascending thread counts. Reverse that order for
+    // confirmation so temperature and run position do not consistently favor
+    // either the lower-memory candidate or the higher-throughput candidate.
+    finalists.sort_unstable_by(|left, right| right.cmp(left));
+    finalists.dedup();
+    finalists
 }
 
 fn select_peak_autotune_candidate(
@@ -1375,6 +1495,64 @@ fn measure_cpu_autotune_candidate(
     Ok(CpuAutotuneMeasureOutcome::Measured)
 }
 
+fn merge_cpu_autotune_measurements(
+    initial: CpuAutotuneMeasurement,
+    confirmation: CpuAutotuneMeasurement,
+) -> CpuAutotuneMeasurement {
+    let hashes = initial.hashes.saturating_add(confirmation.hashes);
+    let wall_secs = initial.wall_secs + confirmation.wall_secs;
+    CpuAutotuneMeasurement {
+        hashes,
+        wall_secs,
+        hps: hashes as f64 / wall_secs.max(f64::EPSILON),
+    }
+}
+
+fn remeasure_cpu_autotune_candidate(
+    cfg: &Config,
+    tag: &str,
+    shutdown: &AtomicBool,
+    threads: usize,
+    window_secs: u64,
+    measurements: &mut BTreeMap<usize, CpuAutotuneMeasurement>,
+) -> Result<CpuAutotuneMeasureOutcome> {
+    let confirmation = match bench_cpu_autotune_candidate(cfg, shutdown, threads, window_secs) {
+        Ok(Some(measurement)) => measurement,
+        Ok(None) => return Ok(CpuAutotuneMeasureOutcome::Interrupted),
+        Err(err) => {
+            if cpu_autotune_is_memory_limit_error(&err) {
+                warn(
+                    tag,
+                    format!(
+                        "cpu-autotune | finalist confirmation at {} threads exceeded memory headroom ({err:#}); keeping completed measurements",
+                        threads
+                    ),
+                );
+                return Ok(CpuAutotuneMeasureOutcome::MemoryLimited);
+            }
+            return Err(err);
+        }
+    };
+
+    let combined = measurements
+        .get(&threads)
+        .copied()
+        .map(|initial| merge_cpu_autotune_measurements(initial, confirmation))
+        .unwrap_or(confirmation);
+    measurements.insert(threads, combined);
+    info(
+        tag,
+        format!(
+            "cpu-autotune |   -> {} threads confirmed at {} (combined {} hashes in {:.1}s)",
+            threads,
+            format_hashrate(combined.hps),
+            combined.hashes,
+            combined.wall_secs,
+        ),
+    );
+    Ok(CpuAutotuneMeasureOutcome::Measured)
+}
+
 fn bench_cpu_autotune_candidate(
     cfg: &Config,
     shutdown: &AtomicBool,
@@ -1393,6 +1571,7 @@ fn bench_cpu_autotune_candidate(
             control_check_interval_hashes: cfg.cpu_control_check_interval_hashes,
             hash_flush_interval: cfg.cpu_hash_flush_interval,
             event_dispatch_capacity: cfg.cpu_event_dispatch_capacity,
+            page_mode: cfg.cpu_page_mode,
         },
     );
 
@@ -1517,19 +1696,37 @@ fn load_cpu_autotune_record(
         return None;
     }
 
-    if record.profile != cpu_profile_label(cfg.cpu_profile)
-        || record.affinity != cpu_affinity_label(cfg.cpu_affinity)
-        || record.cpu_instances != cpu_instance_count
-        || record.min_threads != min_threads
-        || record.max_threads != max_threads
-        || record.autotune_secs != autotune_secs
-        || record.selected_threads < min_threads
-        || record.selected_threads > max_threads
-    {
+    if !cpu_autotune_record_matches_config(
+        &record,
+        cfg,
+        cpu_instance_count,
+        min_threads,
+        max_threads,
+        autotune_secs,
+    ) {
         return None;
     }
 
     Some(record)
+}
+
+fn cpu_autotune_record_matches_config(
+    record: &CpuAutotuneRecord,
+    cfg: &Config,
+    cpu_instance_count: usize,
+    min_threads: usize,
+    max_threads: usize,
+    autotune_secs: u64,
+) -> bool {
+    record.profile == cpu_profile_label(cfg.cpu_profile)
+        && record.affinity == cpu_affinity_label(cfg.cpu_affinity)
+        && record.page_mode == cfg.cpu_page_mode.as_str()
+        && record.cpu_instances == cpu_instance_count
+        && record.min_threads == min_threads
+        && record.max_threads == max_threads
+        && record.autotune_secs == autotune_secs
+        && record.selected_threads >= min_threads
+        && record.selected_threads <= max_threads
 }
 
 fn persist_cpu_autotune_record(
@@ -1551,6 +1748,7 @@ fn persist_cpu_autotune_record(
         schema_version: CPU_AUTOTUNE_RECORD_SCHEMA_VERSION,
         profile: cpu_profile_label(cfg.cpu_profile).to_string(),
         affinity: cpu_affinity_label(cfg.cpu_affinity).to_string(),
+        page_mode: cfg.cpu_page_mode.as_str().to_string(),
         cpu_instances: cpu_instance_count,
         min_threads,
         max_threads,
@@ -1597,11 +1795,16 @@ fn cpu_autotune_host_fingerprint() -> CpuAutotuneHostFingerprint {
     sys.refresh_cpu_all();
     CpuAutotuneHostFingerprint {
         cpu_brand: sys.cpus().first().map(|cpu| cpu.brand().to_string()),
+        cpu_arch: System::cpu_arch(),
         logical_cores: std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(0),
         physical_cores: sys.physical_core_count(),
         total_memory_bytes: sys.total_memory(),
+        os: std::env::consts::OS.to_string(),
+        kernel_version: crate::runtime_identity::runtime_kernel_version(),
+        runtime_environment: crate::runtime_identity::runtime_environment(),
+        build_fingerprint: crate::runtime_identity::build_fingerprint(),
     }
 }
 
@@ -1616,6 +1819,9 @@ struct LinuxHugepagesMeminfo {
 
 #[cfg(target_os = "linux")]
 fn maybe_warn_linux_hugepages_setup(cfg: &Config, mode: RuntimeMode) {
+    if cfg.cpu_page_mode == CpuPageMode::Regular {
+        return;
+    }
     let cpu_lanes = cfg
         .backend_specs
         .iter()
@@ -1623,6 +1829,11 @@ fn maybe_warn_linux_hugepages_setup(cfg: &Config, mode: RuntimeMode) {
         .map(|spec| spec.cpu_threads.unwrap_or(cfg.threads).max(1) as u64)
         .sum::<u64>();
     if cpu_lanes == 0 {
+        return;
+    }
+
+    if cfg.cpu_page_mode == CpuPageMode::Large1G {
+        maybe_warn_linux_1g_hugepages_setup(cpu_lanes, mode);
         return;
     }
 
@@ -1682,6 +1893,60 @@ fn maybe_warn_linux_hugepages_setup(cfg: &Config, mode: RuntimeMode) {
     info(
         tag,
         "hugepages | if allocation is partial, run: echo 3 | sudo tee /proc/sys/vm/drop_caches && echo 1 | sudo tee /proc/sys/vm/compact_memory",
+    );
+}
+
+/// Sizing guidance for `--cpu-page-mode large-1g`: each 2 GiB worker arena
+/// needs two 1 GiB HugeTLB pages. 1 GiB pools are a non-default hugepage size
+/// on most hosts, so they are read from sysfs rather than /proc/meminfo.
+#[cfg(target_os = "linux")]
+fn maybe_warn_linux_1g_hugepages_setup(cpu_lanes: u64, mode: RuntimeMode) {
+    const HUGE_1G_POOL: &str = "/sys/kernel/mm/hugepages/hugepages-1048576kB";
+    let per_lane_pages = div_ceil_u64(CPU_LANE_MEMORY_BYTES, 1024 * 1024 * 1024).max(1);
+    let required_pages = per_lane_pages.saturating_mul(cpu_lanes);
+    let tag = runtime_mode_tag(mode);
+
+    let read_pool = |name: &str| -> Option<u64> {
+        fs::read_to_string(format!("{HUGE_1G_POOL}/{name}"))
+            .ok()?
+            .trim()
+            .parse::<u64>()
+            .ok()
+    };
+    let Some(total_pages) = read_pool("nr_hugepages") else {
+        warn(
+            tag,
+            "hugepages-1g | kernel does not expose a 1 GiB HugeTLB pool; --cpu-page-mode large-1g will fail closed (requires x86_64 with 1 GiB page support)",
+        );
+        return;
+    };
+    let free_pages = read_pool("free_hugepages").unwrap_or(0);
+    let reserved_pages = read_pool("resv_hugepages").unwrap_or(0);
+    let unreserved_pages = free_pages.saturating_sub(reserved_pages);
+    if total_pages >= required_pages && unreserved_pages >= required_pages {
+        return;
+    }
+
+    warn(
+        tag,
+        format!(
+            "hugepages-1g | CPU lanes={} need {} x 1 GiB HugeTLB pages ({} per lane), but current pool is total={} free={} rsvd={}.",
+            cpu_lanes, required_pages, per_lane_pages, total_pages, free_pages, reserved_pages,
+        ),
+    );
+    warn(
+        tag,
+        format!(
+            "hugepages-1g | setup: echo {required_pages} | sudo tee {HUGE_1G_POOL}/nr_hugepages  (or boot with hugepagesz=1G hugepages={required_pages})"
+        ),
+    );
+    info(
+        tag,
+        "hugepages-1g | WSL2: set kernelCommandLine=hugepagesz=1G hugepages=<N> in %UserProfile%\\.wslconfig, then restart WSL",
+    );
+    info(
+        tag,
+        "hugepages-1g | docs: see README.md -> \"WSL/Linux HugeTLB provisioning\"",
     );
 }
 
@@ -1745,6 +2010,7 @@ fn build_backend_instances(cfg: &Config) -> Vec<(BackendSpec, Arc<dyn PowBackend
                         control_check_interval_hashes: cfg.cpu_control_check_interval_hashes,
                         hash_flush_interval: cfg.cpu_hash_flush_interval,
                         event_dispatch_capacity: cfg.cpu_event_dispatch_capacity,
+                        page_mode: cfg.cpu_page_mode,
                     },
                 )) as Arc<dyn PowBackend>,
                 BackendKind::Nvidia => Arc::new(NvidiaBackend::new(
@@ -2180,6 +2446,17 @@ fn merge_backend_telemetry(
         && telemetry.completed_assignments == 0
         && telemetry.completed_assignment_hashes == 0
         && telemetry.completed_assignment_micros == 0
+        && telemetry.memory_explicit_large_workers == 0
+        && telemetry.memory_explicit_large_1g_workers == 0
+        && telemetry.memory_transparent_huge_workers == 0
+        && telemetry.memory_regular_workers == 0
+        && telemetry.memory_heap_workers == 0
+        && telemetry.memory_explicit_large_bytes == 0
+        && telemetry.memory_explicit_large_1g_bytes == 0
+        && telemetry.memory_transparent_huge_bytes == 0
+        && telemetry.memory_regular_bytes == 0
+        && telemetry.memory_heap_bytes == 0
+        && telemetry.memory_allocation_failures == 0
         && telemetry.peak_inflight_assignment_hashes == 0
         && telemetry.peak_inflight_assignment_micros == 0
         && telemetry.assignment_enqueue_timeouts == 0
@@ -2218,6 +2495,35 @@ fn merge_backend_telemetry(
         .saturating_add(telemetry.completed_assignment_micros);
     entry.peak_active_lanes = entry.peak_active_lanes.max(telemetry.peak_active_lanes);
     entry.peak_pending_work = entry.peak_pending_work.max(telemetry.peak_pending_work);
+    entry.memory_explicit_large_workers = entry
+        .memory_explicit_large_workers
+        .max(telemetry.memory_explicit_large_workers);
+    entry.memory_explicit_large_1g_workers = entry
+        .memory_explicit_large_1g_workers
+        .max(telemetry.memory_explicit_large_1g_workers);
+    entry.memory_transparent_huge_workers = entry
+        .memory_transparent_huge_workers
+        .max(telemetry.memory_transparent_huge_workers);
+    entry.memory_regular_workers = entry
+        .memory_regular_workers
+        .max(telemetry.memory_regular_workers);
+    entry.memory_heap_workers = entry.memory_heap_workers.max(telemetry.memory_heap_workers);
+    entry.memory_explicit_large_bytes = entry
+        .memory_explicit_large_bytes
+        .max(telemetry.memory_explicit_large_bytes);
+    entry.memory_explicit_large_1g_bytes = entry
+        .memory_explicit_large_1g_bytes
+        .max(telemetry.memory_explicit_large_1g_bytes);
+    entry.memory_transparent_huge_bytes = entry
+        .memory_transparent_huge_bytes
+        .max(telemetry.memory_transparent_huge_bytes);
+    entry.memory_regular_bytes = entry
+        .memory_regular_bytes
+        .max(telemetry.memory_regular_bytes);
+    entry.memory_heap_bytes = entry.memory_heap_bytes.max(telemetry.memory_heap_bytes);
+    entry.memory_allocation_failures = entry
+        .memory_allocation_failures
+        .saturating_add(telemetry.memory_allocation_failures);
     entry.peak_inflight_assignment_hashes = entry
         .peak_inflight_assignment_hashes
         .max(telemetry.peak_inflight_assignment_hashes);
@@ -2285,6 +2591,17 @@ pub(super) fn backend_round_telemetry_delta(telemetry: BackendTelemetry) -> Back
         completed_assignment_micros: telemetry.completed_assignment_micros,
         peak_active_lanes: telemetry.active_lanes,
         peak_pending_work: telemetry.pending_work,
+        memory_explicit_large_workers: telemetry.memory_explicit_large_workers,
+        memory_explicit_large_1g_workers: telemetry.memory_explicit_large_1g_workers,
+        memory_transparent_huge_workers: telemetry.memory_transparent_huge_workers,
+        memory_regular_workers: telemetry.memory_regular_workers,
+        memory_heap_workers: telemetry.memory_heap_workers,
+        memory_explicit_large_bytes: telemetry.memory_explicit_large_bytes,
+        memory_explicit_large_1g_bytes: telemetry.memory_explicit_large_1g_bytes,
+        memory_transparent_huge_bytes: telemetry.memory_transparent_huge_bytes,
+        memory_regular_bytes: telemetry.memory_regular_bytes,
+        memory_heap_bytes: telemetry.memory_heap_bytes,
+        memory_allocation_failures: telemetry.memory_allocation_failures,
         peak_inflight_assignment_hashes: telemetry.inflight_assignment_hashes,
         peak_inflight_assignment_micros: telemetry.inflight_assignment_micros,
         assignment_enqueue_timeouts: telemetry.assignment_enqueue_timeouts,
@@ -2438,6 +2755,16 @@ fn drain_runtime_backend_events(
         mode,
         backend_executor,
     )
+}
+
+/// Stable "name#instance_id" labels used for degraded-run tracking. Unlike
+/// `backend_display_names`, these never renumber when a backend is
+/// quarantined, so they stay consistent with quarantine log lines.
+fn backend_instance_labels(backends: &[BackendSlot]) -> Vec<String> {
+    backends
+        .iter()
+        .map(|slot| format!("{}#{}", slot.backend.name(), slot.id))
+        .collect()
 }
 
 fn backend_name_list(backends: &[BackendSlot]) -> Vec<String> {
@@ -2717,6 +3044,17 @@ fn format_round_backend_telemetry(
             && telemetry.completed_assignments == 0
             && telemetry.peak_active_lanes == 0
             && telemetry.peak_pending_work == 0
+            && telemetry.memory_explicit_large_workers == 0
+            && telemetry.memory_explicit_large_1g_workers == 0
+            && telemetry.memory_transparent_huge_workers == 0
+            && telemetry.memory_regular_workers == 0
+            && telemetry.memory_heap_workers == 0
+            && telemetry.memory_explicit_large_bytes == 0
+            && telemetry.memory_explicit_large_1g_bytes == 0
+            && telemetry.memory_transparent_huge_bytes == 0
+            && telemetry.memory_regular_bytes == 0
+            && telemetry.memory_heap_bytes == 0
+            && telemetry.memory_allocation_failures == 0
             && telemetry.peak_inflight_assignment_hashes == 0
             && telemetry.peak_inflight_assignment_micros == 0
             && telemetry.assignment_enqueue_timeouts == 0
@@ -2741,9 +3079,20 @@ fn format_round_backend_telemetry(
         }
         let backend_name = backend_names.get(backend_id).copied().unwrap_or("unknown");
         parts.push(format!(
-            "{backend_name}#{backend_id}:active_peak={} pending_peak={} inflight_hashes_peak={} inflight_secs_peak={:.3} drops={} assignments={} assignment_hashes={} assignment_secs={:.3} assign_timeout_enq={} assign_timeout_exec={} control_timeout_enq={} control_timeout_exec={} assign_timeout_strike_peak={} assign_enq_lat_samples={} assign_enq_lat_p95_us={} assign_enq_lat_max_us={} assign_exec_lat_samples={} assign_exec_lat_p95_us={} assign_exec_lat_max_us={} control_enq_lat_samples={} control_enq_lat_p95_us={} control_enq_lat_max_us={} control_exec_lat_samples={} control_exec_lat_p95_us={} control_exec_lat_max_us={}",
+            "{backend_name}#{backend_id}:active_peak={} pending_peak={} memory_workers=large:{}/large1g:{}/thp:{}/regular:{}/heap:{} memory_mib=large:{:.1}/large1g:{:.1}/thp:{:.1}/regular:{:.1}/heap:{:.1} memory_alloc_failures={} inflight_hashes_peak={} inflight_secs_peak={:.3} drops={} assignments={} assignment_hashes={} assignment_secs={:.3} assign_timeout_enq={} assign_timeout_exec={} control_timeout_enq={} control_timeout_exec={} assign_timeout_strike_peak={} assign_enq_lat_samples={} assign_enq_lat_p95_us={} assign_enq_lat_max_us={} assign_exec_lat_samples={} assign_exec_lat_p95_us={} assign_exec_lat_max_us={} control_enq_lat_samples={} control_enq_lat_p95_us={} control_enq_lat_max_us={} control_exec_lat_samples={} control_exec_lat_p95_us={} control_exec_lat_max_us={}",
             telemetry.peak_active_lanes,
             telemetry.peak_pending_work,
+            telemetry.memory_explicit_large_workers,
+            telemetry.memory_explicit_large_1g_workers,
+            telemetry.memory_transparent_huge_workers,
+            telemetry.memory_regular_workers,
+            telemetry.memory_heap_workers,
+            telemetry.memory_explicit_large_bytes as f64 / (1024.0 * 1024.0),
+            telemetry.memory_explicit_large_1g_bytes as f64 / (1024.0 * 1024.0),
+            telemetry.memory_transparent_huge_bytes as f64 / (1024.0 * 1024.0),
+            telemetry.memory_regular_bytes as f64 / (1024.0 * 1024.0),
+            telemetry.memory_heap_bytes as f64 / (1024.0 * 1024.0),
+            telemetry.memory_allocation_failures,
             telemetry.peak_inflight_assignment_hashes,
             telemetry.peak_inflight_assignment_micros as f64 / 1_000_000.0,
             telemetry.dropped_events,
@@ -3145,6 +3494,7 @@ mod tests {
             threads: 1,
             cpu_auto_threads_cap: 1,
             cpu_affinity: crate::config::CpuAffinityMode::Off,
+            cpu_page_mode: crate::config::CpuPageMode::Auto,
             cpu_profile: crate::config::CpuPerformanceProfile::Balanced,
             refresh_interval: Duration::from_secs(20),
             request_timeout: Duration::from_secs(10),
@@ -3232,6 +3582,60 @@ mod tests {
     }
 
     #[test]
+    fn cpu_autotune_fingerprint_includes_runtime_and_build_identity() {
+        let fingerprint = cpu_autotune_host_fingerprint();
+        assert!(!fingerprint.os.is_empty());
+        assert!(!fingerprint.runtime_environment.is_empty());
+        assert!(fingerprint.build_fingerprint.contains("source="));
+        assert!(fingerprint.build_fingerprint.contains("rustc="));
+    }
+
+    #[test]
+    fn cpu_autotune_cache_is_separated_by_page_mode() {
+        let mut cfg = test_config();
+        let record = CpuAutotuneRecord {
+            schema_version: CPU_AUTOTUNE_RECORD_SCHEMA_VERSION,
+            profile: cpu_profile_label(cfg.cpu_profile).to_string(),
+            affinity: cpu_affinity_label(cfg.cpu_affinity).to_string(),
+            page_mode: cfg.cpu_page_mode.as_str().to_string(),
+            cpu_instances: 1,
+            min_threads: 1,
+            max_threads: 4,
+            selected_threads: 2,
+            measured_hps: 1.0,
+            autotune_secs: 6,
+            host_fingerprint: CpuAutotuneHostFingerprint::default(),
+            timestamp_unix_secs: 0,
+        };
+
+        assert!(cpu_autotune_record_matches_config(
+            &record, &cfg, 1, 1, 4, 6
+        ));
+        cfg.cpu_page_mode = CpuPageMode::Regular;
+        assert!(!cpu_autotune_record_matches_config(
+            &record, &cfg, 1, 1, 4, 6
+        ));
+    }
+
+    #[test]
+    fn round_backend_telemetry_line_reports_1g_backing_separately() {
+        let mut telemetry_map = BTreeMap::new();
+        telemetry_map.insert(
+            7u64,
+            BackendRoundTelemetry {
+                memory_explicit_large_1g_workers: 9,
+                memory_explicit_large_1g_bytes: 9 * 2 * 1024 * 1024 * 1024,
+                ..BackendRoundTelemetry::default()
+            },
+        );
+
+        let line =
+            format_round_backend_telemetry(&[], &telemetry_map).expect("telemetry line expected");
+        assert!(line.contains("memory_workers=large:0/large1g:9/thp:0/regular:0/heap:0"));
+        assert!(line.contains("memory_mib=large:0.0/large1g:18432.0/thp:0.0/regular:0.0/heap:0.0"));
+    }
+
+    #[test]
     fn autotune_refinement_candidates_focus_peak_window_for_throughput() {
         let measurements = autotune_measurements(&[(9, 3.0), (10, 3.2)]);
         let candidates = cpu_autotune_refinement_candidates(1, 20, 10, false, &measurements);
@@ -3256,6 +3660,95 @@ mod tests {
         assert_eq!(cpu_autotune_next_sample_chunk_secs(6, 0, 0, 0.0), 6);
         assert_eq!(cpu_autotune_next_sample_chunk_secs(6, 6, 15, 6.0), 2);
         assert_eq!(cpu_autotune_next_sample_chunk_secs(6, 29, 19, 8.0), 1);
+    }
+
+    #[test]
+    fn autotune_confirmation_window_is_longer_and_bounded() {
+        assert_eq!(cpu_autotune_confirmation_window_secs(1), 6);
+        assert_eq!(cpu_autotune_confirmation_window_secs(6), 12);
+        assert_eq!(cpu_autotune_confirmation_window_secs(20), 30);
+        assert_eq!(cpu_autotune_confirmation_window_secs(30), 30);
+    }
+
+    #[test]
+    fn autotune_balanced_confirmation_runs_peak_first() {
+        let measurements = autotune_measurements(&[(13, 27.3), (14, 27.45)]);
+        let selection = CpuAutotuneSelection {
+            selected_threads: 13,
+            selected_hps: 27.3,
+            peak_threads: 14,
+            peak_hps: 27.45,
+            peak_floor_frac: CPU_AUTOTUNE_BALANCED_PEAK_FLOOR_FRAC,
+        };
+        assert_eq!(
+            cpu_autotune_confirmation_threads(
+                CpuPerformanceProfile::Balanced,
+                selection,
+                &measurements
+            ),
+            vec![14, 13]
+        );
+        assert_eq!(
+            cpu_autotune_confirmation_threads(
+                CpuPerformanceProfile::Throughput,
+                selection,
+                &measurements
+            ),
+            Vec::<usize>::new()
+        );
+    }
+
+    #[test]
+    fn autotune_balanced_confirmation_catches_close_runner_up_after_peak_swap() {
+        let measurements = autotune_measurements(&[(12, 27.9), (13, 29.1), (14, 28.83)]);
+        let selection =
+            select_cpu_autotune_candidate(CpuPerformanceProfile::Balanced, &measurements)
+                .expect("selection should exist");
+        assert_eq!(selection.selected_threads, 13);
+        assert_eq!(selection.peak_threads, 13);
+        assert_eq!(
+            cpu_autotune_confirmation_threads(
+                CpuPerformanceProfile::Balanced,
+                selection,
+                &measurements
+            ),
+            vec![14, 13]
+        );
+    }
+
+    #[test]
+    fn autotune_balanced_skips_confirmation_for_clear_peak() {
+        let measurements = autotune_measurements(&[(12, 26.0), (13, 27.0), (14, 29.0)]);
+        let selection =
+            select_cpu_autotune_candidate(CpuPerformanceProfile::Balanced, &measurements)
+                .expect("selection should exist");
+        assert_eq!(
+            cpu_autotune_confirmation_threads(
+                CpuPerformanceProfile::Balanced,
+                selection,
+                &measurements
+            ),
+            Vec::<usize>::new()
+        );
+    }
+
+    #[test]
+    fn autotune_confirmation_combines_hashes_and_wall_time() {
+        let combined = merge_cpu_autotune_measurements(
+            CpuAutotuneMeasurement {
+                hashes: 100,
+                wall_secs: 4.0,
+                hps: 25.0,
+            },
+            CpuAutotuneMeasurement {
+                hashes: 300,
+                wall_secs: 10.0,
+                hps: 30.0,
+            },
+        );
+        assert_eq!(combined.hashes, 400);
+        assert_eq!(combined.wall_secs, 14.0);
+        assert!((combined.hps - (400.0 / 14.0)).abs() < 1e-9);
     }
 
     #[test]

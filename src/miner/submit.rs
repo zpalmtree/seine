@@ -2,13 +2,15 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use crossbeam_channel::{bounded, Receiver, RecvTimeoutError, Sender, TrySendError};
 
 use crate::backend::MiningSolution;
-use crate::daemon_api::{is_retryable_api_error, is_unauthorized_error, ApiClient};
+use crate::daemon_api::{
+    is_retryable_api_error, is_unauthorized_error, is_unknown_or_expired_template_error, ApiClient,
+};
 use crate::types::{
     set_block_nonce, template_height as extract_template_height, BlockTemplateResponse,
     SubmitBlockResponse, TemplateBlock,
@@ -29,6 +31,8 @@ const SUBMIT_RETRY_MAX_DELAY: Duration = Duration::from_secs(2);
 pub(super) enum SubmitTemplate {
     Compact {
         template_id: String,
+        fallback_block: Arc<TemplateBlock>,
+        template_expires_at_unix_ms: Option<i64>,
         template_height: Option<u64>,
     },
     FullBlock {
@@ -48,6 +52,8 @@ impl SubmitTemplate {
         {
             Self::Compact {
                 template_id: template_id.to_string(),
+                fallback_block: Arc::new(template.block.clone()),
+                template_expires_at_unix_ms: template.template_expires_at_unix_ms,
                 template_height,
             }
         } else {
@@ -79,21 +85,62 @@ pub(super) struct SubmitRequest {
 }
 
 enum SubmitAttemptPayload {
-    Compact { template_id: String },
-    FullBlock { block: TemplateBlock },
+    Compact {
+        template_id: String,
+        fallback_block: Arc<TemplateBlock>,
+    },
+    FullBlock {
+        block: TemplateBlock,
+    },
 }
 
 impl SubmitAttemptPayload {
     fn from_request(request: &SubmitRequest) -> Self {
         match &request.template {
-            SubmitTemplate::Compact { template_id, .. } => Self::Compact {
+            SubmitTemplate::Compact {
+                fallback_block,
+                template_expires_at_unix_ms,
+                ..
+            } if template_lease_expired(*template_expires_at_unix_ms) => Self::FullBlock {
+                block: (**fallback_block).clone(),
+            },
+            SubmitTemplate::Compact {
+                template_id,
+                fallback_block,
+                ..
+            } => Self::Compact {
                 template_id: template_id.clone(),
+                fallback_block: Arc::clone(fallback_block),
             },
             SubmitTemplate::FullBlock { block, .. } => Self::FullBlock {
                 block: (**block).clone(),
             },
         }
     }
+
+    fn fall_back_to_full_block(&mut self) -> bool {
+        let Self::Compact { fallback_block, .. } = self else {
+            return false;
+        };
+        *self = Self::FullBlock {
+            block: (**fallback_block).clone(),
+        };
+        true
+    }
+}
+
+fn template_lease_expired(expires_at_unix_ms: Option<i64>) -> bool {
+    let Some(expires_at_unix_ms) = expires_at_unix_ms else {
+        return false;
+    };
+    if expires_at_unix_ms <= 0 {
+        return true;
+    }
+    let now_unix_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    now_unix_ms >= expires_at_unix_ms as u128
 }
 
 pub(super) enum SubmitOutcome {
@@ -294,6 +341,12 @@ pub(super) fn process_submit_request(
 
                 let unauthorized = is_unauthorized_error(&err);
                 let mut error_context = format!("{err:#}");
+                if is_unknown_or_expired_template_error(&err)
+                    && attempts < max_attempts
+                    && payload.fall_back_to_full_block()
+                {
+                    continue;
+                }
                 if let Some(outcome) = stale_submit_outcome(attempts, &error_context) {
                     return SubmitResult {
                         solution,
@@ -398,7 +451,7 @@ fn submit_request_once(
     request_id: u64,
 ) -> Result<SubmitBlockResponse> {
     match payload {
-        SubmitAttemptPayload::Compact { template_id } => {
+        SubmitAttemptPayload::Compact { template_id, .. } => {
             client.submit_block(&(), Some(template_id.as_str()), nonce, request_id)
         }
         SubmitAttemptPayload::FullBlock { block } => {
@@ -666,18 +719,80 @@ fn sleep_with_shutdown(shutdown: &AtomicBool, duration: Duration) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::AtomicU64;
+    use std::sync::atomic::{AtomicBool, AtomicU64};
     use std::sync::{Arc, Mutex, OnceLock};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+    use httpmock::prelude::*;
+    use serde_json::json;
+
+    use crate::backend::MiningSolution;
+    use crate::daemon_api::ApiClient;
     use crate::miner::ui::{set_log_sink, UiLogEvent};
+    use crate::types::BlockTemplateResponse;
 
     use super::{
         handle_submit_result, infer_stale_from_tip, parse_stale_height_error,
-        parse_stale_tip_reject_reason, stale_submit_outcome, stale_submit_summary, Stats,
-        SubmitOutcome, SubmitResult,
+        parse_stale_tip_reject_reason, process_submit_request, stale_submit_outcome,
+        stale_submit_summary, template_lease_expired, Stats, SubmitOutcome, SubmitRequest,
+        SubmitResult, SubmitTemplate,
     };
 
     static TEST_LOG_CAPTURE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn test_client(server: &MockServer) -> ApiClient {
+        ApiClient::new(
+            server.url("").trim_end_matches('/').to_string(),
+            "testtoken".to_string(),
+            Duration::from_secs(5),
+            Duration::from_secs(5),
+            Duration::from_secs(30),
+        )
+        .expect("test client should be created")
+    }
+
+    fn leased_template(expires_at_unix_ms: Option<i64>) -> BlockTemplateResponse {
+        BlockTemplateResponse {
+            block: serde_json::from_value(json!({
+                "header": {"nonce": 0u64, "height": 1u64},
+                "txns": []
+            }))
+            .expect("template should deserialize"),
+            target: "00".repeat(32),
+            header_base: "11".repeat(92),
+            template_id: Some("tmpl-expiring".to_string()),
+            template_expires_at_unix_ms: expires_at_unix_ms,
+        }
+    }
+
+    fn unix_ms_after(offset: Duration) -> i64 {
+        (SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            + offset)
+            .as_millis() as i64
+    }
+
+    fn mining_solution(nonce: u64) -> MiningSolution {
+        MiningSolution {
+            epoch: 1,
+            nonce,
+            hash: None,
+            share_binding_id: 0,
+            backend_id: 1,
+            backend: "cpu",
+        }
+    }
+
+    fn submit_request(template: &BlockTemplateResponse, nonce: u64) -> SubmitRequest {
+        SubmitRequest {
+            request_id: 1,
+            template: SubmitTemplate::from_template(template),
+            solution: mining_solution(nonce),
+            backend_label: "cpu#1".to_string(),
+            is_dev_fee: false,
+        }
+    }
 
     fn capture_logs(run: impl FnOnce()) -> Vec<UiLogEvent> {
         let _guard = TEST_LOG_CAPTURE_LOCK
@@ -711,6 +826,101 @@ mod tests {
             .expect("captured log storage should not be poisoned")
             .clone();
         logs
+    }
+
+    #[test]
+    fn template_lease_expiry_is_conservative() {
+        assert!(!template_lease_expired(None));
+        assert!(template_lease_expired(Some(0)));
+        assert!(template_lease_expired(Some(
+            unix_ms_after(Duration::ZERO) - 1
+        )));
+        assert!(!template_lease_expired(Some(unix_ms_after(
+            Duration::from_secs(60)
+        ))));
+    }
+
+    #[test]
+    fn compact_submit_retries_full_block_when_template_id_expired() {
+        let server = MockServer::start();
+        let template = leased_template(Some(unix_ms_after(Duration::from_secs(60))));
+        let mut expected_block = template.block.clone();
+        crate::types::set_block_nonce(&mut expected_block, 7);
+        let expected_block =
+            serde_json::to_value(expected_block).expect("expected fallback block should serialize");
+
+        let compact_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/api/mining/submitblock")
+                .header("authorization", "Bearer testtoken")
+                .json_body(json!({"template_id": "tmpl-expiring", "nonce": 7}));
+            then.status(400)
+                .json_body(json!({"error": "unknown or expired template_id"}));
+        });
+        let full_mock = server.mock(move |when, then| {
+            when.method(POST)
+                .path("/api/mining/submitblock")
+                .header("authorization", "Bearer testtoken")
+                .json_body(expected_block.clone());
+            then.status(200).json_body(json!({
+                "accepted": true,
+                "hash": "abcd",
+                "height": 1
+            }));
+        });
+
+        let result = process_submit_request(
+            &test_client(&server),
+            submit_request(&template, 7),
+            &AtomicBool::new(false),
+            None,
+            &AtomicU64::new(0),
+        );
+
+        assert_eq!(result.attempts, 2);
+        match result.outcome {
+            SubmitOutcome::Response(response) => assert!(response.accepted),
+            _ => panic!("full-block fallback should be accepted"),
+        }
+        compact_mock.assert_hits(1);
+        full_mock.assert_hits(1);
+    }
+
+    #[test]
+    fn expired_template_lease_submits_full_block_immediately() {
+        let server = MockServer::start();
+        let template = leased_template(Some(1));
+        let mut expected_block = template.block.clone();
+        crate::types::set_block_nonce(&mut expected_block, 11);
+        let expected_block =
+            serde_json::to_value(expected_block).expect("expected fallback block should serialize");
+
+        let full_mock = server.mock(move |when, then| {
+            when.method(POST)
+                .path("/api/mining/submitblock")
+                .header("authorization", "Bearer testtoken")
+                .json_body(expected_block.clone());
+            then.status(200).json_body(json!({
+                "accepted": true,
+                "hash": "ef01",
+                "height": 1
+            }));
+        });
+
+        let result = process_submit_request(
+            &test_client(&server),
+            submit_request(&template, 11),
+            &AtomicBool::new(false),
+            None,
+            &AtomicU64::new(0),
+        );
+
+        assert_eq!(result.attempts, 1);
+        match result.outcome {
+            SubmitOutcome::Response(response) => assert!(response.accepted),
+            _ => panic!("expired compact lease should use the full-block fallback"),
+        }
+        full_mock.assert_hits(1);
     }
 
     #[test]

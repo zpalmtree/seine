@@ -1,3 +1,5 @@
+#[cfg(any(target_os = "windows", test))]
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, Condvar, Mutex, OnceLock, RwLock};
 use std::thread::{self, JoinHandle};
@@ -13,7 +15,7 @@ use crate::backend::{
     BackendInstanceId, BackendTelemetry, BenchBackend, DeadlineSupport, PowBackend,
     PreemptionGranularity, WorkAssignment, WORK_ID_MAX,
 };
-use crate::config::CpuAffinityMode;
+use crate::config::{CpuAffinityMode, CpuPageMode};
 
 #[path = "cpu/events.rs"]
 mod events;
@@ -38,9 +40,9 @@ const STARTUP_READY_TIMEOUT_MAX: Duration = Duration::from_secs(180);
 const BYTES_PER_GIB: u64 = 1024 * 1024 * 1024;
 const DEFAULT_EVENT_DISPATCH_CAPACITY: usize = 256;
 
-/// On macOS, promote the calling thread to the highest QoS class to ensure
-/// scheduling on performance cores (P-cores) rather than efficiency cores.
-/// No-op on other platforms.
+/// On macOS, request the highest QoS class so the scheduler prefers performance
+/// cores. This is a best-effort scheduling hint, not hard CPU pinning. No-op on
+/// other platforms.
 #[inline]
 fn set_thread_high_perf() {
     #[cfg(target_os = "macos")]
@@ -48,7 +50,7 @@ fn set_thread_high_perf() {
         extern "C" {
             fn pthread_set_qos_class_self_np(qos_class: u32, relative_priority: i32) -> i32;
         }
-        // QOS_CLASS_USER_INTERACTIVE = 0x21 — highest priority, P-core affinity.
+        // QOS_CLASS_USER_INTERACTIVE = 0x21 — highest-priority scheduler preference.
         const QOS_CLASS_USER_INTERACTIVE: u32 = 0x21;
         unsafe {
             let _ = pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
@@ -62,6 +64,7 @@ pub struct CpuBackendTuning {
     pub control_check_interval_hashes: u64,
     pub hash_flush_interval: Duration,
     pub event_dispatch_capacity: usize,
+    pub page_mode: CpuPageMode,
 }
 
 impl Default for CpuBackendTuning {
@@ -71,6 +74,7 @@ impl Default for CpuBackendTuning {
             control_check_interval_hashes: DEFAULT_CONTROL_CHECK_INTERVAL_HASHES,
             hash_flush_interval: DEFAULT_HASH_FLUSH_INTERVAL,
             event_dispatch_capacity: DEFAULT_EVENT_DISPATCH_CAPACITY,
+            page_mode: CpuPageMode::Auto,
         }
     }
 }
@@ -82,6 +86,7 @@ impl CpuBackendTuning {
             control_check_interval_hashes: self.control_check_interval_hashes.max(1),
             hash_flush_interval: self.hash_flush_interval.max(Duration::from_millis(1)),
             event_dispatch_capacity: self.event_dispatch_capacity.max(1),
+            page_mode: self.page_mode,
         }
     }
 }
@@ -122,6 +127,7 @@ struct Shared {
     active_workers: AtomicUsize,
     ready_workers: AtomicUsize,
     startup_failed: AtomicBool,
+    startup_error: Mutex<Option<String>>,
     work_control: Mutex<ControlState>,
     work_cv: Condvar,
     idle_lock: Mutex<()>,
@@ -137,12 +143,24 @@ struct Shared {
     completed_assignment_hashes: AtomicU64,
     completed_assignment_micros: AtomicU64,
     dropped_events: AtomicU64,
+    arena_explicit_large_workers: AtomicU64,
+    arena_explicit_large_1g_workers: AtomicU64,
+    arena_transparent_huge_workers: AtomicU64,
+    arena_regular_workers: AtomicU64,
+    arena_heap_workers: AtomicU64,
+    arena_explicit_large_bytes: AtomicU64,
+    arena_explicit_large_1g_bytes: AtomicU64,
+    arena_transparent_huge_bytes: AtomicU64,
+    arena_regular_bytes: AtomicU64,
+    arena_heap_bytes: AtomicU64,
+    arena_allocation_failures: AtomicU64,
     event_dispatch_tx: RwLock<Option<Sender<BackendEvent>>>,
     event_sink: RwLock<Option<Sender<BackendEvent>>>,
     hash_batch_size: u64,
     control_check_interval_hashes: u64,
     hash_flush_interval: Duration,
     event_dispatch_capacity: usize,
+    page_mode: CpuPageMode,
 }
 
 pub struct CpuBackend {
@@ -178,6 +196,7 @@ impl CpuBackend {
                 active_workers: AtomicUsize::new(0),
                 ready_workers: AtomicUsize::new(0),
                 startup_failed: AtomicBool::new(false),
+                startup_error: Mutex::new(None),
                 work_control: Mutex::new(ControlState {
                     shutdown: false,
                     generation: 0,
@@ -197,12 +216,24 @@ impl CpuBackend {
                 completed_assignment_hashes: AtomicU64::new(0),
                 completed_assignment_micros: AtomicU64::new(0),
                 dropped_events: AtomicU64::new(0),
+                arena_explicit_large_workers: AtomicU64::new(0),
+                arena_explicit_large_1g_workers: AtomicU64::new(0),
+                arena_transparent_huge_workers: AtomicU64::new(0),
+                arena_regular_workers: AtomicU64::new(0),
+                arena_heap_workers: AtomicU64::new(0),
+                arena_explicit_large_bytes: AtomicU64::new(0),
+                arena_explicit_large_1g_bytes: AtomicU64::new(0),
+                arena_transparent_huge_bytes: AtomicU64::new(0),
+                arena_regular_bytes: AtomicU64::new(0),
+                arena_heap_bytes: AtomicU64::new(0),
+                arena_allocation_failures: AtomicU64::new(0),
                 event_dispatch_tx: RwLock::new(None),
                 event_sink: RwLock::new(None),
                 hash_batch_size: tuning.hash_batch_size,
                 control_check_interval_hashes: tuning.control_check_interval_hashes,
                 hash_flush_interval: tuning.hash_flush_interval,
                 event_dispatch_capacity: tuning.event_dispatch_capacity,
+                page_mode: tuning.page_mode,
             }),
             worker_handles: Mutex::new(Vec::new()),
             event_forward_handle: Mutex::new(None),
@@ -216,6 +247,9 @@ impl CpuBackend {
         self.shared.active_workers.store(0, Ordering::Release);
         self.shared.ready_workers.store(0, Ordering::Release);
         self.shared.startup_failed.store(false, Ordering::Release);
+        if let Ok(mut startup_error) = self.shared.startup_error.lock() {
+            *startup_error = None;
+        }
         self.shared.assignment_hashes.store(0, Ordering::Release);
         self.shared
             .assignment_generation
@@ -233,6 +267,7 @@ impl CpuBackend {
             .completed_assignment_micros
             .store(0, Ordering::Release);
         self.shared.dropped_events.store(0, Ordering::Release);
+        reset_arena_telemetry(&self.shared);
         reset_hash_slots(&self.shared.hash_slots);
         if let Ok(mut started_at) = self.shared.assignment_started_at.lock() {
             *started_at = None;
@@ -549,6 +584,38 @@ impl PowBackend for CpuBackend {
                 .swap(0, Ordering::AcqRel),
             inflight_assignment_hashes,
             inflight_assignment_micros,
+            memory_explicit_large_workers: self
+                .shared
+                .arena_explicit_large_workers
+                .load(Ordering::Acquire),
+            memory_explicit_large_1g_workers: self
+                .shared
+                .arena_explicit_large_1g_workers
+                .load(Ordering::Acquire),
+            memory_transparent_huge_workers: self
+                .shared
+                .arena_transparent_huge_workers
+                .load(Ordering::Acquire),
+            memory_regular_workers: self.shared.arena_regular_workers.load(Ordering::Acquire),
+            memory_heap_workers: self.shared.arena_heap_workers.load(Ordering::Acquire),
+            memory_explicit_large_bytes: self
+                .shared
+                .arena_explicit_large_bytes
+                .load(Ordering::Acquire),
+            memory_explicit_large_1g_bytes: self
+                .shared
+                .arena_explicit_large_1g_bytes
+                .load(Ordering::Acquire),
+            memory_transparent_huge_bytes: self
+                .shared
+                .arena_transparent_huge_bytes
+                .load(Ordering::Acquire),
+            memory_regular_bytes: self.shared.arena_regular_bytes.load(Ordering::Acquire),
+            memory_heap_bytes: self.shared.arena_heap_bytes.load(Ordering::Acquire),
+            memory_allocation_failures: self
+                .shared
+                .arena_allocation_failures
+                .swap(0, Ordering::AcqRel),
             ..BackendTelemetry::default()
         }
     }
@@ -582,13 +649,16 @@ impl PowBackend for CpuBackend {
 
 impl BenchBackend for CpuBackend {
     fn kernel_bench(&self, seconds: u64, shutdown: &AtomicBool) -> Result<u64> {
+        reset_arena_telemetry(&self.shared);
         let lanes = self.threads.max(1);
         let sample_duration = Duration::from_secs(seconds.max(1));
         let total_hashes = AtomicU64::new(0);
         let setup_barrier = Arc::new(Barrier::new(lanes.saturating_add(1)));
         let start_barrier = Arc::new(Barrier::new(lanes.saturating_add(1)));
         let stop_at = Arc::new(OnceLock::<Instant>::new());
+        let setup_error = Arc::new(Mutex::new(None::<String>));
         let core_ids = resolve_affinity_core_ids(self.affinity_mode);
+        let page_mode = self.shared.page_mode;
 
         thread::scope(|scope| {
             for lane in 0..lanes {
@@ -596,6 +666,7 @@ impl BenchBackend for CpuBackend {
                 let setup_barrier = Arc::clone(&setup_barrier);
                 let start_barrier = Arc::clone(&start_barrier);
                 let stop_at = Arc::clone(&stop_at);
+                let setup_error = Arc::clone(&setup_error);
                 let core_id = core_ids
                     .as_ref()
                     .and_then(|ids| ids.get(lane % ids.len()))
@@ -607,7 +678,23 @@ impl BenchBackend for CpuBackend {
                     }
                     let hasher = fixed_argon::FixedArgon2id::new(POW_MEMORY_KB);
                     let block_count = hasher.block_count();
-                    let mut arena = kernel::PowArena::new(block_count);
+                    let mut arena = match kernel::PowArena::new(block_count, page_mode) {
+                        Ok(arena) => arena,
+                        Err(err) => {
+                            if let Ok(mut slot) = setup_error.lock() {
+                                if slot.is_none() {
+                                    *slot = Some(format!(
+                                        "cpu lane {lane}: {} page-mode arena allocation failed ({err})",
+                                        page_mode.as_str()
+                                    ));
+                                }
+                            }
+                            setup_barrier.wait();
+                            start_barrier.wait();
+                            return;
+                        }
+                    };
+                    kernel::record_arena_backing(&self.shared, &arena, block_count);
                     let memory_blocks = arena.as_mut_slice();
 
                     let mut header_base = [0u8; blocknet_pow_spec::POW_HEADER_BASE_LEN];
@@ -648,9 +735,19 @@ impl BenchBackend for CpuBackend {
             }
 
             setup_barrier.wait();
-            let _ = stop_at.set(Instant::now() + sample_duration);
+            let setup_failed = setup_error.lock().ok().is_some_and(|slot| slot.is_some());
+            let deadline = if setup_failed {
+                Instant::now()
+            } else {
+                Instant::now() + sample_duration
+            };
+            let _ = stop_at.set(deadline);
             start_barrier.wait();
         });
+
+        if let Some(err) = setup_error.lock().ok().and_then(|mut slot| slot.take()) {
+            return Err(anyhow!(err));
+        }
 
         Ok(total_hashes.load(Ordering::Relaxed))
     }
@@ -660,25 +757,175 @@ fn cpu_worker_loop(shared: Arc<Shared>, thread_idx: usize, core_id: Option<core_
     kernel::cpu_worker_loop(shared, thread_idx, core_id);
 }
 
+fn reset_arena_telemetry(shared: &Shared) {
+    shared
+        .arena_explicit_large_workers
+        .store(0, Ordering::Release);
+    shared
+        .arena_explicit_large_1g_workers
+        .store(0, Ordering::Release);
+    shared
+        .arena_transparent_huge_workers
+        .store(0, Ordering::Release);
+    shared.arena_regular_workers.store(0, Ordering::Release);
+    shared.arena_heap_workers.store(0, Ordering::Release);
+    shared
+        .arena_explicit_large_bytes
+        .store(0, Ordering::Release);
+    shared
+        .arena_explicit_large_1g_bytes
+        .store(0, Ordering::Release);
+    shared
+        .arena_transparent_huge_bytes
+        .store(0, Ordering::Release);
+    shared.arena_regular_bytes.store(0, Ordering::Release);
+    shared.arena_heap_bytes.store(0, Ordering::Release);
+    shared.arena_allocation_failures.store(0, Ordering::Release);
+}
+
 fn resolve_affinity_core_ids(mode: CpuAffinityMode) -> Option<Vec<core_affinity::CoreId>> {
     if mode == CpuAffinityMode::Off {
         return None;
     }
-    #[cfg(target_os = "macos")]
-    let mut core_ids = core_affinity::get_core_ids().filter(|ids| !ids.is_empty())?;
-    #[cfg(not(target_os = "macos"))]
     let core_ids = core_affinity::get_core_ids().filter(|ids| !ids.is_empty())?;
-    if mode == CpuAffinityMode::PcoreOnly {
-        #[cfg(target_os = "macos")]
-        if let Some(pcore_count) = macos_pcore_count() {
-            core_ids.truncate(pcore_count.min(core_ids.len()));
+    // Native Windows exposes reliable processor-core masks and benefits materially from
+    // spreading memory-hard workers across physical cores before SMT siblings. Linux keeps
+    // the OS/core_affinity order: WSL topology experiments were unstable and transparent
+    // huge-page coverage dominated the measured affinity delta.
+    #[cfg(target_os = "windows")]
+    let core_ids = order_core_ids_physical_first(core_ids);
+    #[cfg(target_os = "macos")]
+    let core_ids = {
+        let mut core_ids = core_ids;
+        if mode == CpuAffinityMode::PcoreOnly {
+            // core_affinity maps these values to Mach affinity tags on macOS, not hard CPU
+            // identifiers. Limiting the distinct tag set complements the QoS preference above
+            // but cannot guarantee that a worker runs on a particular P-core.
+            if let Some(pcore_count) = macos_pcore_count() {
+                core_ids.truncate(pcore_count.min(core_ids.len()));
+            }
         }
-    }
+        core_ids
+    };
     if core_ids.is_empty() {
         None
     } else {
         Some(core_ids)
     }
+}
+
+/// Orders native Windows logical CPUs so one hardware thread from every physical core is used
+/// before SMT siblings. Incomplete or contradictory topology data retains the original order.
+#[cfg(target_os = "windows")]
+fn order_core_ids_physical_first(
+    core_ids: Vec<core_affinity::CoreId>,
+) -> Vec<core_affinity::CoreId> {
+    let available = core_ids.iter().map(|core| core.id).collect::<BTreeSet<_>>();
+    let Some(groups) = platform_physical_core_groups(&available) else {
+        return core_ids;
+    };
+    order_core_ids_by_groups(core_ids, groups)
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn order_core_ids_by_groups(
+    core_ids: Vec<core_affinity::CoreId>,
+    groups: Vec<Vec<usize>>,
+) -> Vec<core_affinity::CoreId> {
+    let available = core_ids.iter().map(|core| core.id).collect::<BTreeSet<_>>();
+    let mut topology_ids = BTreeSet::new();
+    for group in &groups {
+        if group.is_empty() {
+            return core_ids;
+        }
+        for id in group {
+            if !available.contains(id) || !topology_ids.insert(*id) {
+                return core_ids;
+            }
+        }
+    }
+    if topology_ids != available {
+        return core_ids;
+    }
+
+    let by_id = core_ids
+        .iter()
+        .copied()
+        .map(|core| (core.id, core))
+        .collect::<BTreeMap<_, _>>();
+    let mut normalized = groups
+        .into_iter()
+        .map(|mut group| {
+            group.sort_unstable();
+            group
+        })
+        .collect::<Vec<_>>();
+    normalized.sort_by_key(|group| group[0]);
+
+    let mut ordered = Vec::with_capacity(core_ids.len());
+    let mut seen = BTreeSet::new();
+    let max_siblings = normalized.iter().map(Vec::len).max().unwrap_or(0);
+    for sibling_index in 0..max_siblings {
+        for group in &normalized {
+            let Some(id) = group.get(sibling_index) else {
+                continue;
+            };
+            if seen.insert(*id) {
+                if let Some(core) = by_id.get(id) {
+                    ordered.push(*core);
+                }
+            }
+        }
+    }
+
+    debug_assert_eq!(seen, available);
+    ordered
+}
+
+#[cfg(target_os = "windows")]
+fn platform_physical_core_groups(available: &BTreeSet<usize>) -> Option<Vec<Vec<usize>>> {
+    use std::mem::{size_of, MaybeUninit};
+    use std::ptr;
+    use windows_sys::Win32::System::SystemInformation::{
+        GetLogicalProcessorInformation, RelationProcessorCore, SYSTEM_LOGICAL_PROCESSOR_INFORMATION,
+    };
+
+    let mut byte_len = 0u32;
+    unsafe {
+        // The first call reports the required buffer size.
+        let _ = GetLogicalProcessorInformation(ptr::null_mut(), &mut byte_len);
+    }
+    let entry_size = size_of::<SYSTEM_LOGICAL_PROCESSOR_INFORMATION>();
+    let entry_count = (byte_len as usize).checked_div(entry_size)?;
+    if entry_count == 0 {
+        return None;
+    }
+
+    let mut entries =
+        vec![MaybeUninit::<SYSTEM_LOGICAL_PROCESSOR_INFORMATION>::uninit(); entry_count];
+    let ok = unsafe { GetLogicalProcessorInformation(entries.as_mut_ptr().cast(), &mut byte_len) };
+    if ok == 0 {
+        return None;
+    }
+
+    let initialized_count = (byte_len as usize)
+        .checked_div(entry_size)?
+        .min(entry_count);
+    let mut groups = Vec::new();
+    for entry in &entries[..initialized_count] {
+        let entry = unsafe { entry.assume_init_ref() };
+        if entry.Relationship != RelationProcessorCore {
+            continue;
+        }
+        let group = (0..usize::BITS as usize)
+            .filter(|bit| entry.ProcessorMask & (1usize << bit) != 0)
+            .filter(|bit| available.contains(bit))
+            .collect::<Vec<_>>();
+        if !group.is_empty() {
+            groups.push(group);
+        }
+    }
+    (!groups.is_empty()).then_some(groups)
 }
 
 #[cfg(target_os = "macos")]
@@ -881,8 +1128,14 @@ fn wait_for_workers_ready(
             return Ok(());
         }
         if shared.startup_failed.load(Ordering::Acquire) {
+            let detail = shared
+                .startup_error
+                .lock()
+                .ok()
+                .and_then(|slot| slot.clone())
+                .unwrap_or_else(|| "unknown worker startup error".to_owned());
             return Err(anyhow!(
-                "CPU worker startup failed before readiness barrier ({ready}/{expected_workers} ready)"
+                "CPU worker startup failed before readiness barrier ({ready}/{expected_workers} ready): {detail}"
             ));
         }
 
@@ -1025,7 +1278,7 @@ fn should_flush_hashes(
     pending_hashes >= hash_batch_size.max(1) || now >= next_flush_at
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn emit_warning(shared: &Shared, message: String) {
     events::emit_warning(shared, message);
 }
@@ -1046,7 +1299,8 @@ fn forward_event(shared: &Shared, event: BackendEvent) {
 mod tests {
     use super::{
         emit_error, forward_event, lane_quota_for_chunk, maybe_finalize_assignment,
-        should_flush_hashes, start_assignment, BackendEvent, CpuBackend, DEFAULT_HASH_BATCH_SIZE,
+        order_core_ids_by_groups, should_flush_hashes, start_assignment, BackendEvent, CpuBackend,
+        DEFAULT_HASH_BATCH_SIZE,
     };
     use crate::backend::{MiningSolution, NonceChunk, PowBackend, WorkAssignment, WorkTemplate};
     use crate::config::CpuAffinityMode;
@@ -1069,6 +1323,55 @@ mod tests {
         assert_eq!(lane_quota_for_chunk(5, 1, 4), 1);
         assert_eq!(lane_quota_for_chunk(5, 3, 4), 1);
         assert_eq!(lane_quota_for_chunk(5, 6, 4), 0);
+    }
+
+    #[test]
+    fn affinity_order_spreads_workers_across_physical_cores_before_smt() {
+        let cores = (0..8)
+            .map(|id| core_affinity::CoreId { id })
+            .collect::<Vec<_>>();
+        let groups = vec![vec![0, 1], vec![2, 3], vec![4, 5], vec![6, 7]];
+        let ordered = order_core_ids_by_groups(cores, groups)
+            .into_iter()
+            .map(|core| core.id)
+            .collect::<Vec<_>>();
+        assert_eq!(ordered, vec![0, 2, 4, 6, 1, 3, 5, 7]);
+    }
+
+    #[test]
+    fn affinity_order_rejects_incomplete_topology_groups() {
+        let cores = (0..5)
+            .map(|id| core_affinity::CoreId { id })
+            .collect::<Vec<_>>();
+        let ordered = order_core_ids_by_groups(cores, vec![vec![0, 1], vec![2, 3]])
+            .into_iter()
+            .map(|core| core.id)
+            .collect::<Vec<_>>();
+        assert_eq!(ordered, vec![0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn affinity_order_rejects_overlapping_topology_groups() {
+        let cores = (0..4)
+            .map(|id| core_affinity::CoreId { id })
+            .collect::<Vec<_>>();
+        let ordered = order_core_ids_by_groups(cores, vec![vec![0, 1], vec![1, 2], vec![3]])
+            .into_iter()
+            .map(|core| core.id)
+            .collect::<Vec<_>>();
+        assert_eq!(ordered, vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn affinity_order_rejects_unknown_topology_cpu() {
+        let cores = (0..4)
+            .map(|id| core_affinity::CoreId { id })
+            .collect::<Vec<_>>();
+        let ordered = order_core_ids_by_groups(cores, vec![vec![0, 1], vec![2, 4], vec![3]])
+            .into_iter()
+            .map(|core| core.id)
+            .collect::<Vec<_>>();
+        assert_eq!(ordered, vec![0, 1, 2, 3]);
     }
 
     #[test]

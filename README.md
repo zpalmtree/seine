@@ -35,6 +35,15 @@ When sync is complete, type `exit` to shut down the daemon.
 ./seine
 ```
 
+The Windows release archive includes the CUDA 12.8.61 NVRTC runtime DLLs needed
+by the NVIDIA backend. An up-to-date NVIDIA display driver is still required;
+no separate CUDA Toolkit installation or `PATH` change should be necessary for
+the pre-built archive.
+
+Tagged release archives also include the Seine license, this README, and an
+internal checksum manifest. The GitHub release publishes a separate
+`SHA256SUMS.txt` covering every platform archive.
+
 **Option B — Build from source:**
 
 ```bash
@@ -136,7 +145,75 @@ machine is already fragmented.
 Runtime checks:
 - Startup warns with exact sizing/commands when HugeTLB is under-provisioned (`hugepages | CPU lanes=... need ...`).
 - Per-backend fallback warnings still appear if a worker falls back from `MAP_HUGETLB` (`MAP_HUGETLB unavailable; hugepage coverage...`).
+- `--cpu-page-mode large` requires every CPU worker to receive `MAP_HUGETLB` and fails CPU backend startup instead of mixing page classes or silently falling back.
+- `--cpu-page-mode large-1g` does the same with explicit 1 GiB pages (`MAP_HUGETLB|MAP_HUGE_1GB`, x86_64 Linux/WSL only); see "WSL/Linux HugeTLB provisioning" below for reserving the 1 GiB pool.
+- `--cpu-page-mode regular` disables THP for a controlled base-page benchmark. The default `auto` mode retains the production fallback chain.
+- Benchmark reports record measured HugeTLB, THP, regular-page, and heap bytes per CPU backend so page-backed runs can be verified rather than inferred.
 - In practice, once many CPU lanes are active, hugepage coverage usually matters more than ISA-level tuning for backend throughput.
+
+## Windows Large Pages
+
+Native Windows CPU workers first try `VirtualAlloc` with large pages, then safely
+fall back to regular `VirtualAlloc` pages. Large-page use requires the mining
+account to hold **Lock pages in memory** (`SeLockMemoryPrivilege`); changing that
+user right normally requires signing out and back in before a process can enable
+it. Seine never grants the right or triggers a sign-out itself, and logs the Win32
+fallback reason so benchmark manifests remain interpretable.
+
+Use `--cpu-page-mode large` after granting the right to require large pages for
+every worker, or `--cpu-page-mode regular` for a matched ordinary-page control.
+Required-large startup fails with the Win32 allocation error if the privilege or
+enough large-page memory is unavailable. The Linux-only `large-1g` mode is
+rejected on Windows. macOS supports `auto` and `regular`; explicit `large` and
+`large-1g` modes are rejected because there is no equivalent allocator contract.
+
+Native Windows `--cpu-affinity auto` also uses complete processor-core topology
+groups before SMT siblings. If Windows returns incomplete or contradictory
+topology data, Seine retains the original logical-CPU order.
+
+### WSL/Linux HugeTLB provisioning
+
+`--cpu-page-mode large` uses only a pre-reserved HugeTLB pool on Linux/WSL and
+fails closed when the full arena set is unavailable. Each CPU worker needs 1024
+two-MiB huge pages. A practical reservation with 5% headroom is:
+
+```text
+vm.nr_hugepages = ceil(cpu_threads * 1024 * 1.05)
+```
+
+For nine workers, reserve `9677` pages (about 18.9 GiB) before memory becomes
+fragmented, for example in `/etc/sysctl.d/99-seine-hugepages.conf`:
+
+```text
+vm.nr_hugepages = 9677
+```
+
+`--cpu-page-mode large-1g` is the 1 GiB variant (x86_64 Linux/WSL only): every
+worker arena is mapped with `MAP_HUGETLB|MAP_HUGE_1GB` from the explicit 1 GiB
+pool and startup fails closed on any shortfall. Each 2 GiB worker arena needs
+exactly two 1 GiB pages, so no fractional headroom is required:
+
+```bash
+# 9 workers * 2 pages/worker = 18 x 1 GiB pages
+echo 18 | sudo tee /sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages
+```
+
+1 GiB pages usually cannot be assembled after boot on a fragmented host; prefer
+reserving them at boot with the `hugepagesz=1G hugepages=18` kernel parameters.
+On WSL2 set them in `%UserProfile%\.wslconfig`, e.g.
+`kernelCommandLine = hugepagesz=1G hugepages=18`, then restart WSL. Verify the
+pool with `cat /sys/kernel/mm/hugepages/hugepages-1048576kB/free_hugepages`
+(the `HugePages_*` lines in `/proc/meminfo` cover only the default 2 MiB size).
+Benchmark telemetry reports 1 GiB backing separately (`large1g=`/`large1g_bytes=`),
+and `scripts/bench_cpu_ab.sh --page-mode large-1g` rejects any run that fell
+back or mixed page classes.
+
+On WSL2, the VM must also have enough ordinary headroom for Windows/WSL services.
+The validated 64-GiB host used `%UserProfile%\.wslconfig` with `memory=48GB`,
+`processors=32`, and `swap=8GB`. Restart WSL only when convenient, then verify
+`HugePages_Free` can cover every requested arena before mining. This reservation
+is unavailable to ordinary applications until reduced; size it for the profile
+you actually run.
 
 ## Configuration
 
@@ -218,9 +295,42 @@ Password sources (checked in order): `--wallet-password`, `--wallet-password-fil
 
 ## GPU Mining
 
+### Apple Silicon CPU guidance
+
+Apple Silicon defaults to CPU-only mining; Metal remains explicit opt-in. On the
+48 GiB M4 Max validation host, the balanced 14-lane `pcore-only` policy averaged
+`29.26 H/s` and beat 14-lane `auto` by `0.94%` in three paired runs (95% paired
+bootstrap interval `-1.22%` to `-0.45%` for `auto`). For a dedicated maximum-rate
+run, 16-lane `auto` reached `30.94 H/s`, but the 32 GiB arena set caused macOS to
+create and use roughly 3 GiB of swap. Treat that as a throughput setting, not a
+general balanced default.
+
+An exact-binary 13-versus-14 follow-up measured 14 lanes **2.57% faster** (95%
+paired interval `+1.91%` to `+2.92%`, all three pairs faster). CPU autotuning now
+confirms close balanced-profile finalists with longer reversed-order samples so
+a noisy first-run scan does not cache the slower 13-lane choice.
+
+Examples:
+
+```bash
+# Balanced on a 48 GiB 12P+4E M4 Max
+./seine --backend cpu --threads 14 --cpu-affinity pcore-only
+
+# Maximum observed rate; expect much higher memory pressure
+./seine --backend cpu --threads 16 --cpu-affinity auto
+```
+
+On macOS, affinity values are Mach scheduler tags plus a high-QoS preference;
+they are not hard CPU-ID pinning.
+
 ### NVIDIA
 
 Requires CUDA driver and NVRTC libraries on the host. Seine compiles kernels at startup via NVRTC.
+The current Windows build uses cudarc's CUDA 12.8 loader feature, so a Windows
+machine with only CUDA 13.x-style DLL names (for example `nvrtc64_130_0.dll`)
+will not be discovered. Official Windows release archives bundle the required
+12.8.61 NVRTC DLLs beside Seine. Source builds can install the CUDA 12.8 NVRTC
+redistributable separately or add its `bin` directory to `PATH`.
 
 Current Blackwell / RTX 5090 tuning notes and measured benchmark frontier:
 [`docs/NVIDIA_5090_TUNING.md`](docs/NVIDIA_5090_TUNING.md)
@@ -237,7 +347,10 @@ If CUDA initialization fails, NVIDIA backends are quarantined and CPU mining con
 
 ### Metal (macOS ARM)
 
-Metal support is experimental. Pre-built macOS ARM binaries include it. To build from source:
+Metal support is experimental and is not auto-selected. The M4 Max CPU-only path
+substantially outperformed Metal-only and CPU+Metal tests because both processors
+compete for unified memory bandwidth. Pre-built macOS ARM binaries include Metal
+for explicit experiments. To build from source:
 
 ```bash
 cargo build --release --no-default-features --features metal
