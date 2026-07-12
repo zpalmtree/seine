@@ -38,8 +38,12 @@ manual `PATH` setup.
 The fresh autotuner now uses the repeatedly measured `240/224/208` register-cap
 frontier on the exact desktop `NVIDIA GeForce RTX 5090` (compute capability 12).
 It deliberately does not apply to 5090 Laptop, 5090 D, other Blackwell cards, or
-older architectures; those devices retain the exhaustive candidate set until
-we have equivalent hardware evidence.
+older architectures; since A94 those devices use a staged coarse-to-fine search
+over their full architecture candidate list (short coarse frontier probes, then
+full-quality refinement around the coarse winner, with an exhaustive-sweep
+safety valve). The staged policy was replay-validated against this card's
+recorded A92 trace and remains real-hardware-pending elsewhere; see
+`NVIDIA_OPTIMIZATION_LOG.md` A94.
 
 On the same RTX 5090 with driver `610.47`, NVRTC `13.1`, 14 lanes, default
 five-second/two-sample autotune, and empty data directories:

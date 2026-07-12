@@ -52,6 +52,21 @@ const NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_LEGACY: &[u32] =
 // Keep the exhaustive Ampere+ set for other Blackwell devices until they have
 // equivalent hardware evidence; this shortlist is intentionally device-scoped.
 const NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_RTX_5090: &[u32] = &[240, 224, 208];
+// Devices without a device-specific measured profile use a staged
+// coarse-to-fine fresh-autotune search instead of exhaustively benchmarking
+// every register cap: a short-sample coarse probe of the candidate list's
+// {highest, middle, closest-to-208} frontier picks a region, then full-quality
+// samples refine the winner's +/-1-step neighborhood (extending stepwise while
+// a boundary candidate keeps winning). Final selection scores refine-stage
+// samples only, with the same comparator as the exhaustive search. Pathological
+// coarse results (fewer than two scored probes, non-positive best score, or a
+// pre-Blackwell coarse spread inside the noise band) fall back to the full
+// exhaustive sweep so a degenerate coarse stage can never silently pick a
+// worse profile. Replay-validated against the recorded RTX 5090 trace; other
+// devices remain real-hardware-pending (see NVIDIA_OPTIMIZATION_LOG.md A94).
+const STAGED_AUTOTUNE_COARSE_SAMPLES: u32 = 1;
+const STAGED_AUTOTUNE_COARSE_NOISE_FRAC: f64 = 0.02;
+const STAGED_AUTOTUNE_FRONTIER_ANCHOR_RREGCOUNT: u32 = 208;
 // Retained for reference; the staged autotune no longer iterates this axis.
 const _NVIDIA_AUTOTUNE_LOOP_UNROLL_CANDIDATES: &[bool] = &[false];
 const DEFAULT_NVIDIA_AUTOTUNE_SAMPLES: u32 = 2;
@@ -180,6 +195,10 @@ struct NvidiaAutotuneRecord {
     candidate_trace: Vec<NvidiaAutotuneCandidateTrace>,
     #[serde(default)]
     autotune_elapsed_millis: u64,
+    /// How the fresh search enumerated candidates: `"staged"`, `"exhaustive"`,
+    /// or `"shortlist"`. Empty for records persisted before this field existed.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    search_policy: String,
     timestamp_unix_secs: u64,
 }
 
@@ -197,6 +216,11 @@ struct NvidiaAutotuneCandidateTrace {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     throughput_mean_hps: Option<f64>,
     elapsed_millis: u64,
+    /// `"coarse"` for staged short-sample probes, `"refine"` for staged
+    /// full-quality probes; absent for exhaustive/shortlist candidates and for
+    /// records persisted before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    stage: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -3071,6 +3095,7 @@ fn memory_budget_distance(lhs: u64, rhs: u64) -> u64 {
     lhs.max(rhs) - lhs.min(rhs)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn persist_nvidia_autotune_record(
     path: &Path,
     key: NvidiaAutotuneKey,
@@ -3080,6 +3105,7 @@ fn persist_nvidia_autotune_record(
     autotune_samples: u32,
     candidate_trace: Vec<NvidiaAutotuneCandidateTrace>,
     autotune_elapsed_millis: u64,
+    search_policy: &str,
 ) -> Result<()> {
     let mut cache = load_nvidia_autotune_cache(path).unwrap_or_else(empty_nvidia_autotune_cache);
     if cache.schema_version != NVIDIA_AUTOTUNE_SCHEMA_VERSION {
@@ -3105,6 +3131,7 @@ fn persist_nvidia_autotune_record(
         autotune_samples: autotune_samples.max(1),
         candidate_trace,
         autotune_elapsed_millis,
+        search_policy: search_policy.to_string(),
         timestamp_unix_secs,
     };
     if let Some(existing) = cache.records.iter_mut().find(|record| record.key == key) {
@@ -3326,12 +3353,18 @@ fn build_autotune_hash_depth_candidates(max_hashes_per_launch_per_lane: u32) -> 
     candidates
 }
 
-fn nvidia_autotune_regcap_candidates(compute_cap_major: u32, device_name: &str) -> &'static [u32] {
-    if compute_cap_major == 12
+/// True only for the exact desktop RTX 5090 profile whose `[240, 224, 208]`
+/// regcap frontier was measured directly (A91). Laptop/regional variants and
+/// all other devices intentionally do not match.
+fn nvidia_device_has_measured_regcap_shortlist(compute_cap_major: u32, device_name: &str) -> bool {
+    compute_cap_major == 12
         && device_name
             .trim()
             .eq_ignore_ascii_case("NVIDIA GeForce RTX 5090")
-    {
+}
+
+fn nvidia_autotune_regcap_candidates(compute_cap_major: u32, device_name: &str) -> &'static [u32] {
+    if nvidia_device_has_measured_regcap_shortlist(compute_cap_major, device_name) {
         NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_RTX_5090
     } else if compute_cap_major == 0 {
         NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_LEGACY
@@ -3340,6 +3373,59 @@ fn nvidia_autotune_regcap_candidates(compute_cap_major: u32, device_name: &str) 
     } else {
         NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_LEGACY
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NvidiaAutotuneSearchPolicy {
+    /// Device-specific measured candidate shortlist (exact desktop RTX 5090).
+    Shortlist,
+    /// Coarse-to-fine staged search for devices without a measured profile.
+    Staged,
+    /// Full sweep of the architecture candidate list; also the staged
+    /// safety-valve fallback.
+    Exhaustive,
+}
+
+impl NvidiaAutotuneSearchPolicy {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Shortlist => "shortlist",
+            Self::Staged => "staged",
+            Self::Exhaustive => "exhaustive",
+        }
+    }
+}
+
+fn nvidia_autotune_requested_search_policy(
+    compute_cap_major: u32,
+    device_name: &str,
+) -> NvidiaAutotuneSearchPolicy {
+    if nvidia_device_has_measured_regcap_shortlist(compute_cap_major, device_name) {
+        NvidiaAutotuneSearchPolicy::Shortlist
+    } else {
+        NvidiaAutotuneSearchPolicy::Staged
+    }
+}
+
+/// Coarse stage-1 probe set: the candidate list's highest entry, its middle
+/// entry, and the entry closest to the measured 208 frontier anchor, kept in
+/// candidate-list order.
+fn staged_coarse_regcap_frontier(candidates: &[u32]) -> Vec<u32> {
+    let Some(&first) = candidates.first() else {
+        return Vec::new();
+    };
+    let middle = candidates[candidates.len() / 2];
+    let anchor = candidates
+        .iter()
+        .copied()
+        .min_by_key(|regcap| regcap.abs_diff(STAGED_AUTOTUNE_FRONTIER_ANCHOR_RREGCOUNT))
+        .unwrap_or(first);
+    let picks = [first, middle, anchor];
+    candidates
+        .iter()
+        .copied()
+        .filter(|regcap| picks.contains(regcap))
+        .collect()
 }
 
 fn build_autotune_lane_candidates(
@@ -3368,6 +3454,476 @@ fn build_autotune_lane_candidates(
     candidates
 }
 
+/// Static inputs of one fresh-autotune search, independent of how candidates
+/// are measured so recorded traces can be replayed through the same driver.
+struct NvidiaAutotuneSearchPlan<'a> {
+    compute_cap_major: u32,
+    regcap_candidates: &'a [u32],
+    hash_depth_candidates: &'a [u32],
+    lane_candidates: &'a [Option<usize>],
+    default_depth: u32,
+    autotune_secs: u64,
+    sample_count: u32,
+}
+
+struct NvidiaAutotuneSearchOutcome {
+    best: Option<NvidiaAutotuneCandidateScore>,
+    candidate_trace: Vec<NvidiaAutotuneCandidateTrace>,
+    search_policy: NvidiaAutotuneSearchPolicy,
+}
+
+fn evaluate_nvidia_autotune_candidate<M>(
+    measure: &mut M,
+    candidate_trace: &mut Vec<NvidiaAutotuneCandidateTrace>,
+    candidate: NvidiaKernelTuning,
+    secs: u64,
+    sample_count: u32,
+    stage: Option<&'static str>,
+) -> Option<NvidiaAutotuneCandidateScore>
+where
+    M: FnMut(NvidiaKernelTuning, u64) -> Result<NvidiaAutotuneSampleScore>,
+{
+    let candidate_started = Instant::now();
+    let sample_count = sample_count.max(1);
+    let mut samples = Vec::with_capacity(sample_count as usize);
+    let mut failed_samples = 0u32;
+    for _ in 0..sample_count {
+        let measured = match measure(candidate, secs.max(1)) {
+            Ok(score) if score.counted_hps.is_finite() && score.throughput_hps.is_finite() => score,
+            _ => {
+                failed_samples = failed_samples.saturating_add(1);
+                continue;
+            }
+        };
+        samples.push(NvidiaAutotuneSampleScore {
+            counted_hps: measured.counted_hps.max(0.0),
+            throughput_hps: measured.throughput_hps.max(0.0),
+            elapsed_secs: measured.elapsed_secs.max(0.0),
+        });
+    }
+    let elapsed_millis = u64::try_from(candidate_started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    let stage = stage.map(str::to_string);
+    if samples.is_empty() {
+        candidate_trace.push(NvidiaAutotuneCandidateTrace {
+            tuning: candidate,
+            samples,
+            failed_samples,
+            counted_median_hps: None,
+            counted_mean_hps: None,
+            throughput_median_hps: None,
+            throughput_mean_hps: None,
+            elapsed_millis,
+            stage,
+        });
+        return None;
+    }
+    let mut counted_samples = samples
+        .iter()
+        .map(|sample| sample.counted_hps)
+        .collect::<Vec<_>>();
+    let mut throughput_samples = samples
+        .iter()
+        .map(|sample| sample.throughput_hps)
+        .collect::<Vec<_>>();
+    counted_samples.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    throughput_samples.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let counted_median = median_from_sorted(&counted_samples);
+    let counted_mean = counted_samples.iter().sum::<f64>() / counted_samples.len() as f64;
+    let throughput_median = median_from_sorted(&throughput_samples);
+    let throughput_mean = throughput_samples.iter().sum::<f64>() / throughput_samples.len() as f64;
+    candidate_trace.push(NvidiaAutotuneCandidateTrace {
+        tuning: candidate,
+        samples,
+        failed_samples,
+        counted_median_hps: Some(counted_median),
+        counted_mean_hps: Some(counted_mean),
+        throughput_median_hps: Some(throughput_median),
+        throughput_mean_hps: Some(throughput_mean),
+        elapsed_millis,
+        stage,
+    });
+    Some(NvidiaAutotuneCandidateScore {
+        tuning: candidate,
+        counted_median,
+        counted_mean,
+        throughput_median,
+        throughput_mean,
+    })
+}
+
+fn update_best_nvidia_autotune_candidate(
+    candidate: NvidiaAutotuneCandidateScore,
+    best: &mut Option<NvidiaAutotuneCandidateScore>,
+    compute_cap_major: u32,
+) {
+    let should_replace = match best {
+        None => true,
+        Some(best_score) => {
+            nvidia_autotune_candidate_beats(&candidate, best_score, compute_cap_major)
+        }
+    };
+    if should_replace {
+        *best = Some(candidate);
+    }
+}
+
+/// Today's full sweep: joint regcap x depth on Blackwell, regcap sweep then
+/// depth refinement elsewhere. Used by the exact-5090 shortlist policy and as
+/// the staged policy's safety-valve fallback.
+fn run_nvidia_autotune_full_sweep<M>(
+    plan: &NvidiaAutotuneSearchPlan<'_>,
+    measure: &mut M,
+    candidate_trace: &mut Vec<NvidiaAutotuneCandidateTrace>,
+) -> Option<NvidiaAutotuneCandidateScore>
+where
+    M: FnMut(NvidiaKernelTuning, u64) -> Result<NvidiaAutotuneSampleScore>,
+{
+    let mut best: Option<NvidiaAutotuneCandidateScore> = None;
+    if plan.compute_cap_major >= 12 {
+        for depth in plan.hash_depth_candidates.iter().copied() {
+            for &max_rregcount in plan.regcap_candidates {
+                let candidate = NvidiaKernelTuning {
+                    max_rregcount,
+                    block_loop_unroll: false,
+                    hashes_per_launch_per_lane: depth,
+                    max_lanes_hint: None,
+                };
+                if let Some(score) = evaluate_nvidia_autotune_candidate(
+                    measure,
+                    candidate_trace,
+                    candidate,
+                    plan.autotune_secs,
+                    plan.sample_count,
+                    None,
+                ) {
+                    update_best_nvidia_autotune_candidate(score, &mut best, plan.compute_cap_major);
+                }
+            }
+        }
+    } else {
+        // Stage 1: find best regcap
+        for &max_rregcount in plan.regcap_candidates {
+            let candidate = NvidiaKernelTuning {
+                max_rregcount,
+                block_loop_unroll: false,
+                hashes_per_launch_per_lane: plan.default_depth,
+                max_lanes_hint: None,
+            };
+            if let Some(score) = evaluate_nvidia_autotune_candidate(
+                measure,
+                candidate_trace,
+                candidate,
+                plan.autotune_secs,
+                plan.sample_count,
+                None,
+            ) {
+                update_best_nvidia_autotune_candidate(score, &mut best, plan.compute_cap_major);
+            }
+        }
+
+        let best_regcap = best
+            .as_ref()
+            .map(|score| score.tuning.max_rregcount)
+            .unwrap_or(DEFAULT_NVIDIA_MAX_RREGCOUNT);
+
+        // Stage 2: find best hash depth using best regcap
+        for depth in plan.hash_depth_candidates.iter().copied() {
+            if depth == plan.default_depth {
+                continue; // already tested in stage 1
+            }
+            let candidate = NvidiaKernelTuning {
+                max_rregcount: best_regcap,
+                block_loop_unroll: false,
+                hashes_per_launch_per_lane: depth,
+                max_lanes_hint: None,
+            };
+            if let Some(score) = evaluate_nvidia_autotune_candidate(
+                measure,
+                candidate_trace,
+                candidate,
+                plan.autotune_secs,
+                plan.sample_count,
+                None,
+            ) {
+                update_best_nvidia_autotune_candidate(score, &mut best, plan.compute_cap_major);
+            }
+        }
+    }
+    best
+}
+
+/// Full-quality probe of one register cap during the staged refine stage:
+/// jointly with every depth candidate on Blackwell, at the default depth
+/// elsewhere (depth variants follow once the regcap winner is known).
+fn refine_nvidia_autotune_regcap<M>(
+    plan: &NvidiaAutotuneSearchPlan<'_>,
+    measure: &mut M,
+    candidate_trace: &mut Vec<NvidiaAutotuneCandidateTrace>,
+    best: &mut Option<NvidiaAutotuneCandidateScore>,
+    max_rregcount: u32,
+) where
+    M: FnMut(NvidiaKernelTuning, u64) -> Result<NvidiaAutotuneSampleScore>,
+{
+    let depths: &[u32] = if plan.compute_cap_major >= 12 {
+        plan.hash_depth_candidates
+    } else {
+        std::slice::from_ref(&plan.default_depth)
+    };
+    for depth in depths.iter().copied() {
+        let candidate = NvidiaKernelTuning {
+            max_rregcount,
+            block_loop_unroll: false,
+            hashes_per_launch_per_lane: depth,
+            max_lanes_hint: None,
+        };
+        if let Some(score) = evaluate_nvidia_autotune_candidate(
+            measure,
+            candidate_trace,
+            candidate,
+            plan.autotune_secs,
+            plan.sample_count,
+            Some("refine"),
+        ) {
+            update_best_nvidia_autotune_candidate(score, best, plan.compute_cap_major);
+        }
+    }
+}
+
+/// Coarse-to-fine staged search. Returns `None` when a safety valve trips and
+/// the caller must fall back to the exhaustive sweep. The returned best score
+/// is derived exclusively from full-quality refine-stage samples so cached
+/// records stay comparable with exhaustive/shortlist runs.
+fn run_nvidia_autotune_staged_search<M>(
+    plan: &NvidiaAutotuneSearchPlan<'_>,
+    measure: &mut M,
+    candidate_trace: &mut Vec<NvidiaAutotuneCandidateTrace>,
+) -> Option<NvidiaAutotuneCandidateScore>
+where
+    M: FnMut(NvidiaKernelTuning, u64) -> Result<NvidiaAutotuneSampleScore>,
+{
+    // Stage 1 (coarse): short-sample probes of the regcap frontier. Blackwell
+    // probes the shallowest depth (its measured frontier and runtime clamp both
+    // prefer shallow launches); older architectures probe the default depth.
+    let frontier = staged_coarse_regcap_frontier(plan.regcap_candidates);
+    let coarse_depth = if plan.compute_cap_major >= 12 {
+        plan.hash_depth_candidates
+            .last()
+            .copied()
+            .unwrap_or(plan.default_depth)
+    } else {
+        plan.default_depth
+    };
+    let coarse_secs = plan.autotune_secs.max(1).div_ceil(2);
+    let mut coarse_scores: Vec<NvidiaAutotuneCandidateScore> = Vec::new();
+    let mut coarse_best: Option<NvidiaAutotuneCandidateScore> = None;
+    for &max_rregcount in &frontier {
+        let candidate = NvidiaKernelTuning {
+            max_rregcount,
+            block_loop_unroll: false,
+            hashes_per_launch_per_lane: coarse_depth,
+            max_lanes_hint: None,
+        };
+        if let Some(score) = evaluate_nvidia_autotune_candidate(
+            measure,
+            candidate_trace,
+            candidate,
+            coarse_secs,
+            STAGED_AUTOTUNE_COARSE_SAMPLES,
+            Some("coarse"),
+        ) {
+            update_best_nvidia_autotune_candidate(score, &mut coarse_best, plan.compute_cap_major);
+            coarse_scores.push(score);
+        }
+    }
+
+    // Safety valves: a coarse stage that failed outright, produced too little
+    // signal to cross-check, or (pre-Blackwell, where scoring is strict) spread
+    // its scores inside the noise band cannot be trusted to steer the refine
+    // neighborhood. Blackwell near-ties are not pathological: its comparator
+    // deterministically resolves them toward the measured 208 frontier.
+    let coarse_best = coarse_best?;
+    if coarse_scores.len() < 2 || coarse_best.counted_median <= 0.0 {
+        return None;
+    }
+    if plan.compute_cap_major < 12 {
+        let worst = coarse_scores
+            .iter()
+            .map(|score| score.counted_median)
+            .fold(f64::INFINITY, f64::min);
+        if coarse_best.counted_median - worst
+            <= coarse_best.counted_median * STAGED_AUTOTUNE_COARSE_NOISE_FRAC
+        {
+            return None;
+        }
+    }
+
+    // Stage 2 (refine): full-quality samples around the coarse winner
+    // (winner +/- one step in the candidate list).
+    let winner_index = plan
+        .regcap_candidates
+        .iter()
+        .position(|&regcap| regcap == coarse_best.tuning.max_rregcount)?;
+    let neighborhood_start = winner_index.saturating_sub(1);
+    let neighborhood_end = (winner_index + 1).min(plan.regcap_candidates.len() - 1);
+    let mut best: Option<NvidiaAutotuneCandidateScore> = None;
+    let mut probed: Vec<u32> = Vec::new();
+    for index in neighborhood_start..=neighborhood_end {
+        let regcap = plan.regcap_candidates[index];
+        refine_nvidia_autotune_regcap(plan, measure, candidate_trace, &mut best, regcap);
+        probed.push(regcap);
+    }
+
+    // Boundary extension: while the winner sits on the edge of the probed set
+    // and the candidate list continues in that direction, keep stepping so a
+    // monotone landscape (for example the RTX 3080's low-regcap preference)
+    // still reaches its true optimum. A probe that fails or loses ends the walk.
+    loop {
+        let Some(current) = best.as_ref() else {
+            // Every refine probe failed; the staged search has no usable score.
+            return None;
+        };
+        let best_regcap = current.tuning.max_rregcount;
+        let min_probed = probed.iter().copied().min().unwrap_or(best_regcap);
+        let max_probed = probed.iter().copied().max().unwrap_or(best_regcap);
+        let next = if best_regcap == min_probed {
+            plan.regcap_candidates
+                .iter()
+                .copied()
+                .filter(|&regcap| regcap < best_regcap)
+                .max()
+        } else if best_regcap == max_probed {
+            plan.regcap_candidates
+                .iter()
+                .copied()
+                .filter(|&regcap| regcap > best_regcap)
+                .min()
+        } else {
+            None
+        };
+        let Some(next_regcap) = next else {
+            break;
+        };
+        refine_nvidia_autotune_regcap(plan, measure, candidate_trace, &mut best, next_regcap);
+        probed.push(next_regcap);
+    }
+
+    // Depth variants for pre-Blackwell devices (Blackwell already probed depth
+    // jointly during refine), matching the exhaustive policy's depth stage.
+    if plan.compute_cap_major < 12 {
+        let best_regcap = best
+            .as_ref()
+            .map(|score| score.tuning.max_rregcount)
+            .unwrap_or(DEFAULT_NVIDIA_MAX_RREGCOUNT);
+        for depth in plan.hash_depth_candidates.iter().copied() {
+            if depth == plan.default_depth {
+                continue; // already refined at the default depth
+            }
+            let candidate = NvidiaKernelTuning {
+                max_rregcount: best_regcap,
+                block_loop_unroll: false,
+                hashes_per_launch_per_lane: depth,
+                max_lanes_hint: None,
+            };
+            if let Some(score) = evaluate_nvidia_autotune_candidate(
+                measure,
+                candidate_trace,
+                candidate,
+                plan.autotune_secs,
+                plan.sample_count,
+                Some("refine"),
+            ) {
+                update_best_nvidia_autotune_candidate(score, &mut best, plan.compute_cap_major);
+            }
+        }
+    }
+
+    best
+}
+
+/// Final stage shared by every policy: probe explicit lane hints against the
+/// best regcap/depth profile.
+fn run_nvidia_autotune_lane_stage<M>(
+    plan: &NvidiaAutotuneSearchPlan<'_>,
+    measure: &mut M,
+    candidate_trace: &mut Vec<NvidiaAutotuneCandidateTrace>,
+    best: &mut Option<NvidiaAutotuneCandidateScore>,
+    stage: Option<&'static str>,
+) where
+    M: FnMut(NvidiaKernelTuning, u64) -> Result<NvidiaAutotuneSampleScore>,
+{
+    let best_regcap = best
+        .as_ref()
+        .map(|score| score.tuning.max_rregcount)
+        .unwrap_or(DEFAULT_NVIDIA_MAX_RREGCOUNT);
+    let best_depth = best
+        .as_ref()
+        .map(|score| score.tuning.hashes_per_launch_per_lane)
+        .unwrap_or(plan.default_depth);
+    for max_lanes_hint in plan.lane_candidates.iter().copied() {
+        if max_lanes_hint.is_none() {
+            continue; // already tested
+        }
+        let candidate = NvidiaKernelTuning {
+            max_rregcount: best_regcap,
+            block_loop_unroll: false,
+            hashes_per_launch_per_lane: best_depth,
+            max_lanes_hint,
+        };
+        if let Some(score) = evaluate_nvidia_autotune_candidate(
+            measure,
+            candidate_trace,
+            candidate,
+            plan.autotune_secs,
+            plan.sample_count,
+            stage,
+        ) {
+            update_best_nvidia_autotune_candidate(score, best, plan.compute_cap_major);
+        }
+    }
+}
+
+fn run_nvidia_autotune_search<M>(
+    plan: &NvidiaAutotuneSearchPlan<'_>,
+    requested_policy: NvidiaAutotuneSearchPolicy,
+    measure: &mut M,
+) -> NvidiaAutotuneSearchOutcome
+where
+    M: FnMut(NvidiaKernelTuning, u64) -> Result<NvidiaAutotuneSampleScore>,
+{
+    let mut candidate_trace = Vec::new();
+    let (mut best, search_policy) = match requested_policy {
+        NvidiaAutotuneSearchPolicy::Staged => {
+            match run_nvidia_autotune_staged_search(plan, measure, &mut candidate_trace) {
+                Some(best) => (Some(best), NvidiaAutotuneSearchPolicy::Staged),
+                None => (
+                    run_nvidia_autotune_full_sweep(plan, measure, &mut candidate_trace),
+                    NvidiaAutotuneSearchPolicy::Exhaustive,
+                ),
+            }
+        }
+        other => (
+            run_nvidia_autotune_full_sweep(plan, measure, &mut candidate_trace),
+            other,
+        ),
+    };
+    let lane_stage_label = match search_policy {
+        NvidiaAutotuneSearchPolicy::Staged => Some("refine"),
+        _ => None,
+    };
+    run_nvidia_autotune_lane_stage(
+        plan,
+        measure,
+        &mut candidate_trace,
+        &mut best,
+        lane_stage_label,
+    );
+    NvidiaAutotuneSearchOutcome {
+        best,
+        candidate_trace,
+        search_policy,
+    }
+}
+
 fn autotune_nvidia_kernel_tuning(
     selected: &NvidiaDeviceInfo,
     cache_path: &Path,
@@ -3381,174 +3937,29 @@ fn autotune_nvidia_kernel_tuning(
     let sample_count = autotune_samples.max(1);
     let (compute_cap_major, _) = query_cuda_compute_capability(selected.index).unwrap_or((0, 0));
     let regcap_candidates = nvidia_autotune_regcap_candidates(compute_cap_major, &selected.name);
+    let requested_policy =
+        nvidia_autotune_requested_search_policy(compute_cap_major, &selected.name);
     let (m_cost_kib, _) = pow_params()
         .map(|params| (params.m_cost(), params.t_cost()))
         .unwrap_or((0, 0));
     let lane_candidates = build_autotune_lane_candidates(selected, max_lanes_override, m_cost_kib);
     let hash_depth_candidates =
         build_autotune_hash_depth_candidates(hashes_per_launch_per_lane.max(1));
-
-    // Stage 1: sweep regcap with default hash depth and lane hint.
-    let default_depth = hashes_per_launch_per_lane.max(1);
-    let mut best: Option<NvidiaAutotuneCandidateScore> = None;
-    let mut candidate_trace = Vec::new();
-
-    let mut evaluate_candidate = |candidate: NvidiaKernelTuning,
-                                  best: &mut Option<NvidiaAutotuneCandidateScore>|
-     -> bool {
-        let candidate_started = Instant::now();
-        let mut samples = Vec::with_capacity(sample_count as usize);
-        let mut failed_samples = 0u32;
-        for _ in 0..sample_count {
-            let measured = match measure_nvidia_kernel_tuning_hps(
-                selected,
-                candidate,
-                autotune_secs,
-                &cubin_cache_dir,
-            ) {
-                Ok(score) if score.counted_hps.is_finite() && score.throughput_hps.is_finite() => {
-                    score
-                }
-                _ => {
-                    failed_samples = failed_samples.saturating_add(1);
-                    continue;
-                }
-            };
-            samples.push(NvidiaAutotuneSampleScore {
-                counted_hps: measured.counted_hps.max(0.0),
-                throughput_hps: measured.throughput_hps.max(0.0),
-                elapsed_secs: measured.elapsed_secs.max(0.0),
-            });
-        }
-        let elapsed_millis =
-            u64::try_from(candidate_started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        if samples.is_empty() {
-            candidate_trace.push(NvidiaAutotuneCandidateTrace {
-                tuning: candidate,
-                samples,
-                failed_samples,
-                counted_median_hps: None,
-                counted_mean_hps: None,
-                throughput_median_hps: None,
-                throughput_mean_hps: None,
-                elapsed_millis,
-            });
-            return false;
-        }
-        let mut counted_samples = samples
-            .iter()
-            .map(|sample| sample.counted_hps)
-            .collect::<Vec<_>>();
-        let mut throughput_samples = samples
-            .iter()
-            .map(|sample| sample.throughput_hps)
-            .collect::<Vec<_>>();
-        counted_samples.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        throughput_samples.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let counted_median = median_from_sorted(&counted_samples);
-        let counted_mean = counted_samples.iter().sum::<f64>() / counted_samples.len() as f64;
-        let throughput_median = median_from_sorted(&throughput_samples);
-        let throughput_mean =
-            throughput_samples.iter().sum::<f64>() / throughput_samples.len() as f64;
-        let candidate_score = NvidiaAutotuneCandidateScore {
-            tuning: candidate,
-            counted_median,
-            counted_mean,
-            throughput_median,
-            throughput_mean,
-        };
-        candidate_trace.push(NvidiaAutotuneCandidateTrace {
-            tuning: candidate,
-            samples,
-            failed_samples,
-            counted_median_hps: Some(counted_median),
-            counted_mean_hps: Some(counted_mean),
-            throughput_median_hps: Some(throughput_median),
-            throughput_mean_hps: Some(throughput_mean),
-            elapsed_millis,
-        });
-        let should_replace = match best {
-            None => true,
-            Some(best_score) => {
-                nvidia_autotune_candidate_beats(&candidate_score, best_score, compute_cap_major)
-            }
-        };
-        if should_replace {
-            *best = Some(candidate_score);
-            true
-        } else {
-            false
-        }
+    let plan = NvidiaAutotuneSearchPlan {
+        compute_cap_major,
+        regcap_candidates,
+        hash_depth_candidates: &hash_depth_candidates,
+        lane_candidates: &lane_candidates,
+        default_depth: hashes_per_launch_per_lane.max(1),
+        autotune_secs,
+        sample_count,
     };
+    let mut measure = |tuning: NvidiaKernelTuning, secs: u64| {
+        measure_nvidia_kernel_tuning_hps(selected, tuning, secs, &cubin_cache_dir)
+    };
+    let outcome = run_nvidia_autotune_search(&plan, requested_policy, &mut measure);
 
-    if compute_cap_major >= 12 {
-        for depth in hash_depth_candidates.iter().copied() {
-            for &max_rregcount in regcap_candidates {
-                let candidate = NvidiaKernelTuning {
-                    max_rregcount,
-                    block_loop_unroll: false,
-                    hashes_per_launch_per_lane: depth,
-                    max_lanes_hint: None,
-                };
-                evaluate_candidate(candidate, &mut best);
-            }
-        }
-    } else {
-        // Stage 1: find best regcap
-        for &max_rregcount in regcap_candidates {
-            let candidate = NvidiaKernelTuning {
-                max_rregcount,
-                block_loop_unroll: false,
-                hashes_per_launch_per_lane: default_depth,
-                max_lanes_hint: None,
-            };
-            evaluate_candidate(candidate, &mut best);
-        }
-
-        let best_regcap = best
-            .as_ref()
-            .map(|score| score.tuning.max_rregcount)
-            .unwrap_or(DEFAULT_NVIDIA_MAX_RREGCOUNT);
-
-        // Stage 2: find best hash depth using best regcap
-        for depth in hash_depth_candidates.iter().copied() {
-            if depth == default_depth {
-                continue; // already tested in stage 1
-            }
-            let candidate = NvidiaKernelTuning {
-                max_rregcount: best_regcap,
-                block_loop_unroll: false,
-                hashes_per_launch_per_lane: depth,
-                max_lanes_hint: None,
-            };
-            evaluate_candidate(candidate, &mut best);
-        }
-    }
-
-    let best_regcap = best
-        .as_ref()
-        .map(|score| score.tuning.max_rregcount)
-        .unwrap_or(DEFAULT_NVIDIA_MAX_RREGCOUNT);
-    let best_depth = best
-        .as_ref()
-        .map(|score| score.tuning.hashes_per_launch_per_lane)
-        .unwrap_or(default_depth);
-
-    // Stage 3: find best lane hint using best regcap + depth
-    for max_lanes_hint in lane_candidates.iter().copied() {
-        if max_lanes_hint.is_none() {
-            continue; // already tested
-        }
-        let candidate = NvidiaKernelTuning {
-            max_rregcount: best_regcap,
-            block_loop_unroll: false,
-            hashes_per_launch_per_lane: best_depth,
-            max_lanes_hint,
-        };
-        evaluate_candidate(candidate, &mut best);
-    }
-
-    let selected_score = best.ok_or_else(|| {
+    let selected_score = outcome.best.ok_or_else(|| {
         anyhow!(
             "NVIDIA autotune failed for device {} (index {})",
             selected.name,
@@ -3565,8 +3976,9 @@ fn autotune_nvidia_kernel_tuning(
         selected_score.counted_median,
         autotune_secs,
         sample_count,
-        candidate_trace,
+        outcome.candidate_trace,
         u64::try_from(autotune_started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        outcome.search_policy.as_str(),
     );
     Ok(selected_tuning)
 }
@@ -3688,6 +4100,7 @@ mod tests {
             2,
             Vec::new(),
             0,
+            "exhaustive",
         )
         .expect("first record should persist");
         let candidate_trace = vec![NvidiaAutotuneCandidateTrace {
@@ -3715,6 +4128,7 @@ mod tests {
             throughput_median_hps: Some(1.15),
             throughput_mean_hps: Some(1.15),
             elapsed_millis: 4_300,
+            stage: Some("refine".to_string()),
         }];
         persist_nvidia_autotune_record(
             &path,
@@ -3730,6 +4144,7 @@ mod tests {
             2,
             candidate_trace.clone(),
             4_500,
+            "staged",
         )
         .expect("second record should persist");
 
@@ -3741,6 +4156,7 @@ mod tests {
         assert_eq!(cache.records.len(), 1);
         assert_eq!(cache.records[0].candidate_trace, candidate_trace);
         assert_eq!(cache.records[0].autotune_elapsed_millis, 4_500);
+        assert_eq!(cache.records[0].search_policy, "staged");
 
         let mut legacy_json = serde_json::to_value(&cache).expect("cache should serialize");
         let legacy_record = legacy_json["records"][0]
@@ -3748,10 +4164,23 @@ mod tests {
             .expect("record should be an object");
         legacy_record.remove("candidate_trace");
         legacy_record.remove("autotune_elapsed_millis");
+        legacy_record.remove("search_policy");
         let legacy_cache: NvidiaAutotuneCache =
             serde_json::from_value(legacy_json).expect("older cache records should still parse");
         assert!(legacy_cache.records[0].candidate_trace.is_empty());
         assert_eq!(legacy_cache.records[0].autotune_elapsed_millis, 0);
+        assert!(legacy_cache.records[0].search_policy.is_empty());
+
+        // A92-era traces predate per-candidate stage labels; they must still
+        // parse with `stage: None`.
+        let mut a92_json = serde_json::to_value(&cache).expect("cache should serialize");
+        let a92_candidate = a92_json["records"][0]["candidate_trace"][0]
+            .as_object_mut()
+            .expect("candidate trace entry should be an object");
+        a92_candidate.remove("stage");
+        let a92_cache: NvidiaAutotuneCache =
+            serde_json::from_value(a92_json).expect("stage-less candidate traces should parse");
+        assert_eq!(a92_cache.records[0].candidate_trace[0].stage, None);
         let _ = fs::remove_file(path);
     }
 
@@ -3801,6 +4230,7 @@ mod tests {
             2,
             Vec::new(),
             0,
+            "exhaustive",
         )
         .expect("closer record should persist");
         persist_nvidia_autotune_record(
@@ -3817,6 +4247,7 @@ mod tests {
             2,
             Vec::new(),
             0,
+            "exhaustive",
         )
         .expect("farther record should persist");
 
@@ -3866,6 +4297,7 @@ mod tests {
             2,
             Vec::new(),
             0,
+            "staged",
         )
         .expect("cap-1 record should persist");
 
@@ -4234,6 +4666,403 @@ mod tests {
 
         assert!(nvidia_autotune_candidate_beats(&faster, &slower, 8));
         assert!(!nvidia_autotune_candidate_beats(&slower, &faster, 8));
+    }
+
+    #[test]
+    fn staged_coarse_frontier_spans_high_middle_and_208_anchor() {
+        assert_eq!(
+            staged_coarse_regcap_frontier(NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_AMPERE_PLUS),
+            vec![240, 208, 176]
+        );
+        assert_eq!(
+            staged_coarse_regcap_frontier(NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_LEGACY),
+            vec![224, 208, 160]
+        );
+        assert_eq!(
+            staged_coarse_regcap_frontier(NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_RTX_5090),
+            vec![240, 224, 208]
+        );
+        assert_eq!(staged_coarse_regcap_frontier(&[200]), vec![200]);
+        assert_eq!(staged_coarse_regcap_frontier(&[]), Vec::<u32>::new());
+    }
+
+    #[test]
+    fn staged_policy_requested_only_for_devices_without_measured_shortlist() {
+        assert_eq!(
+            nvidia_autotune_requested_search_policy(12, "NVIDIA GeForce RTX 5090"),
+            NvidiaAutotuneSearchPolicy::Shortlist
+        );
+        assert_eq!(
+            nvidia_autotune_requested_search_policy(12, "NVIDIA GeForce RTX 5090 Laptop GPU"),
+            NvidiaAutotuneSearchPolicy::Staged
+        );
+        assert_eq!(
+            nvidia_autotune_requested_search_policy(12, "NVIDIA GeForce RTX 5080"),
+            NvidiaAutotuneSearchPolicy::Staged
+        );
+        assert_eq!(
+            nvidia_autotune_requested_search_policy(8, "NVIDIA GeForce RTX 3080"),
+            NvidiaAutotuneSearchPolicy::Staged
+        );
+        assert_eq!(
+            nvidia_autotune_requested_search_policy(0, "Unknown Device"),
+            NvidiaAutotuneSearchPolicy::Staged
+        );
+    }
+
+    /// Real persisted RTX 5090 autotune trace (A92 smoke,
+    /// `perf-results/2026-07-10/nvidia-autotune-trace-smoke/trace.json`):
+    /// 3 regcaps x 2 depths plus 3 lane hints, recorded winner `208/1`,
+    /// uncapped lanes.
+    const RTX_5090_TRACE_FIXTURE: &str =
+        include_str!("testdata/nvidia_autotune_trace_rtx5090_wsl2_20260710.json");
+
+    fn load_rtx5090_trace_fixture() -> NvidiaAutotuneRecord {
+        let cache: NvidiaAutotuneCache =
+            serde_json::from_str(RTX_5090_TRACE_FIXTURE).expect("fixture trace should parse");
+        assert_eq!(cache.schema_version, NVIDIA_AUTOTUNE_SCHEMA_VERSION);
+        assert_eq!(cache.records.len(), 1);
+        let record = cache.records[0].clone();
+        assert_eq!(record.key.device_name, "NVIDIA GeForce RTX 5090");
+        assert_eq!(record.candidate_trace.len(), 9);
+        // The fixture predates the search-policy/stage fields; parsing it is
+        // itself a forward-compatibility check.
+        assert!(record.search_policy.is_empty());
+        record
+    }
+
+    /// Replays recorded per-candidate samples: every measurement request is
+    /// answered from the fixture, and tuples the recorded run never benchmarked
+    /// fail like an unmeasurable candidate would.
+    fn replay_measure(
+        record: &NvidiaAutotuneRecord,
+    ) -> impl FnMut(NvidiaKernelTuning, u64) -> Result<NvidiaAutotuneSampleScore> + '_ {
+        move |tuning, _secs| {
+            record
+                .candidate_trace
+                .iter()
+                .find(|candidate| candidate.tuning == tuning)
+                .and_then(|candidate| candidate.samples.first().copied())
+                .ok_or_else(|| anyhow!("tuning {tuning:?} was not recorded in the fixture trace"))
+        }
+    }
+
+    fn assert_staged_replay_selects_recorded_winner(
+        record: &NvidiaAutotuneRecord,
+        regcap_candidates: &[u32],
+        scenario: &str,
+    ) {
+        let hash_depth_candidates =
+            build_autotune_hash_depth_candidates(record.key.hashes_per_launch_per_lane_cap);
+        assert_eq!(hash_depth_candidates, vec![2, 1]);
+        // The lane candidates the recorded run enumerated (uncapped plus the
+        // three explicit follow-ups present in the trace).
+        let lane_candidates = vec![None, Some(14), Some(10), Some(7)];
+        let plan = NvidiaAutotuneSearchPlan {
+            compute_cap_major: record.key.compute_cap_major,
+            regcap_candidates,
+            hash_depth_candidates: &hash_depth_candidates,
+            lane_candidates: &lane_candidates,
+            default_depth: record.key.hashes_per_launch_per_lane_cap,
+            autotune_secs: record.autotune_secs,
+            sample_count: record.autotune_samples.max(1),
+        };
+        let mut measure = replay_measure(record);
+        let outcome =
+            run_nvidia_autotune_search(&plan, NvidiaAutotuneSearchPolicy::Staged, &mut measure);
+
+        assert_eq!(
+            outcome.search_policy,
+            NvidiaAutotuneSearchPolicy::Staged,
+            "{scenario}: staged replay should not trip the exhaustive fallback"
+        );
+        let best = outcome
+            .best
+            .expect("staged replay should select a winner from recorded samples");
+        assert_eq!(
+            best.tuning.max_rregcount, record.max_rregcount,
+            "{scenario}"
+        );
+        assert_eq!(
+            best.tuning.hashes_per_launch_per_lane, record.hashes_per_launch_per_lane,
+            "{scenario}"
+        );
+        assert_eq!(
+            best.tuning.max_lanes_hint, record.max_lanes_hint,
+            "{scenario}"
+        );
+        assert!(
+            (best.counted_median - record.measured_hps).abs() < 1e-9,
+            "{scenario}: staged replay winner score should equal the recorded winner score"
+        );
+
+        let replayed_tunings: Vec<NvidiaKernelTuning> = outcome
+            .candidate_trace
+            .iter()
+            .map(|candidate| candidate.tuning)
+            .collect();
+        let skipped: Vec<&NvidiaAutotuneCandidateTrace> = record
+            .candidate_trace
+            .iter()
+            .filter(|candidate| !replayed_tunings.contains(&candidate.tuning))
+            .collect();
+        assert!(
+            !skipped.is_empty(),
+            "{scenario}: staged replay should skip part of the recorded exhaustive work"
+        );
+        assert!(
+            skipped.iter().all(|candidate| {
+                candidate.tuning.max_rregcount == 240
+                    && candidate.tuning.hashes_per_launch_per_lane == 2
+            }),
+            "{scenario}: only the non-frontier 240/2 probe should be skipped on this trace"
+        );
+        let skipped_millis: u64 = skipped
+            .iter()
+            .map(|candidate| candidate.elapsed_millis)
+            .sum();
+        let total_millis = record.autotune_elapsed_millis;
+        println!(
+            "staged replay [{scenario}]: winner {}/{} lanes {:?}; skipped {}/{} recorded \
+             candidates = {skipped_millis} ms of {total_millis} ms recorded autotune time \
+             ({:.1}% readiness reduction)",
+            best.tuning.max_rregcount,
+            best.tuning.hashes_per_launch_per_lane,
+            best.tuning.max_lanes_hint,
+            skipped.len(),
+            record.candidate_trace.len(),
+            100.0 * skipped_millis as f64 / total_millis as f64,
+        );
+    }
+
+    #[test]
+    fn staged_replay_of_recorded_rtx5090_trace_selects_recorded_winner() {
+        let record = load_rtx5090_trace_fixture();
+        assert_staged_replay_selects_recorded_winner(
+            &record,
+            NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_RTX_5090,
+            "recorded 240/224/208 candidate universe",
+        );
+    }
+
+    #[test]
+    fn staged_replay_of_recorded_rtx5090_trace_survives_unrecorded_candidates() {
+        // Replaying against the full Ampere+ list makes the coarse frontier and
+        // refine neighborhood include register caps the recorded run never
+        // benchmarked (176, 192); those probes fail and the staged search must
+        // still converge on the recorded winner.
+        let record = load_rtx5090_trace_fixture();
+        assert_staged_replay_selects_recorded_winner(
+            &record,
+            NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_AMPERE_PLUS,
+            "full Ampere+ candidate universe with unrecorded probes",
+        );
+    }
+
+    #[test]
+    fn staged_search_walks_to_bottom_edge_regcap_on_pre_blackwell_landscape() {
+        // Synthetic monotone landscape anchored to the only real RTX 3080 data
+        // point available (winner-only cache record: rreg 128, depth 2,
+        // uncapped lanes — no per-candidate trace was persisted in that era):
+        // lower register caps keep winning all the way to the bottom of the
+        // Ampere+ list, so the boundary-extension walk must reach 128 even
+        // though it is far outside the coarse winner's +/- one-step
+        // neighborhood.
+        let hash_depth_candidates = build_autotune_hash_depth_candidates(2);
+        let lane_candidates = vec![None, Some(4)];
+        let plan = NvidiaAutotuneSearchPlan {
+            compute_cap_major: 8,
+            regcap_candidates: NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_AMPERE_PLUS,
+            hash_depth_candidates: &hash_depth_candidates,
+            lane_candidates: &lane_candidates,
+            default_depth: 2,
+            autotune_secs: 5,
+            sample_count: 2,
+        };
+        let mut full_quality_samples = 0u32;
+        let mut measure = |tuning: NvidiaKernelTuning, secs: u64| {
+            if secs == 5 {
+                full_quality_samples += 1;
+            }
+            let mut hps = match tuning.max_rregcount {
+                240 => 1.00,
+                224 => 1.04,
+                208 => 1.08,
+                192 => 1.14,
+                176 => 1.20,
+                160 => 1.26,
+                144 => 1.32,
+                128 => 1.38,
+                other => bail!("unexpected register cap {other}"),
+            };
+            if tuning.hashes_per_launch_per_lane == 1 {
+                hps *= 0.75;
+            }
+            if tuning.max_lanes_hint.is_some() {
+                hps *= 0.9;
+            }
+            Ok(NvidiaAutotuneSampleScore {
+                throughput_hps: hps,
+                counted_hps: hps,
+                elapsed_secs: secs as f64,
+            })
+        };
+        let outcome =
+            run_nvidia_autotune_search(&plan, NvidiaAutotuneSearchPolicy::Staged, &mut measure);
+        drop(measure);
+
+        assert_eq!(outcome.search_policy, NvidiaAutotuneSearchPolicy::Staged);
+        let best = outcome.best.expect("staged search should select a winner");
+        assert_eq!(best.tuning.max_rregcount, 128);
+        assert_eq!(best.tuning.hashes_per_launch_per_lane, 2);
+        assert_eq!(best.tuning.max_lanes_hint, None);
+
+        let coarse_regcaps: Vec<u32> = outcome
+            .candidate_trace
+            .iter()
+            .filter(|candidate| candidate.stage.as_deref() == Some("coarse"))
+            .map(|candidate| candidate.tuning.max_rregcount)
+            .collect();
+        assert_eq!(coarse_regcaps, vec![240, 208, 176]);
+        // Full-quality candidates: refine neighborhood {192, 176, 160}, walk
+        // extensions {144, 128}, the depth-1 variant at 128, and one lane
+        // probe — 7 candidates x 2 samples, versus 10 x 2 for the exhaustive
+        // sweep (8 regcaps + 1 depth variant + 1 lane probe).
+        assert_eq!(full_quality_samples, 14);
+    }
+
+    #[test]
+    fn staged_search_falls_back_to_exhaustive_when_coarse_spread_is_within_noise() {
+        // Flat coarse frontier with an off-frontier peak at 144: the coarse
+        // probes carry no directional signal, so the safety valve must run the
+        // full exhaustive sweep instead of refining around a noise-picked
+        // winner — otherwise the true 144 peak would be missed silently.
+        let hash_depth_candidates = build_autotune_hash_depth_candidates(2);
+        let lane_candidates = vec![None];
+        let plan = NvidiaAutotuneSearchPlan {
+            compute_cap_major: 8,
+            regcap_candidates: NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_AMPERE_PLUS,
+            hash_depth_candidates: &hash_depth_candidates,
+            lane_candidates: &lane_candidates,
+            default_depth: 2,
+            autotune_secs: 5,
+            sample_count: 2,
+        };
+        let mut measure = |tuning: NvidiaKernelTuning, secs: u64| {
+            let mut hps = if tuning.max_rregcount == 144 {
+                1.5
+            } else {
+                1.0
+            };
+            if tuning.hashes_per_launch_per_lane == 1 {
+                hps *= 0.75;
+            }
+            Ok(NvidiaAutotuneSampleScore {
+                throughput_hps: hps,
+                counted_hps: hps,
+                elapsed_secs: secs as f64,
+            })
+        };
+        let outcome =
+            run_nvidia_autotune_search(&plan, NvidiaAutotuneSearchPolicy::Staged, &mut measure);
+
+        assert_eq!(
+            outcome.search_policy,
+            NvidiaAutotuneSearchPolicy::Exhaustive
+        );
+        let best = outcome.best.expect("fallback sweep should select a winner");
+        assert_eq!(best.tuning.max_rregcount, 144);
+        assert_eq!(best.tuning.hashes_per_launch_per_lane, 2);
+        // The abandoned coarse probes stay in the trace for auditability.
+        assert!(outcome
+            .candidate_trace
+            .iter()
+            .any(|candidate| candidate.stage.as_deref() == Some("coarse")));
+    }
+
+    #[test]
+    fn staged_search_falls_back_to_exhaustive_when_coarse_probes_fail() {
+        // Short coarse windows fail outright (for example a transient driver
+        // error during the probe); the staged policy must fall back to the
+        // exhaustive sweep instead of selecting from nothing.
+        let hash_depth_candidates = build_autotune_hash_depth_candidates(2);
+        let lane_candidates = vec![None];
+        let plan = NvidiaAutotuneSearchPlan {
+            compute_cap_major: 8,
+            regcap_candidates: NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_AMPERE_PLUS,
+            hash_depth_candidates: &hash_depth_candidates,
+            lane_candidates: &lane_candidates,
+            default_depth: 2,
+            autotune_secs: 5,
+            sample_count: 2,
+        };
+        let mut measure = |tuning: NvidiaKernelTuning, secs: u64| {
+            if secs != 5 {
+                bail!("synthetic transient failure during short coarse probe");
+            }
+            let mut hps = f64::from(tuning.max_rregcount) / 100.0;
+            if tuning.hashes_per_launch_per_lane == 1 {
+                hps *= 0.75;
+            }
+            Ok(NvidiaAutotuneSampleScore {
+                throughput_hps: hps,
+                counted_hps: hps,
+                elapsed_secs: secs as f64,
+            })
+        };
+        let outcome =
+            run_nvidia_autotune_search(&plan, NvidiaAutotuneSearchPolicy::Staged, &mut measure);
+
+        assert_eq!(
+            outcome.search_policy,
+            NvidiaAutotuneSearchPolicy::Exhaustive
+        );
+        let best = outcome.best.expect("fallback sweep should select a winner");
+        assert_eq!(best.tuning.max_rregcount, 240);
+        assert_eq!(best.tuning.hashes_per_launch_per_lane, 2);
+    }
+
+    #[test]
+    fn shortlist_policy_keeps_full_cross_product_for_exact_rtx_5090() {
+        // The measured exact-5090 path is intentionally untouched by the
+        // staged policy: every shortlist regcap is benchmarked jointly with
+        // every depth at full quality, with no coarse stage.
+        let hash_depth_candidates = build_autotune_hash_depth_candidates(2);
+        let lane_candidates = vec![None, Some(14)];
+        let plan = NvidiaAutotuneSearchPlan {
+            compute_cap_major: 12,
+            regcap_candidates: NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_RTX_5090,
+            hash_depth_candidates: &hash_depth_candidates,
+            lane_candidates: &lane_candidates,
+            default_depth: 2,
+            autotune_secs: 5,
+            sample_count: 2,
+        };
+        let mut measure = |_tuning: NvidiaKernelTuning, secs: u64| {
+            Ok(NvidiaAutotuneSampleScore {
+                throughput_hps: 1.0,
+                counted_hps: 1.0,
+                elapsed_secs: secs as f64,
+            })
+        };
+        let outcome =
+            run_nvidia_autotune_search(&plan, NvidiaAutotuneSearchPolicy::Shortlist, &mut measure);
+
+        assert_eq!(outcome.search_policy, NvidiaAutotuneSearchPolicy::Shortlist);
+        // 3 regcaps x 2 depths plus one explicit lane probe.
+        assert_eq!(outcome.candidate_trace.len(), 7);
+        assert!(outcome
+            .candidate_trace
+            .iter()
+            .all(|candidate| candidate.stage.is_none()));
+        let best = outcome
+            .best
+            .expect("shortlist sweep should select a winner");
+        // With flat scores, Blackwell tie-breaks settle on the measured
+        // 208/depth-1/uncapped frontier.
+        assert_eq!(best.tuning.max_rregcount, 208);
+        assert_eq!(best.tuning.hashes_per_launch_per_lane, 1);
+        assert_eq!(best.tuning.max_lanes_hint, None);
     }
 
     #[test]

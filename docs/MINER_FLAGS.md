@@ -78,7 +78,7 @@ For the raw CLI output, run:
 |---|---|---|
 | `--nvidia-autotune-secs` | integer `>=1`, default `5` | Base sample window per NVIDIA autotune candidate. |
 | `--nvidia-autotune-samples` | integer `>=1`, default `2` | Sample count per NVIDIA autotune candidate (median-priority scoring). |
-| `--nvidia-autotune-config` | path | NVIDIA autotune cache file (default under `--data-dir`). New winner records also retain the complete candidate/sample/timing trace for cross-hardware analysis; older winner-only records remain compatible. |
+| `--nvidia-autotune-config` | path | NVIDIA autotune cache file (default under `--data-dir`). New winner records also retain the complete candidate/sample/timing trace plus the search policy used (`staged`, `exhaustive`, or `shortlist`) for cross-hardware analysis; older winner-only records remain compatible. |
 | `--nvidia-max-rregcount` | integer `>=1` | Forces register cap and skips NVIDIA autotune/cache lookup. |
 | `--nvidia-max-lanes` | integer `>=1` | Caps active NVIDIA lanes per device instance. |
 | `--nvidia-dispatch-iters-per-lane` | integer `>=1` | Overrides NVIDIA scheduler dispatch hint (iters/lane). |

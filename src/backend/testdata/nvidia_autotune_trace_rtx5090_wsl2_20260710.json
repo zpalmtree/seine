@@ -1,0 +1,225 @@
+{
+  "schema_version": 10,
+  "records": [
+    {
+      "key": {
+        "device_name": "NVIDIA GeForce RTX 5090",
+        "memory_total_mib": 32607,
+        "memory_budget_mib": 28672,
+        "lane_capacity_tier": 8,
+        "compute_cap_major": 12,
+        "compute_cap_minor": 0,
+        "m_cost_kib": 2097152,
+        "t_cost": 1,
+        "kernel_threads": 32,
+        "hashes_per_launch_per_lane_cap": 2,
+        "os": "linux",
+        "kernel_version": "6.6.87.2-microsoft-standard-WSL2",
+        "runtime_environment": "wsl2",
+        "build_fingerprint": "source=05bde1b27f9a1a4b;target=x86_64-unknown-linux-gnu;profile=release;opt=3;rustc=rustc 1.93.0 (254b59607 2026-01-19);rustflags=;features=default,nvidia",
+        "cuda_kernel_fingerprint": "9ea2020ab07220942348f7e743dfc7e3d0843a0e306d4ea935f7299723ac6879563397fa8ca0dbd41d7abe5ed93ab5891f196b9e8da84d7eda4c44db0e8a4878",
+        "nvrtc_version": "nvrtc-13.1"
+      },
+      "max_rregcount": 208,
+      "block_loop_unroll": false,
+      "hashes_per_launch_per_lane": 1,
+      "max_lanes_hint": null,
+      "measured_hps": 6.654445947111964,
+      "autotune_secs": 1,
+      "autotune_samples": 1,
+      "candidate_trace": [
+        {
+          "tuning": {
+            "max_rregcount": 240,
+            "block_loop_unroll": false,
+            "hashes_per_launch_per_lane": 2,
+            "max_lanes_hint": null
+          },
+          "samples": [
+            {
+              "throughput_hps": 9.604265975662964,
+              "counted_hps": 3.294353065691949,
+              "elapsed_secs": 2.915371156
+            }
+          ],
+          "failed_samples": 0,
+          "counted_median_hps": 3.294353065691949,
+          "counted_mean_hps": 3.294353065691949,
+          "throughput_median_hps": 9.604265975662964,
+          "throughput_mean_hps": 9.604265975662964,
+          "elapsed_millis": 4024
+        },
+        {
+          "tuning": {
+            "max_rregcount": 224,
+            "block_loop_unroll": false,
+            "hashes_per_launch_per_lane": 2,
+            "max_lanes_hint": null
+          },
+          "samples": [
+            {
+              "throughput_hps": 9.442182103607456,
+              "counted_hps": 3.1840989076695982,
+              "elapsed_secs": 2.965416224
+            }
+          ],
+          "failed_samples": 0,
+          "counted_median_hps": 3.1840989076695982,
+          "counted_mean_hps": 3.1840989076695982,
+          "throughput_median_hps": 9.442182103607456,
+          "throughput_mean_hps": 9.442182103607456,
+          "elapsed_millis": 4010
+        },
+        {
+          "tuning": {
+            "max_rregcount": 208,
+            "block_loop_unroll": false,
+            "hashes_per_launch_per_lane": 2,
+            "max_lanes_hint": null
+          },
+          "samples": [
+            {
+              "throughput_hps": 9.315646606318774,
+              "counted_hps": 3.099329175994609,
+              "elapsed_secs": 3.005695813
+            }
+          ],
+          "failed_samples": 0,
+          "counted_median_hps": 3.099329175994609,
+          "counted_mean_hps": 3.099329175994609,
+          "throughput_median_hps": 9.315646606318774,
+          "throughput_mean_hps": 9.315646606318774,
+          "elapsed_millis": 3907
+        },
+        {
+          "tuning": {
+            "max_rregcount": 240,
+            "block_loop_unroll": false,
+            "hashes_per_launch_per_lane": 1,
+            "max_lanes_hint": null
+          },
+          "samples": [
+            {
+              "throughput_hps": 9.555138952407244,
+              "counted_hps": 6.521476825383704,
+              "elapsed_secs": 1.465180158
+            }
+          ],
+          "failed_samples": 0,
+          "counted_median_hps": 6.521476825383704,
+          "counted_mean_hps": 6.521476825383704,
+          "throughput_median_hps": 9.555138952407244,
+          "throughput_mean_hps": 9.555138952407244,
+          "elapsed_millis": 2419
+        },
+        {
+          "tuning": {
+            "max_rregcount": 224,
+            "block_loop_unroll": false,
+            "hashes_per_launch_per_lane": 1,
+            "max_lanes_hint": null
+          },
+          "samples": [
+            {
+              "throughput_hps": 9.63285999954665,
+              "counted_hps": 6.627999662008098,
+              "elapsed_secs": 1.453358608
+            }
+          ],
+          "failed_samples": 0,
+          "counted_median_hps": 6.627999662008098,
+          "counted_mean_hps": 6.627999662008098,
+          "throughput_median_hps": 9.63285999954665,
+          "throughput_mean_hps": 9.63285999954665,
+          "elapsed_millis": 2450
+        },
+        {
+          "tuning": {
+            "max_rregcount": 208,
+            "block_loop_unroll": false,
+            "hashes_per_launch_per_lane": 1,
+            "max_lanes_hint": null
+          },
+          "samples": [
+            {
+              "throughput_hps": 9.652059890742061,
+              "counted_hps": 6.654445947111964,
+              "elapsed_secs": 1.450467585
+            }
+          ],
+          "failed_samples": 0,
+          "counted_median_hps": 6.654445947111964,
+          "counted_mean_hps": 6.654445947111964,
+          "throughput_median_hps": 9.652059890742061,
+          "throughput_mean_hps": 9.652059890742061,
+          "elapsed_millis": 2455
+        },
+        {
+          "tuning": {
+            "max_rregcount": 208,
+            "block_loop_unroll": false,
+            "hashes_per_launch_per_lane": 1,
+            "max_lanes_hint": 14
+          },
+          "samples": [
+            {
+              "throughput_hps": 9.663837076763283,
+              "counted_hps": 6.670695222401861,
+              "elapsed_secs": 1.44869992
+            }
+          ],
+          "failed_samples": 0,
+          "counted_median_hps": 6.670695222401861,
+          "counted_mean_hps": 6.670695222401861,
+          "throughput_median_hps": 9.663837076763283,
+          "throughput_mean_hps": 9.663837076763283,
+          "elapsed_millis": 2449
+        },
+        {
+          "tuning": {
+            "max_rregcount": 208,
+            "block_loop_unroll": false,
+            "hashes_per_launch_per_lane": 1,
+            "max_lanes_hint": 10
+          },
+          "samples": [
+            {
+              "throughput_hps": 6.639417924514518,
+              "counted_hps": 4.408186751884102,
+              "elapsed_secs": 1.5061561289999998
+            }
+          ],
+          "failed_samples": 0,
+          "counted_median_hps": 4.408186751884102,
+          "counted_mean_hps": 4.408186751884102,
+          "throughput_median_hps": 6.639417924514518,
+          "throughput_mean_hps": 6.639417924514518,
+          "elapsed_millis": 2313
+        },
+        {
+          "tuning": {
+            "max_rregcount": 208,
+            "block_loop_unroll": false,
+            "hashes_per_launch_per_lane": 1,
+            "max_lanes_hint": 7
+          },
+          "samples": [
+            {
+              "throughput_hps": 4.859094920781763,
+              "counted_hps": 3.3729717564753954,
+              "elapsed_secs": 1.440597501
+            }
+          ],
+          "failed_samples": 0,
+          "counted_median_hps": 3.3729717564753954,
+          "counted_mean_hps": 3.3729717564753954,
+          "throughput_median_hps": 4.859094920781763,
+          "throughput_mean_hps": 4.859094920781763,
+          "elapsed_millis": 2084
+        }
+      ],
+      "autotune_elapsed_millis": 26308,
+      "timestamp_unix_secs": 1783751041
+    }
+  ]
+}

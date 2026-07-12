@@ -74,13 +74,19 @@ This file preserves the full engineering reference for AI agents doing optimizat
 - `--nvidia-autotune-samples` (default `2`) runs multiple samples per candidate; autotune prioritizes median deadline-window counted H/s (then mean counted H/s, then throughput tie-breaks).
 - `--nvidia-autotune-config` overrides the persisted NVIDIA autotune cache path (`<seine-data-dir>/seine.nvidia-autotune.json` by default).
   - New records retain the complete candidate trace (raw counted/throughput samples, failures, per-candidate elapsed time, and total autotune elapsed time) so future search policies can be replayed across hardware. Older winner-only records remain readable.
+  - Each record also carries `search_policy` (`staged`, `exhaustive`, or `shortlist`; empty on pre-A94 records) and staged-run trace entries are labeled `stage: coarse|refine`.
+- Fresh autotune search policy per device:
+  - Exact desktop `NVIDIA GeForce RTX 5090` (compute capability 12): the measured `[240, 224, 208]` shortlist, benchmarked exhaustively (`shortlist`).
+  - Every other device (`staged`): a coarse stage probes the candidate list's `{highest, middle, closest-to-208}` regcap frontier with one short sample each (`ceil(autotune-secs / 2)` window; Blackwell probes the shallowest depth, older architectures the default depth), then a refine stage benchmarks the coarse winner's +/- one-step regcap neighborhood at full quality (`--nvidia-autotune-secs` x `--nvidia-autotune-samples`), stepping further while a boundary candidate keeps winning, followed by the usual depth and lane-hint stages. Final selection scores refine-stage samples only, with the unchanged median-counted-H/s comparator.
+  - Safety valve: if the coarse stage yields fewer than two scored probes, a non-positive best score, or (pre-Blackwell) a score spread within the `2%` noise band, the search falls back to the full exhaustive sweep (`exhaustive`) so a degenerate coarse stage never silently picks a worse profile.
+  - The staged policy is replay-validated against the recorded RTX 5090 trace (`src/backend/testdata/nvidia_autotune_trace_rtx5090_wsl2_20260710.json`); real-hardware confirmation on non-5090 devices is pending (A94).
 - `--nvidia-max-rregcount` forces a fixed register cap and skips autotune/cache lookup.
 - `--nvidia-max-lanes` caps active NVIDIA lanes per device instance.
 - `--nvidia-dispatch-iters-per-lane` and `--nvidia-allocation-iters-per-lane` override scheduler/allocator lane-iteration hints.
 - `--nvidia-hashes-per-launch-per-lane` (default `2`) controls CUDA launch depth per lane (`higher => fewer launches`, often higher H/s on this workload, but coarser cancel/fence preemption).
   - On Blackwell, if the flag is left unset and a cached/default tuning record resolves to depth `2`, Seine clamps the runtime depth to `1` for finer preemption. Explicit CLI overrides keep the requested depth.
   - Blackwell fresh autotune also re-probes regcap+depth jointly and breaks near ties toward shallower full-lane profiles, with a soft preference for the measured `rreg=208` frontier.
-  - The exact desktop `NVIDIA GeForce RTX 5090` on compute capability 12 uses the repeatedly measured `[240, 224, 208]` regcap frontier during fresh autotune. Other devices, including 5090 laptop/regional variants, retain the exhaustive architecture-wide candidate set.
+  - The exact desktop `NVIDIA GeForce RTX 5090` on compute capability 12 uses the repeatedly measured `[240, 224, 208]` regcap frontier during fresh autotune. Other devices, including 5090 laptop/regional variants, use the staged coarse-to-fine search over the architecture-wide candidate set (see the fresh-autotune search-policy notes above).
 - `--nvidia-no-adaptive-launch-depth` disables backend pressure/deadline-based launch-depth shaping.
 - `--nvidia-fused-target-check` enables in-fill-kernel target checking (disabled by default; can regress throughput on some GPUs).
 - `--nvidia-template-stop-policy` (`auto`, `on`, `off`) controls whether NVIDIA workers enforce template `stop_at`; `auto` follows `--strict-round-accounting`.
