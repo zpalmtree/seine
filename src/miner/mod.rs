@@ -34,6 +34,7 @@ use crossbeam_channel::{bounded, Receiver, Sender};
 use serde::{Deserialize, Serialize};
 use sysinfo::System;
 
+use crate::backend::amd::{AmdBackend, AmdBackendTuningOptions};
 use crate::backend::cpu::{CpuBackend, CpuBackendTuning};
 use crate::backend::metal::MetalBackend;
 use crate::backend::nvidia::{NvidiaBackend, NvidiaBackendTuningOptions};
@@ -460,6 +461,13 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
                         hash_flush_interval: cfg.cpu_hash_flush_interval,
                         event_dispatch_capacity: cfg.cpu_event_dispatch_capacity,
                         page_mode: cfg.cpu_page_mode,
+                    },
+                )) as Arc<dyn PowBackend>,
+                BackendKind::Amd => Arc::new(AmdBackend::new(
+                    backend_spec.device_index,
+                    AmdBackendTuningOptions {
+                        max_lanes_override: cfg.amd_max_lanes,
+                        ..AmdBackendTuningOptions::default()
                     },
                 )) as Arc<dyn PowBackend>,
                 BackendKind::Metal => Arc::new(MetalBackend::new(
@@ -2031,6 +2039,13 @@ fn build_backend_instances(cfg: &Config) -> Vec<(BackendSpec, Arc<dyn PowBackend
                         enforce_template_stop: cfg.nvidia_enforce_template_stop,
                     },
                 )) as Arc<dyn PowBackend>,
+                BackendKind::Amd => Arc::new(AmdBackend::new(
+                    backend_spec.device_index,
+                    AmdBackendTuningOptions {
+                        max_lanes_override: cfg.amd_max_lanes,
+                        ..AmdBackendTuningOptions::default()
+                    },
+                )) as Arc<dyn PowBackend>,
                 BackendKind::Metal => Arc::new(MetalBackend::new(
                     cfg.metal_max_lanes,
                     cfg.metal_hashes_per_launch_per_lane,
@@ -2064,6 +2079,9 @@ fn activate_single_backend(
         }
         "nvidia" => format!(
             "{backend_name}: initializing CUDA engine (loads cached kernel if available; first run may take ~2 min)...",
+        ),
+        "amd" => format!(
+            "{backend_name}: initializing HIP engine (hipRTC kernel compile; may take ~1 min)...",
         ),
         _ => format!("{backend_name}: initializing..."),
     };
@@ -2160,6 +2178,13 @@ fn activate_single_backend(
                     "BACKEND",
                     "NVIDIA mining requires: (1) NVIDIA GPU drivers and \
                      (2) CUDA Toolkit — https://developer.nvidia.com/cuda-downloads",
+                );
+            }
+            if backend_name == "amd" {
+                warn(
+                    "BACKEND",
+                    "AMD mining requires: (1) amdgpu drivers and (2) the ROCm 6.x runtime \
+                     (libamdhip64/libhiprtc) — https://rocm.docs.amd.com",
                 );
             }
             backend.stop();
@@ -3526,6 +3551,8 @@ mod tests {
             nvidia_fused_target_check: false,
             nvidia_adaptive_launch_depth: true,
             nvidia_enforce_template_stop: false,
+            amd_devices: Vec::new(),
+            amd_max_lanes: None,
             metal_max_lanes: None,
             metal_hashes_per_launch_per_lane: 2,
             backend_assign_timeout: Duration::from_millis(1_000),

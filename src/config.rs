@@ -22,6 +22,9 @@ pub enum BackendKind {
     Cpu,
     Nvidia,
     Metal,
+    /// AMD GPU backend (HIP/ROCm). Requires a build with `--features amd`;
+    /// never auto-selected, pass `--backend amd` explicitly.
+    Amd,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
@@ -370,6 +373,11 @@ struct Cli {
     #[arg(long = "nvidia-devices", value_delimiter = ',', num_args = 1..)]
     nvidia_devices: Vec<u32>,
 
+    /// Explicit AMD device indices; creates one AMD backend instance per index.
+    /// Requires selecting AMD in --backend (and a build with --features amd).
+    #[arg(long = "amd-devices", value_delimiter = ',', num_args = 1..)]
+    amd_devices: Vec<u32>,
+
     /// Number of CPU mining threads per CPU backend instance (each uses ~2GB RAM for Argon2id).
     /// When omitted, threads auto-size from available CPU parallelism and RAM budget.
     #[arg(long, alias = "cpu-threads")]
@@ -528,6 +536,10 @@ struct Cli {
     /// `off` never enforces in the backend worker loop.
     #[arg(long, value_enum, default_value_t = NvidiaTemplateStopPolicy::Auto)]
     nvidia_template_stop_policy: NvidiaTemplateStopPolicy,
+
+    /// Cap AMD active lanes per device instance (each lane uses ~2GB VRAM).
+    #[arg(long)]
+    amd_max_lanes: Option<usize>,
 
     /// Cap Metal active lanes (each uses ~2GB unified memory).
     #[arg(long)]
@@ -741,6 +753,8 @@ pub struct Config {
     pub nvidia_fused_target_check: bool,
     pub nvidia_adaptive_launch_depth: bool,
     pub nvidia_enforce_template_stop: bool,
+    pub amd_devices: Vec<u32>,
+    pub amd_max_lanes: Option<usize>,
     pub metal_max_lanes: Option<usize>,
     pub metal_hashes_per_launch_per_lane: u32,
     pub backend_assign_timeout: Duration,
@@ -934,6 +948,9 @@ impl Config {
         if cli.nvidia_hashes_per_launch_per_lane == 0 {
             bail!("nvidia-hashes-per-launch-per-lane must be >= 1");
         }
+        if matches!(cli.amd_max_lanes, Some(0)) {
+            bail!("amd-max-lanes must be >= 1");
+        }
         if matches!(cli.metal_max_lanes, Some(0)) {
             bail!("metal-max-lanes must be >= 1");
         }
@@ -1049,6 +1066,7 @@ impl Config {
         let backend_specs = expand_backend_specs(
             &backends,
             &cli.nvidia_devices,
+            &cli.amd_devices,
             BackendExpansionOptions {
                 default_cpu_threads: resolved_threads,
                 default_cpu_affinity: cli.cpu_affinity,
@@ -1171,6 +1189,8 @@ impl Config {
             nvidia_fused_target_check: cli.nvidia_fused_target_check,
             nvidia_adaptive_launch_depth: !cli.nvidia_no_adaptive_launch_depth,
             nvidia_enforce_template_stop,
+            amd_devices: cli.amd_devices.clone(),
+            amd_max_lanes: cli.amd_max_lanes.filter(|v| *v > 0),
             metal_max_lanes: cli.metal_max_lanes.filter(|v| *v > 0),
             metal_hashes_per_launch_per_lane: cli.metal_hashes_per_launch_per_lane.max(1),
             backend_assign_timeout: Duration::from_millis(cli.backend_assign_timeout_ms),
@@ -2288,13 +2308,18 @@ struct BackendExpansionOptions<'a> {
 fn expand_backend_specs(
     backends: &[BackendKind],
     nvidia_devices: &[u32],
+    amd_devices: &[u32],
     options: BackendExpansionOptions<'_>,
 ) -> Result<Vec<BackendSpec>> {
     if !nvidia_devices.is_empty() && !backends.contains(&BackendKind::Nvidia) {
         bail!("--nvidia-devices requires selecting nvidia in --backend");
     }
+    if !amd_devices.is_empty() && !backends.contains(&BackendKind::Amd) {
+        bail!("--amd-devices requires selecting amd in --backend");
+    }
 
     let nvidia_devices = dedupe_device_indexes(nvidia_devices);
+    let amd_devices = dedupe_device_indexes(amd_devices);
     let mut specs = Vec::new();
     for backend in backends {
         match backend {
@@ -2322,6 +2347,31 @@ fn expand_backend_specs(
                     for device_index in &nvidia_devices {
                         specs.push(BackendSpec {
                             kind: BackendKind::Nvidia,
+                            device_index: Some(*device_index),
+                            cpu_threads: None,
+                            cpu_affinity: None,
+                            assign_timeout_override: None,
+                            control_timeout_override: None,
+                            assign_timeout_strikes_override: None,
+                        });
+                    }
+                }
+            }
+            BackendKind::Amd => {
+                if amd_devices.is_empty() {
+                    specs.push(BackendSpec {
+                        kind: BackendKind::Amd,
+                        device_index: None,
+                        cpu_threads: None,
+                        cpu_affinity: None,
+                        assign_timeout_override: None,
+                        control_timeout_override: None,
+                        assign_timeout_strikes_override: None,
+                    });
+                } else {
+                    for device_index in &amd_devices {
+                        specs.push(BackendSpec {
+                            kind: BackendKind::Amd,
                             device_index: Some(*device_index),
                             cpu_threads: None,
                             cpu_affinity: None,
@@ -2777,6 +2827,7 @@ mod tests {
             data_dir: PathBuf::from("./seine-data"),
             backends: vec![BackendKind::Cpu],
             nvidia_devices: Vec::new(),
+            amd_devices: Vec::new(),
             threads: Some(1),
             cpu_affinity: CpuAffinityMode::Auto,
             cpu_page_mode: CpuPageMode::Auto,
@@ -2812,6 +2863,7 @@ mod tests {
             nvidia_fused_target_check: false,
             nvidia_no_adaptive_launch_depth: false,
             nvidia_template_stop_policy: NvidiaTemplateStopPolicy::Auto,
+            amd_max_lanes: None,
             metal_max_lanes: None,
             metal_hashes_per_launch_per_lane: DEFAULT_METAL_HASHES_PER_LAUNCH_PER_LANE,
             backend_assign_timeout_ms: 1000,
@@ -3164,6 +3216,7 @@ HugePages_Rsvd:          0
         let out = expand_backend_specs(
             &[BackendKind::Cpu, BackendKind::Cpu],
             &[],
+            &[],
             BackendExpansionOptions {
                 default_cpu_threads: 1,
                 default_cpu_affinity: CpuAffinityMode::Auto,
@@ -3185,6 +3238,7 @@ HugePages_Rsvd:          0
         let out = expand_backend_specs(
             &[BackendKind::Cpu, BackendKind::Nvidia],
             &[2, 0, 2],
+            &[],
             BackendExpansionOptions {
                 default_cpu_threads: 1,
                 default_cpu_affinity: CpuAffinityMode::Auto,
@@ -3235,6 +3289,7 @@ HugePages_Rsvd:          0
         let err = expand_backend_specs(
             &[BackendKind::Cpu],
             &[0],
+            &[],
             BackendExpansionOptions {
                 default_cpu_threads: 1,
                 default_cpu_affinity: CpuAffinityMode::Auto,
@@ -3250,9 +3305,54 @@ HugePages_Rsvd:          0
     }
 
     #[test]
+    fn expand_backend_specs_expands_amd_devices() {
+        let out = expand_backend_specs(
+            &[BackendKind::Amd],
+            &[],
+            &[1, 0, 1],
+            BackendExpansionOptions {
+                default_cpu_threads: 1,
+                default_cpu_affinity: CpuAffinityMode::Auto,
+                cpu_threads_per_instance: &[],
+                cpu_affinity_per_instance: &[],
+                backend_assign_timeout_ms_per_instance: &[],
+                backend_control_timeout_ms_per_instance: &[],
+                backend_assign_timeout_strikes_per_instance: &[],
+            },
+        )
+        .expect("amd backend specs should parse");
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].kind, BackendKind::Amd);
+        assert_eq!(out[0].device_index, Some(1));
+        assert_eq!(out[1].kind, BackendKind::Amd);
+        assert_eq!(out[1].device_index, Some(0));
+    }
+
+    #[test]
+    fn expand_backend_specs_requires_amd_backend_for_devices() {
+        let err = expand_backend_specs(
+            &[BackendKind::Cpu],
+            &[],
+            &[0],
+            BackendExpansionOptions {
+                default_cpu_threads: 1,
+                default_cpu_affinity: CpuAffinityMode::Auto,
+                cpu_threads_per_instance: &[],
+                cpu_affinity_per_instance: &[],
+                backend_assign_timeout_ms_per_instance: &[],
+                backend_control_timeout_ms_per_instance: &[],
+                backend_assign_timeout_strikes_per_instance: &[],
+            },
+        )
+        .expect_err("amd devices without backend should fail");
+        assert!(format!("{err:#}").contains("--amd-devices requires selecting amd"));
+    }
+
+    #[test]
     fn expand_backend_specs_applies_cpu_instance_overrides() {
         let out = expand_backend_specs(
             &[BackendKind::Cpu, BackendKind::Cpu],
+            &[],
             &[],
             BackendExpansionOptions {
                 default_cpu_threads: 2,
@@ -3276,6 +3376,7 @@ HugePages_Rsvd:          0
     fn expand_backend_specs_applies_per_instance_timeout_overrides() {
         let out = expand_backend_specs(
             &[BackendKind::Cpu, BackendKind::Nvidia],
+            &[],
             &[],
             BackendExpansionOptions {
                 default_cpu_threads: 1,
