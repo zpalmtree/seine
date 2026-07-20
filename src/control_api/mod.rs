@@ -1773,8 +1773,8 @@ fn parse_backend_specs_patch(specs: &[BackendSpecPatch]) -> Result<Vec<BackendSp
             bail!("backend_specs[{idx}].assign_timeout_strikes_override must be >= 1");
         }
 
-        if kind != BackendKind::Nvidia && patch.device_index.is_some() {
-            bail!("backend_specs[{idx}].device_index is only valid for nvidia backends");
+        if kind != BackendKind::Nvidia && kind != BackendKind::Amd && patch.device_index.is_some() {
+            bail!("backend_specs[{idx}].device_index is only valid for nvidia/amd backends");
         }
 
         let cpu_threads = if kind == BackendKind::Cpu {
@@ -1819,7 +1819,8 @@ fn parse_backend_kind(value: &str) -> Result<BackendKind> {
         "cpu" => Ok(BackendKind::Cpu),
         "nvidia" => Ok(BackendKind::Nvidia),
         "metal" => Ok(BackendKind::Metal),
-        other => bail!("invalid backend kind '{other}' (expected: cpu|nvidia|metal)"),
+        "amd" => Ok(BackendKind::Amd),
+        other => bail!("invalid backend kind '{other}' (expected: cpu|nvidia|metal|amd)"),
     }
 }
 

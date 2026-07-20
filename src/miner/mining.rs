@@ -2779,6 +2779,8 @@ mod tests {
             nvidia_fused_target_check: false,
             nvidia_adaptive_launch_depth: true,
             nvidia_enforce_template_stop: false,
+            amd_devices: Vec::new(),
+            amd_max_lanes: None,
             metal_max_lanes: None,
             metal_hashes_per_launch_per_lane: 2,
             backend_assign_timeout: Duration::from_millis(1_000),

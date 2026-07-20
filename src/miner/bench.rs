@@ -216,6 +216,8 @@ struct BenchConfigFingerprint {
     nvidia_fused_target_check: bool,
     nvidia_adaptive_launch_depth: bool,
     nvidia_enforce_template_stop: bool,
+    amd_devices: Vec<u32>,
+    amd_max_lanes: Option<usize>,
     backend_assign_timeout_ms: u64,
     backend_assign_timeout_strikes: u32,
     backend_control_timeout_ms: u64,
@@ -286,7 +288,11 @@ struct WorkerBenchmarkIdentity {
 }
 
 type BackendEventAction = RuntimeBackendEventAction;
-const BENCH_REPORT_SCHEMA_VERSION: u32 = 12;
+// Schema 13 adds the AMD backend fingerprint fields (amd_devices,
+// amd_max_lanes); schema-12 baselines remain comparable because the new
+// fields default to empty/None on load and are only cross-checked when both
+// reports are schema >= 13.
+const BENCH_REPORT_SCHEMA_VERSION: u32 = 13;
 const BENCH_REPORT_COMPAT_MIN_SCHEMA_VERSION: u32 = 12;
 const BENCH_SHORT_WINDOW_WARN_SECS: u64 = 10;
 const BENCH_FENCE_JITTER_WARN_SECS: f64 = 0.250;
@@ -1430,6 +1436,22 @@ fn baseline_compatibility_issues(
                 ));
             }
         }
+        if baseline.schema_version >= 13 && current.schema_version >= 13 {
+            if baseline.config_fingerprint.amd_devices != current.config_fingerprint.amd_devices {
+                issues.push(format!(
+                    "amd_devices mismatch baseline={:?} current={:?}",
+                    baseline.config_fingerprint.amd_devices, current.config_fingerprint.amd_devices
+                ));
+            }
+            if baseline.config_fingerprint.amd_max_lanes != current.config_fingerprint.amd_max_lanes
+            {
+                issues.push(format!(
+                    "amd_max_lanes mismatch baseline={:?} current={:?}",
+                    baseline.config_fingerprint.amd_max_lanes,
+                    current.config_fingerprint.amd_max_lanes
+                ));
+            }
+        }
         if baseline.schema_version >= 8 && current.schema_version >= 8 {
             if baseline.config_fingerprint.nvidia_autotune_secs
                 != current.config_fingerprint.nvidia_autotune_secs
@@ -1957,6 +1979,8 @@ fn benchmark_config_fingerprint(
         nvidia_fused_target_check: cfg.nvidia_fused_target_check,
         nvidia_adaptive_launch_depth: cfg.nvidia_adaptive_launch_depth,
         nvidia_enforce_template_stop: cfg.nvidia_enforce_template_stop,
+        amd_devices: cfg.amd_devices.clone(),
+        amd_max_lanes: cfg.amd_max_lanes,
         backend_assign_timeout_ms: cfg.backend_assign_timeout.as_millis() as u64,
         backend_assign_timeout_strikes: cfg.backend_assign_timeout_strikes,
         backend_control_timeout_ms: cfg.backend_control_timeout.as_millis() as u64,
@@ -2412,6 +2436,8 @@ mod tests {
                 nvidia_fused_target_check: false,
                 nvidia_adaptive_launch_depth: true,
                 nvidia_enforce_template_stop: false,
+                amd_devices: Vec::new(),
+                amd_max_lanes: None,
                 backend_assign_timeout_ms: 1000,
                 backend_assign_timeout_strikes: 1,
                 backend_control_timeout_ms: 60_000,
@@ -2559,7 +2585,7 @@ mod tests {
     fn baseline_compatibility_rejects_pre_timing_fix_schema() {
         let current = sample_report();
         let mut baseline = sample_report();
-        baseline.schema_version = BENCH_REPORT_SCHEMA_VERSION - 1;
+        baseline.schema_version = BENCH_REPORT_COMPAT_MIN_SCHEMA_VERSION - 1;
 
         let issues =
             baseline_compatibility_issues(&current, &baseline, BenchBaselinePolicy::Strict);
@@ -2571,7 +2597,7 @@ mod tests {
         let current = sample_report();
         let mut baseline_value =
             serde_json::to_value(sample_report()).expect("sample report should serialize to JSON");
-        baseline_value["schema_version"] = json!(BENCH_REPORT_SCHEMA_VERSION - 1);
+        baseline_value["schema_version"] = json!(BENCH_REPORT_COMPAT_MIN_SCHEMA_VERSION - 1);
         baseline_value
             .as_object_mut()
             .expect("baseline report should be a JSON object")

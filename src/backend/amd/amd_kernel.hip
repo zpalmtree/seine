@@ -1,0 +1,953 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// HIP Argon2id lane-fill kernel specialized for Seine's PoW profile.
+//
+// Port of src/backend/nvidia_kernel.cu (see NVIDIA_OPTIMIZATION_LOG.md for
+// the optimization lineage). Retained from the CUDA kernel:
+//   - A29 full-warp (32-thread) cooperative block compression mapping.
+//   - A77/A78 unrolled global loads/stores for memory-level parallelism.
+//   - A81 closed-form G-round index computation (no switch/branch divergence).
+//   - A82 warp-shuffle G-round fusion (row-columns->row-diagonals and
+//     col-columns->col-diagonals passed lane-to-lane via shuffles).
+// Deliberately OMITTED (NVIDIA/PTXAS-specific scheduling hacks, see A73/A77):
+//   - The dead-code L2-prefetch address-computation block and its
+//     first-8-threads guard. That code exists purely to nudge NVRTC/PTXAS
+//     instruction scheduling on sm_120 and has no meaning for AMD's LLVM
+//     backend. Correctness over speed for bring-up; AMD-specific scheduling
+//     experiments come after the differential tests pass.
+//
+// Wavefront contract: this kernel REQUIRES wave32 execution (RDNA gfx10/gfx11
+// compiled with -mno-wavefrontsize64). The cooperative group is exactly one
+// 32-thread wavefront per hash lane (SEINE_WARPS_PER_BLOCK == 1 keeps the
+// thread block equal to that single wavefront). The host engine refuses to
+// run on devices reporting warpSize != 32 (CDNA/wave64 support comes later).
+//
+// hipRTC compiles HIP device code without explicit includes (__global__,
+// __shfl, atomics and friends are predeclared, mirroring NVRTC).
+
+extern "C" {
+
+constexpr unsigned int ARGON2_COOP_THREADS = 32U;
+constexpr unsigned int SEED_KERNEL_THREADS = 64U;
+constexpr unsigned int EVAL_KERNEL_THREADS = 64U;
+constexpr unsigned int BLAKE2B_BLOCK_BYTES = 128U;
+constexpr unsigned int BLAKE2B_OUT_BYTES = 64U;
+constexpr unsigned int POW_OUTPUT_BYTES = 32U;
+constexpr unsigned int ARGON2_VERSION_V13 = 0x13U;
+constexpr unsigned int ARGON2_ALGORITHM_ID = 2U;
+#ifndef SEINE_FIXED_M_BLOCKS
+#define SEINE_FIXED_M_BLOCKS 0U
+#endif
+#ifndef SEINE_FIXED_T_COST
+#define SEINE_FIXED_T_COST 0U
+#endif
+#ifndef SEINE_CANCEL_CHECK_BLOCK_INTERVAL
+#define SEINE_CANCEL_CHECK_BLOCK_INTERVAL 64U
+#endif
+constexpr unsigned int CANCEL_CHECK_BLOCK_INTERVAL = SEINE_CANCEL_CHECK_BLOCK_INTERVAL;
+#ifndef SEINE_WARPS_PER_BLOCK
+#define SEINE_WARPS_PER_BLOCK 1U
+#endif
+constexpr unsigned int WARPS_PER_BLOCK = SEINE_WARPS_PER_BLOCK;
+
+// Cooperative-group barrier. With WARPS_PER_BLOCK == 1 the thread block is
+// exactly one wave32 wavefront, so __syncthreads() is the conservative,
+// correctness-first barrier (also a shared-memory fence). CUDA's
+// __syncwarp(mask) has no direct HIP equivalent; revisit with
+// __builtin_amdgcn_wave_barrier()/fences only after differential tests pass.
+__device__ __forceinline__ void coop_sync() {
+    __syncthreads();
+}
+
+// Lane-to-lane value exchange inside the 32-thread cooperative group.
+// HIP __shfl takes no participation mask (contrast CUDA's masked *_sync
+// shuffle intrinsics); wave32 execution makes all 32 lanes implicit
+// participants.
+__device__ __forceinline__ unsigned long long coop_shfl(
+    unsigned long long value,
+    unsigned int src_lane
+) {
+    return __shfl(value, static_cast<int>(src_lane), ARGON2_COOP_THREADS);
+}
+
+__device__ __forceinline__ unsigned int coop_shfl_u32(
+    unsigned int value,
+    unsigned int src_lane
+) {
+    return __shfl(value, static_cast<int>(src_lane), ARGON2_COOP_THREADS);
+}
+
+struct Blake2bState {
+    unsigned long long h[8];
+    unsigned long long t0;
+    unsigned long long t1;
+    unsigned char buf[BLAKE2B_BLOCK_BYTES];
+    unsigned int buflen;
+};
+
+constexpr unsigned long long BLAKE2B_IV[8] = {
+    0x6A09E667F3BCC908ULL,
+    0xBB67AE8584CAA73BULL,
+    0x3C6EF372FE94F82BULL,
+    0xA54FF53A5F1D36F1ULL,
+    0x510E527FADE682D1ULL,
+    0x9B05688C2B3E6C1FULL,
+    0x1F83D9ABFB41BD6BULL,
+    0x5BE0CD19137E2179ULL,
+};
+
+constexpr unsigned char BLAKE2B_SIGMA[12][16] = {
+    {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
+    {14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3},
+    {11, 8, 12, 0, 5, 2, 15, 13, 10, 14, 3, 6, 7, 1, 9, 4},
+    {7, 9, 3, 1, 13, 12, 11, 14, 2, 6, 5, 10, 4, 0, 15, 8},
+    {9, 0, 5, 7, 2, 4, 10, 15, 14, 1, 11, 12, 6, 8, 3, 13},
+    {2, 12, 6, 10, 0, 11, 8, 3, 4, 13, 7, 5, 15, 14, 1, 9},
+    {12, 5, 1, 15, 14, 13, 4, 10, 0, 7, 6, 3, 9, 2, 8, 11},
+    {13, 11, 7, 14, 12, 1, 3, 9, 5, 0, 15, 4, 8, 6, 2, 10},
+    {6, 15, 14, 9, 11, 3, 0, 8, 12, 2, 13, 7, 1, 4, 10, 5},
+    {10, 2, 8, 4, 7, 6, 1, 5, 15, 11, 9, 14, 3, 12, 13, 0},
+    {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
+    {14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3},
+};
+
+__device__ __forceinline__ void device_memcpy(
+    unsigned char *dst,
+    const unsigned char *src,
+    unsigned int len
+) {
+    for (unsigned int i = 0U; i < len; ++i) {
+        dst[i] = src[i];
+    }
+}
+
+__device__ __forceinline__ void store_u32_le(unsigned char *dst, unsigned int value) {
+    dst[0] = static_cast<unsigned char>(value & 0xFFU);
+    dst[1] = static_cast<unsigned char>((value >> 8) & 0xFFU);
+    dst[2] = static_cast<unsigned char>((value >> 16) & 0xFFU);
+    dst[3] = static_cast<unsigned char>((value >> 24) & 0xFFU);
+}
+
+__device__ __forceinline__ void store_u64_le(
+    unsigned char *dst,
+    unsigned long long value
+) {
+    for (unsigned int i = 0U; i < 8U; ++i) {
+        dst[i] = static_cast<unsigned char>((value >> (8U * i)) & 0xFFULL);
+    }
+}
+
+__device__ __forceinline__ unsigned long long load_u64_le(const unsigned char *src) {
+    unsigned long long value = 0ULL;
+    for (unsigned int i = 0U; i < 8U; ++i) {
+        value |= static_cast<unsigned long long>(src[i]) << (8U * i);
+    }
+    return value;
+}
+
+__device__ __forceinline__ unsigned long long rotr64(
+    unsigned long long x,
+    unsigned int n
+) {
+    return (x >> n) | (x << (64U - n));
+}
+
+__device__ __forceinline__ void blake2b_g(
+    unsigned long long v[16],
+    unsigned int a,
+    unsigned int b,
+    unsigned int c,
+    unsigned int d,
+    unsigned long long x,
+    unsigned long long y
+) {
+    v[a] = v[a] + v[b] + x;
+    v[d] = rotr64(v[d] ^ v[a], 32U);
+    v[c] = v[c] + v[d];
+    v[b] = rotr64(v[b] ^ v[c], 24U);
+    v[a] = v[a] + v[b] + y;
+    v[d] = rotr64(v[d] ^ v[a], 16U);
+    v[c] = v[c] + v[d];
+    v[b] = rotr64(v[b] ^ v[c], 63U);
+}
+
+__device__ __forceinline__ void blake2b_compress(
+    Blake2bState &state,
+    const unsigned char block[BLAKE2B_BLOCK_BYTES],
+    unsigned long long last_block_flag
+) {
+    unsigned long long m[16];
+    unsigned long long v[16];
+    for (unsigned int i = 0U; i < 16U; ++i) {
+        m[i] = load_u64_le(block + (i * 8U));
+    }
+    for (unsigned int i = 0U; i < 8U; ++i) {
+        v[i] = state.h[i];
+        v[i + 8U] = BLAKE2B_IV[i];
+    }
+    v[12] ^= state.t0;
+    v[13] ^= state.t1;
+    v[14] ^= last_block_flag;
+
+    for (unsigned int round = 0U; round < 12U; ++round) {
+        const unsigned char *s = BLAKE2B_SIGMA[round];
+        blake2b_g(v, 0U, 4U, 8U, 12U, m[s[0]], m[s[1]]);
+        blake2b_g(v, 1U, 5U, 9U, 13U, m[s[2]], m[s[3]]);
+        blake2b_g(v, 2U, 6U, 10U, 14U, m[s[4]], m[s[5]]);
+        blake2b_g(v, 3U, 7U, 11U, 15U, m[s[6]], m[s[7]]);
+        blake2b_g(v, 0U, 5U, 10U, 15U, m[s[8]], m[s[9]]);
+        blake2b_g(v, 1U, 6U, 11U, 12U, m[s[10]], m[s[11]]);
+        blake2b_g(v, 2U, 7U, 8U, 13U, m[s[12]], m[s[13]]);
+        blake2b_g(v, 3U, 4U, 9U, 14U, m[s[14]], m[s[15]]);
+    }
+
+    for (unsigned int i = 0U; i < 8U; ++i) {
+        state.h[i] ^= v[i] ^ v[i + 8U];
+    }
+}
+
+__device__ __forceinline__ void blake2b_init(Blake2bState &state, unsigned int out_len) {
+    for (unsigned int i = 0U; i < 8U; ++i) {
+        state.h[i] = BLAKE2B_IV[i];
+    }
+    state.h[0] ^= 0x01010000ULL ^ static_cast<unsigned long long>(out_len);
+    state.t0 = 0ULL;
+    state.t1 = 0ULL;
+    state.buflen = 0U;
+    for (unsigned int i = 0U; i < BLAKE2B_BLOCK_BYTES; ++i) {
+        state.buf[i] = 0U;
+    }
+}
+
+__device__ __forceinline__ void blake2b_increment_counter(
+    Blake2bState &state,
+    unsigned int increment
+) {
+    const unsigned long long prev = state.t0;
+    state.t0 += static_cast<unsigned long long>(increment);
+    if (state.t0 < prev) {
+        state.t1 += 1ULL;
+    }
+}
+
+__device__ __forceinline__ void blake2b_update(
+    Blake2bState &state,
+    const unsigned char *input,
+    unsigned int input_len
+) {
+    unsigned int offset = 0U;
+    while (offset < input_len) {
+        const unsigned int space = BLAKE2B_BLOCK_BYTES - state.buflen;
+        const unsigned int take = (input_len - offset < space)
+            ? (input_len - offset)
+            : space;
+        device_memcpy(state.buf + state.buflen, input + offset, take);
+        state.buflen += take;
+        offset += take;
+
+        if (state.buflen == BLAKE2B_BLOCK_BYTES) {
+            blake2b_increment_counter(state, BLAKE2B_BLOCK_BYTES);
+            blake2b_compress(state, state.buf, 0ULL);
+            state.buflen = 0U;
+        }
+    }
+}
+
+__device__ __forceinline__ void blake2b_final(
+    Blake2bState &state,
+    unsigned char *out,
+    unsigned int out_len
+) {
+    blake2b_increment_counter(state, state.buflen);
+    for (unsigned int i = state.buflen; i < BLAKE2B_BLOCK_BYTES; ++i) {
+        state.buf[i] = 0U;
+    }
+    blake2b_compress(state, state.buf, 0xFFFFFFFFFFFFFFFFULL);
+
+    unsigned char digest[BLAKE2B_OUT_BYTES];
+    for (unsigned int i = 0U; i < 8U; ++i) {
+        store_u64_le(digest + (i * 8U), state.h[i]);
+    }
+    for (unsigned int i = 0U; i < out_len; ++i) {
+        out[i] = digest[i];
+    }
+}
+
+__device__ __forceinline__ void blake2b_hash(
+    const unsigned char *input,
+    unsigned int input_len,
+    unsigned char *out,
+    unsigned int out_len
+) {
+    Blake2bState state;
+    blake2b_init(state, out_len);
+    blake2b_update(state, input, input_len);
+    blake2b_final(state, out, out_len);
+}
+
+__device__ __forceinline__ void blake2b_long_1024_words(
+    const unsigned char *input,
+    unsigned int input_len,
+    unsigned long long *out_words
+) {
+    unsigned char out_len_le[4];
+    store_u32_le(out_len_le, 1024U);
+
+    unsigned char last_output[64];
+    Blake2bState state;
+    blake2b_init(state, 64U);
+    blake2b_update(state, out_len_le, 4U);
+    blake2b_update(state, input, input_len);
+    blake2b_final(state, last_output, 64U);
+
+    unsigned int out_word_idx = 0U;
+    for (unsigned int i = 0U; i < 4U; ++i) {
+        out_words[out_word_idx++] = load_u64_le(last_output + i * 8U);
+    }
+    unsigned int counter = 32U;
+
+    while ((1024U - counter) > 64U) {
+        unsigned char next_output[64];
+        blake2b_hash(last_output, 64U, next_output, 64U);
+        for (unsigned int i = 0U; i < 64U; ++i) {
+            last_output[i] = next_output[i];
+        }
+        for (unsigned int i = 0U; i < 4U; ++i) {
+            out_words[out_word_idx++] = load_u64_le(last_output + i * 8U);
+        }
+        counter += 32U;
+    }
+
+    unsigned char tail_output[64];
+    blake2b_hash(last_output, 64U, tail_output, 64U);
+    for (unsigned int i = 0U; i < 8U; ++i) {
+        out_words[out_word_idx++] = load_u64_le(tail_output + i * 8U);
+    }
+}
+
+__device__ __forceinline__ void blake2b_long_32_from_words(
+    const unsigned long long *block_words,
+    unsigned char out_hash[POW_OUTPUT_BYTES]
+) {
+    unsigned char out_len_le[4];
+    store_u32_le(out_len_le, POW_OUTPUT_BYTES);
+
+    Blake2bState state;
+    blake2b_init(state, POW_OUTPUT_BYTES);
+    blake2b_update(state, out_len_le, 4U);
+
+    unsigned char chunk[128];
+    for (unsigned int chunk_idx = 0U; chunk_idx < 8U; ++chunk_idx) {
+        const unsigned long long *chunk_words = block_words + chunk_idx * 16U;
+        for (unsigned int i = 0U; i < 16U; ++i) {
+            store_u64_le(chunk + i * 8U, chunk_words[i]);
+        }
+        blake2b_update(state, chunk, 128U);
+    }
+    blake2b_final(state, out_hash, POW_OUTPUT_BYTES);
+}
+
+__device__ __forceinline__ bool hash_meets_target_be(
+    const unsigned char hash[POW_OUTPUT_BYTES],
+    const unsigned char target[POW_OUTPUT_BYTES]
+) {
+    for (unsigned int i = 0U; i < POW_OUTPUT_BYTES; ++i) {
+        if (hash[i] < target[i]) {
+            return true;
+        }
+        if (hash[i] > target[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+__global__ void build_seed_blocks_kernel(
+    const unsigned char *__restrict__ header_base,
+    unsigned int header_base_len,
+    const unsigned long long *__restrict__ nonces,
+    unsigned int active_hashes,
+    unsigned int m_cost_kib,
+    unsigned int t_cost,
+    unsigned long long *__restrict__ seed_blocks
+) {
+    const unsigned int hash_idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (hash_idx >= active_hashes) {
+        return;
+    }
+
+    unsigned char h0[64];
+    {
+        unsigned char tmp4[4];
+        unsigned char tmp8[8];
+        Blake2bState state;
+        blake2b_init(state, 64U);
+
+        store_u32_le(tmp4, 1U);
+        blake2b_update(state, tmp4, 4U);
+
+        store_u32_le(tmp4, POW_OUTPUT_BYTES);
+        blake2b_update(state, tmp4, 4U);
+
+        store_u32_le(tmp4, m_cost_kib);
+        blake2b_update(state, tmp4, 4U);
+
+        store_u32_le(tmp4, t_cost);
+        blake2b_update(state, tmp4, 4U);
+
+        store_u32_le(tmp4, ARGON2_VERSION_V13);
+        blake2b_update(state, tmp4, 4U);
+
+        store_u32_le(tmp4, ARGON2_ALGORITHM_ID);
+        blake2b_update(state, tmp4, 4U);
+
+        store_u32_le(tmp4, 8U);
+        blake2b_update(state, tmp4, 4U);
+
+        store_u64_le(tmp8, nonces[hash_idx]);
+        blake2b_update(state, tmp8, 8U);
+
+        store_u32_le(tmp4, header_base_len);
+        blake2b_update(state, tmp4, 4U);
+        blake2b_update(state, header_base, header_base_len);
+
+        store_u32_le(tmp4, 0U);
+        blake2b_update(state, tmp4, 4U);
+        blake2b_update(state, tmp4, 4U);
+
+        blake2b_final(state, h0, 64U);
+    }
+
+    unsigned char seed_input[72];
+    for (unsigned int i = 0U; i < 64U; ++i) {
+        seed_input[i] = h0[i];
+    }
+    // lane index for p=1 is always zero.
+    seed_input[68] = 0U;
+    seed_input[69] = 0U;
+    seed_input[70] = 0U;
+    seed_input[71] = 0U;
+
+    for (unsigned int seed_idx = 0U; seed_idx < 2U; ++seed_idx) {
+        unsigned long long *seed_out_words =
+            seed_blocks + static_cast<unsigned long long>(hash_idx) * 256ULL +
+            static_cast<unsigned long long>(seed_idx) * 128ULL;
+        store_u32_le(seed_input + 64U, seed_idx);
+        blake2b_long_1024_words(seed_input, 72U, seed_out_words);
+    }
+}
+
+__device__ __forceinline__ unsigned long long blamka(
+    unsigned long long x,
+    unsigned long long y
+) {
+    const unsigned long long low = 0xFFFFFFFFULL;
+    return x + y + 2ULL * (x & low) * (y & low);
+}
+
+__device__ __forceinline__ void permute_step(
+    unsigned long long &a,
+    unsigned long long &b,
+    unsigned long long &c,
+    unsigned long long &d
+) {
+    a = blamka(a, b);
+    d = ((d ^ a) >> 32) | ((d ^ a) << (64 - 32));
+    c = blamka(c, d);
+    b = ((b ^ c) >> 24) | ((b ^ c) << (64 - 24));
+
+    a = blamka(a, b);
+    d = ((d ^ a) >> 16) | ((d ^ a) << (64 - 16));
+    c = blamka(c, d);
+    b = ((b ^ c) >> 63) | ((b ^ c) << 1);
+}
+
+__device__ __forceinline__ void compress_block_coop(
+    const unsigned long long *__restrict__ rhs,
+    const unsigned long long *__restrict__ lhs,
+    unsigned long long *__restrict__ out,
+    bool xor_out,
+    unsigned long long *__restrict__ scratch_r,
+    unsigned long long *__restrict__ scratch_q,
+    unsigned int tid
+) {
+    // Issue all global loads into registers first to maximize
+    // memory-level parallelism (multiple loads in flight at once, A77).
+    const unsigned long long r0 = rhs[tid]       ^ lhs[tid];
+    const unsigned long long r1 = rhs[tid + 32U]  ^ lhs[tid + 32U];
+    const unsigned long long r2 = rhs[tid + 64U]  ^ lhs[tid + 64U];
+    const unsigned long long r3 = rhs[tid + 96U]  ^ lhs[tid + 96U];
+    scratch_r[tid]       = r0;  scratch_q[tid]       = r0;
+    scratch_r[tid + 32U] = r1;  scratch_q[tid + 32U] = r1;
+    scratch_r[tid + 64U] = r2;  scratch_q[tid + 64U] = r2;
+    scratch_r[tid + 96U] = r3;  scratch_q[tid + 96U] = r3;
+    coop_sync();
+
+    // G-rounds with wave-shuffle fusion (A82) and closed-form indexing (A81).
+    const unsigned int state = tid >> 2;
+    const unsigned int lane = tid & 3U;
+    const unsigned int shfl_base = state * 4U; // absolute lane base for shuffles
+
+    // --- Fused row rounds (columns + diagonals) ---
+    {
+        const unsigned int base = state * 16U;
+        // Row columns: load from shared, permute
+        unsigned long long a = scratch_q[base + lane];
+        unsigned long long b = scratch_q[base + 4U + lane];
+        unsigned long long c = scratch_q[base + 8U + lane];
+        unsigned long long d = scratch_q[base + 12U + lane];
+        permute_step(a, b, c, d);
+        // Row diagonals: shuffle outputs instead of shared-memory round-trip.
+        // Thread lane l needs: a from self, b from (l+1)&3, c from (l+2)&3, d from (l+3)&3
+        unsigned long long a2 = a; // same thread, same position
+        unsigned long long b2 = coop_shfl(b, shfl_base + ((lane + 1U) & 3U));
+        unsigned long long c2 = coop_shfl(c, shfl_base + ((lane + 2U) & 3U));
+        unsigned long long d2 = coop_shfl(d, shfl_base + ((lane + 3U) & 3U));
+        permute_step(a2, b2, c2, d2);
+        // Store diagonal results to shared memory for column rounds.
+        // Diagonal indices: base + lane, base + 4 + (lane+1)&3, base + 8 + (lane+2)&3, base + 12 + (lane+3)&3
+        scratch_q[base + lane] = a2;
+        scratch_q[base + 4U + ((lane + 1U) & 3U)] = b2;
+        scratch_q[base + 8U + ((lane + 2U) & 3U)] = c2;
+        scratch_q[base + 12U + ((lane + 3U) & 3U)] = d2;
+    }
+    coop_sync();
+
+    // --- Fused column rounds (columns + diagonals) ---
+    {
+        const unsigned int b = state * 2U;
+        const unsigned int col_sub = (lane >> 1) * 16U + (lane & 1U);
+        // Column columns: load from shared, permute
+        unsigned long long a = scratch_q[b + col_sub];
+        unsigned long long c = scratch_q[b + 32U + col_sub];
+        unsigned long long d = scratch_q[b + 64U + col_sub];
+        unsigned long long e = scratch_q[b + 96U + col_sub];
+        permute_step(a, c, d, e);
+        // Column diagonals: shuffle instead of shared-memory round-trip.
+        unsigned long long a2 = a;
+        unsigned long long c2 = coop_shfl(c, shfl_base + ((lane + 1U) & 3U));
+        unsigned long long d2 = coop_shfl(d, shfl_base + ((lane + 2U) & 3U));
+        unsigned long long e2 = coop_shfl(e, shfl_base + ((lane + 3U) & 3U));
+        permute_step(a2, c2, d2, e2);
+        // Store diagonal results back.
+        const unsigned int p0 = lane;
+        const unsigned int p1 = (lane + 1U) & 3U;
+        const unsigned int p2 = (lane + 2U) & 3U;
+        const unsigned int p3 = (lane + 3U) & 3U;
+        scratch_q[b + (p0 >> 1) * 16U + (p0 & 1U)] = a2;
+        scratch_q[b + 32U + (p1 >> 1) * 16U + (p1 & 1U)] = c2;
+        scratch_q[b + 64U + (p2 >> 1) * 16U + (p2 & 1U)] = d2;
+        scratch_q[b + 96U + (p3 >> 1) * 16U + (p3 & 1U)] = e2;
+    }
+    coop_sync();
+
+    // Unrolled final store: read all shared-memory values into registers
+    // first, then issue all global stores to maximize MLP (A78).
+    {
+        const unsigned long long m0 = scratch_q[tid]       ^ scratch_r[tid];
+        const unsigned long long m1 = scratch_q[tid + 32U] ^ scratch_r[tid + 32U];
+        const unsigned long long m2 = scratch_q[tid + 64U] ^ scratch_r[tid + 64U];
+        const unsigned long long m3 = scratch_q[tid + 96U] ^ scratch_r[tid + 96U];
+        if (xor_out) {
+            out[tid]       ^= m0;
+            out[tid + 32U] ^= m1;
+            out[tid + 64U] ^= m2;
+            out[tid + 96U] ^= m3;
+        } else {
+            out[tid]       = m0;
+            out[tid + 32U] = m1;
+            out[tid + 64U] = m2;
+            out[tid + 96U] = m3;
+        }
+    }
+}
+
+__device__ __forceinline__ void update_address_block_coop(
+    unsigned long long *__restrict__ address_block,
+    unsigned long long *__restrict__ input_block,
+    const unsigned long long *__restrict__ zero_block,
+    unsigned long long *__restrict__ scratch_r,
+    unsigned long long *__restrict__ scratch_q,
+    unsigned int tid
+) {
+    if (tid == 0U) {
+        input_block[6] += 1ULL;
+    }
+    coop_sync();
+    compress_block_coop(
+        zero_block,
+        input_block,
+        address_block,
+        false,
+        scratch_r,
+        scratch_q,
+        tid
+    );
+    compress_block_coop(
+        zero_block,
+        address_block,
+        address_block,
+        false,
+        scratch_r,
+        scratch_q,
+        tid
+    );
+}
+
+__global__ void touch_lane_memory_kernel(
+    unsigned long long *lane_memory,
+    unsigned int lanes_active,
+    unsigned long long lane_stride_words
+) {
+    const unsigned int lane = blockIdx.x * blockDim.x + threadIdx.x;
+    if (lane >= lanes_active || lane_stride_words == 0ULL) {
+        return;
+    }
+
+    volatile unsigned long long *lane_ptr =
+        lane_memory + static_cast<unsigned long long>(lane) * lane_stride_words;
+
+    // Touch one 4 KiB page at a time (512 x u64) to force physical commit.
+    for (unsigned long long word = 0ULL; word < lane_stride_words; word += 512ULL) {
+        unsigned long long v = lane_ptr[word];
+        lane_ptr[word] = v;
+    }
+
+    const unsigned long long tail = lane_stride_words - 1ULL;
+    unsigned long long tail_v = lane_ptr[tail];
+    lane_ptr[tail] = tail_v;
+}
+
+__device__ __forceinline__ void argon2id_fill_kernel_impl(
+    const unsigned long long *__restrict__ seed_blocks,
+    unsigned int lanes_active,
+    unsigned int active_hashes,
+    unsigned int lane_launch_iters,
+    unsigned int m_blocks,
+    unsigned int t_cost,
+    unsigned long long *__restrict__ lane_memory,
+    unsigned long long *__restrict__ out_last_blocks,
+    const volatile unsigned int *__restrict__ cancel_flag,
+    unsigned int *__restrict__ completed_iters,
+    const unsigned char *__restrict__ target,
+    unsigned int *__restrict__ found_index_one_based,
+    bool fused_target_check
+) {
+    const unsigned int warp_id = threadIdx.x / ARGON2_COOP_THREADS;
+    const unsigned int lane = blockIdx.x * WARPS_PER_BLOCK + warp_id;
+    const unsigned int tid = threadIdx.x % ARGON2_COOP_THREADS;
+    const unsigned int effective_m_blocks =
+        (SEINE_FIXED_M_BLOCKS > 0U) ? SEINE_FIXED_M_BLOCKS : m_blocks;
+    const unsigned int effective_t_cost =
+        (SEINE_FIXED_T_COST > 0U) ? SEINE_FIXED_T_COST : t_cost;
+    if (lane >= lanes_active || effective_m_blocks < 8U) {
+        return;
+    }
+
+    const unsigned long long lane_stride_words =
+        static_cast<unsigned long long>(effective_m_blocks) * 128ULL;
+    unsigned long long *memory =
+        lane_memory + static_cast<unsigned long long>(lane) * lane_stride_words;
+    const unsigned int segment_length = effective_m_blocks / 4U;
+    const unsigned int lane_length = effective_m_blocks;
+
+    __shared__ unsigned long long address_block[WARPS_PER_BLOCK * 128];
+    __shared__ unsigned long long input_block[WARPS_PER_BLOCK * 128];
+    __shared__ unsigned long long zero_block[WARPS_PER_BLOCK * 128];
+    __shared__ unsigned long long scratch_r[WARPS_PER_BLOCK * 128];
+    __shared__ unsigned long long scratch_q[WARPS_PER_BLOCK * 128];
+    unsigned long long *my_address = address_block + warp_id * 128U;
+    unsigned long long *my_input = input_block + warp_id * 128U;
+    unsigned long long *my_zero = zero_block + warp_id * 128U;
+    unsigned long long *my_scratch_r = scratch_r + warp_id * 128U;
+    unsigned long long *my_scratch_q = scratch_q + warp_id * 128U;
+    bool abort_requested = false;
+
+    for (unsigned int iter = 0U; iter < lane_launch_iters; ++iter) {
+        {
+            unsigned int cancel_val = 0U;
+            if (tid == 0U) cancel_val = cancel_flag[0];
+            cancel_val = coop_shfl_u32(cancel_val, 0U);
+            if (cancel_val != 0U) break;
+        }
+
+        const unsigned long long global_hash_idx =
+            static_cast<unsigned long long>(iter) * lanes_active +
+            static_cast<unsigned long long>(lane);
+        if (global_hash_idx >= static_cast<unsigned long long>(active_hashes)) {
+            break;
+        }
+
+        const unsigned long long *seed = seed_blocks + global_hash_idx * 256ULL;
+        for (unsigned int i = tid; i < 256U; i += ARGON2_COOP_THREADS) {
+            memory[i] = seed[i];
+        }
+        coop_sync();
+
+        for (unsigned int i = tid; i < 128U; i += ARGON2_COOP_THREADS) {
+            my_address[i] = 0ULL;
+            my_input[i] = 0ULL;
+            my_zero[i] = 0ULL;
+        }
+        coop_sync();
+
+        for (unsigned int pass = 0; pass < effective_t_cost && !abort_requested; ++pass) {
+            for (unsigned int slice = 0; slice < 4U && !abort_requested; ++slice) {
+                const bool data_independent = (pass == 0U && slice < 2U);
+                if (data_independent) {
+                    for (unsigned int i = tid; i < 128U; i += ARGON2_COOP_THREADS) {
+                        my_address[i] = 0ULL;
+                        my_input[i] = 0ULL;
+                    }
+                    if (tid == 0U) {
+                        my_input[0] = static_cast<unsigned long long>(pass);
+                        my_input[1] = 0ULL; // lane index (p=1)
+                        my_input[2] = static_cast<unsigned long long>(slice);
+                        my_input[3] = static_cast<unsigned long long>(effective_m_blocks);
+                        my_input[4] = static_cast<unsigned long long>(effective_t_cost);
+                        my_input[5] = 2ULL; // Argon2id
+                    }
+                    coop_sync();
+
+                    // Argon2id slice 0 starts at block index 2. Prime the first address block
+                    // so indices 2..127 read initialized address words (matches CPU/reference flow).
+                    if (pass == 0U && slice == 0U) {
+                        update_address_block_coop(
+                            my_address,
+                            my_input,
+                            my_zero,
+                            my_scratch_r,
+                            my_scratch_q,
+                            tid
+                        );
+                        coop_sync();
+                    }
+                }
+
+                const unsigned int first_block =
+                    (pass == 0U && slice == 0U) ? 2U : 0U;
+
+                unsigned int cur_index =
+                    slice * segment_length + first_block;
+                unsigned int prev_index =
+                    (slice == 0U && first_block == 0U)
+                        ? (cur_index + lane_length - 1U)
+                        : (cur_index - 1U);
+
+                for (unsigned int block = first_block; block < segment_length; ++block) {
+                    if (((block - first_block) % CANCEL_CHECK_BLOCK_INTERVAL) == 0U) {
+                        unsigned int cancel_val = 0U;
+                        if (tid == 0U) cancel_val = cancel_flag[0];
+                        cancel_val = coop_shfl_u32(cancel_val, 0U);
+                        if (cancel_val != 0U) {
+                            abort_requested = true;
+                            break;
+                        }
+                    }
+
+                    unsigned long long rand64;
+                    if (data_independent) {
+                        const unsigned int address_index = block & 127U;
+                        if (address_index == 0U) {
+                            update_address_block_coop(
+                                my_address,
+                                my_input,
+                                my_zero,
+                                my_scratch_r,
+                                my_scratch_q,
+                                tid
+                            );
+                        }
+                        coop_sync();
+                        rand64 = my_address[address_index];
+                    } else {
+                        rand64 = memory[static_cast<unsigned long long>(prev_index) * 128ULL];
+                    }
+
+                    unsigned long long reference_area_size;
+                    if (pass == 0U) {
+                        if (slice == 0U) {
+                            reference_area_size = static_cast<unsigned long long>(block - 1U);
+                        } else {
+                            reference_area_size =
+                                static_cast<unsigned long long>(slice) * segment_length +
+                                static_cast<unsigned long long>(block) - 1ULL;
+                        }
+                    } else {
+                        reference_area_size =
+                            static_cast<unsigned long long>(lane_length - segment_length) +
+                            static_cast<unsigned long long>(block) - 1ULL;
+                    }
+
+                    unsigned long long map = rand64 & 0xFFFFFFFFULL;
+                    map = (map * map) >> 32;
+                    const unsigned long long relative_position =
+                        reference_area_size - 1ULL -
+                        ((reference_area_size * map) >> 32);
+
+                    const unsigned int start_position =
+                        (pass != 0U && slice != 3U) ? ((slice + 1U) * segment_length) : 0U;
+                    const unsigned int ref_index =
+                        static_cast<unsigned int>(
+                            (static_cast<unsigned long long>(start_position) +
+                             relative_position) %
+                            static_cast<unsigned long long>(lane_length)
+                        );
+
+                    const unsigned long long dst_offset =
+                        static_cast<unsigned long long>(cur_index) * 128ULL;
+                    const unsigned long long rhs_offset =
+                        static_cast<unsigned long long>(prev_index) * 128ULL;
+                    const unsigned long long lhs_offset =
+                        static_cast<unsigned long long>(ref_index) * 128ULL;
+
+                    // NOTE: the CUDA kernel carries an NVRTC/PTXAS
+                    // scheduling hack here (A73): a dead-code L2-prefetch
+                    // address computation restricted to the first 8
+                    // threads. Both parts are NVIDIA sm_120-specific and
+                    // are intentionally omitted from the HIP port.
+
+                    if (pass == 0U) {
+                        compress_block_coop(
+                            memory + rhs_offset,
+                            memory + lhs_offset,
+                            memory + dst_offset,
+                            false,
+                            my_scratch_r,
+                            my_scratch_q,
+                            tid
+                        );
+                    } else {
+                        compress_block_coop(
+                            memory + rhs_offset,
+                            memory + lhs_offset,
+                            memory + dst_offset,
+                            true,
+                            my_scratch_r,
+                            my_scratch_q,
+                            tid
+                        );
+                    }
+                    coop_sync();
+
+                    prev_index = cur_index;
+                    cur_index += 1U;
+                }
+            }
+        }
+        if (abort_requested) {
+            break;
+        }
+
+        const unsigned long long *last =
+            memory + (static_cast<unsigned long long>(lane_length) - 1ULL) * 128ULL;
+        unsigned long long *out = out_last_blocks + global_hash_idx * 128ULL;
+        {
+            const unsigned long long v0 = last[tid];
+            const unsigned long long v1 = last[tid + 32U];
+            const unsigned long long v2 = last[tid + 64U];
+            const unsigned long long v3 = last[tid + 96U];
+            out[tid]       = v0;
+            out[tid + 32U] = v1;
+            out[tid + 64U] = v2;
+            out[tid + 96U] = v3;
+        }
+        coop_sync();
+        if (fused_target_check && tid == 0U) {
+            unsigned char hash[POW_OUTPUT_BYTES];
+            blake2b_long_32_from_words(last, hash);
+            if (hash_meets_target_be(hash, target)) {
+                atomicMin(
+                    found_index_one_based,
+                    static_cast<unsigned int>(global_hash_idx) + 1U
+                );
+            }
+        }
+        coop_sync();
+        if (tid == 0U) {
+            atomicMax(completed_iters, iter + 1U);
+        }
+        coop_sync();
+    }
+}
+
+__global__ void argon2id_fill_kernel(
+    const unsigned long long *__restrict__ seed_blocks,
+    unsigned int lanes_active,
+    unsigned int active_hashes,
+    unsigned int lane_launch_iters,
+    unsigned int m_blocks,
+    unsigned int t_cost,
+    unsigned long long *__restrict__ lane_memory,
+    unsigned long long *__restrict__ out_last_blocks,
+    const volatile unsigned int *__restrict__ cancel_flag,
+    unsigned int *__restrict__ completed_iters
+) {
+    argon2id_fill_kernel_impl(
+        seed_blocks,
+        lanes_active,
+        active_hashes,
+        lane_launch_iters,
+        m_blocks,
+        t_cost,
+        lane_memory,
+        out_last_blocks,
+        cancel_flag,
+        completed_iters,
+        nullptr,
+        nullptr,
+        false
+    );
+}
+
+__global__ void argon2id_fill_kernel_fused_target(
+    const unsigned long long *__restrict__ seed_blocks,
+    unsigned int lanes_active,
+    unsigned int active_hashes,
+    unsigned int lane_launch_iters,
+    unsigned int m_blocks,
+    unsigned int t_cost,
+    unsigned long long *__restrict__ lane_memory,
+    unsigned long long *__restrict__ out_last_blocks,
+    const volatile unsigned int *__restrict__ cancel_flag,
+    unsigned int *__restrict__ completed_iters,
+    const unsigned char *__restrict__ target,
+    unsigned int *__restrict__ found_index_one_based
+) {
+    argon2id_fill_kernel_impl(
+        seed_blocks,
+        lanes_active,
+        active_hashes,
+        lane_launch_iters,
+        m_blocks,
+        t_cost,
+        lane_memory,
+        out_last_blocks,
+        cancel_flag,
+        completed_iters,
+        target,
+        found_index_one_based,
+        true
+    );
+}
+
+__global__ void evaluate_hashes_kernel(
+    const unsigned long long *__restrict__ last_blocks,
+    unsigned int active_hashes,
+    const unsigned char *__restrict__ target,
+    unsigned int *__restrict__ found_index_one_based
+) {
+    const unsigned int hash_idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (hash_idx >= active_hashes) {
+        return;
+    }
+
+    const unsigned long long *last =
+        last_blocks + static_cast<unsigned long long>(hash_idx) * 128ULL;
+    unsigned char hash[POW_OUTPUT_BYTES];
+    blake2b_long_32_from_words(last, hash);
+    if (hash_meets_target_be(hash, target)) {
+        atomicMin(found_index_one_based, hash_idx + 1U);
+    }
+}
+
+} // extern "C"
