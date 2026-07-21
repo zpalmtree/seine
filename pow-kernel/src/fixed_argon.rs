@@ -18,7 +18,6 @@ const ISA_AVX512: u8 = 2;
 const ISA_NEON: u8 = 3;
 const ADDRESSES_IN_BLOCK: usize = 128;
 const SYNC_POINTS: usize = 4;
-const MIN_PWD_LEN: usize = 0;
 const MAX_PWD_LEN: usize = 0xFFFF_FFFF;
 const MIN_SALT_LEN: usize = 8;
 const MAX_SALT_LEN: usize = 0xFFFF_FFFF;
@@ -478,7 +477,7 @@ fn prefetch_pow_block(block: &PowBlock) {
 
 #[inline(always)]
 fn verify_inputs(pwd: &[u8], salt: &[u8], out: &[u8]) -> Result<()> {
-    if pwd.len() < MIN_PWD_LEN || pwd.len() > MAX_PWD_LEN {
+    if pwd.len() > MAX_PWD_LEN {
         return Err(Error::PwdTooLong);
     }
     if salt.len() < MIN_SALT_LEN {
@@ -1242,9 +1241,7 @@ unsafe fn compress_avx512_into(rhs: &PowBlock, lhs: &PowBlock, dst: &mut PowBloc
     macro_rules! gather_col_pair {
         ($lo_off:expr, $hi_off:expr) => {{
             let raw = _mm512_inserti64x4::<1>(
-                _mm512_castsi256_si512(_mm256_loadu_si256(
-                    q_ptr.add($lo_off) as *const __m256i,
-                )),
+                _mm512_castsi256_si512(_mm256_loadu_si256(q_ptr.add($lo_off) as *const __m256i)),
                 _mm256_loadu_si256(q_ptr.add($hi_off) as *const __m256i),
             );
             _mm512_shuffle_i64x2::<DEINTERLEAVE>(raw, raw)
@@ -1258,11 +1255,17 @@ unsafe fn compress_avx512_into(rhs: &PowBlock, lhs: &PowBlock, dst: &mut PowBloc
             let hi = _mm512_extracti64x4_epi64::<1>(contiguous);
             _mm256_storeu_si256(
                 dst_ptr.add($lo_off) as *mut __m256i,
-                _mm256_xor_si256(lo, _mm256_loadu_si256(dst_ptr.add($lo_off) as *const __m256i)),
+                _mm256_xor_si256(
+                    lo,
+                    _mm256_loadu_si256(dst_ptr.add($lo_off) as *const __m256i),
+                ),
             );
             _mm256_storeu_si256(
                 dst_ptr.add($hi_off) as *mut __m256i,
-                _mm256_xor_si256(hi, _mm256_loadu_si256(dst_ptr.add($hi_off) as *const __m256i)),
+                _mm256_xor_si256(
+                    hi,
+                    _mm256_loadu_si256(dst_ptr.add($hi_off) as *const __m256i),
+                ),
             );
         }};
     }
@@ -1392,9 +1395,7 @@ unsafe fn compress_avx512_into_mid_prefetch(
     macro_rules! gather_col_pair {
         ($lo_off:expr, $hi_off:expr) => {{
             let raw = _mm512_inserti64x4::<1>(
-                _mm512_castsi256_si512(_mm256_loadu_si256(
-                    q_ptr.add($lo_off) as *const __m256i,
-                )),
+                _mm512_castsi256_si512(_mm256_loadu_si256(q_ptr.add($lo_off) as *const __m256i)),
                 _mm256_loadu_si256(q_ptr.add($hi_off) as *const __m256i),
             );
             _mm512_shuffle_i64x2::<DEINTERLEAVE>(raw, raw)
@@ -1408,11 +1409,17 @@ unsafe fn compress_avx512_into_mid_prefetch(
             let hi = _mm512_extracti64x4_epi64::<1>(contiguous);
             _mm256_storeu_si256(
                 dst_ptr.add($lo_off) as *mut __m256i,
-                _mm256_xor_si256(lo, _mm256_loadu_si256(dst_ptr.add($lo_off) as *const __m256i)),
+                _mm256_xor_si256(
+                    lo,
+                    _mm256_loadu_si256(dst_ptr.add($lo_off) as *const __m256i),
+                ),
             );
             _mm256_storeu_si256(
                 dst_ptr.add($hi_off) as *mut __m256i,
-                _mm256_xor_si256(hi, _mm256_loadu_si256(dst_ptr.add($hi_off) as *const __m256i)),
+                _mm256_xor_si256(
+                    hi,
+                    _mm256_loadu_si256(dst_ptr.add($hi_off) as *const __m256i),
+                ),
             );
         }};
     }
