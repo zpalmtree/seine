@@ -253,7 +253,7 @@ components:
           minLength: 1
     BackendsResponse:
       type: object
-      required: [pending_nvidia_count, backend_phases, configured_backends]
+      required: [pending_nvidia_count, backend_phases, configured_backends, available_devices]
       properties:
         pending_nvidia_count:
           type: integer
@@ -267,3 +267,19 @@ components:
           items:
             type: object
             additionalProperties: true
+        available_devices:
+          type: array
+          description: >-
+            GPUs currently reported by device enumeration (nvidia-smi / HIP),
+            so clients can build explicit per-device backend_specs. AMD
+            entries only include devices the backend can use (wave32).
+          items:
+            $ref: '#/components/schemas/AvailableDevice'
+    AvailableDevice:
+      type: object
+      required: [vendor, index, name, memory_total_mib]
+      properties:
+        vendor: { type: string, enum: [nvidia, amd] }
+        index: { type: integer, minimum: 0 }
+        name: { type: string }
+        memory_total_mib: { type: integer, minimum: 0 }

@@ -990,6 +990,38 @@ struct BackendsResponse {
     pending_nvidia_count: u64,
     backend_phases: BTreeMap<String, String>,
     configured_backends: Vec<BackendSpecView>,
+    available_devices: Vec<AvailableDeviceView>,
+}
+
+/// A GPU currently reported by device enumeration, so API clients can build
+/// explicit per-device `backend_specs` without guessing indices.
+#[derive(Debug, Clone, Serialize)]
+struct AvailableDeviceView {
+    vendor: &'static str,
+    index: u32,
+    name: String,
+    memory_total_mib: u64,
+}
+
+fn detect_available_devices() -> Vec<AvailableDeviceView> {
+    let mut devices = Vec::new();
+    if let Ok(detected) = crate::config::detect_nvidia_devices() {
+        devices.extend(detected.into_iter().map(|device| AvailableDeviceView {
+            vendor: "nvidia",
+            index: device.index,
+            name: device.name,
+            memory_total_mib: device.memory_total_mib,
+        }));
+    }
+    if let Ok(detected) = crate::config::detect_amd_devices(&mut Vec::new()) {
+        devices.extend(detected.into_iter().map(|device| AvailableDeviceView {
+            vendor: "amd",
+            index: device.index,
+            name: device.name,
+            memory_total_mib: device.memory_total_mib,
+        }));
+    }
+    devices
 }
 
 pub fn run(cfg: Config, shutdown: Arc<AtomicBool>) -> Result<()> {
@@ -1260,10 +1292,17 @@ async fn get_backends(State(state): State<AppState>) -> Json<BackendsResponse> {
         .map(|view| view.backend_specs.clone())
         .unwrap_or_else(|| ApiConfigView::from(state.supervisor.base_config()).backend_specs);
 
+    // Enumeration shells out (nvidia-smi) or calls into HIP; keep it off the
+    // async worker threads since this endpoint is polled by dashboards.
+    let available_devices = tokio::task::spawn_blocking(detect_available_devices)
+        .await
+        .unwrap_or_default();
+
     Json(BackendsResponse {
         pending_nvidia_count: snapshot.pending_nvidia_count,
         backend_phases: snapshot.backend_phases,
         configured_backends,
+        available_devices,
     })
 }
 

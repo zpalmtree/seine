@@ -70,7 +70,7 @@ Rules:
 | `POST` | `/v1/miner/stop` | Stop mining (optional wait budget) |
 | `POST` | `/v1/miner/restart` | Stop then start with optional sparse overrides |
 | `PATCH` | `/v1/miner/live-config` | Stage config changes for next start/session |
-| `GET` | `/v1/backends` | Backend phase visibility + configured backends |
+| `GET` | `/v1/backends` | Backend phase visibility, configured backends, and detected GPUs (`available_devices`) |
 | `POST` | `/v1/wallet/unlock` | Store wallet password for future startup attempts |
 | `GET` | `/v1/events/stream` | Runtime SSE event stream |
 | `GET` | `/metrics` | Prometheus metrics |

@@ -15,6 +15,16 @@ devices, e.g. `--nvidia-devices 0` for single-GPU behavior). AMD builds get
 the same treatment: a bare `--backend amd` uses every supported (wave32) AMD
 GPU. Benchmarks (`--bench`) exercise the same multi-GPU topology.
 
+**GPU tuning results are safe under parallel startup.** With several GPUs
+initializing at once, the NVIDIA autotune cache is now written under a file
+lock with atomic replacement, so one device's tuning results can no longer
+overwrite another's (which previously forced a wasted re-tune on the next
+start).
+
+**The control API now lists your GPUs.** `GET /v1/backends` includes an
+`available_devices` array (vendor, index, name, VRAM) so dashboards and
+scripts can build explicit per-device backend specs without guessing indices.
+
 Compatibility notes for scripted setups:
 - `--backend-*-per-instance` lists must match the new instance count on
   multi-GPU rigs (the error message now says how many instances came from
