@@ -145,9 +145,10 @@ accepted by the pool.
    ≪ 1 s rather than after a full launch.
 4. **`__shfl` on 64-bit values under wave32** — exercised by the (b)
    differential; a wrong-width shuffle shows up as hash mismatches.
-5. **Multi-device** — `--backend amd --amd-devices 0,1` on a 2-GPU rental;
-   device binding is per worker thread (`bind_thread()`), which this
-   verifies.
+5. **Multi-device** — a bare `--backend amd` on a 2-GPU rental now
+   auto-expands to one instance per wave32 device (`--amd-devices 0,1`
+   pins the same topology explicitly); device binding is per worker
+   thread (`bind_thread()`), which this verifies.
 
 ## After bring-up (deferred tuning surface)
 

@@ -38,9 +38,9 @@ use crate::backend::{
     WorkTemplate,
 };
 
-use engine::{AmdDeviceInfo, HipArgon2Engine, HipInterruptController};
+use engine::{HipArgon2Engine, HipInterruptController};
 
-pub(crate) use engine::query_amd_devices;
+pub(crate) use engine::{query_amd_devices, AmdDeviceInfo, REQUIRED_WAVEFRONT_SIZE};
 
 const BACKEND_NAME: &str = "amd";
 const ASSIGN_CHANNEL_CAPACITY: usize = 256;

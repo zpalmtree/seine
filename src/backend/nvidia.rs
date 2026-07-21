@@ -108,11 +108,11 @@ fn select_cancel_check_block_interval(cc_major: u32) -> u32 {
 }
 
 #[derive(Debug, Clone)]
-struct NvidiaDeviceInfo {
-    index: u32,
-    name: String,
-    memory_total_mib: u64,
-    memory_free_mib: Option<u64>,
+pub(crate) struct NvidiaDeviceInfo {
+    pub(crate) index: u32,
+    pub(crate) name: String,
+    pub(crate) memory_total_mib: u64,
+    pub(crate) memory_free_mib: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -2734,7 +2734,7 @@ fn ensure_compatible_template(first: &Arc<WorkTemplate>, second: &Arc<WorkTempla
     Ok(())
 }
 
-fn query_nvidia_devices() -> Result<Vec<NvidiaDeviceInfo>> {
+pub(crate) fn query_nvidia_devices() -> Result<Vec<NvidiaDeviceInfo>> {
     let output = std::process::Command::new("nvidia-smi")
         .args([
             "--query-gpu=index,name,memory.total,memory.free",

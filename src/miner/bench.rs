@@ -658,6 +658,9 @@ fn run_worker_benchmark(
     if let Some(hint) = cfg.nvidia_hint {
         info("HINT", hint);
     }
+    for notice in &cfg.startup_notices {
+        info("BACKEND", notice);
+    }
     let initial_startup_started = Instant::now();
     let requested_backend_kinds: Vec<String> = instances
         .iter()

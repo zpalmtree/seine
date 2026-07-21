@@ -556,6 +556,9 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
     if let Some(hint) = cfg.nvidia_hint {
         info("HINT", hint);
     }
+    for notice in &cfg.startup_notices {
+        info("BACKEND", notice);
+    }
     info(
         "CONFIG",
         format!("data directory: {}", cfg.data_dir.display()),
@@ -886,6 +889,14 @@ fn build_tui_state(cfg: &Config, backends: &[BackendSlot]) -> TuiState {
                 level: tui::LogLevel::Info,
                 tag: "HINT".to_string(),
                 message: hint.to_string(),
+            });
+        }
+        for notice in &cfg.startup_notices {
+            s.push_log(tui::LogEntry {
+                elapsed_secs: 0.0,
+                level: tui::LogLevel::Info,
+                tag: "BACKEND".to_string(),
+                message: notice.clone(),
             });
         }
     }
@@ -3589,6 +3600,7 @@ mod tests {
             bench_fail_below_pct: None,
             bench_baseline_policy: crate::config::BenchBaselinePolicy::Strict,
             nvidia_hint: None,
+            startup_notices: Vec::new(),
         }
     }
 

@@ -6,6 +6,24 @@ appends the auto-generated compare link). Write for miners deciding whether to
 upgrade: lead with what they gain, keep it brief, skip internal refactors.
 `scripts/release_tag.sh` refuses to tag a version that has no section here.
 
+## Unreleased
+
+**Multi-GPU rigs now mine on every GPU out of the box.** Seine detects all
+NVIDIA GPUs at startup and runs one backend instance per device — no more
+`--nvidia-devices 0,1,...` needed (that flag still works to pin or subset
+devices, e.g. `--nvidia-devices 0` for single-GPU behavior). AMD builds get
+the same treatment: a bare `--backend amd` uses every supported (wave32) AMD
+GPU. Benchmarks (`--bench`) exercise the same multi-GPU topology.
+
+Compatibility notes for scripted setups:
+- `--backend-*-per-instance` lists must match the new instance count on
+  multi-GPU rigs (the error message now says how many instances came from
+  auto-detection and how to pin the count).
+- Control API: a `backend_specs` entry without `device_index` now expands to
+  all detected GPUs instead of device 0 only; pass `device_index` explicitly
+  to keep one device. `GET /v1/backends` reports concrete per-GPU
+  `device_index` values.
+
 ## v0.2.15
 
 **Windows GPU mining now works out of the box.** The Windows package bundles

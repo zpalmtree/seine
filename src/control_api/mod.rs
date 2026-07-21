@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -1752,10 +1752,34 @@ fn apply_start_patch(cfg: &mut Config, patch: &StartRequest) -> Result<()> {
 }
 
 fn parse_backend_specs_patch(specs: &[BackendSpecPatch]) -> Result<Vec<BackendSpec>> {
+    parse_backend_specs_patch_with_detection(specs, detected_gpu_indexes)
+}
+
+/// Device indices usable for auto-expanding a GPU spec submitted without a
+/// `device_index`. Detection failures degrade to an empty list, which keeps
+/// the pre-expansion behavior (a single unpinned instance).
+fn detected_gpu_indexes(kind: BackendKind) -> Vec<u32> {
+    let detection = match kind {
+        BackendKind::Nvidia => crate::config::detect_nvidia_devices(),
+        BackendKind::Amd => crate::config::detect_amd_devices(&mut Vec::new()),
+        BackendKind::Cpu | BackendKind::Metal => return Vec::new(),
+    };
+    detection
+        .map(|devices| devices.iter().map(|device| device.index).collect())
+        .unwrap_or_default()
+}
+
+fn parse_backend_specs_patch_with_detection(
+    specs: &[BackendSpecPatch],
+    detect: impl Fn(BackendKind) -> Vec<u32>,
+) -> Result<Vec<BackendSpec>> {
     if specs.is_empty() {
         bail!("backend_specs must include at least one backend");
     }
 
+    // Detection shells out (nvidia-smi) or dlopens (HIP); run at most once per
+    // kind even when a payload repeats bare GPU specs.
+    let mut detected_cache: HashMap<BackendKind, Vec<u32>> = HashMap::new();
     let mut parsed = Vec::with_capacity(specs.len());
     for (idx, patch) in specs.iter().enumerate() {
         let kind = parse_backend_kind(&patch.kind)
@@ -1800,7 +1824,7 @@ fn parse_backend_specs_patch(specs: &[BackendSpecPatch]) -> Result<Vec<BackendSp
             None
         };
 
-        parsed.push(BackendSpec {
+        let spec = BackendSpec {
             kind,
             device_index: patch.device_index,
             cpu_threads,
@@ -1808,7 +1832,28 @@ fn parse_backend_specs_patch(specs: &[BackendSpecPatch]) -> Result<Vec<BackendSp
             assign_timeout_override: patch.assign_timeout_ms_override.map(Duration::from_millis),
             control_timeout_override: patch.control_timeout_ms_override.map(Duration::from_millis),
             assign_timeout_strikes_override: patch.assign_timeout_strikes_override,
-        });
+        };
+
+        let is_bare_gpu_spec =
+            matches!(kind, BackendKind::Nvidia | BackendKind::Amd) && patch.device_index.is_none();
+        if is_bare_gpu_spec {
+            let detected = detected_cache
+                .entry(kind)
+                .or_insert_with(|| detect(kind))
+                .clone();
+            if detected.is_empty() {
+                parsed.push(spec);
+            } else {
+                for device_index in detected {
+                    parsed.push(BackendSpec {
+                        device_index: Some(device_index),
+                        ..spec
+                    });
+                }
+            }
+        } else {
+            parsed.push(spec);
+        }
     }
 
     Ok(parsed)
@@ -1957,6 +2002,64 @@ mod tests {
                 .map(|value| value.as_millis()),
             Some(1500)
         );
+    }
+
+    #[test]
+    fn bare_nvidia_patch_expands_to_all_detected_devices() {
+        let parsed = parse_backend_specs_patch_with_detection(
+            &[BackendSpecPatch {
+                kind: "nvidia".to_string(),
+                assign_timeout_ms_override: Some(1500),
+                ..BackendSpecPatch::default()
+            }],
+            |kind| {
+                assert_eq!(kind, BackendKind::Nvidia);
+                vec![0, 1]
+            },
+        )
+        .expect("bare nvidia spec should expand");
+
+        assert_eq!(parsed.len(), 2);
+        for (spec, expected_index) in parsed.iter().zip([0, 1]) {
+            assert_eq!(spec.kind, BackendKind::Nvidia);
+            assert_eq!(spec.device_index, Some(expected_index));
+            assert_eq!(
+                spec.assign_timeout_override.map(|value| value.as_millis()),
+                Some(1500)
+            );
+        }
+    }
+
+    #[test]
+    fn bare_gpu_patch_without_detected_devices_stays_single_unpinned_spec() {
+        let parsed = parse_backend_specs_patch_with_detection(
+            &[BackendSpecPatch {
+                kind: "amd".to_string(),
+                ..BackendSpecPatch::default()
+            }],
+            |_| Vec::new(),
+        )
+        .expect("bare amd spec should fall back to a single spec");
+
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].kind, BackendKind::Amd);
+        assert_eq!(parsed[0].device_index, None);
+    }
+
+    #[test]
+    fn explicit_device_index_patch_is_never_expanded() {
+        let parsed = parse_backend_specs_patch_with_detection(
+            &[BackendSpecPatch {
+                kind: "nvidia".to_string(),
+                device_index: Some(1),
+                ..BackendSpecPatch::default()
+            }],
+            |_| panic!("detection must not run for explicit device_index"),
+        )
+        .expect("explicit device index should parse unchanged");
+
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].device_index, Some(1));
     }
 
     #[test]

@@ -28,8 +28,9 @@ For the raw CLI output, run:
 
 | Flag | Values / Default | What it does |
 |---|---|---|
-| `--backend` | `cpu`, `nvidia`, `metal`; repeatable / comma-separated; default auto | Selects mining backends. Auto mode selects CPU and NVIDIA (when available). |
-| `--nvidia-devices` | comma-separated GPU indices | Creates one NVIDIA backend instance per listed device index. Requires NVIDIA backend selected. |
+| `--backend` | `cpu`, `nvidia`, `metal`, `amd`; repeatable / comma-separated; default auto | Selects mining backends. Auto mode selects CPU plus all detected NVIDIA GPUs (one instance per device). `amd` requires a `--features amd` build and is never auto-selected. |
+| `--nvidia-devices` | comma-separated GPU indices; default all detected devices | Creates one NVIDIA backend instance per listed device index; listing indices subsets/pins devices and disables auto-expansion. Requires NVIDIA backend selected. |
+| `--amd-devices` | comma-separated GPU indices; default all detected wave32 devices | Creates one AMD backend instance per listed device index; listing indices subsets/pins devices and disables auto-expansion. Requires AMD backend selected. |
 | `--threads` | integer `>=1`; alias: `--cpu-threads` | CPU threads per CPU backend instance. If omitted, auto-sized by CPU/RAM/profile. |
 | `--cpu-affinity` | `off`, `auto`, `pcore-only`; default `pcore-only` on macOS, `auto` elsewhere | CPU worker affinity policy. Native Windows `auto` uses complete physical-core topology before SMT; Linux/WSL keep OS order. macOS modes use best-effort Mach affinity tags/QoS, not hard CPU IDs. |
 | `--cpu-page-mode` | `auto`, `regular`, `large`, `large-1g`; default `auto` | CPU arena page contract. `auto` prefers explicit large pages and falls back; `regular` forces ordinary pages and disables Linux THP; `large` requires every worker to use Windows large pages or Linux HugeTLB and fails closed; `large-1g` requires explicit 1 GiB HugeTLB pages (x86_64 Linux/WSL only, two 1 GiB pages per worker, reserve via `/sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages` or the `hugepagesz=1G` boot parameter) and fails closed. `large` and `large-1g` are unsupported on macOS. |
@@ -87,6 +88,12 @@ For the raw CLI output, run:
 | `--nvidia-no-adaptive-launch-depth` | bool flag | Disables adaptive launch depth shaping. |
 | `--nvidia-fused-target-check` | bool flag | Enables fused in-kernel target checks. |
 | `--nvidia-template-stop-policy` | `auto`, `on`, `off`; default `auto` | Controls backend enforcement of template `stop_at`. |
+
+## AMD Backend Tuning
+
+| Flag | Values / Default | What it does |
+|---|---|---|
+| `--amd-max-lanes` | integer `>=1` | Caps active AMD lanes per device instance. |
 
 ## Metal Backend Tuning
 

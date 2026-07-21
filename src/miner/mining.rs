@@ -2817,6 +2817,7 @@ mod tests {
             bench_fail_below_pct: None,
             bench_baseline_policy: crate::config::BenchBaselinePolicy::Strict,
             nvidia_hint: None,
+            startup_notices: Vec::new(),
         }
     }
 

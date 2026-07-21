@@ -9,9 +9,6 @@ use blocknet_pow_spec::CPU_LANE_MEMORY_BYTES;
 use clap::{ArgAction, CommandFactory, FromArgMatches, Parser, ValueEnum};
 use serde::{Deserialize, Serialize};
 
-#[cfg(feature = "nvidia")]
-use std::process::Command;
-
 use crate::address::validate_mining_address;
 use crate::user_config::{
     read_user_config, write_user_config, UserConfig, USER_CONFIG_SCHEMA_VERSION,
@@ -792,6 +789,8 @@ pub struct Config {
     pub bench_baseline_policy: BenchBaselinePolicy,
     /// Informational hint about NVIDIA requirements when GPU was not auto-detected.
     pub nvidia_hint: Option<&'static str>,
+    /// GPU detection/auto-expansion notices, logged once at miner startup.
+    pub startup_notices: Vec<String>,
 }
 
 impl Config {
@@ -1002,11 +1001,54 @@ impl Config {
             }
         }
 
-        let (backends, nvidia_hint) = resolve_backend_selection(
-            &cli.backends,
+        let nvidia_detection = detect_nvidia_devices();
+        let nvidia_available = nvidia_detection
+            .as_ref()
+            .map(|devices| !devices.is_empty())
+            .unwrap_or(false);
+        let (backends, nvidia_hint) =
+            resolve_backend_selection(&cli.backends, &cli.nvidia_devices, nvidia_available);
+        let mut startup_notices = Vec::new();
+        // HIP is only dlopen'd when an AMD instance without explicit devices is
+        // actually requested; explicit --amd-devices keeps startup free of
+        // config-time ROCm probing.
+        let amd_detection = if backends.contains(&BackendKind::Amd) && cli.amd_devices.is_empty() {
+            Some(detect_amd_devices(&mut startup_notices))
+        } else {
+            None
+        };
+        let auto_nvidia_devices: Vec<u32> =
+            if cli.nvidia_devices.is_empty() && backends.contains(&BackendKind::Nvidia) {
+                nvidia_detection
+                    .as_ref()
+                    .map(|devices| devices.iter().map(|device| device.index).collect())
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+        let auto_amd_devices: Vec<u32> = amd_detection
+            .as_ref()
+            .and_then(|detection| detection.as_ref().ok())
+            .map(|devices| devices.iter().map(|device| device.index).collect())
+            .unwrap_or_default();
+        startup_notices.extend(build_gpu_detection_notices(
+            "NVIDIA",
+            "nvidia",
+            "--nvidia-devices",
+            &nvidia_detection,
             &cli.nvidia_devices,
-            detect_nvidia_backend_available(),
-        );
+            backends.contains(&BackendKind::Nvidia),
+        ));
+        if let Some(detection) = &amd_detection {
+            startup_notices.extend(build_gpu_detection_notices(
+                "AMD",
+                "amd",
+                "--amd-devices",
+                detection,
+                &cli.amd_devices,
+                true,
+            ));
+        }
         let gpu_memory_reservation = if backends.contains(&BackendKind::Metal) {
             estimate_metal_memory_bytes(cli.metal_max_lanes)
         } else {
@@ -1067,6 +1109,8 @@ impl Config {
             &backends,
             &cli.nvidia_devices,
             &cli.amd_devices,
+            &auto_nvidia_devices,
+            &auto_amd_devices,
             BackendExpansionOptions {
                 default_cpu_threads: resolved_threads,
                 default_cpu_affinity: cli.cpu_affinity,
@@ -1233,6 +1277,7 @@ impl Config {
             bench_fail_below_pct: cli.bench_fail_below_pct,
             bench_baseline_policy: cli.bench_baseline_policy,
             nvidia_hint,
+            startup_notices,
         })
     }
 }
@@ -1361,30 +1406,133 @@ fn resolve_backend_selection(
     (selected, hint)
 }
 
+/// A GPU reported by config-time device enumeration, used to fan out one
+/// backend instance per device before any backend is constructed.
+#[derive(Debug, Clone)]
+pub(crate) struct DetectedGpu {
+    pub index: u32,
+    pub name: String,
+    pub memory_total_mib: u64,
+}
+
 #[cfg(feature = "nvidia")]
-fn detect_nvidia_backend_available() -> bool {
-    let output = match Command::new("nvidia-smi")
-        .args(["--query-gpu=index", "--format=csv,noheader,nounits"])
-        .output()
-    {
-        Ok(output) => output,
-        Err(_) => return false,
-    };
-    if !output.status.success() {
-        return false;
-    }
-
-    let stdout = match String::from_utf8(output.stdout) {
-        Ok(stdout) => stdout,
-        Err(_) => return false,
-    };
-
-    stdout.lines().any(|line| !line.trim().is_empty())
+pub(crate) fn detect_nvidia_devices() -> Result<Vec<DetectedGpu>> {
+    let devices = crate::backend::nvidia::query_nvidia_devices()?;
+    Ok(devices
+        .into_iter()
+        .map(|device| DetectedGpu {
+            index: device.index,
+            name: device.name,
+            memory_total_mib: device.memory_total_mib,
+        })
+        .collect())
 }
 
 #[cfg(not(feature = "nvidia"))]
-fn detect_nvidia_backend_available() -> bool {
-    false
+pub(crate) fn detect_nvidia_devices() -> Result<Vec<DetectedGpu>> {
+    bail!("NVIDIA support is not compiled into this build")
+}
+
+/// Enumerates HIP devices, keeping only wave32 GPUs the AMD backend can run on.
+/// Skipped devices are reported through `notices` instead of spawning instances
+/// that are guaranteed to fail wavefront validation at start.
+#[cfg(all(feature = "amd", unix))]
+pub(crate) fn detect_amd_devices(notices: &mut Vec<String>) -> Result<Vec<DetectedGpu>> {
+    let devices = crate::backend::amd::query_amd_devices()?;
+    let (usable, skipped) = partition_wave32_amd_devices(devices);
+    notices.extend(skipped);
+    Ok(usable)
+}
+
+#[cfg(not(all(feature = "amd", unix)))]
+pub(crate) fn detect_amd_devices(_notices: &mut Vec<String>) -> Result<Vec<DetectedGpu>> {
+    bail!("AMD support is not compiled into this build")
+}
+
+#[cfg(all(feature = "amd", unix))]
+fn partition_wave32_amd_devices(
+    devices: Vec<crate::backend::amd::AmdDeviceInfo>,
+) -> (Vec<DetectedGpu>, Vec<String>) {
+    let mut usable = Vec::new();
+    let mut skipped = Vec::new();
+    for device in devices {
+        if device.wavefront_size == crate::backend::amd::REQUIRED_WAVEFRONT_SIZE {
+            usable.push(DetectedGpu {
+                index: device.index,
+                name: device.name,
+                memory_total_mib: device.memory_total_mib,
+            });
+        } else {
+            skipped.push(format!(
+                "skipping AMD device {} ({}, {}): wavefront size {} is unsupported (wave32 required)",
+                device.index, device.name, device.gcn_arch_name, device.wavefront_size
+            ));
+        }
+    }
+    (usable, skipped)
+}
+
+/// Builds user-facing startup notices for one GPU backend kind: what was
+/// detected and auto-enabled, why a forced kind fell back to a single default
+/// instance, or explicit device indices that enumeration does not report.
+fn build_gpu_detection_notices(
+    vendor: &str,
+    backend_flag: &str,
+    subset_flag: &str,
+    detection: &Result<Vec<DetectedGpu>>,
+    explicit_devices: &[u32],
+    kind_selected: bool,
+) -> Vec<String> {
+    if !kind_selected {
+        return Vec::new();
+    }
+    let mut notices = Vec::new();
+    match detection {
+        Ok(detected) if !explicit_devices.is_empty() => {
+            if !detected.is_empty() {
+                let available: Vec<u32> = detected.iter().map(|device| device.index).collect();
+                for index in dedupe_device_indexes(explicit_devices) {
+                    if !available.contains(&index) {
+                        notices.push(format!(
+                            "requested {vendor} device index {index} is not reported by device \
+                             enumeration; available: {available:?}"
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(detected) if detected.is_empty() => {
+            notices.push(format!(
+                "--backend {backend_flag} selected but no usable {vendor} devices were detected; \
+                 starting a single instance on the default device"
+            ));
+        }
+        Ok(detected) => {
+            let device_list = detected
+                .iter()
+                .map(|device| {
+                    format!(
+                        "[{}] {} ({} MiB)",
+                        device.index, device.name, device.memory_total_mib
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            notices.push(format!(
+                "detected {} {vendor} GPU(s): {device_list}; enabling one {backend_flag} backend \
+                 instance per device (use {subset_flag} to select a subset)",
+                detected.len()
+            ));
+        }
+        Err(err) if explicit_devices.is_empty() => {
+            notices.push(format!(
+                "--backend {backend_flag} selected but {vendor} device enumeration failed \
+                 ({err:#}); starting a single instance on the default device"
+            ));
+        }
+        Err(_) => {}
+    }
+    notices
 }
 
 /// Estimate the memory Metal will consume so CPU auto-sizing can deduct it.
@@ -2305,10 +2453,77 @@ struct BackendExpansionOptions<'a> {
     backend_assign_timeout_strikes_per_instance: &'a [u32],
 }
 
+/// Suffix for per-instance flag length-mismatch errors: auto-expansion changes
+/// the instance count versus older single-instance defaults, so scripts with
+/// hardcoded per-instance lists need to know where the extra instances came from.
+fn auto_expansion_hint(nvidia_auto_instances: usize, amd_auto_instances: usize) -> String {
+    let mut parts = Vec::new();
+    if nvidia_auto_instances > 0 {
+        parts.push(format!(
+            "{nvidia_auto_instances} nvidia instance(s) were auto-expanded from detected GPUs; \
+             pass --nvidia-devices to pin the instance count"
+        ));
+    }
+    if amd_auto_instances > 0 {
+        parts.push(format!(
+            "{amd_auto_instances} amd instance(s) were auto-expanded from detected GPUs; \
+             pass --amd-devices to pin the instance count"
+        ));
+    }
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!(" (note: {})", parts.join("; "))
+    }
+}
+
+fn bare_backend_spec(kind: BackendKind, device_index: Option<u32>) -> BackendSpec {
+    BackendSpec {
+        kind,
+        device_index,
+        cpu_threads: None,
+        cpu_affinity: None,
+        assign_timeout_override: None,
+        control_timeout_override: None,
+        assign_timeout_strikes_override: None,
+    }
+}
+
+/// Pushes one spec per device for a GPU backend kind. An explicit device list
+/// always wins over the auto-detected list; with neither, a single unpinned
+/// spec is pushed and the backend binds its default device at start. Returns
+/// how many instances came from auto-detection.
+fn push_gpu_backend_specs(
+    specs: &mut Vec<BackendSpec>,
+    kind: BackendKind,
+    explicit_devices: &[u32],
+    auto_devices: &[u32],
+) -> usize {
+    let (devices, auto) = if explicit_devices.is_empty() {
+        (auto_devices, true)
+    } else {
+        (explicit_devices, false)
+    };
+    if devices.is_empty() {
+        specs.push(bare_backend_spec(kind, None));
+        return 0;
+    }
+    for device_index in devices {
+        specs.push(bare_backend_spec(kind, Some(*device_index)));
+    }
+    if auto {
+        devices.len()
+    } else {
+        0
+    }
+}
+
 fn expand_backend_specs(
     backends: &[BackendKind],
     nvidia_devices: &[u32],
     amd_devices: &[u32],
+    auto_nvidia_devices: &[u32],
+    auto_amd_devices: &[u32],
     options: BackendExpansionOptions<'_>,
 ) -> Result<Vec<BackendSpec>> {
     if !nvidia_devices.is_empty() && !backends.contains(&BackendKind::Nvidia) {
@@ -2320,77 +2535,31 @@ fn expand_backend_specs(
 
     let nvidia_devices = dedupe_device_indexes(nvidia_devices);
     let amd_devices = dedupe_device_indexes(amd_devices);
+    let auto_nvidia_devices = dedupe_device_indexes(auto_nvidia_devices);
+    let auto_amd_devices = dedupe_device_indexes(auto_amd_devices);
+    let mut nvidia_auto_instances = 0usize;
+    let mut amd_auto_instances = 0usize;
     let mut specs = Vec::new();
     for backend in backends {
         match backend {
-            BackendKind::Cpu => specs.push(BackendSpec {
-                kind: BackendKind::Cpu,
-                device_index: None,
-                cpu_threads: None,
-                cpu_affinity: None,
-                assign_timeout_override: None,
-                control_timeout_override: None,
-                assign_timeout_strikes_override: None,
-            }),
+            BackendKind::Cpu => specs.push(bare_backend_spec(BackendKind::Cpu, None)),
             BackendKind::Nvidia => {
-                if nvidia_devices.is_empty() {
-                    specs.push(BackendSpec {
-                        kind: BackendKind::Nvidia,
-                        device_index: None,
-                        cpu_threads: None,
-                        cpu_affinity: None,
-                        assign_timeout_override: None,
-                        control_timeout_override: None,
-                        assign_timeout_strikes_override: None,
-                    });
-                } else {
-                    for device_index in &nvidia_devices {
-                        specs.push(BackendSpec {
-                            kind: BackendKind::Nvidia,
-                            device_index: Some(*device_index),
-                            cpu_threads: None,
-                            cpu_affinity: None,
-                            assign_timeout_override: None,
-                            control_timeout_override: None,
-                            assign_timeout_strikes_override: None,
-                        });
-                    }
-                }
+                nvidia_auto_instances += push_gpu_backend_specs(
+                    &mut specs,
+                    BackendKind::Nvidia,
+                    &nvidia_devices,
+                    &auto_nvidia_devices,
+                );
             }
             BackendKind::Amd => {
-                if amd_devices.is_empty() {
-                    specs.push(BackendSpec {
-                        kind: BackendKind::Amd,
-                        device_index: None,
-                        cpu_threads: None,
-                        cpu_affinity: None,
-                        assign_timeout_override: None,
-                        control_timeout_override: None,
-                        assign_timeout_strikes_override: None,
-                    });
-                } else {
-                    for device_index in &amd_devices {
-                        specs.push(BackendSpec {
-                            kind: BackendKind::Amd,
-                            device_index: Some(*device_index),
-                            cpu_threads: None,
-                            cpu_affinity: None,
-                            assign_timeout_override: None,
-                            control_timeout_override: None,
-                            assign_timeout_strikes_override: None,
-                        });
-                    }
-                }
+                amd_auto_instances += push_gpu_backend_specs(
+                    &mut specs,
+                    BackendKind::Amd,
+                    &amd_devices,
+                    &auto_amd_devices,
+                );
             }
-            BackendKind::Metal => specs.push(BackendSpec {
-                kind: BackendKind::Metal,
-                device_index: None,
-                cpu_threads: None,
-                cpu_affinity: None,
-                assign_timeout_override: None,
-                control_timeout_override: None,
-                assign_timeout_strikes_override: None,
-            }),
+            BackendKind::Metal => specs.push(bare_backend_spec(BackendKind::Metal, None)),
         }
     }
 
@@ -2440,22 +2609,25 @@ fn expand_backend_specs(
     }
 
     let instance_count = specs.len();
+    let auto_expansion_hint = auto_expansion_hint(nvidia_auto_instances, amd_auto_instances);
     if !options.backend_assign_timeout_ms_per_instance.is_empty()
         && options.backend_assign_timeout_ms_per_instance.len() != instance_count
     {
         bail!(
-            "--backend-assign-timeout-ms-per-instance length ({}) must match backend instances ({})",
+            "--backend-assign-timeout-ms-per-instance length ({}) must match backend instances ({}){}",
             options.backend_assign_timeout_ms_per_instance.len(),
-            instance_count
+            instance_count,
+            auto_expansion_hint
         );
     }
     if !options.backend_control_timeout_ms_per_instance.is_empty()
         && options.backend_control_timeout_ms_per_instance.len() != instance_count
     {
         bail!(
-            "--backend-control-timeout-ms-per-instance length ({}) must match backend instances ({})",
+            "--backend-control-timeout-ms-per-instance length ({}) must match backend instances ({}){}",
             options.backend_control_timeout_ms_per_instance.len(),
-            instance_count
+            instance_count,
+            auto_expansion_hint
         );
     }
     if !options
@@ -2464,9 +2636,10 @@ fn expand_backend_specs(
         && options.backend_assign_timeout_strikes_per_instance.len() != instance_count
     {
         bail!(
-            "--backend-assign-timeout-strikes-per-instance length ({}) must match backend instances ({})",
+            "--backend-assign-timeout-strikes-per-instance length ({}) must match backend instances ({}){}",
             options.backend_assign_timeout_strikes_per_instance.len(),
-            instance_count
+            instance_count,
+            auto_expansion_hint
         );
     }
 
@@ -3217,6 +3390,8 @@ HugePages_Rsvd:          0
             &[BackendKind::Cpu, BackendKind::Cpu],
             &[],
             &[],
+            &[],
+            &[],
             BackendExpansionOptions {
                 default_cpu_threads: 1,
                 default_cpu_affinity: CpuAffinityMode::Auto,
@@ -3238,6 +3413,8 @@ HugePages_Rsvd:          0
         let out = expand_backend_specs(
             &[BackendKind::Cpu, BackendKind::Nvidia],
             &[2, 0, 2],
+            &[],
+            &[],
             &[],
             BackendExpansionOptions {
                 default_cpu_threads: 1,
@@ -3290,6 +3467,8 @@ HugePages_Rsvd:          0
             &[BackendKind::Cpu],
             &[0],
             &[],
+            &[],
+            &[],
             BackendExpansionOptions {
                 default_cpu_threads: 1,
                 default_cpu_affinity: CpuAffinityMode::Auto,
@@ -3310,6 +3489,8 @@ HugePages_Rsvd:          0
             &[BackendKind::Amd],
             &[],
             &[1, 0, 1],
+            &[],
+            &[],
             BackendExpansionOptions {
                 default_cpu_threads: 1,
                 default_cpu_affinity: CpuAffinityMode::Auto,
@@ -3334,6 +3515,8 @@ HugePages_Rsvd:          0
             &[BackendKind::Cpu],
             &[],
             &[0],
+            &[],
+            &[],
             BackendExpansionOptions {
                 default_cpu_threads: 1,
                 default_cpu_affinity: CpuAffinityMode::Auto,
@@ -3348,10 +3531,232 @@ HugePages_Rsvd:          0
         assert!(format!("{err:#}").contains("--amd-devices requires selecting amd"));
     }
 
+    fn expansion_options_without_overrides() -> BackendExpansionOptions<'static> {
+        BackendExpansionOptions {
+            default_cpu_threads: 1,
+            default_cpu_affinity: CpuAffinityMode::Auto,
+            cpu_threads_per_instance: &[],
+            cpu_affinity_per_instance: &[],
+            backend_assign_timeout_ms_per_instance: &[],
+            backend_control_timeout_ms_per_instance: &[],
+            backend_assign_timeout_strikes_per_instance: &[],
+        }
+    }
+
+    #[test]
+    fn expand_backend_specs_fans_out_auto_nvidia_devices() {
+        let out = expand_backend_specs(
+            &[BackendKind::Cpu, BackendKind::Nvidia],
+            &[],
+            &[],
+            &[0, 1, 2],
+            &[],
+            expansion_options_without_overrides(),
+        )
+        .expect("auto nvidia devices should expand");
+        assert_eq!(out.len(), 4);
+        assert_eq!(out[0].kind, BackendKind::Cpu);
+        for (spec, expected_index) in out[1..].iter().zip([0, 1, 2]) {
+            assert_eq!(spec.kind, BackendKind::Nvidia);
+            assert_eq!(spec.device_index, Some(expected_index));
+        }
+    }
+
+    #[test]
+    fn explicit_nvidia_devices_override_auto_list() {
+        let out = expand_backend_specs(
+            &[BackendKind::Nvidia],
+            &[1],
+            &[],
+            &[0, 1, 2],
+            &[],
+            expansion_options_without_overrides(),
+        )
+        .expect("explicit nvidia devices should win over auto list");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].device_index, Some(1));
+    }
+
+    #[test]
+    fn expand_backend_specs_falls_back_to_single_unpinned_spec() {
+        let out = expand_backend_specs(
+            &[BackendKind::Nvidia],
+            &[],
+            &[],
+            &[],
+            &[],
+            expansion_options_without_overrides(),
+        )
+        .expect("empty explicit and auto lists should fall back");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].kind, BackendKind::Nvidia);
+        assert_eq!(out[0].device_index, None);
+    }
+
+    #[test]
+    fn expand_backend_specs_fans_out_auto_amd_devices() {
+        let out = expand_backend_specs(
+            &[BackendKind::Amd],
+            &[],
+            &[],
+            &[],
+            &[0, 1],
+            expansion_options_without_overrides(),
+        )
+        .expect("auto amd devices should expand");
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].device_index, Some(0));
+        assert_eq!(out[1].device_index, Some(1));
+        assert!(out.iter().all(|spec| spec.kind == BackendKind::Amd));
+    }
+
+    #[test]
+    fn expand_backend_specs_dedupes_auto_device_list() {
+        let out = expand_backend_specs(
+            &[BackendKind::Nvidia],
+            &[],
+            &[],
+            &[1, 0, 1],
+            &[],
+            expansion_options_without_overrides(),
+        )
+        .expect("auto device list should dedupe");
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].device_index, Some(1));
+        assert_eq!(out[1].device_index, Some(0));
+    }
+
+    fn detected_gpu(index: u32, name: &str, memory_total_mib: u64) -> DetectedGpu {
+        DetectedGpu {
+            index,
+            name: name.to_string(),
+            memory_total_mib,
+        }
+    }
+
+    #[test]
+    fn detection_notice_lists_auto_enabled_gpus() {
+        let detection = Ok(vec![
+            detected_gpu(0, "RTX 5090", 32607),
+            detected_gpu(1, "RTX 4090", 24564),
+        ]);
+        let notices = build_gpu_detection_notices(
+            "NVIDIA",
+            "nvidia",
+            "--nvidia-devices",
+            &detection,
+            &[],
+            true,
+        );
+        assert_eq!(notices.len(), 1);
+        assert!(notices[0].contains("detected 2 NVIDIA GPU(s)"));
+        assert!(notices[0].contains("[0] RTX 5090 (32607 MiB)"));
+        assert!(notices[0].contains("[1] RTX 4090 (24564 MiB)"));
+        assert!(notices[0].contains("--nvidia-devices to select a subset"));
+    }
+
+    #[test]
+    fn detection_notice_warns_on_unknown_explicit_index() {
+        let detection = Ok(vec![
+            detected_gpu(0, "RTX 4090", 24564),
+            detected_gpu(1, "RTX 4090", 24564),
+        ]);
+        let notices = build_gpu_detection_notices(
+            "NVIDIA",
+            "nvidia",
+            "--nvidia-devices",
+            &detection,
+            &[0, 5],
+            true,
+        );
+        assert_eq!(notices.len(), 1);
+        assert!(notices[0].contains("requested NVIDIA device index 5"));
+        assert!(notices[0].contains("available: [0, 1]"));
+    }
+
+    #[test]
+    fn detection_notice_reports_forced_kind_enumeration_failure() {
+        let detection = Err(anyhow::anyhow!("nvidia-smi not found"));
+        let notices = build_gpu_detection_notices(
+            "NVIDIA",
+            "nvidia",
+            "--nvidia-devices",
+            &detection,
+            &[],
+            true,
+        );
+        assert_eq!(notices.len(), 1);
+        assert!(notices[0].contains("--backend nvidia selected"));
+        assert!(notices[0].contains("nvidia-smi not found"));
+        assert!(notices[0].contains("single instance on the default device"));
+    }
+
+    #[test]
+    fn detection_notices_empty_when_kind_not_selected() {
+        let detection = Ok(vec![detected_gpu(0, "RTX 4090", 24564)]);
+        let notices = build_gpu_detection_notices(
+            "NVIDIA",
+            "nvidia",
+            "--nvidia-devices",
+            &detection,
+            &[],
+            false,
+        );
+        assert!(notices.is_empty());
+    }
+
+    #[test]
+    fn detection_notice_reports_no_usable_devices() {
+        let detection = Ok(Vec::new());
+        let notices =
+            build_gpu_detection_notices("AMD", "amd", "--amd-devices", &detection, &[], true);
+        assert_eq!(notices.len(), 1);
+        assert!(notices[0].contains("no usable AMD devices"));
+    }
+
+    #[test]
+    fn detection_notices_silent_for_valid_explicit_indices() {
+        let detection = Ok(vec![
+            detected_gpu(0, "RTX 4090", 24564),
+            detected_gpu(1, "RTX 4090", 24564),
+        ]);
+        let notices = build_gpu_detection_notices(
+            "NVIDIA",
+            "nvidia",
+            "--nvidia-devices",
+            &detection,
+            &[1, 0],
+            true,
+        );
+        assert!(notices.is_empty());
+    }
+
+    #[test]
+    fn per_instance_mismatch_error_mentions_auto_expansion() {
+        let err = expand_backend_specs(
+            &[BackendKind::Cpu, BackendKind::Nvidia],
+            &[],
+            &[],
+            &[0, 1],
+            &[],
+            BackendExpansionOptions {
+                backend_assign_timeout_ms_per_instance: &[900, 1500],
+                ..expansion_options_without_overrides()
+            },
+        )
+        .expect_err("per-instance list length should mismatch after auto expansion");
+        let message = format!("{err:#}");
+        assert!(message.contains("must match backend instances (3)"));
+        assert!(message.contains("auto-expanded from detected GPUs"));
+        assert!(message.contains("--nvidia-devices"));
+    }
+
     #[test]
     fn expand_backend_specs_applies_cpu_instance_overrides() {
         let out = expand_backend_specs(
             &[BackendKind::Cpu, BackendKind::Cpu],
+            &[],
+            &[],
             &[],
             &[],
             BackendExpansionOptions {
@@ -3376,6 +3781,8 @@ HugePages_Rsvd:          0
     fn expand_backend_specs_applies_per_instance_timeout_overrides() {
         let out = expand_backend_specs(
             &[BackendKind::Cpu, BackendKind::Nvidia],
+            &[],
+            &[],
             &[],
             &[],
             BackendExpansionOptions {

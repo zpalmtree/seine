@@ -336,10 +336,13 @@ Current Blackwell / RTX 5090 tuning notes and measured benchmark frontier:
 [`docs/NVIDIA_5090_TUNING.md`](docs/NVIDIA_5090_TUNING.md)
 
 ```bash
-# Auto-detect all GPUs
+# Default: no flags needed — CPU plus every detected NVIDIA GPU
+./seine
+
+# Same, GPU-only: one backend instance per detected device
 ./seine --backend nvidia
 
-# Select specific devices
+# Select specific devices (also the single-GPU opt-out, e.g. --nvidia-devices 0)
 ./seine --backend nvidia --nvidia-devices 0,1
 ```
 
