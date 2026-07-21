@@ -2640,9 +2640,32 @@ fn persist_cached_cubin(path: &Path, cubin: &[u8]) -> Result<()> {
             )
         })?;
     }
-    fs::write(path, cubin)
+    write_file_atomic(path, cubin)
         .with_context(|| format!("failed to write NVIDIA CUBIN cache '{}'", path.display()))?;
     Ok(())
+}
+
+/// Writes `payload` through a same-directory temp file and atomic rename, so
+/// concurrent readers never observe a truncated file. Concurrent per-device
+/// backend instances write these caches in parallel on multi-GPU startups.
+fn write_file_atomic(path: &Path, payload: &[u8]) -> std::io::Result<()> {
+    static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("cache");
+    let tmp_path = path.with_file_name(format!(
+        "{file_name}.tmp.{}.{}",
+        std::process::id(),
+        TMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    if let Err(err) = fs::write(&tmp_path, payload) {
+        let _ = fs::remove_file(&tmp_path);
+        return Err(err);
+    }
+    fs::rename(&tmp_path, path).inspect_err(|_| {
+        let _ = fs::remove_file(&tmp_path);
+    })
 }
 
 fn derive_nvidia_cubin_cache_dir(autotune_config_path: &Path) -> PathBuf {
@@ -3081,6 +3104,20 @@ fn persist_nvidia_autotune_record(
     candidate_trace: Vec<NvidiaAutotuneCandidateTrace>,
     autotune_elapsed_millis: u64,
 ) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "failed to create NVIDIA autotune cache directory '{}'",
+                parent.display()
+            )
+        })?;
+    }
+    // Serializes concurrent load-modify-write cycles: multi-GPU startups
+    // autotune per-device instances in parallel, and an unlocked last writer
+    // would discard the other instances' records. `None` (locking unsupported
+    // on this filesystem) degrades to the old unsynchronized behavior rather
+    // than dropping the record. Held until this function returns.
+    let _cache_lock = lock_nvidia_autotune_cache(path);
     let mut cache = load_nvidia_autotune_cache(path).unwrap_or_else(empty_nvidia_autotune_cache);
     if cache.schema_version != NVIDIA_AUTOTUNE_SCHEMA_VERSION {
         cache = empty_nvidia_autotune_cache();
@@ -3113,18 +3150,23 @@ fn persist_nvidia_autotune_record(
         cache.records.push(updated);
     }
 
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| {
-            format!(
-                "failed to create NVIDIA autotune cache directory '{}'",
-                parent.display()
-            )
-        })?;
-    }
     let payload = serde_json::to_string_pretty(&cache)?;
-    fs::write(path, payload)
+    write_file_atomic(path, payload.as_bytes())
         .with_context(|| format!("failed to write NVIDIA autotune cache '{}'", path.display()))?;
     Ok(())
+}
+
+/// Best-effort exclusive advisory lock on a `<cache>.lock` sidecar file.
+fn lock_nvidia_autotune_cache(path: &Path) -> Option<fs::File> {
+    let mut lock_name = path.as_os_str().to_os_string();
+    lock_name.push(".lock");
+    let lock_file = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open(PathBuf::from(lock_name))
+        .ok()?;
+    lock_file.lock().ok()?;
+    Some(lock_file)
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -3651,6 +3693,63 @@ mod tests {
         let err =
             parse_nvidia_smi_query_output("abc, RTX, 8192").expect_err("invalid index should fail");
         assert!(format!("{err:#}").contains("invalid GPU index"));
+    }
+
+    #[test]
+    fn concurrent_autotune_persists_preserve_every_record() {
+        let path = unique_temp_file("concurrent");
+        let handles: Vec<_> = (0..8u32)
+            .map(|worker| {
+                let path = path.clone();
+                thread::spawn(move || {
+                    let key = NvidiaAutotuneKey {
+                        device_name: format!("Fake GPU {worker}"),
+                        memory_total_mib: 10_240,
+                        memory_budget_mib: 9_600,
+                        lane_capacity_tier: 4,
+                        compute_cap_major: 8,
+                        compute_cap_minor: 6,
+                        m_cost_kib: 2_097_152,
+                        t_cost: 1,
+                        kernel_threads: KERNEL_THREADS,
+                        hashes_per_launch_per_lane_cap: 2,
+                        os: "linux".to_string(),
+                        kernel_version: "test-kernel".to_string(),
+                        runtime_environment: "native".to_string(),
+                        build_fingerprint: "test-build".to_string(),
+                        cuda_kernel_fingerprint: "test-cuda-kernel".to_string(),
+                        nvrtc_version: "nvrtc-test".to_string(),
+                    };
+                    persist_nvidia_autotune_record(
+                        &path,
+                        key,
+                        NvidiaKernelTuning {
+                            max_rregcount: 160,
+                            block_loop_unroll: false,
+                            hashes_per_launch_per_lane: 2,
+                            max_lanes_hint: None,
+                        },
+                        0.8,
+                        2,
+                        2,
+                        Vec::new(),
+                        0,
+                    )
+                    .expect("concurrent persist should succeed");
+                })
+            })
+            .collect();
+        for handle in handles {
+            handle.join().expect("persist thread should not panic");
+        }
+
+        let cache =
+            load_nvidia_autotune_cache(&path).expect("cache should parse after concurrent writes");
+        assert_eq!(cache.records.len(), 8);
+        let _ = fs::remove_file(&path);
+        let mut lock_path = path.as_os_str().to_os_string();
+        lock_path.push(".lock");
+        let _ = fs::remove_file(PathBuf::from(lock_path));
     }
 
     #[test]
