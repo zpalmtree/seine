@@ -44,3 +44,23 @@ benefit across architectures are still required before promotion.
 [Campaign evidence PR #42](https://github.com/zpalmtree/seine/pull/42) retains
 normalized trajectories, raw hashes, fixed-kernel evidence, scope decision and
 archive SHA256 `93cfb1e3fbff6fc4f63ebf7441fa994ba99d1d9cbb24cb0fe8628e3f74ce8dd5`.
+
+## Trajectory review
+
+The autotune owner independently reviewed all four trajectories. Connections
+started in about 1.8 seconds; candidates spent about 197 additional seconds in
+productive kernel comparisons. Final selections matched their paired controls
+(nine workers in pair A, eight in B), and no alternate kernel was promoted.
+This does not establish native successful repeated joint confirmation.
+
+Candidate A's interruption at about 235 seconds triggered a five-minute kernel
+cooldown; twelve workers were later rejected before that cooldown expired,
+without an AVX2 comparison at that count. This is a coverage gap in the prototype.
+Candidate B did test twelve-worker AVX2: 6.700 H/s versus 6.533, about +2.55%,
+below the uncertainty-adjusted 6.764 H/s threshold (+3.53%). It correctly remained
+unpromoted; the log does not imply the alternate kernel was slower.
+
+A follow-up should preserve unresolved count candidates through kernel cooldowns
+while bounding exploration overhead, then measure warm-cache amortization and
+changing load/RAM. These are unimplemented research directions, not validated
+improvements or changes to this frozen candidate.
