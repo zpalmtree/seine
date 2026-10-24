@@ -114,9 +114,14 @@ invocations with arguments, and redirected input/output do not pause.
 | Platform | CPU | GPU (NVIDIA) |
 |----------|-----|--------------|
 | Linux x86_64 | works out of the box | CUDA driver + NVRTC libs |
+| Linux ARM64 | CPU-only `seine-linux-aarch64.tar.gz` | — |
 | macOS x86_64 | works out of the box | — |
 | macOS ARM | works out of the box (Metal experimental) | — |
 | Windows x86_64 | works out of the box | CUDA driver + NVRTC libs |
+
+The Linux ARM64 archive is built on Ubuntu 24.04 and requires glibc 2.39 or
+newer. On older distributions, build the CPU-only miner from source with
+`cargo build --release --locked --no-default-features`.
 
 Each CPU thread needs ~2 GB RAM (Argon2id parameters). Seine auto-sizes thread count from available cores and memory.
 On x86_64, CPU builds include both AVX2 and AVX-512 kernels and dispatch at runtime when the host supports them.
