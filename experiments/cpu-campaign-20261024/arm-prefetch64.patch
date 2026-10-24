@@ -1,0 +1,24 @@
+--- a/pow-kernel/src/fixed_argon.rs
++++ b/pow-kernel/src/fixed_argon.rs
+@@ -491,13 +491,21 @@
+             let ptr = block as *const PowBlock as *const u8;
+             std::arch::asm!(
+                 "prfm pldl1keep, [{ptr}]",
++                "prfm pldl1keep, [{ptr}, #64]",
+                 "prfm pldl1keep, [{ptr}, #128]",
++                "prfm pldl1keep, [{ptr}, #192]",
+                 "prfm pldl1keep, [{ptr}, #256]",
++                "prfm pldl1keep, [{ptr}, #320]",
+                 "prfm pldl1keep, [{ptr}, #384]",
++                "prfm pldl1keep, [{ptr}, #448]",
+                 "prfm pldl1keep, [{ptr}, #512]",
++                "prfm pldl1keep, [{ptr}, #576]",
+                 "prfm pldl1keep, [{ptr}, #640]",
++                "prfm pldl1keep, [{ptr}, #704]",
+                 "prfm pldl1keep, [{ptr}, #768]",
++                "prfm pldl1keep, [{ptr}, #832]",
+                 "prfm pldl1keep, [{ptr}, #896]",
++                "prfm pldl1keep, [{ptr}, #960]",
+                 ptr = in(reg) ptr,
+                 options(nostack, preserves_flags),
+             );

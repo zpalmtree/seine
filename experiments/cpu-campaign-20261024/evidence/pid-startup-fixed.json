@@ -1,0 +1,73 @@
+{
+  "scope": "backend startup only; no network/work assignments",
+  "owned_units_cleanup_verified": true,
+  "expectation": "all-pass",
+  "results": [
+    {
+      "mode": "legacy",
+      "state": {
+        "Result": "success",
+        "ExecMainStatus": "0",
+        "ActiveState": "inactive"
+      },
+      "context": {
+        "affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        "pids.max": "12",
+        "memory.high": "3221225472"
+      },
+      "source": "05276557d4a49aa3c5b084afba0d4401b5725d93",
+      "log_sha256": "cb02536760ee3f926acfd58727ab242be1b6525f12691a9ff913a9d0b09abcc3"
+    },
+    {
+      "mode": "stable",
+      "state": {
+        "Result": "success",
+        "ExecMainStatus": "0",
+        "ActiveState": "inactive"
+      },
+      "context": {
+        "affinity": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ],
+        "pids.max": "12",
+        "memory.high": "3221225472"
+      },
+      "source": "05276557d4a49aa3c5b084afba0d4401b5725d93",
+      "log_sha256": "d48adb454d8a66e526e87645ce9c5c0139b4ecc1140934dfcfc48803378fe8ef"
+    }
+  ],
+  "raw_results_sha256": "4845308c1b01f4f7878d7424e04c7813c7d420d8b23ef0ac585aeabf91c92b7c",
+  "interpretation": "Real OS spawn exhaustion recovered to four provisioned slots with unchanged stride16; legacy one-slot startup also passed. Preflight deliberately bypassed. No network/work assignments; full pool runtime tested separately."
+}

@@ -1,0 +1,64 @@
+{
+  "source": "93b6f86 (test-only reproducer on fbe9e86 recovery candidate)",
+  "scope": "backend startup only; no network/work assignments",
+  "raw_sha256": "d452686e25b6ae71552e4c05527dc9c9d40e4ec4f928a6c412c8eec5237a441b",
+  "cleanup_verified": true,
+  "observations": [
+    {
+      "mode": "legacy",
+      "affinity": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15
+      ],
+      "pids_max": 12,
+      "memory_high_bytes": 3221225472,
+      "exit_status": 0,
+      "probe_log": [
+        "PID_PROBE legacy=true seed=1 capacity=1",
+        "PID_PROBE startup=Ok(())"
+      ]
+    },
+    {
+      "mode": "stable",
+      "affinity": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15
+      ],
+      "pids_max": 12,
+      "memory_high_bytes": 3221225472,
+      "exit_status": 101,
+      "probe_log": [
+        "PID_PROBE legacy=false seed=1 capacity=16",
+        "PID_PROBE startup=Err(failed to spawn CPU worker thread 9: Resource temporarily unavailable (os error 11))"
+      ]
+    }
+  ]
+}

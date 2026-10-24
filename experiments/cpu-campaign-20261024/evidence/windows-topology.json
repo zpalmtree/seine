@@ -1,0 +1,471 @@
+{
+  "memory": {
+    "TotalVisibleMemorySize": 131473780,
+    "FreePhysicalMemory": 32695000
+  },
+  "process_affinity": 4294967295,
+  "cores": [
+    {
+      "smt": 1,
+      "efficiency": 0,
+      "groups": [
+        {
+          "mask": 3,
+          "group": 0
+        }
+      ]
+    },
+    {
+      "smt": 1,
+      "efficiency": 0,
+      "groups": [
+        {
+          "mask": 12,
+          "group": 0
+        }
+      ]
+    },
+    {
+      "smt": 1,
+      "efficiency": 0,
+      "groups": [
+        {
+          "mask": 48,
+          "group": 0
+        }
+      ]
+    },
+    {
+      "smt": 1,
+      "efficiency": 0,
+      "groups": [
+        {
+          "mask": 192,
+          "group": 0
+        }
+      ]
+    },
+    {
+      "smt": 1,
+      "efficiency": 0,
+      "groups": [
+        {
+          "mask": 768,
+          "group": 0
+        }
+      ]
+    },
+    {
+      "smt": 1,
+      "efficiency": 0,
+      "groups": [
+        {
+          "mask": 3072,
+          "group": 0
+        }
+      ]
+    },
+    {
+      "smt": 1,
+      "efficiency": 0,
+      "groups": [
+        {
+          "mask": 12288,
+          "group": 0
+        }
+      ]
+    },
+    {
+      "smt": 1,
+      "efficiency": 0,
+      "groups": [
+        {
+          "mask": 49152,
+          "group": 0
+        }
+      ]
+    },
+    {
+      "smt": 1,
+      "efficiency": 0,
+      "groups": [
+        {
+          "mask": 196608,
+          "group": 0
+        }
+      ]
+    },
+    {
+      "smt": 1,
+      "efficiency": 0,
+      "groups": [
+        {
+          "mask": 786432,
+          "group": 0
+        }
+      ]
+    },
+    {
+      "smt": 1,
+      "efficiency": 0,
+      "groups": [
+        {
+          "mask": 3145728,
+          "group": 0
+        }
+      ]
+    },
+    {
+      "smt": 1,
+      "efficiency": 0,
+      "groups": [
+        {
+          "mask": 12582912,
+          "group": 0
+        }
+      ]
+    },
+    {
+      "smt": 1,
+      "efficiency": 0,
+      "groups": [
+        {
+          "mask": 50331648,
+          "group": 0
+        }
+      ]
+    },
+    {
+      "smt": 1,
+      "efficiency": 0,
+      "groups": [
+        {
+          "mask": 201326592,
+          "group": 0
+        }
+      ]
+    },
+    {
+      "smt": 1,
+      "efficiency": 0,
+      "groups": [
+        {
+          "mask": 805306368,
+          "group": 0
+        }
+      ]
+    },
+    {
+      "smt": 1,
+      "efficiency": 0,
+      "groups": [
+        {
+          "mask": 3221225472,
+          "group": 0
+        }
+      ]
+    }
+  ],
+  "caches": [
+    {
+      "level": 1,
+      "bytes": 49152,
+      "mask": 3,
+      "group": 0
+    },
+    {
+      "level": 1,
+      "bytes": 32768,
+      "mask": 3,
+      "group": 0
+    },
+    {
+      "level": 2,
+      "bytes": 1048576,
+      "mask": 3,
+      "group": 0
+    },
+    {
+      "level": 3,
+      "bytes": 100663296,
+      "mask": 65535,
+      "group": 0
+    },
+    {
+      "level": 1,
+      "bytes": 49152,
+      "mask": 12,
+      "group": 0
+    },
+    {
+      "level": 1,
+      "bytes": 32768,
+      "mask": 12,
+      "group": 0
+    },
+    {
+      "level": 2,
+      "bytes": 1048576,
+      "mask": 12,
+      "group": 0
+    },
+    {
+      "level": 1,
+      "bytes": 49152,
+      "mask": 48,
+      "group": 0
+    },
+    {
+      "level": 1,
+      "bytes": 32768,
+      "mask": 48,
+      "group": 0
+    },
+    {
+      "level": 2,
+      "bytes": 1048576,
+      "mask": 48,
+      "group": 0
+    },
+    {
+      "level": 1,
+      "bytes": 49152,
+      "mask": 192,
+      "group": 0
+    },
+    {
+      "level": 1,
+      "bytes": 32768,
+      "mask": 192,
+      "group": 0
+    },
+    {
+      "level": 2,
+      "bytes": 1048576,
+      "mask": 192,
+      "group": 0
+    },
+    {
+      "level": 1,
+      "bytes": 49152,
+      "mask": 768,
+      "group": 0
+    },
+    {
+      "level": 1,
+      "bytes": 32768,
+      "mask": 768,
+      "group": 0
+    },
+    {
+      "level": 2,
+      "bytes": 1048576,
+      "mask": 768,
+      "group": 0
+    },
+    {
+      "level": 1,
+      "bytes": 49152,
+      "mask": 3072,
+      "group": 0
+    },
+    {
+      "level": 1,
+      "bytes": 32768,
+      "mask": 3072,
+      "group": 0
+    },
+    {
+      "level": 2,
+      "bytes": 1048576,
+      "mask": 3072,
+      "group": 0
+    },
+    {
+      "level": 1,
+      "bytes": 49152,
+      "mask": 12288,
+      "group": 0
+    },
+    {
+      "level": 1,
+      "bytes": 32768,
+      "mask": 12288,
+      "group": 0
+    },
+    {
+      "level": 2,
+      "bytes": 1048576,
+      "mask": 12288,
+      "group": 0
+    },
+    {
+      "level": 1,
+      "bytes": 49152,
+      "mask": 49152,
+      "group": 0
+    },
+    {
+      "level": 1,
+      "bytes": 32768,
+      "mask": 49152,
+      "group": 0
+    },
+    {
+      "level": 2,
+      "bytes": 1048576,
+      "mask": 49152,
+      "group": 0
+    },
+    {
+      "level": 1,
+      "bytes": 49152,
+      "mask": 196608,
+      "group": 0
+    },
+    {
+      "level": 1,
+      "bytes": 32768,
+      "mask": 196608,
+      "group": 0
+    },
+    {
+      "level": 2,
+      "bytes": 1048576,
+      "mask": 196608,
+      "group": 0
+    },
+    {
+      "level": 3,
+      "bytes": 33554432,
+      "mask": 4294901760,
+      "group": 0
+    },
+    {
+      "level": 1,
+      "bytes": 49152,
+      "mask": 786432,
+      "group": 0
+    },
+    {
+      "level": 1,
+      "bytes": 32768,
+      "mask": 786432,
+      "group": 0
+    },
+    {
+      "level": 2,
+      "bytes": 1048576,
+      "mask": 786432,
+      "group": 0
+    },
+    {
+      "level": 1,
+      "bytes": 49152,
+      "mask": 3145728,
+      "group": 0
+    },
+    {
+      "level": 1,
+      "bytes": 32768,
+      "mask": 3145728,
+      "group": 0
+    },
+    {
+      "level": 2,
+      "bytes": 1048576,
+      "mask": 3145728,
+      "group": 0
+    },
+    {
+      "level": 1,
+      "bytes": 49152,
+      "mask": 12582912,
+      "group": 0
+    },
+    {
+      "level": 1,
+      "bytes": 32768,
+      "mask": 12582912,
+      "group": 0
+    },
+    {
+      "level": 2,
+      "bytes": 1048576,
+      "mask": 12582912,
+      "group": 0
+    },
+    {
+      "level": 1,
+      "bytes": 49152,
+      "mask": 50331648,
+      "group": 0
+    },
+    {
+      "level": 1,
+      "bytes": 32768,
+      "mask": 50331648,
+      "group": 0
+    },
+    {
+      "level": 2,
+      "bytes": 1048576,
+      "mask": 50331648,
+      "group": 0
+    },
+    {
+      "level": 1,
+      "bytes": 49152,
+      "mask": 201326592,
+      "group": 0
+    },
+    {
+      "level": 1,
+      "bytes": 32768,
+      "mask": 201326592,
+      "group": 0
+    },
+    {
+      "level": 2,
+      "bytes": 1048576,
+      "mask": 201326592,
+      "group": 0
+    },
+    {
+      "level": 1,
+      "bytes": 49152,
+      "mask": 805306368,
+      "group": 0
+    },
+    {
+      "level": 1,
+      "bytes": 32768,
+      "mask": 805306368,
+      "group": 0
+    },
+    {
+      "level": 2,
+      "bytes": 1048576,
+      "mask": 805306368,
+      "group": 0
+    },
+    {
+      "level": 1,
+      "bytes": 49152,
+      "mask": 3221225472,
+      "group": 0
+    },
+    {
+      "level": 1,
+      "bytes": 32768,
+      "mask": 3221225472,
+      "group": 0
+    },
+    {
+      "level": 2,
+      "bytes": 1048576,
+      "mask": 3221225472,
+      "group": 0
+    }
+  ]
+}
