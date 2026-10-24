@@ -63,7 +63,14 @@ impl Cache {
                 && candidates().contains(&kernel)
                 && winner.samples.iter().all(|s| s.secs > 0 && s.hashes > 0)
                 && if winner.kernel == winner.base {
-                    winner.samples.len() >= 3
+                    match winner.samples.as_slice() {
+                        [a, b, c] => comparison(*a, *b, *c) == Comparison::NoConfirmedGain,
+                        [a, b, c, d, e, f] => {
+                            improves(*a, *b, *c)
+                                && comparison(*d, *e, *f) == Comparison::NoConfirmedGain
+                        }
+                        _ => false,
+                    }
                 } else {
                     winner.kernel == winner.candidate
                         && winner.samples.len() == 6
@@ -89,20 +96,36 @@ impl Sample {
 
 // Two A/B/A comparisons are required; each has a fresh baseline. One favourable
 // window cannot promote a path. Baseline drift and hash quantization are gated.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Comparison {
+    Gain,
+    NoConfirmedGain,
+    Inconclusive,
+}
+
 fn improves(before: Sample, candidate: Sample, after: Sample) -> bool {
+    comparison(before, candidate, after) == Comparison::Gain
+}
+
+fn comparison(before: Sample, candidate: Sample, after: Sample) -> Comparison {
     if [before, candidate, after]
         .iter()
         .any(|s| s.secs == 0 || s.hashes == 0)
     {
-        return false;
+        return Comparison::Inconclusive;
+    }
+    if (after.hps() / before.hps() - 1.0).abs() > MAX_DRIFT {
+        return Comparison::Inconclusive;
     }
     let baseline =
         (before.hashes as f64 + after.hashes as f64) / (before.secs as f64 + after.secs as f64);
     let quantization =
         1.0 / before.secs as f64 + 1.0 / candidate.secs as f64 + 1.0 / after.secs as f64;
-    before.hps() > 0.0
-        && (after.hps() / before.hps() - 1.0).abs() <= MAX_DRIFT
-        && candidate.hps() > baseline * 1.02 + quantization
+    if candidate.hps() > baseline * 1.02 + quantization {
+        Comparison::Gain
+    } else {
+        Comparison::NoConfirmedGain
+    }
 }
 
 struct Trial {
@@ -231,6 +254,9 @@ impl Tuner {
         let base = self.trial.take().map(|trial| trial.base);
         self.settling = None;
         self.retry_at = now + RETRY_SECS;
+        // A new context can begin before the previous context's recheck date.
+        // Its interrupted trial must not inherit that stale, longer deadline.
+        self.next_check = self.retry_at;
         Action {
             kernel: base,
             reset_scores: false,
@@ -375,7 +401,8 @@ impl Tuner {
         {
             // Reject an inconclusive/noisy candidate without spending a second cycle.
             let trial = self.trial.take().unwrap();
-            let stable = (trial.samples[2].hps() / trial.samples[0].hps() - 1.0).abs() <= MAX_DRIFT;
+            let stable = comparison(trial.samples[0], trial.samples[1], trial.samples[2])
+                == Comparison::NoConfirmedGain;
             self.next_check = now + if stable { RECHECK_SECS } else { RETRY_SECS };
             if stable {
                 let base = trial.base;
@@ -388,14 +415,18 @@ impl Tuner {
         }
         if trial.samples.len() == 6 {
             let trial = self.trial.take().unwrap();
-            let promoted = improves(trial.samples[3], trial.samples[4], trial.samples[5]);
+            let outcome = comparison(trial.samples[3], trial.samples[4], trial.samples[5]);
+            let promoted = outcome == Comparison::Gain;
+            let conclusive = outcome != Comparison::Inconclusive;
             let kernel = if promoted {
                 trial.candidate
             } else {
                 trial.base
             };
-            self.save(trial, kernel);
-            self.next_check = now + RECHECK_SECS;
+            if conclusive {
+                self.save(trial, kernel);
+            }
+            self.next_check = now + if conclusive { RECHECK_SECS } else { RETRY_SECS };
             self.settling = Some(kernel);
             self.settle_started = now;
             return Action {
@@ -404,8 +435,10 @@ impl Tuner {
                 reset_scores: promoted,
                 message: Some(if promoted {
                     format!("confirmed faster {kernel} path in two comparisons")
-                } else {
+                } else if conclusive {
                     format!("keeping {kernel}; gain did not repeat")
+                } else {
+                    format!("keeping {kernel}; confirmation was noisy, retrying sooner")
                 }),
             };
         }
@@ -437,7 +470,7 @@ mod tests {
 
     fn snapshot() -> CpuAdaptiveSnapshot {
         CpuAdaptiveSnapshot {
-            kernel: CpuKernel::Avx512,
+            kernel: CpuKernel::preferred(),
             kernel_generation: 1,
             kernel_ready: true,
             backing_bytes: [0, 0, 0, CPU_LANE_MEMORY_BYTES, 0],
@@ -487,11 +520,12 @@ mod tests {
 
     #[test]
     fn two_confirmations_and_switch_acknowledgements_are_required() {
-        if !CpuKernel::Avx512.is_supported() || !CpuKernel::Avx2.is_supported() {
+        if candidates().len() < 2 {
             return;
         }
         let mut t = tuner();
         let mut s = snapshot();
+        let challenger = candidates().into_iter().find(|&k| k != s.kernel).unwrap();
         let mut now = 0;
         assert!(t.tick(now, &[s], true, true).hold_counts);
         for (index, rate) in [100, 110, 100, 100, 110, 100].into_iter().enumerate() {
@@ -512,11 +546,75 @@ mod tests {
                 assert!(t.cache.winners.is_empty());
             }
         }
-        assert_eq!(s.kernel, CpuKernel::Avx2);
+        assert_eq!(s.kernel, challenger);
         assert_eq!(t.cache.winners.len(), 1);
         assert!(!t.tick(now + 1, &[s], true, true).hold_counts);
         assert!(!t.tick(now + 2, &[s], true, true).hold_counts);
         let _ = fs::remove_file(&t.path);
+    }
+
+    #[test]
+    fn noisy_second_confirmation_is_not_cached_as_a_loss() {
+        if candidates().len() < 2 {
+            return;
+        }
+        for (rates, conclusive) in [
+            ([100, 110, 100, 100, 120, 110], false),
+            ([100, 110, 100, 100, 95, 100], true),
+        ] {
+            let mut t = tuner();
+            let mut s = snapshot();
+            let base = s.kernel;
+            let mut now = 0;
+            assert!(t.tick(now, &[s], true, true).hold_counts);
+            for rate in rates {
+                now += 1;
+                t.tick(now, &[s], true, true);
+                now += 30;
+                s.hashes += rate * 30;
+                let action = t.tick(now, &[s], true, true);
+                if let Some(kernel) = action.kernel {
+                    s.kernel = kernel;
+                    s.kernel_generation += 1;
+                }
+            }
+            assert_eq!(s.kernel, base);
+            assert_eq!(t.cache.winners.len(), usize::from(conclusive));
+            assert_eq!(
+                t.next_check,
+                now + if conclusive { RECHECK_SECS } else { RETRY_SECS }
+            );
+            assert!(!t.tick(now + 1, &[s], true, true).hold_counts);
+            let _ = fs::remove_file(&t.path);
+        }
+    }
+
+    #[test]
+    fn low_count_timeout_in_new_context_does_not_inherit_old_recheck() {
+        if candidates().len() < 2 {
+            return;
+        }
+        let mut t = tuner();
+        let mut s = snapshot();
+        t.checked = Some(Context::from_snapshots(&[s]));
+        t.next_check = RECHECK_SECS;
+        s.threads = 2;
+        s.warmed = 2;
+        s.committed_bytes *= 2;
+        s.resident_bytes *= 2;
+        s.backing_bytes[3] *= 2;
+        assert!(t.tick(1, &[s], true, true).hold_counts);
+        t.tick(2, &[s], true, true);
+        s.hashes = 31;
+        assert!(t.tick(MAX_TRIAL_SECS - 1, &[s], true, true).hold_counts);
+        assert!(t.trial.as_ref().unwrap().samples.is_empty());
+        let now = MAX_TRIAL_SECS + 1;
+        assert_eq!(t.tick(now, &[s], true, true).kernel, Some(s.kernel));
+        assert!(t.trial.is_none());
+        assert!(t.cache.winners.is_empty());
+        assert_eq!(t.next_check, now + RETRY_SECS);
+        assert!(!t.tick(now + RETRY_SECS - 1, &[s], true, true).hold_counts);
+        assert!(t.tick(now + RETRY_SECS, &[s], true, true).hold_counts);
     }
 
     #[test]
@@ -538,7 +636,7 @@ mod tests {
                 t.tick(32, &[s], false, true);
             }
             let action = t.tick(35, &[s], backing_change, true);
-            assert_eq!(action.kernel, Some(CpuKernel::Avx512));
+            assert_eq!(action.kernel, Some(CpuKernel::preferred()));
             assert!(t.trial.is_none());
             assert!(t.cache.winners.is_empty());
             assert!(!t.tick(36, &[s], true, true).hold_counts);
@@ -580,6 +678,17 @@ mod tests {
         assert!(cache
             .winner(&context, 100 + CPU_AUTOTUNE_RECORD_MAX_AGE_SECS)
             .is_none());
+        assert_eq!(cache.winner(&context, 100), Some(CpuKernel::preferred()));
+        cache.winners[0].samples = [100, 110, 100, 100, 120, 110]
+            .into_iter()
+            .map(sample)
+            .collect();
+        assert!(cache.winner(&context, 100).is_none());
+        cache.winners[0].samples = [100, 110, 100, 100, 95, 100]
+            .into_iter()
+            .map(sample)
+            .collect();
+        assert_eq!(cache.winner(&context, 100), Some(CpuKernel::preferred()));
         cache.winners[0].kernel = "avx512-256".into();
         assert!(cache.winner(&context, 100).is_none());
     }
@@ -595,7 +704,7 @@ mod tests {
         assert!(t.trial.is_none());
         assert!(t.tick(1, &[s], true, true).hold_counts);
         let action = t.tick(1 + MAX_TRIAL_SECS, &[s], true, true);
-        assert_eq!(action.kernel, Some(CpuKernel::Avx512));
+        assert_eq!(action.kernel, Some(CpuKernel::preferred()));
         assert!(t.trial.is_none());
     }
 }
