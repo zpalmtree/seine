@@ -47,6 +47,8 @@ metal = ["dep:metal"]
 # without ROCm headers/toolkit installed: all HIP/hipRTC FFI is hand-declared
 # and resolved at runtime via dlopen (libamdhip64.so / libhiprtc.so).
 amd = []
+# Research-only allocator instrumentation; never enabled by release workflows.
+numa-experiment = []
 
 [target.'cfg(target_os = "macos")'.dependencies]
 metal = { version = "0.33", optional = true }

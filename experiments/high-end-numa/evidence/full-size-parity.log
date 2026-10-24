@@ -1,0 +1,22 @@
+
+running 3 tests
+test backend::cpu::numa_experiment::tests::full_size_local_arena_reference_parity ... NUMA_ARENA {"allocation_seconds":0.760915704,"bytes":2147483648,"cpu":0,"inherited_policy":0,"local_node":0,"local_node_meminfo":"Node 0 MemTotal:       82355872 kB\nNode 0 MemFree:         9453392 kB\nNode 0 MemUsed:        72902480 kB\nNode 0 SwapCached:       158968 kB\nNode 0 Active:         39666448 kB\nNode 0 Inactive:       24961856 kB\nNode 0 Active(anon):    4211368 kB\nNode 0 Inactive(anon): 16621072 kB\nNode 0 Active(file):   35455080 kB\nNode 0 Inactive(file):  8340784 kB\nNode 0 Unevictable:           0 kB\nNode 0 Mlocked:               0 kB\nNode 0 Dirty:             18136 kB\nNode 0 Writeback:             4 kB\nNode 0 FilePages:      44095012 kB\nNode 0 Mapped:          1919740 kB\nNode 0 AnonPages:      20593464 kB\nNode 0 Shmem:            139840 kB\nNode 0 KernelStack:       37952 kB\nNode 0 PageTables:       300172 kB\nNode 0 SecPageTables:         0 kB\nNode 0 NFS_Unstable:          0 kB\nNode 0 Bounce:                0 kB\nNode 0 WritebackTmp:          0 kB\nNode 0 KReclaimable:    4091172 kB\nNode 0 Slab:            4873548 kB\nNode 0 SReclaimable:    4091172 kB\nNode 0 SUnreclaim:       782376 kB\nNode 0 AnonHugePages:      8192 kB\nNode 0 ShmemHugePages:        0 kB\nNode 0 ShmemPmdMapped:        0 kB\nNode 0 FileHugePages:   1579008 kB\nNode 0 FilePmdMapped:         0 kB\nNode 0 Unaccepted:            0 kB\nNode 0 HugePages_Total:     0\nNode 0 HugePages_Free:      0\nNode 0 HugePages_Surp:      0\n","policy":"audit","policy_restored":true,"sampled_placement_only":true,"samples_by_node":{"0":1024},"schema":1,"stride_bytes":2097152,"target_node":null,"worker":0}
+NUMA_PARITY policy=audit kernel=scalar full_2gib=true dirty_reuse=true PASS
+NUMA_PARITY policy=audit kernel=avx2 full_2gib=true dirty_reuse=true PASS
+NUMA_PARITY policy=audit kernel=avx512 full_2gib=true dirty_reuse=true PASS
+NUMA_PARITY policy=audit kernel=avx512-256 full_2gib=true dirty_reuse=true PASS
+NUMA_ARENA {"allocation_seconds":0.727509129,"bytes":2147483648,"cpu":0,"inherited_policy":0,"local_node":0,"local_node_meminfo":"Node 0 MemTotal:       82355872 kB\nNode 0 MemFree:         9081236 kB\nNode 0 MemUsed:        73274636 kB\nNode 0 SwapCached:       158968 kB\nNode 0 Active:         39741888 kB\nNode 0 Inactive:       25233504 kB\nNode 0 Active(anon):    4211364 kB\nNode 0 Inactive(anon): 17016516 kB\nNode 0 Active(file):   35530524 kB\nNode 0 Inactive(file):  8216988 kB\nNode 0 Unevictable:           0 kB\nNode 0 Mlocked:               0 kB\nNode 0 Dirty:             34892 kB\nNode 0 Writeback:            32 kB\nNode 0 FilePages:      44046284 kB\nNode 0 Mapped:          1816252 kB\nNode 0 AnonPages:      20988492 kB\nNode 0 Shmem:            139836 kB\nNode 0 KernelStack:       37056 kB\nNode 0 PageTables:       298056 kB\nNode 0 SecPageTables:         0 kB\nNode 0 NFS_Unstable:          0 kB\nNode 0 Bounce:                0 kB\nNode 0 WritebackTmp:          0 kB\nNode 0 KReclaimable:    4090672 kB\nNode 0 Slab:            4871920 kB\nNode 0 SReclaimable:    4090672 kB\nNode 0 SUnreclaim:       781248 kB\nNode 0 AnonHugePages:      8192 kB\nNode 0 ShmemHugePages:        0 kB\nNode 0 ShmemPmdMapped:        0 kB\nNode 0 FileHugePages:   1576960 kB\nNode 0 FilePmdMapped:         0 kB\nNode 0 Unaccepted:            0 kB\nNode 0 HugePages_Total:     0\nNode 0 HugePages_Free:      0\nNode 0 HugePages_Surp:      0\n","policy":"local","policy_restored":true,"sampled_placement_only":true,"samples_by_node":{"0":1024},"schema":1,"stride_bytes":2097152,"target_node":0,"worker":0}
+NUMA_PARITY policy=local kernel=scalar full_2gib=true dirty_reuse=true PASS
+NUMA_PARITY policy=local kernel=avx2 full_2gib=true dirty_reuse=true PASS
+NUMA_PARITY policy=local kernel=avx512 full_2gib=true dirty_reuse=true PASS
+NUMA_PARITY policy=local kernel=avx512-256 full_2gib=true dirty_reuse=true PASS
+ok
+test backend::cpu::numa_experiment::tests::native_policy_restores_on_success_error_and_unwind ... 
+thread '<unnamed>' (4134318) panicked at src/backend/cpu/numa_experiment.rs:292:25:
+injected unwinding
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ok
+test backend::cpu::numa_experiment::tests::sparse_ids_and_masks_do_not_assume_dense_nodes ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 476 filtered out; finished in 34.05s
+

@@ -1,0 +1,38 @@
+{
+  "observation_date": "2026-10-24",
+  "profile": "seine-bench",
+  "role": "SeineBenchmark",
+  "region": "us-east-2",
+  "quotas": [
+    {
+      "name": "Running On-Demand HPC instances",
+      "code": "L-F7808C92",
+      "value": 0,
+      "required_hpc7a_96xlarge": 192
+    },
+    {
+      "name": "Running On-Demand Standard (A, C, D, H, I, M, R, T, Z) instances",
+      "code": "L-1216C47A",
+      "value": 5,
+      "hpc_launch_gate": false
+    }
+  ],
+  "quota_source": "AWS service-quotas get-service-quota",
+  "denied_actions": [
+    "ec2:DescribeInstances",
+    "ec2:DescribeInstanceTypeOfferings",
+    "servicequotas:ListServiceQuotas"
+  ],
+  "denial_reason": "No identity-based policy allows the action",
+  "pricing_source": "AWS Pricing GetProducts; Linux, Shared, NA preInstalledSw, Used capacitystatus, OnDemand",
+  "compute_usd_per_hour": {
+    "hpc6a.48xlarge": 2.88,
+    "hpc7a.96xlarge": 7.2
+  },
+  "resources_created": [],
+  "incremental_spend_usd": 0,
+  "iam_changes": false,
+  "quota_requests": false,
+  "support_cases": false,
+  "next_gate": "Administrator enables benchmark lifecycle access in Ohio and raises separate HPC quota; budget/ownership/deadline must be verified before launch."
+}

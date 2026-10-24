@@ -21,6 +21,9 @@ use crate::config::{CpuAffinityMode, CpuPageMode};
 mod events;
 #[path = "cpu/kernel.rs"]
 mod kernel;
+#[cfg(all(target_os = "linux", feature = "numa-experiment"))]
+#[path = "cpu/numa_experiment.rs"]
+mod numa_experiment;
 #[path = "cpu/sampling.rs"]
 mod sampling;
 #[cfg(target_os = "linux")]

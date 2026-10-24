@@ -169,7 +169,13 @@ fn worker_loop_with_allocator<const MEMORY_KB: u32>(
             let block_count = initialized.block_count();
             #[cfg(any(target_os = "linux", target_os = "windows"))]
             let block_bytes = block_count * std::mem::size_of::<fixed_argon::PowBlock>();
-            match allocate(block_count, shared.page_mode) {
+            #[cfg(all(target_os = "linux", feature = "numa-experiment"))]
+            let allocation = super::numa_experiment::allocate(thread_idx, || {
+                allocate(block_count, shared.page_mode)
+            });
+            #[cfg(not(all(target_os = "linux", feature = "numa-experiment")))]
+            let allocation = allocate(block_count, shared.page_mode);
+            match allocation {
                 Ok(allocated) => {
                     backing = Some(allocated.backing_observation(
                         (block_count * std::mem::size_of::<fixed_argon::PowBlock>()) as u64,

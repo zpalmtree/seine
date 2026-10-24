@@ -1,0 +1,13 @@
+   Compiling seine v0.2.21 (/home/zp/Code/blocknet/seine-high-end-numa)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 10.49s
+     Running unittests src/main.rs (data/target-numa/debug/deps/seine-b6770ed5ca9c9709)
+
+running 1 test
+
+thread '<unnamed>' (4128885) panicked at src/backend/cpu/numa_experiment.rs:292:25:
+injected unwinding
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test backend::cpu::numa_experiment::tests::native_policy_restores_on_success_error_and_unwind ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 478 filtered out; finished in 0.00s
+
