@@ -158,15 +158,25 @@ selected between probes. New peak measurements can extend exploration without
 repeatedly committing higher counts that are already known to be unnecessary.
 
 On CPUs supporting both AVX2 and AVX-512, automatic mining tuning also compares
-those paths at the current worker count. On AArch64 with runtime SHA3 support,
+those paths at the current and proposed worker counts. On AArch64 with runtime SHA3 support,
 it compares baseline NEON with `neon-sha3`, which combines XOR/rotate instructions
 and 64-byte prefetch coverage. Startup keeps the existing portable NEON path.
 Two baseline/candidate/baseline cycles
 must confirm a gain above 2% plus the hash-count uncertainty before changing the
-path. Kernel and thread-count trials run in turn; memory-pressure handling remains
-active throughout. Kernel windows last 30–60 seconds and require 32 hashes, with
+path. Count sampling pauses during a kernel comparison; memory-pressure handling
+remains active throughout. Kernel windows last 30–60 seconds and require 32 hashes, with
 a ten-minute limit for each trial. Interrupted or noisy trials retain the previous
 path. Workers switch between complete hashes without reallocating their arenas.
+
+Testing a proposed worker count includes selecting its kernel before measuring
+the count. This can find a faster combination even when increasing workers with
+the original kernel would lose throughput. Baseline checks restore the original
+count and kernel and wait for workers to acknowledge the switch. A winning
+combination that changes both requires a second fresh baseline/candidate/baseline
+comparison before its worker count is saved. Resource changes or interrupted
+kernel trials discard the comparison. Joint trials have a 15-minute limit,
+extended for explicitly longer count windows; restarts discard partial progress.
+This adds productive mining trial time without delaying the initial connection.
 
 Confirmed kernel choices are cached alongside the thread cache in
 `seine.cpu-autotune.json.kernels.json`, keyed by worker counts, observed page

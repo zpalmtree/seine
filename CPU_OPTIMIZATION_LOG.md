@@ -11,6 +11,7 @@ This log tracks CPU backend/hash-kernel tuning attempts and measured outcomes.
 
 ## Newest-first index
 
+- `2026-10-24 joint count/kernel crossover prototype (native validation pending)`
 - `2026-10-24 parked CPU worker task budgets and spawn failure recovery`
 - `2026-10-24 automatic joint CPU kernel and worker selection`
 - `2026-10-24 stable efficiency selections during productive rechecks`
@@ -59,6 +60,67 @@ This log tracks CPU backend/hash-kernel tuning attempts and measured outcomes.
 - `Validation`
 - `Baseline`
 - `Benchmark protocol`
+
+## 2026-10-24 joint count/kernel crossover prototype (native validation pending)
+
+Status: isolated implementation candidate on
+`codex/joint-crossover-campaign-20261024`, based on `636e688`; **not merged or
+native-validated**. This does not change the architecture campaign's frozen
+binary or its separate performance-regression investigation.
+
+The existing policy chose a kernel only while the count policy was at its
+baseline. A proposed count that lost on the incumbent path was rejected before
+its alternate kernel could be tested. Wider count probes could therefore remain
+trapped at eight/full512 even when twelve/AVX2 was faster. Commit `2aefacb` records
+a regression that fails against `636e688` with “candidate count was rejected
+without testing its alternate kernel.”
+
+The final fixture models 8/full512 at 9.72 H/s, 12/full512 at 9.28 H/s and
+12/AVX2 at 10.23 H/s, using integer completed hashes and fractional carry so the
+normal count uncertainty margin remains meaningful. These are synthetic rates
+representing the shape observed by the C5 campaign, not new hardware results.
+
+The prototype allows established-kernel selection at a proposed count before
+sampling that count. It captures the original count, kernel and backing, then
+restores that complete baseline for confirmation. Count sampling waits for kernel
+acknowledgements. If the winning combination changes the kernel as well as the
+count, a second fresh configuration A/B/A must confirm it before publishing the
+count hint. The first gain cannot raise the retained profile floor. Fully
+confirmed per-count kernel evidence can still be cached independently; a restart
+reuses that evidence but must repeat the count comparisons from scratch.
+
+Pressure, allocation failure, interrupted or inconclusive kernel trials, changed
+baseline backing, inconsistent repeated candidate backing, or a joint deadline
+discard the comparison and restore the original kernel at a safe count. The
+default joint deadline is 15 minutes, extended to at least six count windows
+plus ten minutes when a longer count window is configured. Kernel-switch waits
+have a ten-minute bound. Existing memory recovery/allocation backoff, profile
+floors, opt-out, min/max constraints and fixed nonce stride remain in effect.
+No worker backend, hash kernel, consensus, nonce allocation or startup path was
+edited. This remains heuristic count exploration, not an exhaustive global
+configuration search. New contexts require additional productive trial time;
+the initial connection still has no offline sweep.
+
+Local validation with Rust 1.93.0:
+
+- `cargo +1.93.0 test --workspace --no-default-features --quiet -- --test-threads=4`:
+  **503 passed** (496 root-binary, seven library tests), five opt-in tests ignored.
+- Regression coverage includes the crossover, a gain that disappears on its
+  second comparison, restart after the first gain, delayed acknowledgements,
+  changed baseline backing, reduced/zero RAM capacity, allocation failure,
+  interrupted inner trials, deadlines and explicitly long count windows.
+- Existing multi-hour synthetic profile/recovery and small-arena worker/nonce
+  tests continue to pass.
+- Windows GNU CPU test compilation passed:
+  `cargo +1.93.0 check --no-default-features --target x86_64-pc-windows-gnu --tests --quiet`.
+  This is a compile check, not native Windows execution.
+- Changed Rust files pass pinned formatting; `git diff --check` passes.
+
+Native validation remains with the architecture campaign: exercise automatic
+8/full512 to 12/AVX2 selection on the crossover host, verify repeated confirmation
+and productive hashes through restores, and assess count/kernel trial overhead
+alongside the independent frozen-build regression. No native mining, full-size
+arena test, cloud rental, PR or merge was performed by this implementation task.
 
 ## 2026-10-24 parked CPU worker task budgets and spawn failure recovery
 

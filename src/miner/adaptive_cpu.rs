@@ -2,11 +2,14 @@
 //! RAM limits constrain the operating count without replacing a remembered peak.
 use super::*;
 use crate::config::{cpu_autotune_capacity, cpu_autotune_worker_ceiling};
+use blocknet_pow_kernel::CpuKernel;
 use std::thread::{self, JoinHandle};
 
 const RECOVERY_SECS: u64 = 30;
 const RETRY_SECS: u64 = 300;
 const MAX_DRIFT: f64 = 0.08;
+const JOINT_TIMEOUT_SECS: u64 = 15 * 60;
+const SWITCH_TIMEOUT_SECS: u64 = 10 * 60;
 
 pub(super) fn limits(cfg: &Config, owned_bytes: u64) -> (usize, usize, usize) {
     let (_, available) = cpu_autotune_capacity(cfg, owned_bytes);
@@ -190,6 +193,20 @@ enum Phase {
     },
 }
 
+#[derive(Debug, Clone)]
+struct JointComparison {
+    base: usize,
+    candidate: usize,
+    base_kernel: CpuKernel,
+    candidate_kernel: Option<CpuKernel>,
+    base_backing: Vec<[u64; 5]>,
+    candidate_backing: Option<Vec<[u64; 5]>>,
+    started: u64,
+    confirmed_peak: f64,
+    // A changed kernel must also win a second fresh count/configuration A/B/A.
+    repeat: bool,
+}
+
 #[derive(Debug)]
 struct Policy {
     current: usize,
@@ -215,6 +232,8 @@ struct Policy {
     idle_since: Option<u64>,
     reference_hps: Option<f64>,
     peak_hps: f64,
+    joint: Option<JointComparison>,
+    restoring: Option<(CpuKernel, u64)>,
 }
 
 #[derive(Debug)]
@@ -250,6 +269,8 @@ impl Policy {
             idle_since: None,
             reference_hps: None,
             peak_hps: 0.0,
+            joint: None,
+            restoring: None,
         }
     }
 
@@ -294,6 +315,65 @@ impl Policy {
         }
     }
 
+    fn restore_kernel(
+        &mut self,
+        now: u64,
+        kernel: CpuKernel,
+        snapshots: &[crate::backend::cpu::CpuAdaptiveSnapshot],
+        action: &mut super::adaptive_kernel::Action,
+    ) {
+        if snapshots
+            .iter()
+            .filter(|s| s.running)
+            .any(|s| s.kernel != kernel || !s.kernel_ready)
+        {
+            action.kernel = Some(kernel);
+            self.restoring = Some((kernel, now));
+            self.sampling = false;
+            self.idle_since = None;
+        }
+    }
+
+    fn cancel_joint(
+        &mut self,
+        kernels: &mut super::adaptive_kernel::Tuner,
+        now: u64,
+        snapshots: &[crate::backend::cpu::CpuAdaptiveSnapshot],
+        cap: usize,
+        actual: usize,
+        allocation_limited: bool,
+    ) -> (super::adaptive_kernel::Action, Option<Decision>) {
+        let joint = self.joint.take().expect("joint comparison exists");
+        let delay = if allocation_limited {
+            RETRY_SECS
+        } else {
+            RECOVERY_SECS
+        };
+        self.restoring = None;
+        self.reset(now, delay);
+        if allocation_limited {
+            self.allocation_retry_at = now + RETRY_SECS;
+        }
+        let mut action = kernels.abort(now);
+        // The kernel tuner's baseline belongs to the candidate count. Restore
+        // the original configuration's kernel on every outer cancellation.
+        action.kernel = Some(joint.base_kernel);
+        action.hold_counts = false;
+        self.restore_kernel(now, joint.base_kernel, snapshots, &mut action);
+        let count = if allocation_limited {
+            actual.min(cap)
+        } else {
+            joint.base.min(cap)
+        };
+        (
+            action,
+            Some(self.change(
+                count,
+                "joint comparison interrupted; restoring safe baseline",
+            )),
+        )
+    }
+
     fn tick_joint(
         &mut self,
         kernels: &mut super::adaptive_kernel::Tuner,
@@ -302,17 +382,18 @@ impl Policy {
         cap: usize,
         allocation_failed: bool,
     ) -> (super::adaptive_kernel::Action, Option<Decision>) {
+        let cap = cap.min(self.max);
         let running: Vec<_> = snapshots.iter().filter(|s| s.running).collect();
         let actual = running.iter().map(|s| s.threads).min().unwrap_or(0);
+        let allocation_limited = allocation_failed || actual < self.current;
         let hashes = running.iter().map(|s| s.hashes).sum();
-        let ready = running.iter().all(|s| {
-            s.hashing
-                && s.warmed == s.threads
-                && s.resident_bytes == s.threads as u64 * CPU_LANE_MEMORY_BYTES
-        });
-        // Track recovery through kernel holds, but debounce transient headroom
-        // and honor allocation cooldowns before interrupting productive trials.
-        self.observe_cap(now, cap.min(self.max));
+        let ready = !running.is_empty()
+            && running.iter().all(|s| {
+                s.hashing
+                    && s.warmed == s.threads
+                    && s.resident_bytes == s.threads as u64 * CPU_LANE_MEMORY_BYTES
+            });
+        self.observe_cap(now, cap);
         let recovering_capacity = self.recovery_pending && now >= self.allocation_retry_at;
         let recovery_due = recovering_capacity
             && now >= self.next_trial
@@ -323,24 +404,71 @@ impl Policy {
             || allocation_failed
             || running.len() != snapshots.len()
             || actual == 0;
-        let action = if safety_change {
+        let backing: Vec<_> = snapshots.iter().map(|s| s.backing_bytes).collect();
+        let joint_invalid = self.joint.as_ref().is_some_and(|j| {
+            j.base.max(j.candidate) > cap
+                || now.saturating_sub(j.started)
+                    >= JOINT_TIMEOUT_SECS
+                        .max(self.window_secs.saturating_mul(6).saturating_add(600))
+                || (ready
+                    && !matches!(self.phase, Phase::Probe { .. })
+                    && backing != j.base_backing)
+        });
+        let switch_timeout = self
+            .restoring
+            .is_some_and(|(_, start)| now.saturating_sub(start) >= SWITCH_TIMEOUT_SECS);
+        if self.joint.is_some() && (safety_change || joint_invalid || switch_timeout) {
+            return self.cancel_joint(kernels, now, snapshots, cap, actual, allocation_limited);
+        }
+        if safety_change || switch_timeout {
+            self.restoring = None;
+        }
+        if let Some((kernel, _)) = self.restoring {
+            if ready && running.iter().all(|s| s.kernel == kernel && s.kernel_ready) {
+                self.restoring = None;
+            } else {
+                self.sampling = false;
+                return (
+                    super::adaptive_kernel::Action {
+                        hold_counts: true,
+                        ..Default::default()
+                    },
+                    None,
+                );
+            }
+        }
+        let phase_before = self.phase;
+        let mut action = if safety_change || switch_timeout {
             kernels.abort(now)
         } else {
             kernels.tick(
                 now,
                 snapshots,
                 ready,
-                matches!(self.phase, Phase::Baseline) && !recovering_capacity,
+                (matches!(self.phase, Phase::Baseline)
+                    && self.joint.is_none()
+                    && !recovering_capacity)
+                    || matches!(self.phase, Phase::Probe { .. }),
             )
         };
+        if action.interrupted && self.joint.is_some() {
+            return self.cancel_joint(kernels, now, snapshots, cap, actual, allocation_limited);
+        }
         if action.hold_counts {
             self.sampling = false;
             self.idle_since = None;
         }
         if action.reset_scores {
-            self.kernel_changed(now);
+            if matches!(self.phase, Phase::Probe { .. }) {
+                // Keep the original count/kernel baseline while selecting the
+                // candidate's path. Only this window's partial sample is stale.
+                self.sampling = false;
+                self.idle_since = None;
+            } else {
+                self.kernel_changed(now);
+            }
         }
-        let decision = if action.hold_counts && !safety_change {
+        let mut decision = if action.hold_counts && !safety_change {
             None
         } else {
             self.tick(
@@ -352,11 +480,83 @@ impl Policy {
                 actual,
             )
         };
+        match (phase_before, self.phase) {
+            (Phase::Baseline, Phase::Probe { base, .. }) => {
+                if let Some(joint) = self.joint.clone() {
+                    // Second outer A/B/A: use the already-confirmed candidate
+                    // kernel, then wait for acknowledgements before sampling.
+                    self.restore_kernel(
+                        now,
+                        joint.candidate_kernel.unwrap_or(joint.base_kernel),
+                        snapshots,
+                        &mut action,
+                    );
+                } else if let Some(first) = running.first() {
+                    self.joint = Some(JointComparison {
+                        base,
+                        candidate: self.current,
+                        base_kernel: first.kernel,
+                        candidate_kernel: None,
+                        base_backing: backing.clone(),
+                        candidate_backing: None,
+                        started: now,
+                        confirmed_peak: self.peak_hps,
+                        repeat: false,
+                    });
+                }
+            }
+            (Phase::Probe { .. }, Phase::Confirm { .. }) => {
+                if let (Some(mut joint), Some(first)) = (self.joint.clone(), running.first()) {
+                    if joint.repeat
+                        && (joint.candidate_kernel != Some(first.kernel)
+                            || joint.candidate_backing.as_ref() != Some(&backing))
+                    {
+                        return self.cancel_joint(kernels, now, snapshots, cap, actual, false);
+                    }
+                    joint.candidate_kernel = Some(first.kernel);
+                    joint.candidate_backing = Some(backing);
+                    let base_kernel = joint.base_kernel;
+                    self.joint = Some(joint);
+                    self.restore_kernel(now, base_kernel, snapshots, &mut action);
+                }
+            }
+            (Phase::Confirm { .. }, Phase::Baseline) => {
+                if let Some(mut joint) = self.joint.take() {
+                    let accepted = decision
+                        .as_ref()
+                        .is_some_and(|d| d.learned.is_some() && d.threads == joint.candidate);
+                    let candidate_kernel = joint.candidate_kernel.unwrap_or(joint.base_kernel);
+                    if accepted && candidate_kernel != joint.base_kernel && !joint.repeat {
+                        joint.repeat = true;
+                        let base = joint.base;
+                        // The first outer gain is provisional. It must not raise
+                        // the profile floor if the fresh confirmation fails.
+                        self.peak_hps = joint.confirmed_peak;
+                        self.joint = Some(joint);
+                        self.reset(now, 0);
+                        self.reference_hps = None;
+                        decision =
+                            Some(self.change(base, "repeating joint configuration confirmation"));
+                    } else {
+                        let selected = if accepted {
+                            candidate_kernel
+                        } else {
+                            joint.base_kernel
+                        };
+                        self.restore_kernel(now, selected, snapshots, &mut action);
+                    }
+                }
+            }
+            (Phase::Probe { .. }, Phase::Baseline) if self.joint.is_some() => {
+                return self.cancel_joint(kernels, now, snapshots, cap, actual, allocation_limited);
+            }
+            _ => {}
+        }
         (action, decision)
     }
 
     fn kernel_changed(&mut self, now: u64) {
-        // Count samples must use one path, but the profile floor is a joint
+        // Each count window must use one path, but the profile floor is a joint
         // throughput frontier. Retain that peak and the discovery/retention
         // state across confirmed path changes; resetting them can cycle between
         // a low-count kernel and a high-count kernel under completely steady load.
@@ -497,7 +697,9 @@ impl Policy {
                     .next_up_probe
                     .take()
                     .filter(|&n| can_grow && n > self.current && n <= cap);
-                let candidate = if let Some(threads) = farther_probe {
+                let candidate = if let Some(joint) = self.joint.as_ref().filter(|j| j.repeat) {
+                    joint.candidate
+                } else if let Some(threads) = farther_probe {
                     threads
                 } else if self.up && can_grow && self.current < cap {
                     self.current.saturating_add(step).min(cap)
@@ -1549,40 +1751,268 @@ mod tests {
 
     #[test]
     fn joint_tuner_crosses_count_kernel_valley() {
+        simulate_crossover(false, false);
+    }
+
+    fn joint_fixture(
+        name: &str,
+        base: usize,
+        candidate: usize,
+    ) -> (
+        Policy,
+        super::super::adaptive_kernel::Tuner,
+        crate::backend::cpu::CpuAdaptiveSnapshot,
+    ) {
+        let mut cfg = super::super::tests::test_config();
+        cfg.cpu_autotune_config_path =
+            std::env::temp_dir().join(format!("seine-joint-{name}-{}.json", std::process::id()));
+        let mut p = Policy::new(&cfg, candidate, 1, 16);
+        p.phase = Phase::Probe {
+            base,
+            before: sample(10.0),
+        };
+        p.joint = Some(JointComparison {
+            base,
+            candidate,
+            base_kernel: CpuKernel::Avx512,
+            candidate_kernel: None,
+            base_backing: vec![[0, 0, 0, base as u64 * CPU_LANE_MEMORY_BYTES, 0]],
+            candidate_backing: None,
+            started: 0,
+            confirmed_peak: 10.0,
+            repeat: false,
+        });
+        let kernels =
+            super::super::adaptive_kernel::Tuner::new(&cfg, CpuAutotuneHostFingerprint::default());
+        let s = crate::backend::cpu::CpuAdaptiveSnapshot {
+            kernel: CpuKernel::Avx2,
+            kernel_generation: 1,
+            kernel_ready: true,
+            backing_bytes: [0, 0, 0, candidate as u64 * CPU_LANE_MEMORY_BYTES, 0],
+            running: true,
+            threads: candidate,
+            committed_bytes: candidate as u64 * CPU_LANE_MEMORY_BYTES,
+            resident_bytes: candidate as u64 * CPU_LANE_MEMORY_BYTES,
+            hashes: 1000,
+            hashing: true,
+            allocation_failures: 0,
+            warmed: candidate,
+        };
+        (p, kernels, s)
+    }
+
+    #[test]
+    fn joint_pressure_and_allocation_failure_restore_original_kernel_without_learning() {
+        for (base, candidate, cap, failed, actual, expected) in [
+            (8, 12, 4, false, 12, 4),
+            (12, 8, 10, false, 8, 10),
+            (8, 12, 16, true, 3, 3),
+            (8, 12, 0, false, 12, 0),
+        ] {
+            let (mut p, mut kernels, mut s) = joint_fixture("pressure", base, candidate);
+            s.threads = actual;
+            let (action, decision) = p.tick_joint(&mut kernels, 100, &[s], cap, failed);
+            let d = decision.unwrap();
+            assert_eq!(action.kernel, Some(CpuKernel::Avx512));
+            assert_eq!(d.threads, expected);
+            assert!(d.learned.is_none());
+            assert!(p.joint.is_none());
+            assert!(!action.hold_counts);
+            if failed {
+                assert_eq!(p.allocation_retry_at, 100 + RETRY_SECS);
+            }
+        }
+    }
+
+    #[test]
+    fn joint_baseline_waits_for_its_kernel_ack_and_rejects_changed_backing() {
+        let (mut p, mut kernels, mut s) = joint_fixture("ack", 8, 12);
+        p.phase = Phase::Confirm {
+            base: 8,
+            before: sample(10.0),
+            candidate: 12,
+            candidate_sample: sample(11.0),
+        };
+        p.current = 8;
+        p.restoring = Some((CpuKernel::Avx512, 1));
+        s.threads = 8;
+        s.warmed = 8;
+        s.resident_bytes = 8 * CPU_LANE_MEMORY_BYTES;
+        s.committed_bytes = s.resident_bytes;
+        s.backing_bytes[3] = s.resident_bytes;
+        let (a, d) = p.tick_joint(&mut kernels, 2, &[s], 16, false);
+        assert!(a.hold_counts && d.is_none() && !p.sampling);
+        s.kernel = CpuKernel::Avx512;
+        s.kernel_ready = false;
+        assert!(p.tick_joint(&mut kernels, 3, &[s], 16, false).0.hold_counts);
+        s.kernel_ready = true;
+        assert!(p.tick_joint(&mut kernels, 4, &[s], 16, false).1.is_none());
+        assert!(p.sampling);
+        s.backing_bytes.swap(0, 3);
+        let (_, d) = p.tick_joint(&mut kernels, 5, &[s], 16, false);
+        assert!(d.unwrap().learned.is_none());
+        assert!(p.joint.is_none());
+    }
+
+    #[test]
+    fn joint_trial_timeout_and_restart_do_not_retain_partial_confirmation() {
+        let (mut p, mut kernels, s) = joint_fixture("timeout", 8, 12);
+        p.joint.as_mut().unwrap().repeat = true;
+        let (a, d) = p.tick_joint(&mut kernels, JOINT_TIMEOUT_SECS, &[s], 16, false);
+        assert_eq!(a.kernel, Some(CpuKernel::Avx512));
+        assert_eq!(d.as_ref().unwrap().threads, 8);
+        assert!(d.unwrap().learned.is_none());
+        assert!(p.joint.is_none());
+        let restarted = Policy::new(&super::super::tests::test_config(), 8, 1, 16);
+        assert!(restarted.joint.is_none() && restarted.restoring.is_none());
+    }
+
+    #[test]
+    fn joint_deadline_allows_explicitly_long_count_windows() {
+        let (mut p, mut kernels, s) = joint_fixture("long-window", 8, 12);
+        p.window_secs = 300;
+        let (_, d) = p.tick_joint(&mut kernels, JOINT_TIMEOUT_SECS, &[s], 16, false);
+        assert!(p.joint.is_some());
+        assert!(d.is_none());
+    }
+
+    #[test]
+    fn interrupted_candidate_kernel_trial_cancels_outer_comparison() {
+        if !CpuKernel::Avx512.is_supported() || !CpuKernel::Avx2.is_supported() {
+            return;
+        }
+        let (mut p, mut kernels, mut s) = joint_fixture("disconnect", 8, 12);
+        // The inner trial's baseline is AVX2; the outer baseline is AVX-512.
+        assert!(p.tick_joint(&mut kernels, 1, &[s], 16, false).0.hold_counts);
+        s.hashing = false;
+        assert!(p.tick_joint(&mut kernels, 2, &[s], 16, false).1.is_none());
+        let (a, d) = p.tick_joint(&mut kernels, 5, &[s], 16, false);
+        assert_eq!(a.kernel, Some(CpuKernel::Avx512));
+        assert_eq!(d.as_ref().unwrap().threads, 8);
+        assert!(d.unwrap().learned.is_none());
+        assert!(p.joint.is_none());
+    }
+
+    #[test]
+    fn joint_tuner_rejects_a_gain_that_disappears_on_repeat() {
+        simulate_crossover(true, false);
+    }
+
+    #[test]
+    fn joint_restart_reuses_kernel_evidence_but_repeats_count_comparisons() {
+        simulate_crossover(false, true);
+    }
+
+    fn simulate_crossover(fade_on_repeat: bool, restart_on_repeat: bool) {
         use crate::backend::cpu::CpuAdaptiveSnapshot;
         use blocknet_pow_kernel::CpuKernel;
-        if !CpuKernel::Avx512.is_supported() || !CpuKernel::Avx2.is_supported() { return; }
+        if !CpuKernel::Avx512.is_supported() || !CpuKernel::Avx2.is_supported() {
+            return;
+        }
         let mut cfg = super::super::tests::test_config();
-        cfg.cpu_autotune_config_path = std::env::temp_dir().join(format!("seine-joint-valley-{}.json", std::process::id()));
-        let path = std::path::PathBuf::from(format!("{}.kernels.json", cfg.cpu_autotune_config_path.display()));
+        cfg.cpu_autotune_config_path = std::env::temp_dir().join(format!(
+            "seine-joint-valley-{fade_on_repeat}-{restart_on_repeat}-{}.json",
+            std::process::id()
+        ));
+        let path = std::path::PathBuf::from(format!(
+            "{}.kernels.json",
+            cfg.cpu_autotune_config_path.display()
+        ));
         let _ = fs::remove_file(&path);
-        let mut kernels = super::super::adaptive_kernel::Tuner::new(&cfg, CpuAutotuneHostFingerprint::default());
+        let mut kernels =
+            super::super::adaptive_kernel::Tuner::new(&cfg, CpuAutotuneHostFingerprint::default());
         let mut p = Policy::new(&cfg, 8, 1, 12);
         let mut s = CpuAdaptiveSnapshot {
-            kernel: CpuKernel::Avx512, kernel_generation: 1, kernel_ready: true,
+            kernel: CpuKernel::Avx512,
+            kernel_generation: 1,
+            kernel_ready: true,
             backing_bytes: [0, 0, 0, 8 * CPU_LANE_MEMORY_BYTES, 0],
-            running: true, threads: 8, committed_bytes: 8 * CPU_LANE_MEMORY_BYTES,
-            resident_bytes: 8 * CPU_LANE_MEMORY_BYTES, hashes: 0, hashing: true,
-            allocation_failures: 0, warmed: 8,
+            running: true,
+            threads: 8,
+            committed_bytes: 8 * CPU_LANE_MEMORY_BYTES,
+            resident_bytes: 8 * CPU_LANE_MEMORY_BYTES,
+            hashes: 0,
+            hashing: true,
+            allocation_failures: 0,
+            warmed: 8,
         };
         let mut accepted = false;
         let mut visited_candidate_kernel = false;
+        let mut repeats = 0;
+        let mut baseline_returns = 0;
+        let mut restarted = false;
+        let mut hash_remainder = 0;
         for now in 0..3600 {
-            // Scaled deterministic analogue of the C5 crossover: full512 peaks
+            // Hundredths of H/s model the C5 crossover: full512 peaks
             // at eight; twelve loses on full512 but wins with established AVX2.
-            let rate = if s.kernel == CpuKernel::Avx512 {
-                if s.threads <= 8 { s.threads as u64 * 121 + 4 }
-                else { 972 - (s.threads as u64 - 8) * 11 }
-            } else { [0,108,216,324,432,540,648,756,865,907,946,990,1023][s.threads] };
-            s.hashes += rate;
+            if matches!(p.phase, Phase::Confirm { .. }) && p.sampling {
+                assert_eq!(
+                    s.kernel,
+                    CpuKernel::Avx512,
+                    "confirm with original baseline kernel"
+                );
+            }
+            let phase_before = p.phase;
+            let rate = if fade_on_repeat
+                && repeats > 0
+                && s.threads == 12
+                && s.kernel == CpuKernel::Avx2
+            {
+                950
+            } else if s.kernel == CpuKernel::Avx512 {
+                if s.threads <= 8 {
+                    s.threads as u64 * 121 + 4
+                } else {
+                    972 - (s.threads as u64 - 8) * 11
+                }
+            } else {
+                [
+                    0, 108, 216, 324, 432, 540, 648, 756, 865, 907, 946, 990, 1023,
+                ][s.threads]
+            };
+            hash_remainder += rate;
+            s.hashes += hash_remainder / 100;
+            hash_remainder %= 100;
             visited_candidate_kernel |= s.threads == 12 && s.kernel == CpuKernel::Avx2;
             let (action, decision) = p.tick_joint(&mut kernels, now, &[s], 12, false);
             if let Some(kernel) = action.kernel {
-                if kernel != s.kernel { s.kernel_generation += 1; }
+                if kernel != s.kernel {
+                    s.kernel_generation += 1;
+                }
                 s.kernel = kernel;
             }
+            if matches!(phase_before, Phase::Probe { .. })
+                && matches!(p.phase, Phase::Confirm { .. })
+            {
+                baseline_returns += 1;
+            }
             if let Some(d) = decision {
+                if d.reason == "repeating joint configuration confirmation" {
+                    assert!(
+                        d.learned.is_none(),
+                        "first joint gain must not reach count cache"
+                    );
+                    repeats += 1;
+                    if restart_on_repeat && !restarted {
+                        // A restart can reuse the fully confirmed kernel cache,
+                        // but has no partially confirmed count winner to resume.
+                        assert!(path.exists());
+                        kernels = super::super::adaptive_kernel::Tuner::new(
+                            &cfg,
+                            CpuAutotuneHostFingerprint::default(),
+                        );
+                        p = Policy::new(&cfg, 8, 1, 12);
+                        s.kernel = CpuKernel::Avx512;
+                        s.kernel_generation = 1;
+                        s.hashes = 0;
+                        hash_remainder = 0;
+                        restarted = true;
+                    }
+                }
                 accepted |= d.learned.is_some() && d.threads == 12 && s.kernel == CpuKernel::Avx2;
+                if repeats > 0 && d.learned.is_some() {
+                    break;
+                }
             }
             s.threads = p.current;
             s.warmed = p.current;
@@ -1591,8 +2021,31 @@ mod tests {
             s.backing_bytes[3] = s.resident_bytes;
         }
         let _ = fs::remove_file(path);
-        assert!(visited_candidate_kernel, "candidate count was rejected without testing its alternate kernel");
-        assert!(accepted, "joint winner twelve/AVX2 was never confirmed");
+        assert!(
+            visited_candidate_kernel,
+            "candidate count was rejected without testing its alternate kernel"
+        );
+        assert_eq!(repeats, 1 + usize::from(restart_on_repeat));
+        assert_eq!(
+            baseline_returns,
+            if restart_on_repeat { 3 } else { 2 },
+            "two complete configuration comparisons required"
+        );
+        assert_eq!(
+            accepted, !fade_on_repeat,
+            "second comparison controls promotion"
+        );
+        assert_eq!(p.current, if fade_on_repeat { 8 } else { 12 });
+        let expected_peak = if fade_on_repeat { 9.72 } else { 10.23 };
+        assert!((p.peak_hps - expected_peak).abs() < 0.04);
+        assert_eq!(
+            s.kernel,
+            if fade_on_repeat {
+                CpuKernel::Avx512
+            } else {
+                CpuKernel::Avx2
+            }
+        );
     }
 
     #[test]

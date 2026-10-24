@@ -1,4 +1,5 @@
-//! Bounded kernel trials on productive work, serialized with worker-count trials.
+//! Bounded kernel trials on productive work at baseline and proposed worker counts.
+//! Count sampling pauses while a kernel comparison is in progress.
 //! Only established paths participate. Experimental kernels remain benchmark-only.
 use super::*;
 use crate::backend::cpu::CpuAdaptiveSnapshot;
@@ -161,6 +162,9 @@ pub(super) struct Action {
     pub hold_counts: bool,
     pub kernel: Option<CpuKernel>,
     pub reset_scores: bool,
+    /// An outer count/configuration comparison must discard interrupted or
+    /// inconclusive kernel trials, even if its original path is restored.
+    pub interrupted: bool,
     pub message: Option<String>,
 }
 
@@ -272,6 +276,7 @@ impl Tuner {
         Action {
             kernel: base,
             reset_scores: false,
+            interrupted: true,
             message: base.map(|_| "kernel comparison interrupted; keeping previous path".into()),
             ..Action::default()
         }
@@ -334,7 +339,7 @@ impl Tuner {
                     self.settling = Some(kernel);
                     self.settle_started = now;
                     return Action {
-                        hold_counts: true, kernel: Some(kernel), reset_scores: true,
+                        hold_counts: true, kernel: Some(kernel), reset_scores: true, interrupted: false,
                         message: Some(format!("restoring confirmed {kernel} path for this worker count and memory backing")),
                     };
                 }
@@ -421,6 +426,7 @@ impl Tuner {
                 self.save(trial, base);
             }
             return Action {
+                interrupted: !stable,
                 message: Some("keeping current kernel; no confirmed gain".into()),
                 ..Action::default()
             };
@@ -445,6 +451,7 @@ impl Tuner {
                 hold_counts: true,
                 kernel: Some(kernel),
                 reset_scores: promoted,
+                interrupted: !conclusive,
                 message: Some(if promoted {
                     format!("confirmed faster {kernel} path in two comparisons")
                 } else if conclusive {
@@ -718,7 +725,7 @@ mod tests {
     }
 
     #[test]
-    fn count_probe_blocks_kernel_probe_and_trial_has_hard_deadline() {
+    fn caller_can_block_new_kernel_probe_and_trial_has_hard_deadline() {
         if candidates().len() < 2 {
             return;
         }
