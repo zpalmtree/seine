@@ -10,16 +10,18 @@ pub enum CpuKernel {
     Neon,
     /// Runtime-guarded NEON path using SHA3 XOR/rotate and 64-byte prefetch coverage.
     /// Automatically compared with baseline NEON on hosts with SHA3 support.
+    #[cfg(target_arch = "aarch64")]
     NeonSha3,
 }
 
 impl CpuKernel {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 5 + cfg!(target_arch = "aarch64") as usize] = [
         Self::Scalar,
         Self::Avx2,
         Self::Avx512,
         Self::Avx512256,
         Self::Neon,
+        #[cfg(target_arch = "aarch64")]
         Self::NeonSha3,
     ];
 
@@ -30,6 +32,7 @@ impl CpuKernel {
             Self::Avx512 => "avx512",
             Self::Avx512256 => "avx512-256",
             Self::Neon => "neon",
+            #[cfg(target_arch = "aarch64")]
             Self::NeonSha3 => "neon-sha3",
         }
     }
@@ -81,7 +84,11 @@ impl std::str::FromStr for CpuKernel {
             .into_iter()
             .find(|kernel| kernel.as_str() == value)
             .ok_or_else(|| {
-                "expected scalar, avx2, avx512, avx512-256, neon, or neon-sha3".to_string()
+                #[cfg(target_arch = "aarch64")]
+                let expected = "expected scalar, avx2, avx512, avx512-256, neon, or neon-sha3";
+                #[cfg(not(target_arch = "aarch64"))]
+                let expected = "expected scalar, avx2, avx512, avx512-256, or neon";
+                expected.to_string()
             })
     }
 }

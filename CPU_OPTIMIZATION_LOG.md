@@ -11,6 +11,8 @@ This log tracks CPU backend/hash-kernel tuning attempts and measured outcomes.
 
 ## Newest-first index
 
+- `2026-10-24 ARM enum isolation: x86 layout ablation, unvalidated performance`
+
 - `2026-10-24 parked CPU worker task budgets and spawn failure recovery`
 - `2026-10-24 automatic joint CPU kernel and worker selection`
 - `2026-10-24 stable efficiency selections during productive rechecks`
@@ -59,6 +61,51 @@ This log tracks CPU backend/hash-kernel tuning attempts and measured outcomes.
 - `Validation`
 - `Baseline`
 - `Benchmark protocol`
+
+## 2026-10-24 ARM enum isolation: x86 layout ablation, unvalidated performance
+
+Research follow-up based on `f20e7bb1772b`, kept separate from production. Gate
+`NeonSha3` enum membership, parser choices, dispatch matches and candidate lists
+to AArch64. The ARM parity example now has an explicit unsupported-target entry
+point. CLI help uses a generic description; invalid-kernel diagnostics retain
+architecture-specific choices. No hashing arithmetic changes.
+
+The isolated generic x86 CPU-only Rust 1.93.0 release has source fingerprint
+`34b506c9c59b8142` and SHA-256
+`2a10430e40804053e9e80421b87538438498c974290f1516212d486f7a948b7f`.
+It was built before committing this experiment, so its embedded Git label is
+its parent `f20e7bb1772b`; the fingerprint and binary SHA identify the actual
+modified source. Comparison baselines and complete normalized function results
+are retained in `experiments/arm-enum-isolation/layout.json`.
+
+- Both direct hash-calling thread wrappers now match baseline instruction shapes.
+  This removes the three enum-bound/translation immediates previously different
+  in the 12,566-byte worker wrapper.
+- All four fill loops, hash dispatcher and six compression helpers retain their
+  baseline instruction shapes and sizes. Their entry positions remain shifted
+  by 16 bytes modulo 64, exactly as in ungated `f20e7bb`.
+- Worker wrapper entry modulo 64 is 16, versus baseline 48 and ungated 0. The
+  second hash caller moves to 48, versus baseline/ungated 16.
+- Therefore enum isolation does not restore baseline layout. Static similarity
+  is not semantic equivalence: this comparison normalizes relocated addresses
+  and does not recursively validate referenced data or callees. No native
+  throughput benchmark was run, no cause of Intel regressions is established,
+  and this experiment is not a performance fix approved for production.
+
+Validation: CPU-only workspace tests passed (495 passed, five existing ignored
+resource tests); AArch64 Linux kernel `--all-targets` crosscheck passed; release
+build passed. On x86 the CLI rejects `neon-sha3` during parsing with exit 2.
+Edited Rust files pass pinned-toolchain formatting and `git diff --check`.
+
+Reproduce inspection without executing the binaries:
+
+```sh
+python3 experiments/arm-enum-isolation/inspect_layout.py BASELINE_ELF UNGATED_F20_ELF GATED_ELF
+```
+
+The script requires GNU `nm`/`objdump`, records binary SHA-256 and asserts that
+all expected fill functions, the dispatcher and both hash callers were found.
+Native paired Intel timings and ARM runtime parity remain promotion gates.
 
 ## 2026-10-24 parked CPU worker task budgets and spawn failure recovery
 

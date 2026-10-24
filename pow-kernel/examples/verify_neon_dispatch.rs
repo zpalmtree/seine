@@ -1,7 +1,15 @@
 //! Native full-size runtime-dispatch parity, including dirty reuse and switches.
+#[cfg(target_arch = "aarch64")]
 use argon2::{Algorithm, Argon2, Params, Version};
+#[cfg(target_arch = "aarch64")]
 use blocknet_pow_kernel::{CpuKernel, FixedArgon2id, PowBlock};
 
+#[cfg(not(target_arch = "aarch64"))]
+fn main() {
+    panic!("requires native AArch64");
+}
+
+#[cfg(target_arch = "aarch64")]
 fn main() {
     assert!(CpuKernel::Neon.is_supported(), "requires native AArch64");
     let sha3_supported = CpuKernel::NeonSha3.is_supported();

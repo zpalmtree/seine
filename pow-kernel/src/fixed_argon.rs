@@ -69,6 +69,7 @@ const fn kernel_isa(kernel: CpuKernel) -> u8 {
         CpuKernel::Avx512 => ISA_AVX512,
         CpuKernel::Avx512256 => ISA_AVX512_256,
         CpuKernel::Neon => ISA_NEON,
+        #[cfg(target_arch = "aarch64")]
         CpuKernel::NeonSha3 => ISA_NEON_SHA3,
     }
 }

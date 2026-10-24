@@ -17,6 +17,7 @@ fn candidates() -> Vec<CpuKernel> {
         CpuKernel::Avx512,
         CpuKernel::Avx2,
         CpuKernel::Neon,
+        #[cfg(target_arch = "aarch64")]
         CpuKernel::NeonSha3,
     ]
     .into_iter()
@@ -515,6 +516,7 @@ mod tests {
         assert!(paths.len() <= 2);
         assert!(paths.iter().all(|path| path.is_supported()));
         assert!(!paths.contains(&CpuKernel::Avx512256));
+        #[cfg(target_arch = "aarch64")]
         assert_eq!(
             paths.contains(&CpuKernel::NeonSha3),
             CpuKernel::NeonSha3.is_supported()

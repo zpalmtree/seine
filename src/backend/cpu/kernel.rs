@@ -673,6 +673,7 @@ mod tests {
                 CpuKernel::Avx2,
                 CpuKernel::Avx512,
                 CpuKernel::Neon,
+                #[cfg(target_arch = "aarch64")]
                 CpuKernel::NeonSha3,
             ]
             .into_iter()
