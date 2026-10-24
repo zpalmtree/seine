@@ -952,8 +952,34 @@ pub(crate) fn affinity_topology_fingerprint() -> String {
         // Cache identity must change on cpuset/NUMA/L3 changes even at equal CPU counts.
         format!("{available:?}:{:?}", topology::detect(&available))
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
+    {
+        let available = core_affinity::get_core_ids()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|cpu| cpu.id)
+            .collect();
+        physical_topology_fingerprint(&available, platform_physical_core_groups(&available))
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     String::new()
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn physical_topology_fingerprint(
+    available: &BTreeSet<usize>,
+    groups: Option<Vec<Vec<usize>>>,
+) -> String {
+    let groups = groups.map(|mut groups| {
+        for group in &mut groups {
+            group.sort_unstable();
+        }
+        groups.sort_unstable();
+        groups
+    });
+    // Equal-sized process masks can select different CCDs or SMT siblings.
+    // Keep the mask even when Windows cannot supply complete core topology.
+    format!("{available:?}:{groups:?}")
 }
 
 /// Orders native Windows logical CPUs so one hardware thread from every physical core is used
@@ -1655,6 +1681,76 @@ mod tests {
             .map(|core| core.id)
             .collect::<Vec<_>>();
         assert_eq!(ordered, vec![0, 2, 4, 6, 1, 3, 5, 7]);
+    }
+
+    #[test]
+    fn affinity_fingerprint_distinguishes_equal_sized_cpu_masks() {
+        let left = [0, 2, 4, 6].into_iter().collect();
+        let right = [16, 18, 20, 22].into_iter().collect();
+        assert_ne!(
+            super::physical_topology_fingerprint(&left, None),
+            super::physical_topology_fingerprint(&right, None),
+        );
+    }
+
+    #[test]
+    fn affinity_fingerprint_distinguishes_smt_layout_and_canonicalizes_order() {
+        let cpus = [0, 1, 2, 3].into_iter().collect();
+        let paired =
+            super::physical_topology_fingerprint(&cpus, Some(vec![vec![0, 1], vec![2, 3]]));
+        assert_eq!(
+            paired,
+            super::physical_topology_fingerprint(&cpus, Some(vec![vec![3, 2], vec![1, 0]]),),
+        );
+        assert_ne!(
+            paired,
+            super::physical_topology_fingerprint(
+                &cpus,
+                Some(vec![vec![0], vec![1], vec![2], vec![3]]),
+            ),
+        );
+        assert_ne!(paired, super::physical_topology_fingerprint(&cpus, None));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    #[ignore = "changes this test process's CPU mask; run alone with --test-threads=1"]
+    fn windows_fingerprint_changes_with_process_cpu_mask() {
+        use windows_sys::Win32::System::Threading::{
+            GetCurrentProcess, GetProcessAffinityMask, SetProcessAffinityMask,
+        };
+        let process = unsafe { GetCurrentProcess() };
+        let mut original = 0usize;
+        let mut system = 0usize;
+        assert_ne!(
+            unsafe { GetProcessAffinityMask(process, &mut original, &mut system) },
+            0
+        );
+        if original.count_ones() < 2 {
+            eprintln!("requires two available logical CPUs; native mask check skipped");
+            return;
+        }
+        struct RestoreMask(usize);
+        impl Drop for RestoreMask {
+            fn drop(&mut self) {
+                assert_ne!(
+                    unsafe { SetProcessAffinityMask(GetCurrentProcess(), self.0) },
+                    0
+                );
+            }
+        }
+        let restore = RestoreMask(original);
+        let before = super::affinity_topology_fingerprint();
+        let first = 1usize << original.trailing_zeros();
+        let last = 1usize << (usize::BITS - 1 - original.leading_zeros());
+        assert_ne!(unsafe { SetProcessAffinityMask(process, first) }, 0);
+        let first_fingerprint = super::affinity_topology_fingerprint();
+        assert_ne!(unsafe { SetProcessAffinityMask(process, last) }, 0);
+        let last_fingerprint = super::affinity_topology_fingerprint();
+        drop(restore);
+        assert_eq!(before, super::affinity_topology_fingerprint());
+        assert_ne!(first_fingerprint, last_fingerprint);
+        println!("native masks {first:#x} => {first_fingerprint}; {last:#x} => {last_fingerprint}; restored {original:#x}");
     }
 
     #[test]
