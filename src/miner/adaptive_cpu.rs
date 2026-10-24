@@ -1548,6 +1548,54 @@ mod tests {
     }
 
     #[test]
+    fn joint_tuner_crosses_count_kernel_valley() {
+        use crate::backend::cpu::CpuAdaptiveSnapshot;
+        use blocknet_pow_kernel::CpuKernel;
+        if !CpuKernel::Avx512.is_supported() || !CpuKernel::Avx2.is_supported() { return; }
+        let mut cfg = super::super::tests::test_config();
+        cfg.cpu_autotune_config_path = std::env::temp_dir().join(format!("seine-joint-valley-{}.json", std::process::id()));
+        let path = std::path::PathBuf::from(format!("{}.kernels.json", cfg.cpu_autotune_config_path.display()));
+        let _ = fs::remove_file(&path);
+        let mut kernels = super::super::adaptive_kernel::Tuner::new(&cfg, CpuAutotuneHostFingerprint::default());
+        let mut p = Policy::new(&cfg, 8, 1, 12);
+        let mut s = CpuAdaptiveSnapshot {
+            kernel: CpuKernel::Avx512, kernel_generation: 1, kernel_ready: true,
+            backing_bytes: [0, 0, 0, 8 * CPU_LANE_MEMORY_BYTES, 0],
+            running: true, threads: 8, committed_bytes: 8 * CPU_LANE_MEMORY_BYTES,
+            resident_bytes: 8 * CPU_LANE_MEMORY_BYTES, hashes: 0, hashing: true,
+            allocation_failures: 0, warmed: 8,
+        };
+        let mut accepted = false;
+        let mut visited_candidate_kernel = false;
+        for now in 0..3600 {
+            // Scaled deterministic analogue of the C5 crossover: full512 peaks
+            // at eight; twelve loses on full512 but wins with established AVX2.
+            let rate = if s.kernel == CpuKernel::Avx512 {
+                if s.threads <= 8 { s.threads as u64 * 121 + 4 }
+                else { 972 - (s.threads as u64 - 8) * 11 }
+            } else { [0,108,216,324,432,540,648,756,865,907,946,990,1023][s.threads] };
+            s.hashes += rate;
+            visited_candidate_kernel |= s.threads == 12 && s.kernel == CpuKernel::Avx2;
+            let (action, decision) = p.tick_joint(&mut kernels, now, &[s], 12, false);
+            if let Some(kernel) = action.kernel {
+                if kernel != s.kernel { s.kernel_generation += 1; }
+                s.kernel = kernel;
+            }
+            if let Some(d) = decision {
+                accepted |= d.learned.is_some() && d.threads == 12 && s.kernel == CpuKernel::Avx2;
+            }
+            s.threads = p.current;
+            s.warmed = p.current;
+            s.resident_bytes = p.current as u64 * CPU_LANE_MEMORY_BYTES;
+            s.committed_bytes = s.resident_bytes;
+            s.backing_bytes[3] = s.resident_bytes;
+        }
+        let _ = fs::remove_file(path);
+        assert!(visited_candidate_kernel, "candidate count was rejected without testing its alternate kernel");
+        assert!(accepted, "joint winner twelve/AVX2 was never confirmed");
+    }
+
+    #[test]
     fn joint_tuner_finds_count_dependent_kernel_and_preserves_memory_safety() {
         use crate::backend::cpu::CpuAdaptiveSnapshot;
         use blocknet_pow_kernel::CpuKernel;
