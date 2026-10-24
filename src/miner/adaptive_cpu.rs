@@ -234,6 +234,7 @@ struct Policy {
     peak_hps: f64,
     joint: Option<JointComparison>,
     restoring: Option<(CpuKernel, u64)>,
+    members: Option<Vec<usize>>,
 }
 
 #[derive(Debug)]
@@ -271,6 +272,7 @@ impl Policy {
             peak_hps: 0.0,
             joint: None,
             restoring: None,
+            members: None,
         }
     }
 
@@ -383,6 +385,13 @@ impl Policy {
         allocation_failed: bool,
     ) -> (super::adaptive_kernel::Action, Option<Decision>) {
         let cap = cap.min(self.max);
+        let members: Vec<_> = snapshots
+            .iter()
+            .enumerate()
+            .filter_map(|(index, s)| s.running.then_some(index))
+            .collect();
+        let membership_changed = self.members.as_ref().is_some_and(|old| *old != members);
+        self.members = Some(members);
         let running: Vec<_> = snapshots.iter().filter(|s| s.running).collect();
         let actual = running.iter().map(|s| s.threads).min().unwrap_or(0);
         let allocation_limited = allocation_failed || actual < self.current;
@@ -394,6 +403,38 @@ impl Policy {
                     && s.resident_bytes == s.threads as u64 * CPU_LANE_MEMORY_BYTES
             });
         self.observe_cap(now, cap);
+        if membership_changed {
+            // Aggregate rates from different backend sets are not comparable.
+            // Invalidate once, then let the surviving set tune normally.
+            self.reference_hps = None;
+            self.peak_hps = 0.0;
+            self.up = true;
+            self.ramp = true;
+            self.attempts = 0;
+            self.unsuccessful = 0;
+            let (mut action, decision) = if self.joint.is_some() {
+                self.cancel_joint(kernels, now, snapshots, cap, actual, allocation_limited)
+            } else {
+                self.restoring = None;
+                let delay = if allocation_limited {
+                    self.allocation_retry_at = now.saturating_add(RETRY_SECS);
+                    RETRY_SECS
+                } else {
+                    RECOVERY_SECS
+                };
+                self.reset(now, delay);
+                (
+                    kernels.abort(now),
+                    Some(self.change(
+                        actual.min(cap),
+                        "active CPU backends changed; restarting comparisons",
+                    )),
+                )
+            };
+            kernels.forget_previous_members(now);
+            action.reset_scores = true;
+            return (action, decision);
+        }
         let recovering_capacity = self.recovery_pending && now >= self.allocation_retry_at;
         let recovery_due = recovering_capacity
             && now >= self.next_trial
@@ -402,9 +443,8 @@ impl Policy {
             || cap < actual
             || actual != self.current
             || allocation_failed
-            || running.len() != snapshots.len()
             || actual == 0;
-        let backing: Vec<_> = snapshots.iter().map(|s| s.backing_bytes).collect();
+        let backing: Vec<_> = running.iter().map(|s| s.backing_bytes).collect();
         let joint_invalid = self.joint.as_ref().is_some_and(|j| {
             j.base.max(j.candidate) > cap
                 || now.saturating_sub(j.started)
@@ -1751,7 +1791,7 @@ mod tests {
 
     #[test]
     fn joint_tuner_crosses_count_kernel_valley() {
-        simulate_crossover(false, false);
+        simulate_crossover(false, false, false);
     }
 
     fn joint_fixture(
@@ -1799,6 +1839,27 @@ mod tests {
             warmed: candidate,
         };
         (p, kernels, s)
+    }
+
+    #[test]
+    fn membership_change_preserves_allocation_cooldown() {
+        let (mut p, mut kernels, mut s) = joint_fixture("membership-allocation", 8, 12);
+        p.phase = Phase::Baseline;
+        p.joint = None;
+        p.members = Some(vec![0, 1]);
+        let mut stopped = s;
+        stopped.running = false;
+        s.threads = 3;
+        s.warmed = 3;
+        s.resident_bytes = 3 * CPU_LANE_MEMORY_BYTES;
+        s.committed_bytes = s.resident_bytes;
+        s.backing_bytes[3] = s.resident_bytes;
+        let (action, decision) = p.tick_joint(&mut kernels, 100, &[s, stopped], 16, true);
+        assert!(action.reset_scores);
+        assert_eq!(decision.as_ref().unwrap().threads, 3);
+        assert!(decision.unwrap().learned.is_none());
+        assert_eq!(p.allocation_retry_at, 100 + RETRY_SECS);
+        assert_eq!(p.next_trial, 100 + RETRY_SECS);
     }
 
     #[test]
@@ -1895,15 +1956,20 @@ mod tests {
 
     #[test]
     fn joint_tuner_rejects_a_gain_that_disappears_on_repeat() {
-        simulate_crossover(true, false);
+        simulate_crossover(true, false, false);
     }
 
     #[test]
     fn joint_restart_reuses_kernel_evidence_but_repeats_count_comparisons() {
-        simulate_crossover(false, true);
+        simulate_crossover(false, true, false);
     }
 
-    fn simulate_crossover(fade_on_repeat: bool, restart_on_repeat: bool) {
+    #[test]
+    fn joint_survivor_finishes_tuning_after_backend_quarantine() {
+        simulate_crossover(false, false, true);
+    }
+
+    fn simulate_crossover(fade_on_repeat: bool, restart_on_repeat: bool, quarantine: bool) {
         use crate::backend::cpu::CpuAdaptiveSnapshot;
         use blocknet_pow_kernel::CpuKernel;
         if !CpuKernel::Avx512.is_supported() || !CpuKernel::Avx2.is_supported() {
@@ -1911,7 +1977,7 @@ mod tests {
         }
         let mut cfg = super::super::tests::test_config();
         cfg.cpu_autotune_config_path = std::env::temp_dir().join(format!(
-            "seine-joint-valley-{fade_on_repeat}-{restart_on_repeat}-{}.json",
+            "seine-joint-valley-{fade_on_repeat}-{restart_on_repeat}-{quarantine}-{}.json",
             std::process::id()
         ));
         let path = std::path::PathBuf::from(format!(
@@ -1942,6 +2008,7 @@ mod tests {
         let mut baseline_returns = 0;
         let mut restarted = false;
         let mut hash_remainder = 0;
+        let mut stopped = None;
         for now in 0..3600 {
             // Hundredths of H/s model the C5 crossover: full512 peaks
             // at eight; twelve loses on full512 but wins with established AVX2.
@@ -1974,7 +2041,32 @@ mod tests {
             s.hashes += hash_remainder / 100;
             hash_remainder %= 100;
             visited_candidate_kernel |= s.threads == 12 && s.kernel == CpuKernel::Avx2;
-            let (action, decision) = p.tick_joint(&mut kernels, now, &[s], 12, false);
+            let just_stopped = quarantine
+                && stopped.is_none()
+                && matches!(p.phase, Phase::Probe { .. })
+                && kernels.is_comparing();
+            if just_stopped {
+                let mut other = s;
+                // Retain stale counters and an unacknowledged path, as the
+                // controller's full backend list does after quarantine.
+                other.running = false;
+                other.hashing = false;
+                other.kernel_ready = false;
+                other.hashes = 1_000_000;
+                stopped = Some(other);
+            }
+            let snapshots = if quarantine {
+                vec![s, stopped.unwrap_or(s)]
+            } else {
+                vec![s]
+            };
+            let (action, decision) = p.tick_joint(&mut kernels, now, &snapshots, 12, false);
+            if just_stopped {
+                assert!(action.reset_scores);
+                assert!(decision.as_ref().unwrap().learned.is_none());
+                assert!(p.joint.is_none());
+                assert_eq!(p.peak_hps, 0.0, "old aggregate peak must be discarded");
+            }
             if let Some(kernel) = action.kernel {
                 if kernel != s.kernel {
                     s.kernel_generation += 1;
@@ -2026,11 +2118,16 @@ mod tests {
             "candidate count was rejected without testing its alternate kernel"
         );
         assert_eq!(repeats, 1 + usize::from(restart_on_repeat));
-        assert_eq!(
-            baseline_returns,
-            if restart_on_repeat { 3 } else { 2 },
-            "two complete configuration comparisons required"
-        );
+        if quarantine {
+            assert!(stopped.is_some());
+            assert!(baseline_returns >= 2, "survivor must finish comparisons");
+        } else {
+            assert_eq!(
+                baseline_returns,
+                if restart_on_repeat { 3 } else { 2 },
+                "two complete configuration comparisons required"
+            );
+        }
         assert_eq!(
             accepted, !fade_on_repeat,
             "second comparison controls promotion"

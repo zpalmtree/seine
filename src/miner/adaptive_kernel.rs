@@ -27,6 +27,9 @@ fn candidates() -> Vec<CpuKernel> {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct Context {
+    // Indices in the controller's stable CPU backend list. Different survivors
+    // may have different affinity even with identical worker/backing vectors.
+    members: Vec<usize>,
     workers: Vec<usize>,
     backing: Vec<[u64; 5]>,
 }
@@ -34,8 +37,21 @@ struct Context {
 impl Context {
     fn from_snapshots(snapshots: &[CpuAdaptiveSnapshot]) -> Self {
         Self {
-            workers: snapshots.iter().map(|s| s.threads).collect(),
-            backing: snapshots.iter().map(|s| s.backing_bytes).collect(),
+            members: snapshots
+                .iter()
+                .enumerate()
+                .filter_map(|(index, s)| s.running.then_some(index))
+                .collect(),
+            workers: snapshots
+                .iter()
+                .filter(|s| s.running)
+                .map(|s| s.threads)
+                .collect(),
+            backing: snapshots
+                .iter()
+                .filter(|s| s.running)
+                .map(|s| s.backing_bytes)
+                .collect(),
         }
     }
 }
@@ -60,7 +76,7 @@ struct Cache {
 
 impl Cache {
     fn compatible(&self, host: &CpuAutotuneHostFingerprint, configuration: &str) -> bool {
-        self.schema == 1 && self.host == *host && self.configuration == configuration
+        self.schema == 2 && self.host == *host && self.configuration == configuration
     }
 
     fn winner(&self, context: &Context, now: u64) -> Option<CpuKernel> {
@@ -205,7 +221,7 @@ impl Tuner {
             .and_then(|raw| serde_json::from_slice::<Cache>(&raw).ok())
             .filter(|record| record.compatible(&host, &configuration))
             .unwrap_or(Cache {
-                schema: 1,
+                schema: 2,
                 host,
                 configuration,
                 winners: Vec::new(),
@@ -266,6 +282,16 @@ impl Tuner {
         self.trial.is_some() || self.settling.is_some()
     }
 
+    pub(super) fn forget_previous_members(&mut self, now: u64) {
+        // The caller already aborted/restored the old comparison. Its retry
+        // delay must not let a new membership's count probes bypass kernel
+        // selection and incorrectly reject a count on its incumbent path.
+        debug_assert!(!self.is_comparing());
+        self.checked = None;
+        self.retry_at = now;
+        self.next_check = now;
+    }
+
     pub(super) fn abort(&mut self, now: u64) -> Action {
         let base = self.trial.take().map(|trial| trial.base);
         self.settling = None;
@@ -289,10 +315,12 @@ impl Tuner {
         ready: bool,
         allow_start: bool,
     ) -> Action {
+        let context = Context::from_snapshots(snapshots);
+        let active: Vec<_> = snapshots.iter().filter(|s| s.running).copied().collect();
+        let snapshots = active.as_slice();
         if snapshots.is_empty() || candidates().len() < 2 {
             return Action::default();
         }
-        let context = Context::from_snapshots(snapshots);
         let hashes: u64 = snapshots.iter().map(|s| s.hashes).sum();
         if let Some(kernel) = self.settling {
             if ready
@@ -675,11 +703,36 @@ mod tests {
     }
 
     #[test]
-    fn cache_is_scoped_to_count_backing_host_build_and_supported_paths() {
+    fn stopped_backend_does_not_block_acknowledgements_or_contribute_hashes() {
+        if candidates().len() < 2 {
+            return;
+        }
+        let mut t = tuner();
+        let mut s = snapshot();
+        let mut stopped = s;
+        stopped.running = false;
+        stopped.hashing = false;
+        stopped.kernel_ready = false;
+        stopped.hashes = 1_000_000;
+        assert!(t.tick(0, &[stopped, s], true, true).hold_counts);
+        assert!(t.tick(1, &[stopped, s], true, true).hold_counts);
+        s.hashes = 3000;
+        stopped.hashes += 50_000;
+        let action = t.tick(31, &[stopped, s], true, true);
+        assert!(action.kernel.is_some());
+        let trial = t.trial.as_ref().unwrap();
+        assert_eq!(trial.context.members, vec![1]);
+        assert_eq!(trial.context.workers, vec![1]);
+        assert_eq!(trial.samples[0].hashes, 3000);
+        assert_eq!(trial.samples[0].secs, 30);
+    }
+
+    #[test]
+    fn cache_is_scoped_to_members_count_backing_host_build_and_supported_paths() {
         let host = CpuAutotuneHostFingerprint::default();
         let context = Context::from_snapshots(&[snapshot()]);
         let mut cache = Cache {
-            schema: 1,
+            schema: 2,
             host: host.clone(),
             configuration: "test".into(),
             winners: vec![Winner {
@@ -692,6 +745,9 @@ mod tests {
             }],
         };
         assert!(cache.compatible(&host, "test"));
+        cache.schema = 1;
+        assert!(!cache.compatible(&host, "test"));
+        cache.schema = 2;
         let mut other = host.clone();
         other.build_fingerprint = "changed".into();
         assert!(!cache.compatible(&other, "test"));
@@ -700,6 +756,9 @@ mod tests {
         assert!(!cache.compatible(&other, "test"));
         assert!(!cache.compatible(&host, "other"));
         let mut changed = context.clone();
+        changed.members[0] = 1;
+        assert!(cache.winner(&changed, 100).is_none());
+        changed = context.clone();
         changed.workers[0] += 1;
         assert!(cache.winner(&changed, 100).is_none());
         changed = context.clone();

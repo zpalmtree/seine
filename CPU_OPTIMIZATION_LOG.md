@@ -122,6 +122,38 @@ and productive hashes through restores, and assess count/kernel trial overhead
 alongside the independent frozen-build regression. No native mining, full-size
 arena test, cloud rental, PR or merge was performed by this implementation task.
 
+Review follow-up: quarantined CPU backends
+
+Independent review found that the persistent presence of a stopped backend in
+the controller's full snapshot list made every tick a safety change. The new
+joint policy repeatedly aborted the survivor's count probes. A two-backend
+regression fails on `9d36157`: after one backend stops during a count trial, the
+survivor never reaches the alternate kernel.
+
+The follow-up tracks stable active backend indices and invalidates aggregate
+comparison/peak evidence once when membership changes. Both tuners exclude stopped
+backends from hash accounting, readiness, acknowledgements and page backing.
+Kernel cache schema 2 also includes those indices, so equal worker/backing vectors
+on different survivors cannot share a winner. Older kernel-cache records are
+rebuilt; the worker-count seed format is unchanged. The controller continues to
+avoid writing full-configuration count hints from a partial surviving set.
+
+An old membership's kernel retry timer is cleared after its trial has been
+aborted/restored. Otherwise the survivor's first wider count probe can bypass
+kernel selection during that timer and reject the crossover count too early.
+Count-side allocation cooldowns remain in force, including simultaneous backend
+loss and allocation failure. No quarantined backend is restarted.
+
+The final survivor trace stops one backend during a proposed count's kernel
+trial, leaves stale hashes and an unacknowledged kernel in its snapshot, and
+requires the survivor to finish both configuration confirmations and select
+12/AVX2. Additional coverage checks active-index cache isolation, exclusion of
+stopped counters and acknowledgements, and the simultaneous allocation cooldown.
+Final CPU workspace validation: **506 passed** (499 root-binary plus seven
+library tests), five opt-in tests ignored. Windows GNU CPU test compilation,
+pinned formatting and diff checks pass. Native validation and adoption remain
+pending; this follow-up stays on the isolated research branch.
+
 ## 2026-10-24 parked CPU worker task budgets and spawn failure recovery
 
 The memory-recovery change preserved CPU-sized parked lanes but also eagerly

@@ -179,8 +179,8 @@ extended for explicitly longer count windows; restarts discard partial progress.
 This adds productive mining trial time without delaying the initial connection.
 
 Confirmed kernel choices are cached alongside the thread cache in
-`seine.cpu-autotune.json.kernels.json`, keyed by worker counts, observed page
-backing, CPU/build identity, placement and tuning settings. Known contexts reuse
+`seine.cpu-autotune.json.kernels.json`, keyed by active CPU backend identities,
+worker counts, observed page backing, CPU/build identity, placement and tuning settings. Known contexts reuse
 that choice; stable contexts are reconsidered after 30 minutes. Experimental
 `avx512-256` remains benchmark-only. AVX2-only CPUs and ARM hosts without SHA3
 keep their existing paths. No extra configuration is needed: `--disable-cpu-autotune-threads` disables
