@@ -1,3 +1,6 @@
+#[cfg(target_arch = "x86_64")]
+mod avx512_256;
+
 use crate::CpuKernel;
 use std::convert::TryInto;
 use std::num::Wrapping;
