@@ -1,0 +1,162 @@
+{
+  "schema": "seine-numa-validation/v1",
+  "recorded_utc": "2026-10-24T20:39:49.695221+00:00",
+  "source_commit": "7728086d6eba5bbe1854ee4834e3739bf0487b4b",
+  "base_commit": "1fe7f239fafb3b9de5df9728babbf041d6c03910",
+  "build": {
+    "toolchain": "rustc 1.93.0 (254b59607 2026-01-19)\nbinary: rustc\ncommit-hash: 254b59607d4417e9dffbc307138ae5c86280fe4c\ncommit-date: 2026-01-19\nhost: x86_64-unknown-linux-gnu\nrelease: 1.93.0\nLLVM version: 21.1.8\n",
+    "default_features": false,
+    "features": [
+      "numa-experiment"
+    ],
+    "profile": "release",
+    "build_jobs": 4,
+    "rustflags": null,
+    "inherited_git_label": null
+  },
+  "source_files_sha256": {
+    "Cargo.lock": "a2bfc2e98c1520af69f0bcc356bcedf3fb1a036cf1fea40faa0ddae9bfa1c80a",
+    "Cargo.toml": "8a76c30199bd3eaf0284098eba0b589cec350705dcf22ae953686ff894eaa115",
+    "build.rs": "6d96abd43de96f2084da2f9c1ef4850225967a9167365be129c60cae285c15b2",
+    "pow-kernel/Cargo.toml": "28ecd062e9fab270da84eee928bfbb6112449429fecfcbb3a83aab316168e744",
+    "pow-kernel/src/cpu_kernel.rs": "d361a75f492481a5c295ae3009b64017394bb34143aef065fc8073e20431b15e",
+    "pow-kernel/src/fixed_argon/avx512_256.rs": "49f1b3258eef0fa40f48188bc786353710db2ce84f41893b5207e674056c7769",
+    "pow-kernel/src/fixed_argon.rs": "ea28310ec9cc297a2c0c1f1035ddd5b5eec1db58246281cd4755618463ffb20c",
+    "pow-kernel/src/lib.rs": "1fb156b38cbe2567c6e41abe9413d728d0510461994ad58d69d78b8f237bd605",
+    "pow-spec/Cargo.toml": "4d9cbaa1cfaf523b1874fb7b34de537540583012128d5970a9cb134f7258ed52",
+    "pow-spec/src/lib.rs": "7038a4b2c2220e4c3400afc01501e5488e83c52f6ec62e28c2c6d1ee254fbe2e",
+    "rust-toolchain.toml": "258b3f8bf8b12925c1f6be8569bc7b9557ce9fa356474e433ca8e4526be2ab24",
+    "src/address.rs": "10e0c0902eda7e5d1eacccc000d55da8224f52fb6d0cec44ab785e923cde341b",
+    "src/backend/amd/engine.rs": "33bb70f307fe0fde20b19816059419ede1ac0442f34c81cc1a5d6eddc59a5ab9",
+    "src/backend/amd/hip_ffi.rs": "085015c25baf3b8822c47ba8a4ba8b248bda8dc73a781596789efa6eb53a02cb",
+    "src/backend/amd/mod.rs": "e8bd7fc48f3a8af11e69cb0508be224aff0aededbfdc50e4a9b773745633579e",
+    "src/backend/cpu/events.rs": "7ebc7a634e4dab17fa1e565673317deaaa0bf7451b1d0217bf6bbb2255ec5e0f",
+    "src/backend/cpu/kernel.rs": "af44708b444053b8edc290cf87e36e7af19a7ef2b1d6e4de4741994ebaf64861",
+    "src/backend/cpu/numa_experiment.rs": "0365a30913bae263e0c5c62444b96a35f40a14eab4ea23550c155f671b1a968c",
+    "src/backend/cpu/sampling.rs": "9fb5cd2bc54f4113f2ac126070f7e0b6413af05162b55b991b1b6c554548e92a",
+    "src/backend/cpu/topology.rs": "9d294ede0afcace1bf3e7f91b223b0515532249862cdb19ae1882574d9f0eb3a",
+    "src/backend/cpu.rs": "aa654c114e095c858a27d581191811bdbc93386b0fa8b621a3b6c9436d0877c9",
+    "src/backend/metal.rs": "8310d8aef2f58ed3640a7a43ff2fc126a91f24188aa8231f4a71a633a78561b8",
+    "src/backend/mod.rs": "656401db166a64db5ed9657f61ba213c807e3591ef6390e58a3812d6f6205b44",
+    "src/backend/nvidia.rs": "1534328a1c0ab51411be74ad494b1072c1d059b2db4b22268aaba240f7c89b3d",
+    "src/config.rs": "064e5825ac5bcbf2c1e76609566552e14576ca1357db33d1d931031c1a99d230",
+    "src/console_exit.rs": "4718de8284df03af44b042b2b92aeed006ed9e78beccb0e85723e78fd45630ca",
+    "src/control_api/mod.rs": "ee3a82bc31492a6dd17ba0604c0b991ca6a04b64fd06d4c9e6588b3f40c4006b",
+    "src/daemon_api.rs": "c702d090ff407e4fb28c4c026604ca04ba36476798b330878ccdad5f56d8e7a4",
+    "src/dev_fee.rs": "c031e43f719b2a6e5bd831d348f9c4615ce90a85e4d08534e4d116a789a499fd",
+    "src/main.rs": "6d01228f0cc55f80f536da09c7578f895402ba8a11be2905a1a4aa785c38c237",
+    "src/miner/adaptive_cpu.rs": "53738b847b2267ad5faed8c2bc8b13a92ad30e0437d86d11daa11bd62f4f8572",
+    "src/miner/adaptive_kernel.rs": "f7ccb7b9ea5f25472d5ab01e8fcc4f648b2cf95960c2cfd6b18898a6dc576668",
+    "src/miner/auth.rs": "7c398e24a32504fbb3e0cbb697043cedcd09329355969a42d51947f9ee160672",
+    "src/miner/backend_control.rs": "5ed4fbeaf4c37d9b570985131b575437095b2d1af528fc604e91534497c4cbb6",
+    "src/miner/backend_executor.rs": "4af48034f2076aeb15acd98ab955f5f0fade3e8a335c26df79c0cc68163d4080",
+    "src/miner/bench.rs": "27a702bee89c7b5cb2a9944b7fd57e32c528562ccdd62a6e537249b8ad58a9f6",
+    "src/miner/hash_poll.rs": "7c216e5f3ec2bdd90adcb93be73fd827a04ee4d4d1e30bb62c658870ffdc187c",
+    "src/miner/hashrate_tracker.rs": "ff84e67ce1ab22ed1cd89af1f02f908a731f51930491c31799050e1b626af656",
+    "src/miner/mining.rs": "d1e105bce44a74cc2a91da488bf1ff8dd5885ba14a09d768a40ce82b123839af",
+    "src/miner/mining_pool.rs": "9173ee4c7f94563adf420701d256d38b14a8f0e02312e12550466493b382ad57",
+    "src/miner/mining_tui.rs": "e52791dfd9cb93ba161edb004338eea3ba78a14307a85bc3d9f429b8743d8214",
+    "src/miner/mod.rs": "21f153598615f02d5f1614ff9c6dab5aeb5f3d5c7e6e31e94dfd03ef2c259498",
+    "src/miner/round_control.rs": "01c2459b5009f498b3495be592e970661a1fc124c6407a9ee9f0b58c84d7ba25",
+    "src/miner/round_driver.rs": "e1738f9c2c0356c0de2d5aa64a736a8fd636fbb1fa9129bd7b6c0aa225806d47",
+    "src/miner/runtime.rs": "d514d7337c4ea3de9538fd84b6d87f49f0054d86d32f49d69e8dc074ee244313",
+    "src/miner/scheduler.rs": "8c768882db43f1090bfce2dea6ac56a490877c51fe56973272a41d855eb4efeb",
+    "src/miner/session.rs": "4af7f7e539007c098e081f2fafe42d2541f2b3cd1f0fc9dc18e406c63a7555e9",
+    "src/miner/solution_cache.rs": "d2bf76fb976e8f04e50c651ee40cf22d745dfe855503f32fa375f39be083dc9b",
+    "src/miner/stats.rs": "555ab9cd79d54eef576e155e9c671a394b18ad5a37e2613e4c84a110a46b05fd",
+    "src/miner/submit.rs": "3ffe50344e243e6128026dc45fb4e7eedb8d82080e7eada3d283b9a574a283b8",
+    "src/miner/template_prefetch.rs": "ab60a1887a51b1e77669a10644b55c9ffc41b7b40e3125b6c562975a4734506d",
+    "src/miner/thread_control.rs": "17e4a4abebf002c0ac0cad95239f26fced294f89967a6125950ef86984939cde",
+    "src/miner/tip.rs": "6e5783651581ebbadf30e46eca652338100ceef91ef370b5669134592a8a86bb",
+    "src/miner/tui.rs": "a6706e6618b0d29f604e3ca6675422358a94ca3fbc361abfe1a8b47adb5d9548",
+    "src/miner/ui.rs": "41f6e3cbe06036b5019d9ebc173c1c21afbb77d64e98c45f1ec70c3d50d2ab88",
+    "src/miner/wallet.rs": "18fd0926da4c50e38a8bc2c634560529405072da2c539cd3444b632fe89e25bf",
+    "src/miner/work_allocator.rs": "198b8a9e6df16c86514709188b429f8a6b0d6fda78810e1195335060d0190417",
+    "src/pool.rs": "7a2c74a84aee95922e2ff4755a19df6768e3718b202b52241c27daabe4dd0501",
+    "src/runtime_identity.rs": "6b71a8b738aa87b9abbc71e5dc7dac24144226a8007c5224b385a817995ea06a",
+    "src/shortname.rs": "e9115d2cc171d56d8674208448c8a6bd84521a65726724d57ebe11deafb46905",
+    "src/types.rs": "dce8426c1ec06416dee3a448fd941c7e16740358ac0673f252e3433699c6be65",
+    "src/user_config.rs": "e0d96e6de696e04e903214daaa3927cf989a00590dba98c55df68bd2d4e81ee2",
+    "src/version.rs": "98b1ca6dffaa53dfe03aa1a6c922d4d23d98e38d53ddc4f22bc57cbb5894b59c"
+  },
+  "binaries": {
+    "miner": {
+      "path": "data/frozen/seine",
+      "sha256": "00502e0b5451d1965042ccf5f2bbe1f8eaf174d4008c537cdf29ba75073b818a"
+    },
+    "parity_tests": {
+      "path": "data/frozen/seine-numa-tests",
+      "sha256": "8ec2a69ef858e6688a2a5685a4f863a4f600279c71fc0f703344a550db8a000a"
+    }
+  },
+  "raw_data_sha256": {
+    "workspace-tests.log": "5431fc1b554f569b151f828d99e752de2eafb185d31363051f2f335e8e3c2931",
+    "full-size-parity.log": "82517dfae35fdc564b9e9e7c780f3f69ac41a78e7fee072fded32f1d60eb73ed",
+    "policy-test.log": "18fa6adcb249d6eea45b8fed0dcca5f7308ddb4c94cd60bfd8edceb3b329804c",
+    "python-tests.log": "8297fd8250fa5904d2dc9cf86998f91a71a8494c6380b3373d3dab7ebd777e66",
+    "local-smoke.json": "57c1fa7dba071bd0995694539de4e42ac2f4dade70f569bb1ac8b2f15672b722",
+    "local-smoke.log": "e1d462c1e3966e6f6d8cb7666ff0506bc29b37681f7f0aad687b41d6e1c23083",
+    "wsl-preflight.log": "990d2f79d5df972b9e1dea8d9aeb64ac6d210a050afdec6de8c3346be1c50d85",
+    "default-cpu-check.log": "c4c48a1a79106d592ba86a1789fb628c9fd23d768df212f80d2ea6b87d38e82b",
+    "clippy.jsonl": "55bad38f87ce757da90d11b6b06c87a46131d10bcfcb40b8da3831c76188da84",
+    "release-build.log": "694050262e56a1ab3563f15553be8730fa308c2e55c3ea517bb2330aec7ccc42",
+    "miner-build.log": "4a42fdd5e685d683c3fdfb56fc03015808b7fd31c0665fbdd810173e489de63d",
+    "numa-local-inventory.json": "9863cfbf009e6321e699565e8b292ecc27144948ab09fd3dbe2efc0188ba0d7f"
+  },
+  "checks": {
+    "workspace_tests": {
+      "passed": 480,
+      "ignored": 6,
+      "failed": 0
+    },
+    "full_size_and_policy_tests": {
+      "passed": 3,
+      "failed": 0,
+      "regular_pages": true,
+      "arena_bytes": 2147483648,
+      "policies": [
+        "audit",
+        "local"
+      ],
+      "kernels": [
+        "scalar",
+        "avx2",
+        "avx512",
+        "avx512-256"
+      ],
+      "distinct_reference_inputs": 3,
+      "dirty_reuse": true,
+      "local_environment": "WSL2 single NUMA node; not physical NUMA performance evidence"
+    },
+    "python_evidence_gate_tests": {
+      "passed": 8,
+      "failed": 0
+    },
+    "real_miner_smoke": {
+      "passed": true,
+      "workers": 1,
+      "bytes": 2147483648,
+      "policy": "local",
+      "kernel": "avx2",
+      "report_validated": true,
+      "performance_evidence": false
+    },
+    "non_experimental_cpu_build_check": "passed",
+    "wsl_performance_preflight": "correctly refused; created no result directory",
+    "scoped_rustfmt": "passed",
+    "diff_whitespace": "passed",
+    "clippy": {
+      "exit_code": 0,
+      "diagnostics_total": 61,
+      "new_module_diagnostics": 0,
+      "workspace_warning_free": false
+    }
+  },
+  "native_numa_benchmarks": [],
+  "accepted_performance_changes": [],
+  "cloud": {
+    "resources_created": [],
+    "incremental_spending_usd": 0,
+    "cleanup_required": false
+  }
+}

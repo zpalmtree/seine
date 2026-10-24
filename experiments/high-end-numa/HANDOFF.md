@@ -134,8 +134,30 @@ temporary networking/keys are deleted, update costs and this handoff.
 
 ## Validation and artifacts
 
-Validation results are recorded in `validation.json` when completed. Build logs,
-local inventory and raw test logs live under ignored `data/` in this worktree.
-Public evidence retains hashes and meaningful limitations. Keep this document,
-the exact commit IDs, and validation manifest together when handing off; another
-assistant should not need chat history or hidden state to identify what is proven.
+Implementation commit: `7728086d6eba5bbe1854ee4834e3739bf0487b4b`.
+Validation results are recorded in `validation.json`:
+
+- 480 workspace tests passed, six ignored in the ordinary suite.
+- Three targeted optimized tests passed, including the two ignored NUMA tests:
+  policy restoration on success/error/unwind and full-size reference parity.
+- Audit and local allocation each passed scalar, AVX2, AVX-512 and 256-bit
+  AVX-512 parity against three distinct reference inputs and dirty reuse.
+- Eight Python evidence/cleanup tests passed, including actual timed-process
+  termination. The runner refused a WSL performance matrix as intended.
+- A real one-worker miner startup/benchmark produced a 2 GiB local arena and
+  passed the report/placement validator. This was a WSL integration smoke test;
+  its timing is deliberately not promoted as a NUMA result.
+- Nonexperimental CPU compilation and scoped Rust formatting passed. Clippy
+  completed with 61 diagnostics and none in the new module; no warning-free
+  workspace claim is made.
+
+Build logs, local inventory and raw test logs live under ignored `data/` in this
+worktree. Public `evidence/` includes parity, restoration and Python test logs.
+Frozen miner and optimized test executables are in `data/frozen/`; their hashes
+and the compiled source-file hashes are in `validation.json`. Both build caches
+are intentionally retained for continuation; no benchmark or build process is
+left running by this branch. No rental, disk, security group, SSH key, support
+case or account change was created by this follow-up.
+
+Keep this document, exact commits and validation manifest together when handing
+off. Another assistant should not need chat history to identify what is proven.
