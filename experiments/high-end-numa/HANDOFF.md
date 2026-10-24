@@ -18,6 +18,11 @@ the completed ten-hour campaign in `../cpu-campaign-20261024/RESULTS.md`.
 - Initial base: `1fe7f239fafb3b9de5df9728babbf041d6c03910` (master after PR42).
   Worktree: `/home/zp/Code/blocknet/seine-high-end-numa`.
   Branch: `codex/high-end-numa-20261024`.
+- Remote branch is pushed. PR creation through the connected GitHub integration
+  returned HTTP403 `Resource not accessible by integration`. No PR was created;
+  no alternate credentials were used. `PR_DESCRIPTION.md` preserves the proposed
+  draft description. Review the branch or restore integration access before
+  opening a draft. This branch must not be merged as a proven optimization.
 - No cloud resources have been created by this follow-up. No cloud spend has
   been added. Do not reset the previous campaign's $40 cap implicitly; record
   an authorized budget and conservative commitments before another rental.
