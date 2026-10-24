@@ -183,7 +183,15 @@ low-memory notifications reduce the operating count when arena headroom is also
 tight; brief reclaim spikes do not force a reduction.
 The CPU backend can pause at zero workers when no complete arena fits, then retry
 after 30 seconds of sustained headroom. Released Linux HugeTLB arenas return to the
-reserved hugepage pool; the miner does not resize that OS pool. Returning capacity
+reserved hugepage pool; the miner does not resize that OS pool. Parked worker slots
+follow the CPU and configured worker ceiling, with a startup cap for Linux
+cgroup-v2 task limits that leaves room for control and networking threads. If
+automatic worker creation still runs out of resources, startup cleans up and
+retries with fewer slots; explicit fixed counts report failure instead. The nonce
+stride remains fixed. Raising a RAM limit can activate more provisioned workers;
+raising a task limit requires restarting to provision additional slots. A task
+budget too small for the CPU and supporting threads reports a startup error.
+Only active arenas count against the refreshed memory allowance. Returning capacity
 and sustained throughput changes prompt new probes. Stable settings are revisited
 periodically; failed allocation attempts back off for five minutes.
 
@@ -191,7 +199,7 @@ Tuning does not reconnect to the pool or restart GPU backends. Surviving CPU
 workers keep their arenas; parked lanes retain their nonce positions and resume
 within the same disjoint nonce allocation. Manual thread changes disable automatic
 adjustment for that run. The tuner preserves a previously learned higher count when
-a later run is temporarily limited by RAM. Cache schema 10 records remain usable
+a later run is temporarily limited by RAM or worker slots. Cache schema 10 records remain usable
 as starting points; schema 11 also stores measurements and the resource-limit flag.
 Hardware, build, affinity/topology, and page-mode mismatches discard the seed.
 

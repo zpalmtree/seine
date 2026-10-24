@@ -234,6 +234,7 @@ impl TuiStateInner {
             return false;
         }
         let request = ThreadChangeRequest {
+            max_threads: control.max_threads.max(control.current_threads),
             run_id: control.run_id,
             threads,
             quit_requested: Arc::clone(&control.quit_requested),
@@ -1288,6 +1289,7 @@ mod tests {
             press(&mut state, KeyCode::Char(key));
             let request = receiver.try_recv().unwrap();
             assert_eq!((request.run_id, request.threads), (42, expected));
+            assert_eq!(request.max_threads, 4);
             assert_eq!(state.threads, 2);
             assert!(state.thread_change_pending);
             for (width, height) in [(80, 12), (120, 34)] {
@@ -1315,7 +1317,12 @@ mod tests {
         let (mut state, receiver) = controlled_state();
         state.thread_control.as_mut().unwrap().current_threads = 6;
         press(&mut state, KeyCode::Char('-'));
-        assert_eq!(receiver.try_recv().unwrap().threads, 5);
+        let request = receiver.try_recv().unwrap();
+        assert_eq!(request.threads, 5);
+        assert_eq!(
+            request.max_threads, 6,
+            "allow reducing an explicit above-auto count"
+        );
         let (mut state, receiver) = controlled_state();
         for kind in [KeyEventKind::Release, KeyEventKind::Repeat] {
             state.handle_key(KeyEvent::new_with_kind(

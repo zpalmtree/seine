@@ -250,6 +250,10 @@ impl Tuner {
         }
     }
 
+    pub(super) fn is_comparing(&self) -> bool {
+        self.trial.is_some() || self.settling.is_some()
+    }
+
     pub(super) fn abort(&mut self, now: u64) -> Action {
         let base = self.trial.take().map(|trial| trial.base);
         self.settling = None;

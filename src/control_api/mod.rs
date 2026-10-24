@@ -911,7 +911,7 @@ impl MinerSupervisor {
                 .or(state.effective_config.as_ref())
                 .cloned()
                 .ok_or_else(|| anyhow!("no active mining configuration"))?;
-            apply_thread_count(&mut cfg, request.threads)?;
+            apply_runtime_thread_count(&mut cfg, request.threads, request.max_threads)?;
             state.staged_config = Some(cfg);
         }
         crate::miner::ui::info(
@@ -1229,6 +1229,19 @@ impl Drop for ThreadControlWorker {
             let _ = handle.join();
         }
     }
+}
+
+fn apply_runtime_thread_count(cfg: &mut Config, threads: usize, limit: usize) -> Result<()> {
+    // This channel is internal to the TUI. Use the live bound supplied by the
+    // mining controller instead of the supervisor's pre-start RAM estimate.
+    if threads == 0 || threads > limit {
+        bail!("thread request exceeds the current runtime limit");
+    }
+    let mut next = cfg.clone();
+    next.cpu_auto_threads_cap = limit;
+    apply_thread_count(&mut next, threads)?;
+    *cfg = next;
+    Ok(())
 }
 
 fn apply_thread_count(cfg: &mut Config, threads: usize) -> Result<()> {
@@ -2267,6 +2280,25 @@ mod tests {
     }
 
     #[test]
+    fn runtime_thread_limit_overrides_stale_startup_ram_estimate_in_both_directions() {
+        let mut cfg = crate::miner::tests::test_config();
+        cfg.cpu_autotune_threads = true;
+        cfg.cpu_auto_threads_cap = 1;
+        apply_runtime_thread_count(&mut cfg, 3, 4).unwrap();
+        assert_eq!(cfg.threads, 3);
+        assert_eq!(cfg.cpu_auto_threads_cap, 4);
+        assert!(!cfg.cpu_autotune_threads);
+        assert!(apply_runtime_thread_count(&mut cfg, 3, 2).is_err());
+        assert_eq!(
+            cfg.cpu_auto_threads_cap, 4,
+            "rejected request cannot mutate config"
+        );
+        apply_runtime_thread_count(&mut cfg, 1, 2).unwrap();
+        assert_eq!(cfg.threads, 1);
+        assert_eq!(cfg.cpu_auto_threads_cap, 2);
+    }
+
+    #[test]
     fn manual_threads_disable_autotune_and_preserve_other_settings() {
         let mut cfg = crate::miner::tests::test_config();
         cfg.cpu_auto_threads_cap = 8;
@@ -2325,6 +2357,7 @@ mod tests {
         supervisor
             .thread_changes_tx
             .send(ThreadChangeRequest {
+                max_threads: 8,
                 run_id: 1,
                 threads: 1,
                 quit_requested: Arc::new(AtomicBool::new(false)),
@@ -2344,6 +2377,7 @@ mod tests {
         supervisor
             .thread_changes_tx
             .send(ThreadChangeRequest {
+                max_threads: 8,
                 run_id: 0,
                 threads: 1,
                 quit_requested: Arc::new(AtomicBool::new(false)),

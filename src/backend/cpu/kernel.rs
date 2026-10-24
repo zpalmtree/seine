@@ -949,6 +949,168 @@ mod tests {
     }
 
     #[test]
+    fn spawn_exhaustion_retries_smaller_pool_without_changing_nonce_stride() {
+        use crate::backend::cpu::CpuBackendTuning;
+        use crate::backend::{NonceChunk, PowBackend, WorkAssignment};
+        use crate::config::CpuPageMode;
+        use std::collections::HashSet;
+        let backend = CpuBackend::adaptive(
+            1,
+            8,
+            CpuAffinityMode::Off,
+            CpuBackendTuning {
+                page_mode: CpuPageMode::Regular,
+                ..CpuBackendTuning::default()
+            },
+        );
+        let (tx, rx) = unbounded();
+        backend.set_event_sink(tx);
+        let mut attempted = Vec::new();
+        backend
+            .start_with_spawner(|shared, index, _| {
+                attempted.push(index);
+                if index == 4 {
+                    return Err(std::io::ErrorKind::WouldBlock.into());
+                }
+                std::thread::Builder::new()
+                    .spawn(move || super::worker_loop::<32>(shared, index, None))
+            })
+            .unwrap();
+        let wait = |predicate: &dyn Fn() -> bool| {
+            let until = Instant::now() + Duration::from_secs(5);
+            while !predicate() {
+                assert!(Instant::now() < until, "worker transition timed out");
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        };
+        let work = |epoch, start, count| WorkAssignment {
+            template: Arc::new(WorkTemplate {
+                work_id: epoch,
+                epoch,
+                header_base: Arc::from(vec![0u8; POW_HEADER_BASE_LEN]),
+                target: [0xff; 32],
+                dynamic_share_target: None,
+                pause_on_solution: false,
+                stop_at: Instant::now() + Duration::from_secs(60),
+            }),
+            nonce_chunk: NonceChunk {
+                start_nonce: start,
+                nonce_count: count,
+            },
+        };
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            assert_eq!(attempted, [0, 1, 2, 3, 4, 0, 1]);
+            assert_eq!(backend.worker_capacity(), 2);
+            assert_eq!(backend.lanes(), 8, "nonce reservation stride stays fixed");
+            assert_eq!(backend.worker_handles.lock().unwrap().len(), 2);
+            assert_eq!(backend.adaptive_snapshot().resident_bytes, 32 * 1024);
+            backend.assign_work(work(1, 100, 1_000_000)).unwrap();
+            let mut seen = HashSet::new();
+            for count in [0, 2, 1, usize::MAX, 0] {
+                if backend.enabled_lanes() > 0 {
+                    let mut solutions = 0;
+                    while solutions < 20 {
+                        if let BackendEvent::Solution(s) =
+                            rx.recv_timeout(Duration::from_secs(5)).unwrap()
+                        {
+                            assert_eq!(s.epoch, 1);
+                            assert!((s.nonce - 100) % 8 < 2);
+                            assert!(seen.insert(s.nonce), "nonce repeated after resize");
+                            solutions += 1;
+                        }
+                    }
+                }
+                backend.set_active_threads(count);
+                assert_eq!(backend.enabled_lanes(), count.min(2));
+                wait(&|| {
+                    backend.adaptive_snapshot().resident_bytes == count.min(2) as u64 * 32 * 1024
+                });
+            }
+            backend
+                .cancel_work_with_deadline(Instant::now() + Duration::from_secs(2))
+                .unwrap();
+            backend
+                .fence_with_deadline(Instant::now() + Duration::from_secs(2))
+                .unwrap();
+            backend.assign_work(work(2, 2_000_100, 37)).unwrap();
+            backend.set_active_threads(8);
+            let expected: HashSet<_> = (2_000_100..2_000_137)
+                .filter(|n| (n - 2_000_100) % 8 < 2)
+                .collect();
+            let mut next = HashSet::new();
+            while next.len() < expected.len() {
+                if let BackendEvent::Solution(s) = rx.recv_timeout(Duration::from_secs(5)).unwrap()
+                {
+                    if s.epoch == 1 {
+                        assert!(seen.insert(s.nonce));
+                        continue;
+                    }
+                    assert_eq!(s.epoch, 2);
+                    assert!(next.insert(s.nonce));
+                }
+            }
+            assert_eq!(
+                next, expected,
+                "all provisioned residues of the fixed stride are covered"
+            );
+            wait(&|| !super::super::has_pending_work(&backend.shared));
+            backend
+                .fence_with_deadline(Instant::now() + Duration::from_secs(2))
+                .unwrap();
+            backend.set_active_threads(0);
+            wait(&|| backend.adaptive_snapshot().resident_bytes == 0);
+        }));
+        backend.stop();
+        assert!(backend.worker_handles.lock().unwrap().is_empty());
+        assert_eq!(backend.adaptive_snapshot().committed_bytes, 0);
+        result.unwrap();
+    }
+
+    #[test]
+    fn spawn_failure_cleans_up_fixed_counts_and_unrecoverable_adaptive_startup() {
+        use crate::backend::cpu::CpuBackendTuning;
+        use crate::backend::PowBackend;
+        for (adaptive, fail_at, kind) in [
+            (false, 2, std::io::ErrorKind::WouldBlock),
+            (true, 0, std::io::ErrorKind::WouldBlock),
+            (true, 2, std::io::ErrorKind::PermissionDenied),
+        ] {
+            let backend = if adaptive {
+                CpuBackend::adaptive(1, 4, CpuAffinityMode::Off, CpuBackendTuning::default())
+            } else {
+                CpuBackend::new(4, CpuAffinityMode::Off)
+            };
+            let mut calls = 0;
+            let result = backend.start_with_spawner(|shared, index, _| {
+                calls += 1;
+                if index == fail_at {
+                    return Err(kind.into());
+                }
+                std::thread::Builder::new()
+                    .spawn(move || super::worker_loop::<32>(shared, index, None))
+            });
+            assert!(result.is_err());
+            assert_eq!(
+                calls,
+                fail_at + 1,
+                "manual/non-resource failures must not silently downsize"
+            );
+            assert!(!backend.adaptive_snapshot().running);
+            assert_eq!(backend.adaptive_snapshot().committed_bytes, 0);
+            assert!(backend.worker_handles.lock().unwrap().is_empty());
+            assert!(backend.event_forward_handle.lock().unwrap().is_none());
+            backend
+                .start_with_spawner(|shared, index, _| {
+                    std::thread::Builder::new()
+                        .spawn(move || super::worker_loop::<32>(shared, index, None))
+                })
+                .unwrap();
+            backend.stop();
+            assert_eq!(backend.adaptive_snapshot().resident_bytes, 0);
+        }
+    }
+
+    #[test]
     fn adaptive_workers_release_ram_resume_unique_nonces_and_stop_parked() {
         use crate::backend::cpu::{request_shutdown, CpuBackendTuning};
         use crate::backend::{NonceChunk, PowBackend, WorkAssignment};

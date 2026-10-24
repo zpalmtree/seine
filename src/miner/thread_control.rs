@@ -6,6 +6,9 @@ use std::sync::Arc;
 pub(crate) struct ThreadChangeRequest {
     pub run_id: u64,
     pub threads: usize,
+    /// Current runtime RAM/worker bound, which may differ from the supervisor's
+    /// original configuration after automatic recovery or startup fallback.
+    pub max_threads: usize,
     pub quit_requested: Arc<AtomicBool>,
 }
 
