@@ -11,6 +11,7 @@ This log tracks CPU backend/hash-kernel tuning attempts and measured outcomes.
 
 ## Newest-first index
 
+- `2026-10-24 joint kernel retry coverage follow-up (not promoted)`
 - `2026-10-24 joint count/kernel crossover prototype (native validation pending)`
 - `2026-10-24 parked CPU worker task budgets and spawn failure recovery`
 - `2026-10-24 automatic joint CPU kernel and worker selection`
@@ -60,6 +61,55 @@ This log tracks CPU backend/hash-kernel tuning attempts and measured outcomes.
 - `Validation`
 - `Baseline`
 - `Benchmark protocol`
+
+## 2026-10-24 joint kernel retry coverage follow-up (not promoted)
+
+The architecture campaign's Skylake joint prototype finished four 900-second
+fresh-cache ABBA windows with lower logged completed work in both comparisons
+(-2.006% and -0.836%; aggregate -1.424%). It spent about 197 additional seconds
+per window in productive kernel comparisons. No alternate kernel was promoted.
+These remain negative native results, not superseded by the changes below.
+
+Candidate A exposed a coverage bug: an interrupted nine-worker kernel comparison
+at about 235 seconds set one global retry deadline. Twelve workers were sampled
+at about 462-496 seconds and rejected around 529 seconds without trying AVX2,
+because the unrelated kernel cooldown lasted until about 535 seconds. In
+`Tuner::tick`, that global deadline was checked before the new count's context.
+
+The isolated follow-up on `codex/joint-context-retry-investigation`, based on
+draft PR #46 head `04e1843`, keeps at most 64 in-memory retry deadlines keyed by
+active backend membership and worker counts. A new count may compare immediately;
+returning to an interrupted count retains its own five-minute backoff. Changing
+backing at that count cannot bypass backoff, while cached winners still require
+exact backing. Inconclusive completed trials retain the same scoped delay.
+
+A joint count probe whose own kernel comparison is deferred cannot record a
+count score or reject the count on the incumbent path. Mining continues while
+count sampling waits. Expiry allows retry, and the existing joint deadline still
+bounds the entire sequence. RAM limits, allocation failures, backend membership
+changes, and a sustained disconnect still cancel and restore the safe original
+configuration. Baseline count tuning remains free to progress during cooldown.
+
+Validation: the new cross-count coverage and deferred-count sampling tests both
+failed before the fix. Afterward, the CPU-only workspace suite passed 511 tests
+with five existing resource-dependent tests ignored. Tests exercise nine-worker
+abort -> twelve-worker comparison -> nine-worker backoff, backing changes,
+expiry despite another context's later deadline, and deferred-probe cancellation
+on disconnect (including across retry expiry), pressure, allocation failure and
+the joint deadline. Idle cancellation cannot extend another context's retry,
+and inconclusive comparisons retain backoff after visiting another count. Existing
+crossover, repeat-confirmation, restart, quarantine and efficiency tests pass.
+Only the two edited Rust files were formatted with Rust 1.93.0.
+
+This is a coverage correction, not a performance promotion. Waiting at an
+unproven count can consume up to the remaining cooldown and could worsen short
+session throughput. Repeated successful native joint confirmation, warm-cache
+amortization, and changed-load/RAM validation remain required. Returning to the
+confirmed baseline while queuing a deferred count is a separate potential way
+to reduce that cost; it is not implemented here. The independent EPYC session
+owns multi-challenger integration, and the architecture session owns accepted
+subset regression checks and merges. No cloud rentals or new timing were used
+for this follow-up.
 
 ## 2026-10-24 joint count/kernel crossover prototype (native validation pending)
 

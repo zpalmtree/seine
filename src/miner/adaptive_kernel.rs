@@ -35,6 +35,10 @@ struct Context {
 }
 
 impl Context {
+    fn same_workers(&self, other: &Self) -> bool {
+        self.members == other.members && self.workers == other.workers
+    }
+
     fn from_snapshots(snapshots: &[CpuAdaptiveSnapshot]) -> Self {
         Self {
             members: snapshots
@@ -190,7 +194,9 @@ pub(super) struct Tuner {
     trial: Option<Trial>,
     checked: Option<Context>,
     next_check: u64,
-    retry_at: u64,
+    // Interrupted counts back off independently. Backing changes at the same
+    // count must not evade that delay; winner caches still require exact backing.
+    retries: Vec<(Context, u64)>,
     window_secs: u64,
     // Cached/final winners must finish switching before thread sampling resumes.
     settling: Option<CpuKernel>,
@@ -232,7 +238,7 @@ impl Tuner {
             trial: None,
             checked: None,
             next_check: 0,
-            retry_at: 0,
+            retries: Vec::new(),
             window_secs: cfg.cpu_autotune_secs.saturating_mul(5).clamp(30, 60),
             settling: None,
             settle_started: 0,
@@ -288,17 +294,44 @@ impl Tuner {
         // selection and incorrectly reject a count on its incumbent path.
         debug_assert!(!self.is_comparing());
         self.checked = None;
-        self.retry_at = now;
+        self.retries.clear();
         self.next_check = now;
     }
 
+    fn defer_retry(&mut self, now: u64, context: Context) {
+        self.retries
+            .retain(|(old, until)| *until > now && !old.same_workers(&context));
+        self.retries.push((context, now.saturating_add(RETRY_SECS)));
+        if self.retries.len() > 64 {
+            self.retries.remove(0);
+        }
+    }
+
+    pub(super) fn retry_pending(&self, now: u64, snapshots: &[CpuAdaptiveSnapshot]) -> bool {
+        !self.retries.is_empty()
+            && self.context_retry_pending(now, &Context::from_snapshots(snapshots))
+    }
+
+    fn context_retry_pending(&self, now: u64, context: &Context) -> bool {
+        self.retries
+            .iter()
+            .any(|(old, until)| now < *until && old.same_workers(context))
+    }
+
     pub(super) fn abort(&mut self, now: u64) -> Action {
-        let base = self.trial.take().map(|trial| trial.base);
+        let trial = self.trial.take();
+        let context = trial
+            .as_ref()
+            .map(|trial| trial.context.clone())
+            .or_else(|| self.settling.and(self.checked.clone()));
+        let base = trial.map(|trial| trial.base);
+        if let Some(context) = context {
+            self.defer_retry(now, context);
+            // Do not let an interrupted new context inherit an older, longer
+            // recheck. An idle cancellation has no comparison to reschedule.
+            self.next_check = now.saturating_add(RETRY_SECS);
+        }
         self.settling = None;
-        self.retry_at = now + RETRY_SECS;
-        // A new context can begin before the previous context's recheck date.
-        // Its interrupted trial must not inherit that stale, longer deadline.
-        self.next_check = self.retry_at;
         Action {
             kernel: base,
             reset_scores: false,
@@ -316,6 +349,7 @@ impl Tuner {
         allow_start: bool,
     ) -> Action {
         let context = Context::from_snapshots(snapshots);
+        let retry_pending = self.context_retry_pending(now, &context);
         let active: Vec<_> = snapshots.iter().filter(|s| s.running).copied().collect();
         let snapshots = active.as_slice();
         if snapshots.is_empty() || candidates().len() < 2 {
@@ -345,10 +379,7 @@ impl Tuner {
             }
         }
         if self.trial.is_none() {
-            if now < self.retry_at
-                || !allow_start
-                || !ready
-                || !snapshots.iter().all(|s| s.kernel_ready)
+            if retry_pending || !allow_start || !ready || !snapshots.iter().all(|s| s.kernel_ready)
             {
                 return Action::default();
             }
@@ -452,6 +483,8 @@ impl Tuner {
             if stable {
                 let base = trial.base;
                 self.save(trial, base);
+            } else {
+                self.defer_retry(now, trial.context);
             }
             return Action {
                 interrupted: !stable,
@@ -471,6 +504,8 @@ impl Tuner {
             };
             if conclusive {
                 self.save(trial, kernel);
+            } else {
+                self.defer_retry(now, trial.context);
             }
             self.next_check = now + if conclusive { RECHECK_SECS } else { RETRY_SECS };
             self.settling = Some(kernel);
@@ -646,6 +681,85 @@ mod tests {
             assert!(!t.tick(now + 1, &[s], true, true).hold_counts);
             let _ = fs::remove_file(&t.path);
         }
+    }
+
+    #[test]
+    fn aborted_count_does_not_delay_a_different_count_or_forget_its_own_backoff() {
+        if candidates().len() < 2 {
+            return;
+        }
+        let mut t = tuner();
+        let mut first = snapshot();
+        first.threads = 9;
+        first.warmed = 9;
+        first.committed_bytes = 9 * CPU_LANE_MEMORY_BYTES;
+        first.resident_bytes = first.committed_bytes;
+        first.backing_bytes[3] = first.committed_bytes;
+        assert!(t.tick(0, &[first], true, true).hold_counts);
+        t.abort(10);
+        let mut second = first;
+        second.threads = 12;
+        second.warmed = 12;
+        second.committed_bytes = 12 * CPU_LANE_MEMORY_BYTES;
+        second.resident_bytes = second.committed_bytes;
+        second.backing_bytes[3] = second.committed_bytes;
+        assert!(
+            t.tick(11, &[second], true, true).hold_counts,
+            "a new count must compare kernels before count selection"
+        );
+        t.abort(12);
+        assert!(!t.tick(13, &[first], true, true).hold_counts);
+        // Changing backing at the interrupted count must not evade its backoff.
+        first.backing_bytes = [first.resident_bytes, 0, 0, 0, 0];
+        assert!(!t.tick(14, &[first], true, true).hold_counts);
+        assert!(t.tick(10 + RETRY_SECS, &[first], true, true).hold_counts);
+    }
+
+    #[test]
+    fn idle_abort_does_not_extend_last_checked_counts_retry() {
+        if candidates().len() < 2 {
+            return;
+        }
+        let mut t = tuner();
+        let s = snapshot();
+        assert!(t.tick(0, &[s], true, true).hold_counts);
+        t.abort(1);
+        t.abort(100);
+        assert!(t.tick(301, &[s], true, true).hold_counts);
+    }
+
+    #[test]
+    fn inconclusive_count_keeps_backoff_after_another_count_is_visited() {
+        if candidates().len() < 2 {
+            return;
+        }
+        let mut t = tuner();
+        let mut first = snapshot();
+        let mut now = 0;
+        assert!(t.tick(now, &[first], true, true).hold_counts);
+        for rate in [100, 120, 110] {
+            now += 1;
+            t.tick(now, &[first], true, true);
+            now += 30;
+            first.hashes += rate * 30;
+            if let Some(kernel) = t.tick(now, &[first], true, true).kernel {
+                first.kernel = kernel;
+                first.kernel_generation += 1;
+            }
+        }
+        assert!(t.trial.is_none());
+        assert!(t.cache.winners.is_empty(), "drift is not a cached loss");
+        let retry = now + RETRY_SECS;
+        let mut second = first;
+        second.threads = 2;
+        second.warmed = 2;
+        second.committed_bytes *= 2;
+        second.resident_bytes *= 2;
+        second.backing_bytes[3] *= 2;
+        assert!(t.tick(now + 1, &[second], true, true).hold_counts);
+        t.abort(now + 2);
+        assert!(!t.tick(now + 3, &[first], true, true).hold_counts);
+        assert!(t.tick(retry, &[first], true, true).hold_counts);
     }
 
     #[test]

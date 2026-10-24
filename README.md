@@ -177,6 +177,9 @@ comparison before its worker count is saved. Resource changes or interrupted
 kernel trials discard the comparison. Joint trials have a 15-minute limit,
 extended for explicitly longer count windows; restarts discard partial progress.
 This adds productive mining trial time without delaying the initial connection.
+Interrupted or noisy kernel comparisons back off for five minutes at the affected
+worker count; other counts can still compare kernels. A proposed count waits for
+its deferred kernel comparison before it can be accepted or rejected.
 
 Confirmed kernel choices are cached alongside the thread cache in
 `seine.cpu-autotune.json.kernels.json`, keyed by active CPU backend identities,

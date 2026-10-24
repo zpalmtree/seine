@@ -233,6 +233,7 @@ struct Policy {
     reference_hps: Option<f64>,
     peak_hps: f64,
     joint: Option<JointComparison>,
+    waiting_for_kernel_retry: bool,
     restoring: Option<(CpuKernel, u64)>,
     members: Option<Vec<usize>>,
 }
@@ -271,6 +272,7 @@ impl Policy {
             reference_hps: None,
             peak_hps: 0.0,
             joint: None,
+            waiting_for_kernel_retry: false,
             restoring: None,
             members: None,
         }
@@ -281,6 +283,7 @@ impl Policy {
         self.recovery_pending = false;
         self.sampling = false;
         self.idle_since = None;
+        self.waiting_for_kernel_retry = false;
         Decision {
             threads,
             reason,
@@ -293,6 +296,7 @@ impl Policy {
         self.next_up_probe = None;
         self.sampling = false;
         self.idle_since = None;
+        self.waiting_for_kernel_retry = false;
         self.next_trial = now.saturating_add(delay);
     }
 
@@ -493,6 +497,29 @@ impl Policy {
         };
         if action.interrupted && self.joint.is_some() {
             return self.cancel_joint(kernels, now, snapshots, cap, actual, allocation_limited);
+        }
+        if matches!(self.phase, Phase::Probe { .. }) && !safety_change {
+            let pending = kernels.retry_pending(now, snapshots);
+            self.waiting_for_kernel_retry |= pending;
+            if self.waiting_for_kernel_retry {
+                // Productive work continues, but an interrupted kernel comparison
+                // is not evidence that this count should keep its incumbent path.
+                // Wait within the existing joint deadline; safety can still cancel.
+                if running.iter().any(|s| !s.hashing) {
+                    let idle = self.idle_since.get_or_insert(now);
+                    if now.saturating_sub(*idle) >= 3 {
+                        return self.cancel_joint(kernels, now, snapshots, cap, actual, false);
+                    }
+                    self.sampling = false;
+                    action.hold_counts = true;
+                    return (action, None);
+                }
+                if !pending && ready && running.iter().all(|s| s.kernel_ready) {
+                    self.waiting_for_kernel_retry = false;
+                } else {
+                    action.hold_counts = true;
+                }
+            }
         }
         if action.hold_counts {
             self.sampling = false;
@@ -1839,6 +1866,90 @@ mod tests {
             warmed: candidate,
         };
         (p, kernels, s)
+    }
+
+    #[test]
+    fn joint_probe_waits_for_its_own_kernel_retry_without_learning() {
+        if !blocknet_pow_kernel::CpuKernel::Avx512.is_supported()
+            || !blocknet_pow_kernel::CpuKernel::Avx2.is_supported()
+        {
+            return;
+        }
+        let (mut p, mut kernels, mut s) = joint_fixture("retry-coverage", 8, 12);
+        assert!(kernels.tick(0, &[s], true, true).hold_counts);
+        kernels.abort(1);
+        for now in 2..100 {
+            s.hashes += 10;
+            let (action, decision) = p.tick_joint(&mut kernels, now, &[s], 16, false);
+            assert!(
+                action.hold_counts,
+                "uncertain kernel must not be a count score"
+            );
+            assert!(decision.is_none());
+            assert!(matches!(p.phase, Phase::Probe { .. }));
+            assert!(!p.sampling);
+        }
+        assert!(
+            p.tick_joint(&mut kernels, 301, &[s], 16, false)
+                .0
+                .hold_counts
+        );
+        assert!(
+            kernels.is_comparing(),
+            "expiry must permit the kernel retry"
+        );
+        // Memory safety still interrupts the resumed kernel/count comparison.
+        let (_, decision) = p.tick_joint(&mut kernels, 302, &[s], 4, false);
+        assert!(decision.unwrap().threads <= 4);
+        assert!(p.joint.is_none());
+    }
+
+    #[test]
+    fn deferred_joint_probe_still_cancels_on_disconnect_pressure_and_deadline() {
+        if !blocknet_pow_kernel::CpuKernel::Avx512.is_supported()
+            || !blocknet_pow_kernel::CpuKernel::Avx2.is_supported()
+        {
+            return;
+        }
+        for case in [
+            "disconnect",
+            "expiry-disconnect",
+            "post-expiry-disconnect",
+            "pressure",
+            "deadline",
+            "allocation",
+        ] {
+            let (mut p, mut kernels, mut s) = joint_fixture(case, 8, 12);
+            assert!(kernels.tick(0, &[s], true, true).hold_counts);
+            kernels.abort(1);
+            assert!(p.tick_joint(&mut kernels, 2, &[s], 16, false).0.hold_counts);
+            let (now, cap, failed) = match case {
+                "disconnect" | "expiry-disconnect" | "post-expiry-disconnect" => {
+                    s.hashing = false;
+                    let start = match case {
+                        "expiry-disconnect" => 299,
+                        "post-expiry-disconnect" => 302,
+                        _ => 3,
+                    };
+                    p.tick_joint(&mut kernels, start, &[s], 16, false);
+                    (start + 3, 16, false)
+                }
+                "pressure" => (3, 4, false),
+                "allocation" => (3, 16, true),
+                _ => (JOINT_TIMEOUT_SECS, 16, false),
+            };
+            let (action, decision) = p.tick_joint(&mut kernels, now, &[s], cap, failed);
+            let decision = decision.expect(case);
+            assert!(decision.learned.is_none(), "{case}");
+            let expected = if failed {
+                s.threads.min(cap)
+            } else {
+                8.min(cap)
+            };
+            assert_eq!(decision.threads, expected, "{case}");
+            assert_eq!(action.kernel, Some(blocknet_pow_kernel::CpuKernel::Avx512));
+            assert!(p.joint.is_none(), "{case}");
+        }
     }
 
     #[test]
