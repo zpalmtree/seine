@@ -1,6 +1,9 @@
 #[cfg(target_arch = "x86_64")]
 mod avx512_256;
 
+#[cfg(feature = "cpu-research")]
+pub(crate) mod research;
+
 use crate::CpuKernel;
 use std::convert::TryInto;
 use std::num::Wrapping;
