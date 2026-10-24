@@ -42,6 +42,38 @@ with that owner before using the shared us-east-1 quota. It requested no changes
 to compiled master source until its frozen candidate finished validation.
 This branch remains isolated. Never touch the dirty main `seine` checkout.
 
+### Completed EPYC handoff, 20:56 UTC
+
+PR48 merged as `36b431147375877a58c160a7767a46c950060f05`. Its final
+evidence commit is `46ac876adcc4699e36a3d008857a2847e7e5e5e1`; compiled source
+remained `4f5fec9119fdfe6c9d24608fe9bc2a42eec49b4f`, fingerprint
+`9bb49f76970becb9`. The production-merge freeze is released.
+
+Read the [integrated validation report](https://github.com/zpalmtree/seine/blob/46ac876adcc4699e36a3d008857a2847e7e5e5e1/experiments/epyc-investigation/INTEGRATED_VALIDATION.md)
+and adjacent `integration-results.json`; local copies are in
+`/home/zp/Code/blocknet/seine-epyc-integration/experiments/epyc-investigation/`.
+At 24 workers / 48 GiB explicit 2 MiB pages on the tested Turin guest, streaming
+gained 29.80% versus AVX2, 32.32% versus full-width AVX-512 and 27.37% versus
+uniform 256-bit AVX-512. Two opposite-order pairs passed per control. The actual
+tuner confirmed and cached streaming, completed 14,096 hashes, and released all
+arenas. Automatic eligibility is restricted to AMD family 26/model 2 plus ISA/OS
+support; these measurements do not establish gains on Genoa or 9950X3D.
+
+Intel CPU-only comparisons were near-flat (+0.43%/+0.08%). Default-profile
+variation reached roughly 10%; no Intel speedup or tight regression bound is
+claimed. All 148 archive files verified. Both rentals, disks, security groups
+and private keys were deleted by 20:52:54 UTC. Compute estimate $0.7009 excludes
+EBS, IPv4 and transfer. The separate session's Standard quota reservation is
+released; coordinate anew before launching. No release tag was published.
+
+For the next native NUMA run, integrate/rebase these experiment changes onto
+`36b4311` or newer accepted master, rebuild isolated binaries, and repeat all
+correctness checks. **Do not relabel this branch's existing `7728086` validation
+as testing the new streaming kernel.** Keep the existing frozen binaries/evidence
+as the pre-streaming experiment identity. Compare allocation policies at a fixed
+kernel first, then test interaction with streaming. Zen 4 and high-end desktop
+eligibility expansion remains unvalidated work.
+
 ## Evidence we are building on
 
 The EPYC session's committed investigation is at
