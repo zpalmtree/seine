@@ -9,11 +9,19 @@ const RETRY_SECS: u64 = 5 * 60;
 const MAX_TRIAL_SECS: u64 = 10 * 60;
 const MAX_DRIFT: f64 = 0.05;
 
+// Each architecture has at most one challenger. ARM starts on the portable
+// NEON path; SHA3 is eligible only after runtime feature detection and must
+// win two productive-work comparisons before it becomes the cached choice.
 fn candidates() -> Vec<CpuKernel> {
-    [CpuKernel::Avx512, CpuKernel::Avx2, CpuKernel::Neon]
-        .into_iter()
-        .filter(|k| k.is_supported())
-        .collect()
+    [
+        CpuKernel::Avx512,
+        CpuKernel::Avx2,
+        CpuKernel::Neon,
+        CpuKernel::NeonSha3,
+    ]
+    .into_iter()
+    .filter(|k| k.is_supported())
+    .collect()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -499,6 +507,18 @@ mod tests {
         let mut t = Tuner::new(&cfg, CpuAutotuneHostFingerprint::default());
         t.cache.winners.clear();
         t
+    }
+
+    #[test]
+    fn candidates_are_supported_and_experimental_x86_path_stays_manual() {
+        let paths = candidates();
+        assert!(paths.len() <= 2);
+        assert!(paths.iter().all(|path| path.is_supported()));
+        assert!(!paths.contains(&CpuKernel::Avx512256));
+        assert_eq!(
+            paths.contains(&CpuKernel::NeonSha3),
+            CpuKernel::NeonSha3.is_supported()
+        );
     }
 
     #[test]

@@ -669,10 +669,15 @@ mod tests {
                     },
                 })
                 .unwrap();
-            let paths: Vec<_> = [CpuKernel::Avx2, CpuKernel::Avx512]
-                .into_iter()
-                .filter(|k| k.is_supported())
-                .collect();
+            let paths: Vec<_> = [
+                CpuKernel::Avx2,
+                CpuKernel::Avx512,
+                CpuKernel::Neon,
+                CpuKernel::NeonSha3,
+            ]
+            .into_iter()
+            .filter(|k| k.is_supported())
+            .collect();
             for kernel in paths
                 .into_iter()
                 .chain(std::iter::once(CpuKernel::preferred()))

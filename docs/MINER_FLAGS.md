@@ -135,7 +135,7 @@ For the raw CLI output, run:
 |---|---|---|
 | `--bench` | bool flag (default `false`) | Runs local benchmark instead of live mining. |
 | `--bench-kind` | `kernel`, `kernel-effective`, `backend`, `end-to-end`; default `backend` | Selects benchmark scope. |
-| `--bench-cpu-kernel` | `scalar`, `avx2`, `avx512`, `avx512-256`, `neon`; unset = automatic | Benchmark-only CPU kernel selection. Requires `--bench`, explicit `--threads`, CPU-only backends, and disabled CPU autotuning; unsupported host/build paths fail. |
+| `--bench-cpu-kernel` | `scalar`, `avx2`, `avx512`, `avx512-256`, `neon`, `neon-sha3`; unset = automatic | Benchmark-only CPU kernel selection. Requires `--bench`, explicit `--threads`, CPU-only backends, and disabled CPU autotuning; unsupported host/build paths fail. |
 | `--bench-secs` | integer `>=1`, default `20` | Per-round measured benchmark duration. |
 | `--bench-rounds` | integer `>=1`, default `3` | Number of measured rounds. |
 | `--bench-warmup-rounds` | integer `>=0`, default `0` | Warmup rounds before measured rounds. |

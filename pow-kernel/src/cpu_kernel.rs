@@ -8,15 +8,19 @@ pub enum CpuKernel {
     /// Experimental 256-bit AVX-512 path; never selected automatically.
     Avx512256,
     Neon,
+    /// Runtime-guarded NEON path using SHA3 XOR/rotate and 64-byte prefetch coverage.
+    /// Automatically compared with baseline NEON on hosts with SHA3 support.
+    NeonSha3,
 }
 
 impl CpuKernel {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Scalar,
         Self::Avx2,
         Self::Avx512,
         Self::Avx512256,
         Self::Neon,
+        Self::NeonSha3,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -26,6 +30,7 @@ impl CpuKernel {
             Self::Avx512 => "avx512",
             Self::Avx512256 => "avx512-256",
             Self::Neon => "neon",
+            Self::NeonSha3 => "neon-sha3",
         }
     }
 
@@ -47,6 +52,8 @@ impl CpuKernel {
             }
             #[cfg(target_arch = "aarch64")]
             Self::Neon => true,
+            #[cfg(target_arch = "aarch64")]
+            Self::NeonSha3 => std::arch::is_aarch64_feature_detected!("sha3"),
             _ => false,
         }
     }
@@ -73,6 +80,8 @@ impl std::str::FromStr for CpuKernel {
         Self::ALL
             .into_iter()
             .find(|kernel| kernel.as_str() == value)
-            .ok_or_else(|| "expected scalar, avx2, avx512, avx512-256, or neon".to_string())
+            .ok_or_else(|| {
+                "expected scalar, avx2, avx512, avx512-256, neon, or neon-sha3".to_string()
+            })
     }
 }

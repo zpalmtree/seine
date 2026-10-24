@@ -158,7 +158,10 @@ selected between probes. New peak measurements can extend exploration without
 repeatedly committing higher counts that are already known to be unnecessary.
 
 On CPUs supporting both AVX2 and AVX-512, automatic mining tuning also compares
-those paths at the current worker count. Two baseline/candidate/baseline cycles
+those paths at the current worker count. On AArch64 with runtime SHA3 support,
+it compares baseline NEON with `neon-sha3`, which combines XOR/rotate instructions
+and 64-byte prefetch coverage. Startup keeps the existing portable NEON path.
+Two baseline/candidate/baseline cycles
 must confirm a gain above 2% plus the hash-count uncertainty before changing the
 path. Kernel and thread-count trials run in turn; memory-pressure handling remains
 active throughout. Kernel windows last 30–60 seconds and require 32 hashes, with
@@ -169,8 +172,8 @@ Confirmed kernel choices are cached alongside the thread cache in
 `seine.cpu-autotune.json.kernels.json`, keyed by worker counts, observed page
 backing, CPU/build identity, placement and tuning settings. Known contexts reuse
 that choice; stable contexts are reconsidered after 30 minutes. Experimental
-`avx512-256` remains benchmark-only. AVX2-only CPUs and ARM/NEON keep their existing
-paths. No extra configuration is needed: `--disable-cpu-autotune-threads` disables
+`avx512-256` remains benchmark-only. AVX2-only CPUs and ARM hosts without SHA3
+keep their existing paths. No extra configuration is needed: `--disable-cpu-autotune-threads` disables
 both automatic count and kernel tuning, and explicit fixed thread counts retain
 the default ISA unless autotuning is explicitly enabled.
 

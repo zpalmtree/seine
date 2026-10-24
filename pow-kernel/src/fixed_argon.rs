@@ -22,6 +22,8 @@ const ISA_AVX512: u8 = 2;
 const ISA_NEON: u8 = 3;
 #[allow(dead_code)]
 const ISA_AVX512_256: u8 = 4;
+#[allow(dead_code)]
+const ISA_NEON_SHA3: u8 = 5;
 const ADDRESSES_IN_BLOCK: usize = 128;
 const SYNC_POINTS: usize = 4;
 const MAX_PWD_LEN: usize = 0xFFFF_FFFF;
@@ -50,6 +52,7 @@ const fn isa_label(isa: u8) -> &'static str {
         ISA_AVX512 => "avx512",
         ISA_AVX512_256 => "avx512-256",
         ISA_NEON => "neon",
+        ISA_NEON_SHA3 => "neon-sha3",
         _ => "scalar",
     }
 }
@@ -66,6 +69,7 @@ const fn kernel_isa(kernel: CpuKernel) -> u8 {
         CpuKernel::Avx512 => ISA_AVX512,
         CpuKernel::Avx512256 => ISA_AVX512_256,
         CpuKernel::Neon => ISA_NEON,
+        CpuKernel::NeonSha3 => ISA_NEON_SHA3,
     }
 }
 
@@ -80,7 +84,7 @@ pub fn compiled_isa_variants() -> &'static [&'static str] {
     }
     #[cfg(target_arch = "aarch64")]
     {
-        &["scalar", "neon"]
+        &["scalar", "neon", "neon-sha3"]
     }
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     {
@@ -174,6 +178,8 @@ impl FixedArgon2id {
             ISA_AVX512_256 => self.fill_blocks::<ISA_AVX512_256, true, false>(memory_blocks),
             ISA_AVX2 => self.fill_blocks::<ISA_AVX2, true, false>(memory_blocks),
             ISA_NEON => self.fill_blocks::<ISA_NEON, false, true>(memory_blocks),
+            #[cfg(target_arch = "aarch64")]
+            ISA_NEON_SHA3 => unsafe { self.fill_blocks_neon_sha3(memory_blocks) },
             _ => self.fill_blocks::<ISA_SCALAR, false, false>(memory_blocks),
         }
 
@@ -181,6 +187,27 @@ impl FixedArgon2id {
     }
 
     fn fill_blocks<
+        const ISA: u8,
+        const USE_X86_MID_PREFETCH: bool,
+        const USE_AARCH64_MID_PREFETCH: bool,
+    >(
+        &self,
+        memory_blocks: &mut [PowBlock],
+    ) {
+        self.fill_blocks_impl::<ISA, USE_X86_MID_PREFETCH, USE_AARCH64_MID_PREFETCH>(memory_blocks);
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[target_feature(enable = "sha3")]
+    unsafe fn fill_blocks_neon_sha3(&self, memory_blocks: &mut [PowBlock]) {
+        // Feature detection happens in with_kernel/set_kernel, once per selection.
+        // Inline the loop and its NEON helpers into this feature-enabled boundary
+        // so XAR is emitted directly, without a function call for every rotation.
+        self.fill_blocks_impl::<ISA_NEON_SHA3, false, true>(memory_blocks);
+    }
+
+    #[inline(always)]
+    fn fill_blocks_impl<
         const ISA: u8,
         const USE_X86_MID_PREFETCH: bool,
         const USE_AARCH64_MID_PREFETCH: bool,
@@ -205,7 +232,7 @@ impl FixedArgon2id {
                 for pre in 0..DI_PREFETCH_DISTANCE {
                     let idx = first_block + pre;
                     if idx < self.segment_length {
-                        prefetch_pow_block(
+                        prefetch_pow_block::<ISA>(
                             &memory_blocks[self.data_independent_ref_indexes[ref_base + idx]],
                         );
                     }
@@ -214,7 +241,7 @@ impl FixedArgon2id {
                     let ref_index = self.data_independent_ref_indexes[ref_base + block];
                     let ahead = block + DI_PREFETCH_DISTANCE;
                     if ahead < self.segment_length {
-                        prefetch_pow_block(
+                        prefetch_pow_block::<ISA>(
                             &memory_blocks[self.data_independent_ref_indexes[ref_base + ahead]],
                         );
                     }
@@ -238,7 +265,7 @@ impl FixedArgon2id {
                         #[cfg(target_arch = "aarch64")]
                         if USE_AARCH64_MID_PREFETCH {
                             let next_ref_area = slice_prefix + block + 1;
-                            fill_block_from_refs_mid_prefetch(
+                            fill_block_from_refs_mid_prefetch::<ISA>(
                                 memory_blocks,
                                 prev_index,
                                 ref_index,
@@ -427,7 +454,7 @@ fn fill_block_from_refs_mid_prefetch<const ISA: u8>(
 
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
-fn fill_block_from_refs_mid_prefetch(
+fn fill_block_from_refs_mid_prefetch<const ISA: u8>(
     memory_blocks: &mut [PowBlock],
     prev_index: usize,
     ref_index: usize,
@@ -445,7 +472,17 @@ fn fill_block_from_refs_mid_prefetch(
         let prev = &*base.add(prev_index);
         let refb = &*base.add(ref_index);
         let dst = &mut *base.add(cur_index);
-        compress_neon_into_mid_prefetch(
+        if ISA == ISA_NEON_SHA3 {
+            compress_neon_into_mid_prefetch::<true>(
+                prev,
+                refb,
+                dst,
+                next_ref_area_size,
+                base as *const PowBlock,
+            );
+            return;
+        }
+        compress_neon_into_mid_prefetch::<false>(
             prev,
             refb,
             dst,
@@ -459,9 +496,10 @@ fn fill_block_from_refs_mid_prefetch(
 /// hardware prefetcher doesn't have to ramp up from scratch.
 ///
 /// - x86_64: all 16 cache lines at 64-byte stride (full 1024-byte block).
-/// - AArch64: all 8 cache lines at 128-byte stride (full 1024-byte block).
+/// - AArch64 baseline: retain eight hints at the original 128-byte stride.
+/// - NEON SHA3 candidate: sixteen hints cover every 64-byte server cache line.
 #[inline(always)]
-fn prefetch_pow_block(block: &PowBlock) {
+fn prefetch_pow_block<const ISA: u8>(block: &PowBlock) {
     #[cfg(target_arch = "x86_64")]
     {
         unsafe {
@@ -489,6 +527,32 @@ fn prefetch_pow_block(block: &PowBlock) {
     {
         unsafe {
             let ptr = block as *const PowBlock as *const u8;
+            if ISA == ISA_NEON_SHA3 {
+                // Keep the historical Apple-oriented stride in the baseline.
+                // The candidate covers the 64-byte lines on tested Gravitons;
+                // automatic A/B selection can retain baseline on other CPUs.
+                std::arch::asm!(
+                    "prfm pldl1keep, [{ptr}]",
+                    "prfm pldl1keep, [{ptr}, #64]",
+                    "prfm pldl1keep, [{ptr}, #128]",
+                    "prfm pldl1keep, [{ptr}, #192]",
+                    "prfm pldl1keep, [{ptr}, #256]",
+                    "prfm pldl1keep, [{ptr}, #320]",
+                    "prfm pldl1keep, [{ptr}, #384]",
+                    "prfm pldl1keep, [{ptr}, #448]",
+                    "prfm pldl1keep, [{ptr}, #512]",
+                    "prfm pldl1keep, [{ptr}, #576]",
+                    "prfm pldl1keep, [{ptr}, #640]",
+                    "prfm pldl1keep, [{ptr}, #704]",
+                    "prfm pldl1keep, [{ptr}, #768]",
+                    "prfm pldl1keep, [{ptr}, #832]",
+                    "prfm pldl1keep, [{ptr}, #896]",
+                    "prfm pldl1keep, [{ptr}, #960]",
+                    ptr = in(reg) ptr,
+                    options(nostack, preserves_flags),
+                );
+                return;
+            }
             std::arch::asm!(
                 "prfm pldl1keep, [{ptr}]",
                 "prfm pldl1keep, [{ptr}, #128]",
@@ -610,7 +674,12 @@ fn compress<const ISA: u8>(rhs: &PowBlock, lhs: &PowBlock) -> PowBlock {
     {
         if ISA == ISA_NEON {
             unsafe {
-                return compress_neon(rhs, lhs);
+                return compress_neon::<false>(rhs, lhs);
+            }
+        }
+        if ISA == ISA_NEON_SHA3 {
+            unsafe {
+                return compress_neon::<true>(rhs, lhs);
             }
         }
     }
@@ -649,7 +718,13 @@ fn compress_into<const ISA: u8>(rhs: &PowBlock, lhs: &PowBlock, dst: &mut PowBlo
     {
         if ISA == ISA_NEON {
             unsafe {
-                compress_neon_into(rhs, lhs, dst);
+                compress_neon_into::<false>(rhs, lhs, dst);
+            }
+            return;
+        }
+        if ISA == ISA_NEON_SHA3 {
+            unsafe {
+                compress_neon_into::<true>(rhs, lhs, dst);
             }
             return;
         }
@@ -1265,7 +1340,7 @@ unsafe fn compress_avx2_into_mid_prefetch(
     {
         let rand = *dst_ptr;
         let next_ref = reference_index(next_ref_area_size, rand);
-        prefetch_pow_block(&*memory_blocks_base.add(next_ref));
+        prefetch_pow_block::<ISA_AVX2>(&*memory_blocks_base.add(next_ref));
     }
 
     // Phase 3b: Pair adjacent columns 1+2, 3+4, and 5+6 after the prefetch.
@@ -1709,7 +1784,7 @@ unsafe fn compress_avx512_into_mid_prefetch(
     {
         let rand = *dst_ptr;
         let next_ref = reference_index(next_ref_area_size, rand);
-        prefetch_pow_block(&*memory_blocks_base.add(next_ref));
+        prefetch_pow_block::<ISA_AVX512>(&*memory_blocks_base.add(next_ref));
     }
 
     // Phase 3b: Column pairs 1-3 (columns 2-7).
@@ -1734,8 +1809,8 @@ unsafe fn compress_avx512_into_mid_prefetch(
 // AArch64 NEON SIMD path
 // ---------------------------------------------------------------------------
 //
-// NEON is mandatory on AArch64, so no runtime feature detection or
-// `#[target_feature]` is needed. Functions inline freely — no ABI memcpy.
+// Baseline NEON is mandatory on AArch64. The optional SHA3 path is guarded at
+// selection and inlined under fill_blocks_neon_sha3's target-feature boundary.
 
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
@@ -1766,16 +1841,13 @@ unsafe fn neon_blamka(
 }
 
 /// XOR-and-rotate: `rotr(a ^ b, N)`.  Uses the single-instruction XAR when the
-/// target supports SHA3 (Apple Silicon), otherwise falls back to EOR+SHR+SHL+ORR.
+/// build target or selected runtime path supports SHA3; otherwise uses shifts.
 #[cfg(target_arch = "aarch64")]
 macro_rules! neon_rotr_xor {
-    ($a:expr, $b:expr, $n:literal) => {{
-        #[cfg(target_feature = "sha3")]
-        {
+    ($sha3:expr, $a:expr, $b:expr, $n:literal) => {{
+        if $sha3 || cfg!(target_feature = "sha3") {
             std::arch::aarch64::vxarq_u64::<$n>($a, $b)
-        }
-        #[cfg(not(target_feature = "sha3"))]
-        {
+        } else {
             let x = std::arch::aarch64::veorq_u64($a, $b);
             std::arch::aarch64::vorrq_u64(
                 std::arch::aarch64::vshrq_n_u64::<$n>(x),
@@ -1792,7 +1864,8 @@ macro_rules! neon_rotr_xor {
 /// via `vextq_u64` to achieve cross-lane permutation without scatter/gather.
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
-unsafe fn neon_round(
+#[allow(clippy::too_many_arguments)] // Explicit SIMD register pairs form one round.
+unsafe fn neon_round<const SHA3: bool>(
     a_lo: &mut std::arch::aarch64::uint64x2_t,
     a_hi: &mut std::arch::aarch64::uint64x2_t,
     b_lo: &mut std::arch::aarch64::uint64x2_t,
@@ -1812,23 +1885,23 @@ unsafe fn neon_round(
     // G step 1: a = a + b + 2*lo32(a)*lo32(b);  d = rotr32(d ^ a)
     *a_lo = neon_blamka(*a_lo, *b_lo);
     *a_hi = neon_blamka(*a_hi, *b_hi);
-    *d_lo = neon_rotr_xor!(*d_lo, *a_lo, 32);
-    *d_hi = neon_rotr_xor!(*d_hi, *a_hi, 32);
+    *d_lo = neon_rotr_xor!(SHA3, *d_lo, *a_lo, 32);
+    *d_hi = neon_rotr_xor!(SHA3, *d_hi, *a_hi, 32);
     // G step 2: c = c + d + 2*lo32(c)*lo32(d);  b = rotr24(b ^ c)
     *c_lo = neon_blamka(*c_lo, *d_lo);
     *c_hi = neon_blamka(*c_hi, *d_hi);
-    *b_lo = neon_rotr_xor!(*b_lo, *c_lo, 24);
-    *b_hi = neon_rotr_xor!(*b_hi, *c_hi, 24);
+    *b_lo = neon_rotr_xor!(SHA3, *b_lo, *c_lo, 24);
+    *b_hi = neon_rotr_xor!(SHA3, *b_hi, *c_hi, 24);
     // G step 3: a = a + b + 2*lo32(a)*lo32(b);  d = rotr16(d ^ a)
     *a_lo = neon_blamka(*a_lo, *b_lo);
     *a_hi = neon_blamka(*a_hi, *b_hi);
-    *d_lo = neon_rotr_xor!(*d_lo, *a_lo, 16);
-    *d_hi = neon_rotr_xor!(*d_hi, *a_hi, 16);
+    *d_lo = neon_rotr_xor!(SHA3, *d_lo, *a_lo, 16);
+    *d_hi = neon_rotr_xor!(SHA3, *d_hi, *a_hi, 16);
     // G step 4: c = c + d + 2*lo32(c)*lo32(d);  b = rotr63(b ^ c)
     *c_lo = neon_blamka(*c_lo, *d_lo);
     *c_hi = neon_blamka(*c_hi, *d_hi);
-    *b_lo = neon_rotr_xor!(*b_lo, *c_lo, 63);
-    *b_hi = neon_rotr_xor!(*b_hi, *c_hi, 63);
+    *b_lo = neon_rotr_xor!(SHA3, *b_lo, *c_lo, 63);
+    *b_hi = neon_rotr_xor!(SHA3, *b_hi, *c_hi, 63);
 
     // Diagonal step: rotate b by 1, c by 2, d by 3 across the 4-wide logical
     // vector, then run the half-rounds interleaved, then un-rotate.
@@ -1842,23 +1915,23 @@ unsafe fn neon_round(
     // G step 1
     *a_lo = neon_blamka(*a_lo, bb_lo);
     *a_hi = neon_blamka(*a_hi, bb_hi);
-    dd_lo = neon_rotr_xor!(dd_lo, *a_lo, 32);
-    dd_hi = neon_rotr_xor!(dd_hi, *a_hi, 32);
+    dd_lo = neon_rotr_xor!(SHA3, dd_lo, *a_lo, 32);
+    dd_hi = neon_rotr_xor!(SHA3, dd_hi, *a_hi, 32);
     // G step 2
     cc_lo = neon_blamka(cc_lo, dd_lo);
     cc_hi = neon_blamka(cc_hi, dd_hi);
-    bb_lo = neon_rotr_xor!(bb_lo, cc_lo, 24);
-    bb_hi = neon_rotr_xor!(bb_hi, cc_hi, 24);
+    bb_lo = neon_rotr_xor!(SHA3, bb_lo, cc_lo, 24);
+    bb_hi = neon_rotr_xor!(SHA3, bb_hi, cc_hi, 24);
     // G step 3
     *a_lo = neon_blamka(*a_lo, bb_lo);
     *a_hi = neon_blamka(*a_hi, bb_hi);
-    dd_lo = neon_rotr_xor!(dd_lo, *a_lo, 16);
-    dd_hi = neon_rotr_xor!(dd_hi, *a_hi, 16);
+    dd_lo = neon_rotr_xor!(SHA3, dd_lo, *a_lo, 16);
+    dd_hi = neon_rotr_xor!(SHA3, dd_hi, *a_hi, 16);
     // G step 4
     cc_lo = neon_blamka(cc_lo, dd_lo);
     cc_hi = neon_blamka(cc_hi, dd_hi);
-    bb_lo = neon_rotr_xor!(bb_lo, cc_lo, 63);
-    bb_hi = neon_rotr_xor!(bb_hi, cc_hi, 63);
+    bb_lo = neon_rotr_xor!(SHA3, bb_lo, cc_lo, 63);
+    bb_hi = neon_rotr_xor!(SHA3, bb_hi, cc_hi, 63);
 
     // Un-rotate.
     *b_lo = vextq_u64::<1>(bb_hi, bb_lo);
@@ -1876,7 +1949,8 @@ unsafe fn neon_round(
 /// dependency chain, potentially improving throughput by ~20%.
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
-unsafe fn neon_round_pair(
+#[allow(clippy::too_many_arguments)] // Two independent rounds expose register-level ILP.
+unsafe fn neon_round_pair<const SHA3: bool>(
     // Column 1
     a1_lo: &mut std::arch::aarch64::uint64x2_t,
     a1_hi: &mut std::arch::aarch64::uint64x2_t,
@@ -1905,37 +1979,37 @@ unsafe fn neon_round_pair(
     *a2_lo = neon_blamka(*a2_lo, *b2_lo);
     *a1_hi = neon_blamka(*a1_hi, *b1_hi);
     *a2_hi = neon_blamka(*a2_hi, *b2_hi);
-    *d1_lo = neon_rotr_xor!(*d1_lo, *a1_lo, 32);
-    *d2_lo = neon_rotr_xor!(*d2_lo, *a2_lo, 32);
-    *d1_hi = neon_rotr_xor!(*d1_hi, *a1_hi, 32);
-    *d2_hi = neon_rotr_xor!(*d2_hi, *a2_hi, 32);
+    *d1_lo = neon_rotr_xor!(SHA3, *d1_lo, *a1_lo, 32);
+    *d2_lo = neon_rotr_xor!(SHA3, *d2_lo, *a2_lo, 32);
+    *d1_hi = neon_rotr_xor!(SHA3, *d1_hi, *a1_hi, 32);
+    *d2_hi = neon_rotr_xor!(SHA3, *d2_hi, *a2_hi, 32);
     // G step 2: c = c + d + 2*lo32(c)*lo32(d);  b = rotr24(b ^ c)
     *c1_lo = neon_blamka(*c1_lo, *d1_lo);
     *c2_lo = neon_blamka(*c2_lo, *d2_lo);
     *c1_hi = neon_blamka(*c1_hi, *d1_hi);
     *c2_hi = neon_blamka(*c2_hi, *d2_hi);
-    *b1_lo = neon_rotr_xor!(*b1_lo, *c1_lo, 24);
-    *b2_lo = neon_rotr_xor!(*b2_lo, *c2_lo, 24);
-    *b1_hi = neon_rotr_xor!(*b1_hi, *c1_hi, 24);
-    *b2_hi = neon_rotr_xor!(*b2_hi, *c2_hi, 24);
+    *b1_lo = neon_rotr_xor!(SHA3, *b1_lo, *c1_lo, 24);
+    *b2_lo = neon_rotr_xor!(SHA3, *b2_lo, *c2_lo, 24);
+    *b1_hi = neon_rotr_xor!(SHA3, *b1_hi, *c1_hi, 24);
+    *b2_hi = neon_rotr_xor!(SHA3, *b2_hi, *c2_hi, 24);
     // G step 3: a = a + b + 2*lo32(a)*lo32(b);  d = rotr16(d ^ a)
     *a1_lo = neon_blamka(*a1_lo, *b1_lo);
     *a2_lo = neon_blamka(*a2_lo, *b2_lo);
     *a1_hi = neon_blamka(*a1_hi, *b1_hi);
     *a2_hi = neon_blamka(*a2_hi, *b2_hi);
-    *d1_lo = neon_rotr_xor!(*d1_lo, *a1_lo, 16);
-    *d2_lo = neon_rotr_xor!(*d2_lo, *a2_lo, 16);
-    *d1_hi = neon_rotr_xor!(*d1_hi, *a1_hi, 16);
-    *d2_hi = neon_rotr_xor!(*d2_hi, *a2_hi, 16);
+    *d1_lo = neon_rotr_xor!(SHA3, *d1_lo, *a1_lo, 16);
+    *d2_lo = neon_rotr_xor!(SHA3, *d2_lo, *a2_lo, 16);
+    *d1_hi = neon_rotr_xor!(SHA3, *d1_hi, *a1_hi, 16);
+    *d2_hi = neon_rotr_xor!(SHA3, *d2_hi, *a2_hi, 16);
     // G step 4: c = c + d + 2*lo32(c)*lo32(d);  b = rotr63(b ^ c)
     *c1_lo = neon_blamka(*c1_lo, *d1_lo);
     *c2_lo = neon_blamka(*c2_lo, *d2_lo);
     *c1_hi = neon_blamka(*c1_hi, *d1_hi);
     *c2_hi = neon_blamka(*c2_hi, *d2_hi);
-    *b1_lo = neon_rotr_xor!(*b1_lo, *c1_lo, 63);
-    *b2_lo = neon_rotr_xor!(*b2_lo, *c2_lo, 63);
-    *b1_hi = neon_rotr_xor!(*b1_hi, *c1_hi, 63);
-    *b2_hi = neon_rotr_xor!(*b2_hi, *c2_hi, 63);
+    *b1_lo = neon_rotr_xor!(SHA3, *b1_lo, *c1_lo, 63);
+    *b2_lo = neon_rotr_xor!(SHA3, *b2_lo, *c2_lo, 63);
+    *b1_hi = neon_rotr_xor!(SHA3, *b1_hi, *c1_hi, 63);
+    *b2_hi = neon_rotr_xor!(SHA3, *b2_hi, *c2_hi, 63);
 
     // ---- Diagonal step: rotate, interleaved round, un-rotate ----
 
@@ -1958,37 +2032,37 @@ unsafe fn neon_round_pair(
     *a2_lo = neon_blamka(*a2_lo, bb2_lo);
     *a1_hi = neon_blamka(*a1_hi, bb1_hi);
     *a2_hi = neon_blamka(*a2_hi, bb2_hi);
-    dd1_lo = neon_rotr_xor!(dd1_lo, *a1_lo, 32);
-    dd2_lo = neon_rotr_xor!(dd2_lo, *a2_lo, 32);
-    dd1_hi = neon_rotr_xor!(dd1_hi, *a1_hi, 32);
-    dd2_hi = neon_rotr_xor!(dd2_hi, *a2_hi, 32);
+    dd1_lo = neon_rotr_xor!(SHA3, dd1_lo, *a1_lo, 32);
+    dd2_lo = neon_rotr_xor!(SHA3, dd2_lo, *a2_lo, 32);
+    dd1_hi = neon_rotr_xor!(SHA3, dd1_hi, *a1_hi, 32);
+    dd2_hi = neon_rotr_xor!(SHA3, dd2_hi, *a2_hi, 32);
     // G step 2
     cc1_lo = neon_blamka(cc1_lo, dd1_lo);
     cc2_lo = neon_blamka(cc2_lo, dd2_lo);
     cc1_hi = neon_blamka(cc1_hi, dd1_hi);
     cc2_hi = neon_blamka(cc2_hi, dd2_hi);
-    bb1_lo = neon_rotr_xor!(bb1_lo, cc1_lo, 24);
-    bb2_lo = neon_rotr_xor!(bb2_lo, cc2_lo, 24);
-    bb1_hi = neon_rotr_xor!(bb1_hi, cc1_hi, 24);
-    bb2_hi = neon_rotr_xor!(bb2_hi, cc2_hi, 24);
+    bb1_lo = neon_rotr_xor!(SHA3, bb1_lo, cc1_lo, 24);
+    bb2_lo = neon_rotr_xor!(SHA3, bb2_lo, cc2_lo, 24);
+    bb1_hi = neon_rotr_xor!(SHA3, bb1_hi, cc1_hi, 24);
+    bb2_hi = neon_rotr_xor!(SHA3, bb2_hi, cc2_hi, 24);
     // G step 3
     *a1_lo = neon_blamka(*a1_lo, bb1_lo);
     *a2_lo = neon_blamka(*a2_lo, bb2_lo);
     *a1_hi = neon_blamka(*a1_hi, bb1_hi);
     *a2_hi = neon_blamka(*a2_hi, bb2_hi);
-    dd1_lo = neon_rotr_xor!(dd1_lo, *a1_lo, 16);
-    dd2_lo = neon_rotr_xor!(dd2_lo, *a2_lo, 16);
-    dd1_hi = neon_rotr_xor!(dd1_hi, *a1_hi, 16);
-    dd2_hi = neon_rotr_xor!(dd2_hi, *a2_hi, 16);
+    dd1_lo = neon_rotr_xor!(SHA3, dd1_lo, *a1_lo, 16);
+    dd2_lo = neon_rotr_xor!(SHA3, dd2_lo, *a2_lo, 16);
+    dd1_hi = neon_rotr_xor!(SHA3, dd1_hi, *a1_hi, 16);
+    dd2_hi = neon_rotr_xor!(SHA3, dd2_hi, *a2_hi, 16);
     // G step 4
     cc1_lo = neon_blamka(cc1_lo, dd1_lo);
     cc2_lo = neon_blamka(cc2_lo, dd2_lo);
     cc1_hi = neon_blamka(cc1_hi, dd1_hi);
     cc2_hi = neon_blamka(cc2_hi, dd2_hi);
-    bb1_lo = neon_rotr_xor!(bb1_lo, cc1_lo, 63);
-    bb2_lo = neon_rotr_xor!(bb2_lo, cc2_lo, 63);
-    bb1_hi = neon_rotr_xor!(bb1_hi, cc1_hi, 63);
-    bb2_hi = neon_rotr_xor!(bb2_hi, cc2_hi, 63);
+    bb1_lo = neon_rotr_xor!(SHA3, bb1_lo, cc1_lo, 63);
+    bb2_lo = neon_rotr_xor!(SHA3, bb2_lo, cc2_lo, 63);
+    bb1_hi = neon_rotr_xor!(SHA3, bb1_hi, cc1_hi, 63);
+    bb2_hi = neon_rotr_xor!(SHA3, bb2_hi, cc2_hi, 63);
 
     // Un-rotate column 1.
     *b1_lo = vextq_u64::<1>(bb1_hi, bb1_lo);
@@ -2010,9 +2084,9 @@ unsafe fn neon_round_pair(
 /// By-value NEON compress (used in `update_address_block` where dst may alias lhs).
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
-unsafe fn compress_neon(rhs: &PowBlock, lhs: &PowBlock) -> PowBlock {
+unsafe fn compress_neon<const SHA3: bool>(rhs: &PowBlock, lhs: &PowBlock) -> PowBlock {
     let mut result = PowBlock::default();
-    compress_neon_into(rhs, lhs, &mut result);
+    compress_neon_into::<SHA3>(rhs, lhs, &mut result);
     result
 }
 
@@ -2026,7 +2100,7 @@ unsafe fn compress_neon(rhs: &PowBlock, lhs: &PowBlock) -> PowBlock {
 /// `dst` must not alias `rhs` or `lhs`.
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
-unsafe fn compress_neon_into(rhs: &PowBlock, lhs: &PowBlock, dst: &mut PowBlock) {
+unsafe fn compress_neon_into<const SHA3: bool>(rhs: &PowBlock, lhs: &PowBlock, dst: &mut PowBlock) {
     use std::arch::aarch64::{uint64x2_t, veorq_u64, vld1q_u64, vst1q_u64};
 
     // q is the working buffer between row and column rounds.
@@ -2127,7 +2201,7 @@ unsafe fn compress_neon_into(rhs: &PowBlock, lhs: &PowBlock, dst: &mut PowBlock)
         vst1q_u64(dst_ptr.add(base2 + 14), d2_hi);
 
         // Row rounds in registers — no load/store needed.
-        neon_round_pair(
+        neon_round_pair::<SHA3>(
             &mut a1_lo, &mut a1_hi, &mut b1_lo, &mut b1_hi, &mut c1_lo, &mut c1_hi, &mut d1_lo,
             &mut d1_hi, &mut a2_lo, &mut a2_hi, &mut b2_lo, &mut b2_hi, &mut c2_lo, &mut c2_hi,
             &mut d2_lo, &mut d2_hi,
@@ -2181,7 +2255,7 @@ unsafe fn compress_neon_into(rhs: &PowBlock, lhs: &PowBlock, dst: &mut PowBlock)
         let mut d2_hi: uint64x2_t = vld1q_u64(q_ptr.add(base2 + 112));
 
         // Interleaved round for both columns.
-        neon_round_pair(
+        neon_round_pair::<SHA3>(
             &mut a1_lo, &mut a1_hi, &mut b1_lo, &mut b1_hi, &mut c1_lo, &mut c1_hi, &mut d1_lo,
             &mut d1_hi, &mut a2_lo, &mut a2_hi, &mut b2_lo, &mut b2_hi, &mut c2_lo, &mut c2_hi,
             &mut d2_lo, &mut d2_hi,
@@ -2270,7 +2344,7 @@ unsafe fn compress_neon_into(rhs: &PowBlock, lhs: &PowBlock, dst: &mut PowBlock)
 /// point to a valid PowBlock array of at least `block_count` elements.
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
-unsafe fn compress_neon_into_mid_prefetch(
+unsafe fn compress_neon_into_mid_prefetch<const SHA3: bool>(
     rhs: &PowBlock,
     lhs: &PowBlock,
     dst: &mut PowBlock,
@@ -2371,7 +2445,7 @@ unsafe fn compress_neon_into_mid_prefetch(
         vst1q_u64(dst_ptr.add(base2 + 12), d2_lo);
         vst1q_u64(dst_ptr.add(base2 + 14), d2_hi);
 
-        neon_round_pair(
+        neon_round_pair::<SHA3>(
             &mut a1_lo, &mut a1_hi, &mut b1_lo, &mut b1_hi, &mut c1_lo, &mut c1_hi, &mut d1_lo,
             &mut d1_hi, &mut a2_lo, &mut a2_hi, &mut b2_lo, &mut b2_hi, &mut c2_lo, &mut c2_hi,
             &mut d2_lo, &mut d2_hi,
@@ -2407,7 +2481,7 @@ unsafe fn compress_neon_into_mid_prefetch(
         let mut d_lo: uint64x2_t = vld1q_u64(q_ptr.add(96));
         let mut d_hi: uint64x2_t = vld1q_u64(q_ptr.add(112));
 
-        neon_round(
+        neon_round::<SHA3>(
             &mut a_lo, &mut a_hi, &mut b_lo, &mut b_hi, &mut c_lo, &mut c_hi, &mut d_lo, &mut d_hi,
         );
 
@@ -2431,7 +2505,11 @@ unsafe fn compress_neon_into_mid_prefetch(
     {
         let rand = *dst_ptr;
         let next_ref = reference_index(next_ref_area_size, rand);
-        prefetch_pow_block(&*memory_blocks_base.add(next_ref));
+        if SHA3 {
+            prefetch_pow_block::<ISA_NEON_SHA3>(&*memory_blocks_base.add(next_ref));
+        } else {
+            prefetch_pow_block::<ISA_NEON>(&*memory_blocks_base.add(next_ref));
+        }
     }
 
     // Remaining column rounds (idx=1..8): process in pairs (1,2), (3,4), (5,6),
@@ -2458,7 +2536,7 @@ unsafe fn compress_neon_into_mid_prefetch(
         let mut d2_lo: uint64x2_t = vld1q_u64(q_ptr.add(base2 + 96));
         let mut d2_hi: uint64x2_t = vld1q_u64(q_ptr.add(base2 + 112));
 
-        neon_round_pair(
+        neon_round_pair::<SHA3>(
             &mut a1_lo, &mut a1_hi, &mut b1_lo, &mut b1_hi, &mut c1_lo, &mut c1_hi, &mut d1_lo,
             &mut d1_hi, &mut a2_lo, &mut a2_hi, &mut b2_lo, &mut b2_hi, &mut c2_lo, &mut c2_hi,
             &mut d2_lo, &mut d2_hi,
@@ -2543,7 +2621,7 @@ unsafe fn compress_neon_into_mid_prefetch(
         let mut d_lo: uint64x2_t = vld1q_u64(q_ptr.add(base + 96));
         let mut d_hi: uint64x2_t = vld1q_u64(q_ptr.add(base + 112));
 
-        neon_round(
+        neon_round::<SHA3>(
             &mut a_lo, &mut a_hi, &mut b_lo, &mut b_hi, &mut c_lo, &mut c_hi, &mut d_lo, &mut d_hi,
         );
 
@@ -2821,6 +2899,15 @@ mod tests {
         }
         // Runtime dispatch would otherwise skip AVX2 on newer test hosts.
         assert_fixed_kernel_matches_reference(Some(super::ISA_AVX2));
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn fixed_neon_sha3_matches_reference_at_segment_boundaries() {
+        if !crate::CpuKernel::NeonSha3.is_supported() {
+            return;
+        }
+        assert_fixed_kernel_matches_reference(Some(super::ISA_NEON_SHA3));
     }
 
     fn assert_fixed_kernel_matches_reference(isa: Option<u8>) {
