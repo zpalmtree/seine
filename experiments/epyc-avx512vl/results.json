@@ -1,0 +1,572 @@
+{
+  "prototype_vs_existing_avx512": {
+    "complete": true,
+    "experiment": {
+      "started_at": "2026-10-24T07:46:01.562266+00:00",
+      "baseline": "existing 512-bit AVX-512",
+      "candidate": "256-bit AVX-512VL paired rounds",
+      "pairs": 3,
+      "seconds": 20,
+      "rounds": 2,
+      "warmup_rounds": 1,
+      "affinity": "auto",
+      "autotune": false
+    },
+    "cells": [
+      {
+        "page_mode": "large",
+        "workers": 1,
+        "complete": true,
+        "pairs": [
+          {
+            "pair": 1,
+            "baseline": {
+              "counted_hps": 2.1407554712401575,
+              "completed_hps": 2.1905404821992307
+            },
+            "candidate": {
+              "counted_hps": 2.2661055010429196,
+              "completed_hps": 2.3153686641090703
+            }
+          },
+          {
+            "pair": 2,
+            "baseline": {
+              "counted_hps": 2.1387216498655093,
+              "completed_hps": 2.188459362653079
+            },
+            "candidate": {
+              "counted_hps": 2.2666252394565296,
+              "completed_hps": 2.3158997011838456
+            }
+          },
+          {
+            "pair": 3,
+            "baseline": {
+              "counted_hps": 2.1397539252951066,
+              "completed_hps": 2.189515644488016
+            },
+            "candidate": {
+              "counted_hps": 2.2633241636600543,
+              "completed_hps": 2.312526862870055
+            }
+          }
+        ],
+        "counted_hps": {
+          "baseline": 2.139743682133591,
+          "candidate": 2.2653516347198344,
+          "paired_deltas_pct": [
+            5.855410927906957,
+            5.980375688396067,
+            5.774974257748133
+          ],
+          "geometric_delta_pct": 5.870219900390028
+        },
+        "completed_hps": {
+          "baseline": 2.189505163113442,
+          "candidate": 2.314598409387657,
+          "paired_deltas_pct": [
+            5.698510615266783,
+            5.823290151308536,
+            5.618193169421426
+          ],
+          "geometric_delta_pct": 5.713297637691839
+        }
+      },
+      {
+        "page_mode": "large",
+        "workers": 4,
+        "complete": true,
+        "pairs": [
+          {
+            "pair": 1,
+            "baseline": {
+              "counted_hps": 6.82336591348864,
+              "completed_hps": 7.0183192253026006
+            },
+            "candidate": {
+              "counted_hps": 7.242988878211456,
+              "completed_hps": 7.441426929669304
+            }
+          },
+          {
+            "pair": 2,
+            "baseline": {
+              "counted_hps": 6.8290316097433195,
+              "completed_hps": 7.024146798593129
+            },
+            "candidate": {
+              "counted_hps": 7.19419590707445,
+              "completed_hps": 7.389956339920014
+            }
+          },
+          {
+            "pair": 3,
+            "baseline": {
+              "counted_hps": 6.825681791425463,
+              "completed_hps": 7.020701271180476
+            },
+            "candidate": {
+              "counted_hps": 7.2003081521967065,
+              "completed_hps": 7.396234904637433
+            }
+          }
+        ],
+        "counted_hps": {
+          "baseline": 6.826026438219141,
+          "candidate": 7.212497645827537,
+          "paired_deltas_pct": [
+            6.149794251738605,
+            5.347233959352771,
+            5.488482648603044
+          ],
+          "geometric_delta_pct": 5.661258650192935
+        },
+        "completed_hps": {
+          "baseline": 7.021055765025402,
+          "candidate": 7.409206058075584,
+          "paired_deltas_pct": [
+            6.028618687524312,
+            5.207885766284837,
+            5.348947618644573
+          ],
+          "geometric_delta_pct": 5.527876592771275
+        }
+      },
+      {
+        "page_mode": "regular",
+        "workers": 4,
+        "complete": true,
+        "pairs": [
+          {
+            "pair": 1,
+            "baseline": {
+              "counted_hps": 5.37786422118686,
+              "completed_hps": 5.577044377527114
+            },
+            "candidate": {
+              "counted_hps": 5.476326804272169,
+              "completed_hps": 5.671909904424747
+            }
+          },
+          {
+            "pair": 2,
+            "baseline": {
+              "counted_hps": 5.382219389633719,
+              "completed_hps": 5.581560848509042
+            },
+            "candidate": {
+              "counted_hps": 5.489860158963246,
+              "completed_hps": 5.685926593211933
+            }
+          },
+          {
+            "pair": 3,
+            "baseline": {
+              "counted_hps": 5.379766144740285,
+              "completed_hps": 5.579016742693629
+            },
+            "candidate": {
+              "counted_hps": 5.496062357741524,
+              "completed_hps": 5.691482439055772
+            }
+          }
+        ],
+        "counted_hps": {
+          "baseline": 5.379949918520288,
+          "candidate": 5.487416440325647,
+          "paired_deltas_pct": [
+            1.8308863711620438,
+            1.9999327700547909,
+            2.1617336120630437
+          ],
+          "geometric_delta_pct": 1.997428137736712
+        },
+        "completed_hps": {
+          "baseline": 5.579207322909928,
+          "candidate": 5.683106312230818,
+          "paired_deltas_pct": [
+            1.7010000365049294,
+            1.8698308149909248,
+            2.015869490075106
+          ],
+          "geometric_delta_pct": 1.8621521908708027
+        }
+      }
+    ]
+  },
+  "prototype_vs_avx2": {
+    "complete": true,
+    "experiment": {
+      "started_at": "2026-10-24T08:05:19.624116+00:00",
+      "baseline": "existing avx2",
+      "candidate": "256-bit AVX-512VL paired rounds",
+      "cells": [
+        [
+          "large",
+          1
+        ],
+        [
+          "large",
+          4
+        ]
+      ],
+      "baseline_kernel": "avx2",
+      "candidate_kernel": "avx512",
+      "pairs": 3,
+      "seconds": 20,
+      "rounds": 2,
+      "warmup_rounds": 1,
+      "affinity": "auto",
+      "autotune": false
+    },
+    "cells": [
+      {
+        "page_mode": "large",
+        "workers": 1,
+        "complete": true,
+        "pairs": [
+          {
+            "pair": 1,
+            "baseline": {
+              "counted_hps": 2.217259922320402,
+              "completed_hps": 2.2665323650386333
+            },
+            "candidate": {
+              "counted_hps": 2.267000680121636,
+              "completed_hps": 2.3162833036025408
+            }
+          },
+          {
+            "pair": 2,
+            "baseline": {
+              "counted_hps": 2.2187381898358614,
+              "completed_hps": 2.268043482943325
+            },
+            "candidate": {
+              "counted_hps": 2.2671025915578324,
+              "completed_hps": 2.316387430504742
+            }
+          },
+          {
+            "pair": 3,
+            "baseline": {
+              "counted_hps": 2.2167350979341434,
+              "completed_hps": 2.265995877888235
+            },
+            "candidate": {
+              "counted_hps": 2.2637869248096836,
+              "completed_hps": 2.3129996840446765
+            }
+          }
+        ],
+        "counted_hps": {
+          "baseline": 2.217577736696802,
+          "candidate": 2.2659633988297174,
+          "paired_deltas_pct": [
+            2.2433435656555423,
+            2.179815624192649,
+            2.122573279928197
+          ],
+          "geometric_delta_pct": 2.1818989177479153
+        },
+        "completed_hps": {
+          "baseline": 2.266857241956731,
+          "candidate": 2.3152234727173195,
+          "paired_deltas_pct": [
+            2.195024405180268,
+            2.1315264863740246,
+            2.0743111942571613
+          ],
+          "geometric_delta_pct": 2.1336087953860217
+        }
+      },
+      {
+        "page_mode": "large",
+        "workers": 4,
+        "complete": true,
+        "pairs": [
+          {
+            "pair": 1,
+            "baseline": {
+              "counted_hps": 7.211179605708641,
+              "completed_hps": 7.407402180013638
+            },
+            "candidate": {
+              "counted_hps": 7.235746774456861,
+              "completed_hps": 7.432637843149564
+            }
+          },
+          {
+            "pair": 2,
+            "baseline": {
+              "counted_hps": 7.204355555150572,
+              "completed_hps": 7.40039244100501
+            },
+            "candidate": {
+              "counted_hps": 7.19595353124043,
+              "completed_hps": 7.391761790593911
+            }
+          },
+          {
+            "pair": 3,
+            "baseline": {
+              "counted_hps": 7.208007812352675,
+              "completed_hps": 7.4041440793554685
+            },
+            "candidate": {
+              "counted_hps": 7.248706399492334,
+              "completed_hps": 7.447301095368836
+            }
+          }
+        ],
+        "counted_hps": {
+          "baseline": 7.207847657737296,
+          "candidate": 7.226802235063208,
+          "paired_deltas_pct": [
+            0.34068169275345284,
+            -0.11662422607856548,
+            0.5646301752047389
+          ],
+          "geometric_delta_pct": 0.2624947545397882
+        },
+        "completed_hps": {
+          "baseline": 7.403979566791373,
+          "candidate": 7.423900243037437,
+          "paired_deltas_pct": [
+            0.34068169275345284,
+            -0.11662422607857659,
+            0.5828765020078341
+          ],
+          "geometric_delta_pct": 0.2685582237423656
+        }
+      }
+    ]
+  },
+  "integrated_confirmation": {
+    "complete": true,
+    "scope": "two opposite-order passes; integration confirmation, not a long repeat",
+    "cells": [
+      {
+        "mode": "large",
+        "workers": 4,
+        "kernels": {
+          "avx512": {
+            "samples": [
+              {
+                "pass": 1,
+                "counted_hps": 6.822847638599749,
+                "completed_hps": 7.017786142559742
+              },
+              {
+                "pass": 2,
+                "counted_hps": 6.819824982827568,
+                "completed_hps": 7.01467712519407
+              }
+            ],
+            "counted_hps": 6.821336310713659,
+            "completed_hps": 7.016231633876906
+          },
+          "avx2": {
+            "samples": [
+              {
+                "pass": 1,
+                "counted_hps": 7.100780754306099,
+                "completed_hps": 7.298024664147935
+              },
+              {
+                "pass": 2,
+                "counted_hps": 7.10816659294082,
+                "completed_hps": 7.305615664966954
+              }
+            ],
+            "counted_hps": 7.10447367362346,
+            "completed_hps": 7.301820164557444
+          },
+          "avx512-256": {
+            "samples": [
+              {
+                "pass": 1,
+                "counted_hps": 7.184341807846313,
+                "completed_hps": 7.379834101937369
+              },
+              {
+                "pass": 2,
+                "counted_hps": 7.217338943089598,
+                "completed_hps": 7.413729118411764
+              }
+            ],
+            "counted_hps": 7.200840375467956,
+            "completed_hps": 7.396781610174567
+          }
+        },
+        "delta_pct": {
+          "avx512-256-vs-avx512": {
+            "counted_hps": 5.563485620233144,
+            "completed_hps": 5.4238513799947485
+          },
+          "avx512-256-vs-avx2": {
+            "counted_hps": 1.3564228157009417,
+            "completed_hps": 1.300517452868255
+          },
+          "avx2-vs-avx512": {
+            "counted_hps": 4.150760936168796,
+            "completed_hps": 4.0703976947057185
+          }
+        }
+      },
+      {
+        "mode": "regular",
+        "workers": 4,
+        "kernels": {
+          "avx512": {
+            "samples": [
+              {
+                "pass": 1,
+                "counted_hps": 5.375348475044481,
+                "completed_hps": 5.574435455601685
+              },
+              {
+                "pass": 2,
+                "counted_hps": 5.365245100061693,
+                "completed_hps": 5.563957881545459
+              }
+            ],
+            "counted_hps": 5.370296787553087,
+            "completed_hps": 5.569196668573571
+          },
+          "avx2": {
+            "samples": [
+              {
+                "pass": 1,
+                "counted_hps": 5.495063547269152,
+                "completed_hps": 5.691315816814479
+              },
+              {
+                "pass": 2,
+                "counted_hps": 5.481244407503153,
+                "completed_hps": 5.677003136342552
+              }
+            ],
+            "counted_hps": 5.488153977386153,
+            "completed_hps": 5.6841594765785155
+          },
+          "avx512-256": {
+            "samples": [
+              {
+                "pass": 1,
+                "counted_hps": 5.483753973831192,
+                "completed_hps": 5.67786915874557
+              },
+              {
+                "pass": 2,
+                "counted_hps": 5.48523059655785,
+                "completed_hps": 5.681131689292059
+              }
+            ],
+            "counted_hps": 5.484492285194521,
+            "completed_hps": 5.679500424018814
+          }
+        },
+        "delta_pct": {
+          "avx512-256-vs-avx512": {
+            "counted_hps": 2.126428057125418,
+            "completed_hps": 1.9806044212386187
+          },
+          "avx512-256-vs-avx2": {
+            "counted_hps": -0.06671992452690345,
+            "completed_hps": -0.0819655496806404
+          },
+          "avx2-vs-avx512": {
+            "counted_hps": 2.194612225272663,
+            "completed_hps": 2.0642619545771845
+          }
+        }
+      }
+    ]
+  },
+  "fused_rows_vs_unfused": {
+    "complete": true,
+    "experiment": {
+      "started_at": "2026-10-24T08:28:02.746044+00:00",
+      "baseline": "unfused 256-bit AVX-512",
+      "candidate": "256-bit AVX-512 with fused input XOR/rows",
+      "cells": [
+        [
+          "large",
+          4
+        ]
+      ],
+      "baseline_kernel": "avx512",
+      "candidate_kernel": "avx512",
+      "pairs": 3,
+      "seconds": 20,
+      "rounds": 2,
+      "warmup_rounds": 1,
+      "affinity": "auto",
+      "autotune": false
+    },
+    "cells": [
+      {
+        "page_mode": "large",
+        "workers": 4,
+        "complete": true,
+        "pairs": [
+          {
+            "pair": 1,
+            "baseline": {
+              "counted_hps": 7.210256888226036,
+              "completed_hps": 7.407798172834969
+            },
+            "candidate": {
+              "counted_hps": 6.2219080466096965,
+              "completed_hps": 6.4178736543769315
+            }
+          },
+          {
+            "pair": 2,
+            "baseline": {
+              "counted_hps": 7.216858709623887,
+              "completed_hps": 7.414580866051939
+            },
+            "candidate": {
+              "counted_hps": 6.226186360035935,
+              "completed_hps": 6.422286717832343
+            }
+          },
+          {
+            "pair": 3,
+            "baseline": {
+              "counted_hps": 7.192263683474703,
+              "completed_hps": 7.388642220969015
+            },
+            "candidate": {
+              "counted_hps": 6.205235923813589,
+              "completed_hps": 6.400676425351024
+            }
+          }
+        ],
+        "counted_hps": {
+          "baseline": 7.206459760441542,
+          "candidate": 6.21777677681974,
+          "paired_deltas_pct": [
+            -13.707539924551925,
+            -13.727196131287178,
+            -13.723464587775847
+          ],
+          "geometric_delta_pct": -13.71940063555458
+        },
+        "completed_hps": {
+          "baseline": 7.403673753285307,
+          "candidate": 6.413612265853433,
+          "paired_deltas_pct": [
+            -13.363276041836237,
+            -13.383010667034046,
+            -13.371412041229124
+          ],
+          "geometric_delta_pct": -13.372566628528704
+        }
+      }
+    ]
+  }
+}

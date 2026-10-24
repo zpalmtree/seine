@@ -1,0 +1,38 @@
+{
+  "base_revision": "9c414716471b19970336539cf64d91d0de59635c",
+  "module_commit": "7cf7981",
+  "integrated_commit": "ac4febae92970dddb9012812df50337f26b19247",
+  "host": {
+    "cpu": "AMD EPYC9R14",
+    "vendor": "AuthenticAMD",
+    "family": 25,
+    "model": 17,
+    "stepping": 1,
+    "physical_cores": 8,
+    "numa_nodes": 1,
+    "l3_groups": 1
+  },
+  "build": "Rust1.93.0 portable CPU-only release, fatLTO, codegen-units1, noRUSTFLAGS",
+  "sha256": {
+    "data/epyc-avx512vl/bin/baseline": "00ddd936d770bb639989be123cbc2bef91e8d063696b31ffbbf97be09533b60b",
+    "data/epyc-avx512vl/bin/candidate": "8983ead61dbd4f3c8db0887cdda6a385827bb199d214d3a1f3dbc4997caf3be5",
+    "data/epyc-final/bin/seine": "aabf4a7e74a2faa61ebfcdcf3bba4614e2df606fdd1d68531e37516ea72f3727",
+    "data/epyc-final/bin/verify": "03ce8c193b4598914ddae0e544c24099911be73158f44e45e3a1076b69b12ddd",
+    "experiments/epyc-avx512vl/candidate.patch": "7f3bd88d89f25b0a90ecc27d432d5a9e79a55e203aed4a083227ddba743af67a",
+    "experiments/epyc-avx512vl/fused-candidate.patch": "283e2e716669a11a43d33a1157be066b68e342e6a2d1724273673ff61c15e708"
+  },
+  "fused_provenance": {
+    "base_revision": "9c414716471b19970336539cf64d91d0de59635c",
+    "build_head": "7cf7981 (experimental source replacement)",
+    "baseline": "unfused 256-bit AVX-512 candidate",
+    "candidate": "same 256-bit path with input XOR and row fusion",
+    "sha256": {
+      "data/epyc-vl-fused/bin/verify-baseline": "2f0527d7c325f68176fa510123f2480a5138d0b04f02094577b31b608795dc35",
+      "data/epyc-vl-fused/bin/baseline": "8983ead61dbd4f3c8db0887cdda6a385827bb199d214d3a1f3dbc4997caf3be5",
+      "data/epyc-vl-fused/bin/candidate": "bc5f7c97a11952971a3771cd1d6f9c0f60cbc07d7b173ceebfffb0eb9222e35b",
+      "data/epyc-vl-fused/bin/verify-candidate": "87cd0c94f568f0169b8af1953d06516fb08745d0137518b413bfb3c0f1b7d775",
+      "data/epyc-vl-fused/candidate-fixed_argon.rs": "13d565db67ba334394dee77ca92019b7668762635dfbd1b12455c68b09505550",
+      "experiments/epyc-avx512vl/fused-candidate.patch": "283e2e716669a11a43d33a1157be066b68e342e6a2d1724273673ff61c15e708"
+    }
+  }
+}

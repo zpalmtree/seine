@@ -11,6 +11,7 @@ This log tracks CPU backend/hash-kernel tuning attempts and measured outcomes.
 
 ## Newest-first index
 
+- `2026-10-24 EPYC 9R14 256-bit AVX-512 kernel experiment`
 - `2026-10-24 explicit CPU kernel benchmarks and architecture identity`
 - `2026-10-24 independent two-node Milan release validation`
 - `2026-10-24 Intel AVX2 release validation`
@@ -50,6 +51,53 @@ This log tracks CPU backend/hash-kernel tuning attempts and measured outcomes.
 - `Validation`
 - `Baseline`
 - `Benchmark protocol`
+
+## 2026-10-24 EPYC 9R14 256-bit AVX-512 kernel experiment
+
+- Added an isolated 256-bit AVX-512 compression module (`7cf7981`) and handed it
+  to the architecture session, which integrated explicit benchmark selection as
+  `avx512-256` in `ac4feba`. No automatic kernel preference or autotuning policy
+  changes are made by this experiment.
+- Host: EC2 c7a.2xlarge, AMD EPYC 9R14, AuthenticAMD family 25/model 17/stepping 1,
+  eight physical cores, one NUMA node and one L3 group. Portable Rust 1.93.0
+  CPU-only release builds, fixed workers, verified page backing, autotuning off.
+- The candidate combines paired 256-bit rows/columns, native AVX-512VL rotates,
+  and data-dependent prefetch after column zero. It requires AVX2 + AVX-512F/VL.
+  The disassembly uses no ZMM operations or high YMM registers; no speedup is
+  attributed to an expanded register file.
+- Three alternating pairs, each with one warmup and two measured 20-second
+  backend rounds, found these completed-hash gains against existing AVX-512:
+  **+5.71% at one HugeTLB worker**, **+5.53% at four HugeTLB workers**, and
+  **+1.86% at four ordinary-page workers**. Every pair improved.
+- The necessary same-binary AVX2 control changes the interpretation: the new
+  path beats paired AVX2 by **+2.13% at one HugeTLB worker**, but only **+0.27%
+  at four**, with mixed pair signs (+0.34%, -0.12%, +0.58%). A useful four-worker
+  advantage over AVX2 is not established by that comparison.
+- Native integrated confirmation checked all three SIMD paths at four workers
+  with two opposite-order passes. AVX2 beat existing AVX-512 by +4.07% with
+  HugeTLB and +2.06% with ordinary pages. The new path was +1.30% / -0.08%
+  relative to AVX2. These shorter checks confirm integration and the weaker
+  existing AVX-512 default, but do not establish a broad generation preference.
+- Both experimental builds and the distinct-label integration passed full 2 GiB
+  RustCrypto parity on the EPYC host. The module's scalar-comparison tests cover
+  shared inputs, edge/random words, ordinary/mid-prefetch paths and guarded
+  outputs. Six kernel tests pass; Windows x86-64 GNU and macOS AArch64 checks
+  compile. The architecture session separately reports 432 workspace tests
+  passed, one existing 1 GiB HugeTLB test ignored, and strict kernel Clippy.
+- No memory-backing failures, backend timeouts, swapping or OOM events occurred.
+  All paired results and the integrated check have checksummed local archives.
+  A pilot stopped on a checker field-name error and is excluded. See
+  `experiments/epyc-avx512vl/README.md`, `results.json`, source hashes and runners.
+  Raw evidence is under `data/epyc-avx512vl`, `data/epyc-control` and
+  `data/epyc-final` in the EPYC worktree.
+- A second candidate fused the 256-bit input XOR/backup with row rounds to
+  remove a scratch-buffer store/reload. It passed full-size reference checks but
+  regressed four-worker HugeTLB throughput by **13.37%** in all three paired
+  comparisons (7.40367 to 6.41361 completed H/s). It is rejected and retained only
+  as an experimental patch/results, not in the kernel module.
+- Scope: an eight-core guest with one/four-worker measurements, not a full EPYC
+  socket or Siena/Zen 4c. The architecture session owns the subsequent 8/12-worker
+  Genoa check and coordinates any cache/default change with the autotune session.
 
 ## 2026-10-24 explicit CPU kernel benchmarks and architecture identity
 

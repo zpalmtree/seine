@@ -1,0 +1,104 @@
+--- a/pow-kernel/src/fixed_argon.rs
++++ b/pow-kernel/src/fixed_argon.rs
+@@ -1487,30 +1487,29 @@
+     let dst_ptr = dst.0.as_mut_ptr();
+     let q_ptr = q.as_mut_ptr() as *mut u64;
+ 
+-    // Phase 1: XOR rhs ^ lhs → store to both dst (pre-round backup) and q (working copy).
+-    for vec_idx in 0..(PowBlock::SIZE / 32) {
+-        let offset = vec_idx * 4;
+-        let rv = _mm256_xor_si256(
+-            _mm256_loadu_si256(rhs_ptr.add(offset) as *const __m256i),
+-            _mm256_loadu_si256(lhs_ptr.add(offset) as *const __m256i),
+-        );
+-        _mm256_storeu_si256(dst_ptr.add(offset) as *mut __m256i, rv);
+-        _mm256_storeu_si256(q_ptr.add(offset) as *mut __m256i, rv);
+-    }
+-
+-    // Phase 2: Interleave pairs of contiguous 16-element row rounds.
++    // Fuse input XOR/backup with paired row rounds. Each row initializes q
++    // only after its round; every q word is ready before column processing.
+     for row in (0..8).step_by(2) {
+         let base0 = row * 16;
+-        let mut a0 = _mm256_loadu_si256(q_ptr.add(base0) as *const __m256i);
+-        let mut b0 = _mm256_loadu_si256(q_ptr.add(base0 + 4) as *const __m256i);
+-        let mut c0 = _mm256_loadu_si256(q_ptr.add(base0 + 8) as *const __m256i);
+-        let mut d0 = _mm256_loadu_si256(q_ptr.add(base0 + 12) as *const __m256i);
+-
+         let base1 = (row + 1) * 16;
+-        let mut a1 = _mm256_loadu_si256(q_ptr.add(base1) as *const __m256i);
+-        let mut b1 = _mm256_loadu_si256(q_ptr.add(base1 + 4) as *const __m256i);
+-        let mut c1 = _mm256_loadu_si256(q_ptr.add(base1 + 8) as *const __m256i);
+-        let mut d1 = _mm256_loadu_si256(q_ptr.add(base1 + 12) as *const __m256i);
++        macro_rules! xor_backup {
++            ($off:expr) => {{
++                let value = _mm256_xor_si256(
++                    _mm256_loadu_si256(rhs_ptr.add($off) as *const __m256i),
++                    _mm256_loadu_si256(lhs_ptr.add($off) as *const __m256i),
++                );
++                _mm256_storeu_si256(dst_ptr.add($off) as *mut __m256i, value);
++                value
++            }};
++        }
++        let mut a0 = xor_backup!(base0);
++        let mut b0 = xor_backup!(base0 + 4);
++        let mut c0 = xor_backup!(base0 + 8);
++        let mut d0 = xor_backup!(base0 + 12);
++        let mut a1 = xor_backup!(base1);
++        let mut b1 = xor_backup!(base1 + 4);
++        let mut c1 = xor_backup!(base1 + 8);
++        let mut d1 = xor_backup!(base1 + 12);
+ 
+         avx512vl_round_pair(
+             &mut a0, &mut b0, &mut c0, &mut d0, &mut a1, &mut b1, &mut c1, &mut d1,
+@@ -1653,30 +1652,29 @@
+     let dst_ptr = dst.0.as_mut_ptr();
+     let q_ptr = q.as_mut_ptr() as *mut u64;
+ 
+-    // Phase 1: XOR rhs ^ lhs → store to both dst (pre-round backup) and q (working copy).
+-    for vec_idx in 0..(PowBlock::SIZE / 32) {
+-        let offset = vec_idx * 4;
+-        let rv = _mm256_xor_si256(
+-            _mm256_loadu_si256(rhs_ptr.add(offset) as *const __m256i),
+-            _mm256_loadu_si256(lhs_ptr.add(offset) as *const __m256i),
+-        );
+-        _mm256_storeu_si256(dst_ptr.add(offset) as *mut __m256i, rv);
+-        _mm256_storeu_si256(q_ptr.add(offset) as *mut __m256i, rv);
+-    }
+-
+-    // Phase 2: Interleave pairs of contiguous 16-element row rounds.
++    // Fuse input XOR/backup with paired row rounds. Each row initializes q
++    // only after its round; every q word is ready before column processing.
+     for row in (0..8).step_by(2) {
+         let base0 = row * 16;
+-        let mut a0 = _mm256_loadu_si256(q_ptr.add(base0) as *const __m256i);
+-        let mut b0 = _mm256_loadu_si256(q_ptr.add(base0 + 4) as *const __m256i);
+-        let mut c0 = _mm256_loadu_si256(q_ptr.add(base0 + 8) as *const __m256i);
+-        let mut d0 = _mm256_loadu_si256(q_ptr.add(base0 + 12) as *const __m256i);
+-
+         let base1 = (row + 1) * 16;
+-        let mut a1 = _mm256_loadu_si256(q_ptr.add(base1) as *const __m256i);
+-        let mut b1 = _mm256_loadu_si256(q_ptr.add(base1 + 4) as *const __m256i);
+-        let mut c1 = _mm256_loadu_si256(q_ptr.add(base1 + 8) as *const __m256i);
+-        let mut d1 = _mm256_loadu_si256(q_ptr.add(base1 + 12) as *const __m256i);
++        macro_rules! xor_backup {
++            ($off:expr) => {{
++                let value = _mm256_xor_si256(
++                    _mm256_loadu_si256(rhs_ptr.add($off) as *const __m256i),
++                    _mm256_loadu_si256(lhs_ptr.add($off) as *const __m256i),
++                );
++                _mm256_storeu_si256(dst_ptr.add($off) as *mut __m256i, value);
++                value
++            }};
++        }
++        let mut a0 = xor_backup!(base0);
++        let mut b0 = xor_backup!(base0 + 4);
++        let mut c0 = xor_backup!(base0 + 8);
++        let mut d0 = xor_backup!(base0 + 12);
++        let mut a1 = xor_backup!(base1);
++        let mut b1 = xor_backup!(base1 + 4);
++        let mut c1 = xor_backup!(base1 + 8);
++        let mut d1 = xor_backup!(base1 + 12);
+ 
+         avx512vl_round_pair(
+             &mut a0, &mut b0, &mut c0, &mut d0, &mut a1, &mut b1, &mut c1, &mut d1,

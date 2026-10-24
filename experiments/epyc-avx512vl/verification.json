@@ -1,0 +1,34 @@
+{
+  "epyc-avx512vl": {
+    "complete": true,
+    "checks": 20,
+    "max_steal_pct": 0.0020694507677662347
+  },
+  "epyc-control": {
+    "complete": true,
+    "checks": 14,
+    "max_steal_pct": 0.0020408163265306124
+  },
+  "epyc-final": {
+    "complete": true,
+    "checks": 13,
+    "max_steal_pct": 0.003057542958478567
+  },
+  "epyc-vl-fused": {
+    "complete": true,
+    "checks": 8,
+    "max_steal_pct": 0.00204897039237783
+  },
+  "cleanup": {
+    "instance_terminated": true,
+    "root_volume_deleted": true,
+    "security_group_deleted": true,
+    "private_key_removed": true,
+    "completed_at": "2026-10-24T08:37:40.432448+00:00",
+    "recovery_private_key_removed": true,
+    "elapsed_minutes": 54.007207466666664,
+    "estimated_compute_usd": 0.36955331829191107
+  },
+  "artifact_files": 196,
+  "manifest_sha256": "af754ed07825708a3aa3fe53016ffef36799bf1d81cd8f17a9ed3bc05b3353c6"
+}
