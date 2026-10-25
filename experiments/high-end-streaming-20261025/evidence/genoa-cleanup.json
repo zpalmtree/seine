@@ -1,0 +1,7 @@
+{
+  "instance_terminated": true,
+  "root_volume_deleted": true,
+  "security_group_deleted": true,
+  "private_key_removed": true,
+  "completed_at": "2026-10-25T00:40:07.371594+00:00"
+}

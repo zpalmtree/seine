@@ -1,0 +1,12 @@
+{
+  "delta": {
+    "pswpin": 0,
+    "pswpout": 0,
+    "oom_kill": 0,
+    "ticks": 203370,
+    "steal": 1
+  },
+  "steal_pct": 0.0004917146088410287,
+  "steal_single_cpu_upper_pct": 0.025,
+  "wall_seconds": 63.56074428299996
+}

@@ -1,0 +1,7 @@
+reference=[e9, fb, fa, cf, b6, 96, ae, f8, f8, 88, 20, 17, c5, 5b, 23, 4e, 4b, 31, 30, a4, b6, 23, 42, c6, 3d, f5, 61, 31, 8d, 5a, db, a8]
+scalar: PASS (full 2 GiB reference parity)
+avx2: PASS (full 2 GiB reference parity)
+avx512: PASS (full 2 GiB reference parity)
+avx512-256: PASS (full 2 GiB reference parity)
+neon: unsupported
+avx512-256-stream: PASS (full 2 GiB reference parity)

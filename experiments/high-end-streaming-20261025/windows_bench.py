@@ -19,11 +19,21 @@ def run(label, cpus, threads, kernel='avx512', page='regular', secs=12, rounds=2
  gate=subprocess.run(['gpuq','gaming','check','--quiet'])
  if gate.returncode:raise RuntimeError(f'local timing deferred: gaming gate {gate.returncode}')
  admission=json.loads(subprocess.check_output(['gpuq','status'],text=True))
- if admission['managedGpuBusy']:raise RuntimeError('local timing deferred: another managed workload is active')
+ own_job=None
+ if os.environ.get('SEINE_GPUQ_JOB_FILE'):
+  job_file=pathlib.Path(os.environ['SEINE_GPUQ_JOB_FILE'])
+  for _ in range(50):
+   if job_file.exists():break
+   time.sleep(.1)
+  own_job=json.loads(job_file.read_text())['id']
+  assert re.fullmatch('[0-9a-f]{32}',own_job)
+  if admission['activeJobId']!=own_job:raise RuntimeError('Owned exclusive reservation is not active')
+ elif admission['managedGpuBusy']:raise RuntimeError('local timing deferred: another managed workload is active')
  assert re.fullmatch(r"[a-zA-Z0-9_-]+",label)
  assert 1 <= threads <= 16 and len(cpus)>=threads
  assert len(set(cpus))==len(cpus) and all(0 <= c < 32 for c in cpus)
  name=label;mask=sum(1<<n for n in cpus);output=WIN/(name+'.json');log=WIN/(name+'.log')
+ reservation_check=(f"$reservation = & 'D:\\AI\\gpuq\\gpuq.exe' show '{own_job}' | ConvertFrom-Json; if ($reservation.state -ne 'running') {{ throw 'Exclusive reservation ended; discard sample' }}" if own_job else '')
  args=['--bench','--backend','cpu','--threads',str(threads),'--disable-cpu-autotune-threads','--bench-kind','backend','--cpu-page-mode',page,'--cpu-affinity','os','--bench-cpu-kernel',kernel,'--bench-secs',str(secs),'--bench-rounds',str(rounds),'--bench-warmup-rounds',str(warmup),'--bench-output',WIN_STR+'\\'+output.name,'--ui','plain','--data-dir',WIN_STR+'\\config']
  # The dedicated shell's affinity is inherited before miner initialization.
  script=f'''$ErrorActionPreference = 'Stop'
@@ -41,6 +51,7 @@ try {{
  $mine.PriorityClass = 'BelowNormal'
  $watch = [Diagnostics.Stopwatch]::StartNew()
  while (!$mine.WaitForExit(3000)) {{
+  {reservation_check}
   if ($watch.Elapsed.TotalSeconds -gt 180) {{ throw 'Benchmark deadline exceeded' }}
   $state = Get-Content -Raw '{GPUQ_STATE}' | ConvertFrom-Json
   $age = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() - $state.updatedAtUnixMs
@@ -59,7 +70,7 @@ try {{
  for suffix in ['.json','.log','.err']:
   src=WIN/(name+suffix)
   if src.exists():shutil.copy2(src,ROOT/(name+suffix))
- meta={'label':label,'cpus':cpus,'mask':mask,'threads':threads,'kernel':kernel,'page':page,'seconds':secs,'rounds':rounds,'warmup':warmup,'exit_code':result.returncode,'wall_seconds':time.time()-began,'stdout':result.stdout,'stderr':result.stderr,'timestamp':datetime.datetime.now(datetime.timezone.utc).isoformat()}
+ meta={'label':label,'cpus':cpus,'mask':mask,'threads':threads,'kernel':kernel,'page':page,'seconds':secs,'rounds':rounds,'warmup':warmup,'exclusive_job_id':own_job,'exit_code':result.returncode,'wall_seconds':time.time()-began,'stdout':result.stdout,'stderr':result.stderr,'timestamp':datetime.datetime.now(datetime.timezone.utc).isoformat()}
  save(ROOT/(name+'.meta.json'),meta)
  if result.returncode:raise RuntimeError(result.stderr)
  report=json.loads((ROOT/(name+'.json')).read_text());return report

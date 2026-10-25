@@ -1,0 +1,6 @@
+{
+  "lifetime_upper_seconds": 1103.371594,
+  "compute_upper_estimate_usd": 0.5033336018140444,
+  "reserved_usd": 1.5,
+  "scope": "Compute only, upper bound through cleanup completion; excludes EBS, public IPv4 and transfer. Original $1.50 conservative reservation retained."
+}

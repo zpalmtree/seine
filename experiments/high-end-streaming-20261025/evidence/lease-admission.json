@@ -1,0 +1,19 @@
+{
+  "checked_at": "2026-10-25T00:24:09.819406+00:00",
+  "instance_id": "i-04f82f51670b91a3e",
+  "type": "c7a.8xlarge",
+  "launch_time": "2026-10-25T00:21:44+00:00",
+  "deadline_timer": "TimersMonotonic={ OnActiveUSec=35min ; next_elapse=35min 11.783546s }\nNextElapseUSecMonotonic=35min 11.783546s\nActiveState=active\n12.83 378.07\n",
+  "shutdown_behavior": "terminate",
+  "root_delete_on_termination": true,
+  "quota_vcpus": 32,
+  "lease_vcpus": 32,
+  "other_active_instances_before_launch": 0,
+  "allowed_resource_types": [
+    "instance",
+    "root-volume",
+    "security-group",
+    "local-private-key"
+  ],
+  "budget_file": "budget.json"
+}

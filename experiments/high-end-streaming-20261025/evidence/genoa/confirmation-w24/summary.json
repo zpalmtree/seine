@@ -1,0 +1,19 @@
+{
+  "completed_hps": {
+    "baseline": 28.067234194843007,
+    "candidate": 35.69753900681033
+  },
+  "paired_deltas_pct": [
+    27.259809712330572,
+    27.426282872296113,
+    26.80540761954948,
+    27.252893620407036
+  ],
+  "paired_geometric_delta_pct": 27.18588938996678,
+  "paired_resampling_interval_pct": [
+    26.918855804970974,
+    27.38291342320329
+  ],
+  "interval_method": "Enumerated paired resampling, linearly interpolated percentiles; descriptive with few pairs",
+  "scope": "within-host repeatability; not whole-architecture uncertainty"
+}

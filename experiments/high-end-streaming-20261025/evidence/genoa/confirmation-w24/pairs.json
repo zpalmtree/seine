@@ -1,0 +1,42 @@
+[
+  {
+    "baseline": {
+      "counted_hps": 26.93395340726567,
+      "completed_hps": 28.098664905958238
+    },
+    "candidate": {
+      "counted_hps": 34.58989418842579,
+      "completed_hps": 35.758307491027864
+    }
+  },
+  {
+    "candidate": {
+      "counted_hps": 34.49657714702853,
+      "completed_hps": 35.665127293912974
+    },
+    "baseline": {
+      "counted_hps": 26.82666525604614,
+      "completed_hps": 27.988831259918175
+    }
+  },
+  {
+    "baseline": {
+      "counted_hps": 26.944668956444744,
+      "completed_hps": 28.10984383023695
+    },
+    "candidate": {
+      "counted_hps": 34.476917749237145,
+      "completed_hps": 35.644802050150744
+    }
+  },
+  {
+    "candidate": {
+      "counted_hps": 34.55230655830037,
+      "completed_hps": 35.72191919214975
+    },
+    "baseline": {
+      "counted_hps": 26.905994148659687,
+      "completed_hps": 28.071596783258663
+    }
+  }
+]

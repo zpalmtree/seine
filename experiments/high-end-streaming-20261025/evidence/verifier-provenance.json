@@ -1,0 +1,70 @@
+{
+  "source_commit": "4f5fec9119fdfe6c9d24608fe9bc2a42eec49b4f",
+  "release_commit": "6e5411768d5d67365ecaff3abc30d280fb30cb0d",
+  "kernel_and_spec_source_identical": true,
+  "original_manifest": {
+    "source_head": "4f5fec9119fdfe6c9d24608fe9bc2a42eec49b4f",
+    "rust": "1.93.0",
+    "builds": {
+      "seine": {
+        "args": [
+          "build",
+          "--locked",
+          "--release",
+          "--bin",
+          "seine"
+        ],
+        "sha256": "1d4288b06d3c7b2c479a8db631cdd95f98ae42902d4350fd234ce1db4cdc7cad"
+      },
+      "seine-cpu": {
+        "args": [
+          "build",
+          "--locked",
+          "--release",
+          "--no-default-features",
+          "--bin",
+          "seine"
+        ],
+        "sha256": "dec7e6adbe545e37a40bb45db218dd647901b2441134ea44cad24b0ce82dc43e"
+      },
+      "seine-tests": {
+        "features": "cpu-only",
+        "sha256": "37c76c75013413a5906cd04a6e9c7ebf33e4a2aa46c372a343351ad3a759d14b"
+      },
+      "verify_cpu_kernels": {
+        "args": [
+          "build",
+          "--locked",
+          "--release",
+          "-p",
+          "blocknet-pow-kernel",
+          "--example",
+          "verify_cpu_kernels"
+        ],
+        "sha256": "8e1e21ea79e5784b05787164e3ee647aca260545588f828d4dbd121d2f969b1b"
+      },
+      "verify_streaming_dispatch": {
+        "args": [
+          "build",
+          "--locked",
+          "--release",
+          "-p",
+          "blocknet-pow-kernel",
+          "--example",
+          "verify_streaming_dispatch"
+        ],
+        "sha256": "36f0eade863c5a4171171532946cd2e87c42810698db06aa9647009b6304a543"
+      }
+    }
+  },
+  "note": "These verifier executables predate the release tag. Their entire kernel/spec source trees match v0.2.22; the benchmark miner is the published release executable.",
+  "miner_source_trees_identical": true,
+  "comparison_paths": [
+    "src",
+    "pow-kernel",
+    "pow-spec",
+    "build.rs"
+  ],
+  "native_miner_regression_test_binary": "seine-tests",
+  "native_miner_regression_test_binary_sha256": "37c76c75013413a5906cd04a6e9c7ebf33e4a2aa46c372a343351ad3a759d14b"
+}

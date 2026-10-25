@@ -1,0 +1,5 @@
+7e4bfad1c151eccb784752802fdd879af0d4c561399cae0081a5d6b626633141  seine-linux-aarch64.tar.gz
+7fe6731d69ab82e1b72af2cfdefeeda25efc14d201c5badefb523d7d619669df  seine-linux-x86_64.tar.gz
+1674445e10bf91f3e1d6f8ef07c87b49e324f180941ae42f55d7e95481db4230  seine-macos-aarch64.tar.gz
+a63988f1d46b4c091c30acbbcc34a1cce7eedfece32b6afed99fd0ac54e72109  seine-macos-x86_64.tar.gz
+317301483bd0f09d6b9361ea029088c2c9b9113a22ca04e381d19a084c152d2d  seine-windows-x86_64.zip

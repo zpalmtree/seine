@@ -1,0 +1,27 @@
+version PASS
+full-size-kernels PASS
+full-size-switches PASS
+w8-p1-avx2 {"counted_hps": 15.695407821491795, "completed_hps": 16.480178212566386}
+w8-p1-avx512 {"counted_hps": 15.236847685346305, "completed_hps": 16.003481531149895}
+w8-p1-avx512-256 {"counted_hps": 15.694076002673517, "completed_hps": 16.478779802807193}
+w8-p1-avx512-256-stream {"counted_hps": 15.681580526930698, "completed_hps": 16.465659553277234}
+w8-p2-avx512-256-stream {"counted_hps": 15.68880449872233, "completed_hps": 16.473244723658446}
+w8-p2-avx512-256 {"counted_hps": 15.70702753080213, "completed_hps": 16.492378907342236}
+w8-p2-avx512 {"counted_hps": 15.246394070567879, "completed_hps": 16.013508237640476}
+w8-p2-avx2 {"counted_hps": 15.752471818633719, "completed_hps": 16.540095409565403}
+w24-p1-avx2 {"counted_hps": 25.593715823800306, "completed_hps": 27.851984867076805}
+w24-p1-avx512 {"counted_hps": 24.96778328425635, "completed_hps": 27.23758176464329}
+w24-p1-avx512-256 {"counted_hps": 25.496459559620213, "completed_hps": 27.788276149248997}
+w24-p1-avx512-256-stream {"counted_hps": 32.657546467751494, "completed_hps": 34.92937578724725}
+w24-p2-avx512-256-stream {"counted_hps": 32.84791238394625, "completed_hps": 35.11328565180462}
+w24-p2-avx512-256 {"counted_hps": 25.51765674216879, "completed_hps": 27.81137869652104}
+w24-p2-avx512 {"counted_hps": 24.943043672290763, "completed_hps": 27.210593097044466}
+w24-p2-avx2 {"counted_hps": 25.605127614174027, "completed_hps": 27.864403580130556}
+1-baseline {"counted_hps": 26.93395340726567, "completed_hps": 28.098664905958238}
+1-candidate {"counted_hps": 34.58989418842579, "completed_hps": 35.758307491027864}
+2-candidate {"counted_hps": 34.49657714702853, "completed_hps": 35.665127293912974}
+2-baseline {"counted_hps": 26.82666525604614, "completed_hps": 27.988831259918175}
+3-baseline {"counted_hps": 26.944668956444744, "completed_hps": 28.10984383023695}
+3-candidate {"counted_hps": 34.476917749237145, "completed_hps": 35.644802050150744}
+4-candidate {"counted_hps": 34.55230655830037, "completed_hps": 35.72191919214975}
+4-baseline {"counted_hps": 26.905994148659687, "completed_hps": 28.071596783258663}

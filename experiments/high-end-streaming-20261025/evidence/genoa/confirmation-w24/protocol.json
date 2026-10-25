@@ -1,0 +1,21 @@
+{
+  "cases": {
+    "baseline": {
+      "binary": "seine",
+      "kernel": "avx2"
+    },
+    "candidate": {
+      "binary": "seine",
+      "kernel": "avx512-256-stream"
+    }
+  },
+  "sha256": {
+    "/home/ubuntu/bench/seine": "d336f33f6f610b868a2f0f6ccedfa7316481c62fb4e209db4a8b5d891a6df260"
+  },
+  "workers": 24,
+  "pairs": 4,
+  "seconds": 20,
+  "rounds": 2,
+  "warmup": 1,
+  "harness_sha256": "4a34a286734200d37e924d74df73a35f5ee13e4e9b8753149958f66567f671fb"
+}

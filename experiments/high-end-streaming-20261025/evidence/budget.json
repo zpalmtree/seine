@@ -1,0 +1,12 @@
+{
+  "timestamp": "2026-10-25T00:20:04.568463+00:00",
+  "old_campaign_closed_conservative_commitments_usd": 37.44941333333335,
+  "epyc_integration_allowance_usd": 1.0,
+  "epyc_integration_compute_estimate_usd": 0.7009,
+  "new_genoa_reservation_usd": 1.5,
+  "new_genoa_minutes": 35,
+  "live_compute_usd_per_hour": 1.64224,
+  "combined_reserved_usd": 39.94941333333335,
+  "cap_usd": 40,
+  "note": "No new budget reset. Genoa reserve includes 35min compute ($0.958), disk/IP and small transfer; EPYC allowance conservatively rounds its $0.7009 compute up to $1."
+}
