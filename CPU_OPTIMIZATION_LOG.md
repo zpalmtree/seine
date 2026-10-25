@@ -2,6 +2,39 @@
 
 This log tracks CPU backend/hash-kernel tuning attempts and measured outcomes.
 
+## 2026-10-25 reduced-memory prototype: native result negative (not adopted)
+
+These are native single-worker runs of the `aeab118` prototype. Each case has
+four repeats in alternating threshold order, three measured hashes per repeat
+after one warmup hash, AVX-512, and ordinary allocator pages with THP disabled
+for every variant. Process max RSS excludes reference verification. Hosts were
+AWS c5.4xlarge (Xeon 8275CL, Cascade Lake) and c6i.4xlarge (Xeon 8375C, Ice
+Lake).
+
+| Host | Threshold | H/s | Max RSS | H/s per GiB RSS | vs full | Compressions/hash |
+|---|---|---|---|---|---|---|
+| C5 | 0 (full) | 1.144 | 2.01 GiB | 0.569 | — | 2,097,150 |
+| C5 | 2 | 0.564 | 1.27 GiB | 0.445 | −50.7% | 2,897,215 |
+| C5 | 3 | 0.476 | 1.03 GiB | 0.462 | −58.3% | 3,668,420 |
+| Ice Lake | 0 (full) | 1.361 | 2.01 GiB | 0.677 | — | 2,097,150 |
+| Ice Lake | 2 | 0.616 | 1.27 GiB | 0.486 | −54.7% | 2,897,215 |
+| Ice Lake | 3 | 0.512 | 1.03 GiB | 0.496 | −62.4% | 3,668,420 |
+
+Every repeat agreed within about 2.5 percentage points. Recomputation adds
+1.38× and 1.75× compression work, exactly as simulated, but throughput falls
+2.0–2.7×. The prototype's recompute path costs much more per compression than
+the streaming full-arena fill. More importantly, throughput per GiB is 22–28%
+below full memory on both hosts. Fitting more reduced-memory workers into a
+fixed RAM budget therefore loses even when CPU cores are idle, unless a
+recomputation path reached near-hot-loop efficiency, which this prototype
+does not approach.
+
+Not adopted. The planned EPYC Turin 24-versus-32-worker 48 GiB comparison was
+cancelled by user decision after these results. A threshold-1 (no
+recomputation) overhead control was planned only for EPYC and was not run,
+so this does not separate bookkeeping overhead from recomputation cost.
+Raw downloads are retained in the cpu-followups campaign's ignored `data/`.
+
 ## 2026-10-25 practical online reduced-memory prototype
 
 `pow-kernel` feature `cpu-research` now provides a working hash context and
@@ -53,6 +86,7 @@ its own full arena. Native performance is not established by these parity tests.
 
 ## Newest-first index
 
+- `2026-10-25 reduced-memory prototype: native result negative (not adopted)`
 - `2026-10-24 streaming-store kernel integration on validated EPYC`
 - `2026-10-24 sequential Milan/Turin investigation and streaming-store candidate`
 
