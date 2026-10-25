@@ -1,0 +1,232 @@
+{
+  "schema": 1,
+  "host": "AWS c6i.4xlarge, Intel Xeon Platinum 8375C (Ice Lake), 16 vCPU, 2 MiB HugeTLB arenas",
+  "collected": "2026-10-25; Codex campaign seine-cpu-followups, alignment finished by Claude Code takeover",
+  "binaries": {
+    "baseline21-aligned": "4e6c09c390cdc3d5726127bed7495373f809341f6b268d6dad78bfd3f9ac7b3c",
+    "arm-ungated": "24149835ff2468ba75f95c5e34c0d5f0ca4edd0a2848dc16da16534e0812d86f",
+    "baseline21": "879203959abf3e1ac511e180d802cc20c7200f1f042db245f7095ba9568bd0e3",
+    "arm-aligned": "b26bb0616aff539b46e2c40253ce0bddfa99dfdaf01e36756937035c49b04c1c"
+  },
+  "arm_gated_sha256": "2a10430e40804053e9e80421b87538438498c974290f1516212d486f7a948b7f",
+  "fixed_kernel_pairs": {
+    "legacy-avx2": {
+      "cases": {
+        "baseline": {
+          "binary": "baseline21",
+          "kernel": "avx2"
+        },
+        "candidate": {
+          "binary": "arm-ungated",
+          "kernel": "avx2"
+        }
+      },
+      "workers": 12,
+      "pairs_hps": [
+        {
+          "baseline": 10.822227618857724,
+          "candidate": 10.864029234660865
+        },
+        {
+          "baseline": 10.784656152105937,
+          "candidate": 10.73365448924235
+        }
+      ],
+      "paired_deltas_pct": [
+        0.38625703760195584,
+        -0.4729094942320322
+      ],
+      "geometric_delta_pct": -0.044249341437607725
+    },
+    "legacy-avx512": {
+      "cases": {
+        "baseline": {
+          "binary": "baseline21",
+          "kernel": "avx512"
+        },
+        "candidate": {
+          "binary": "arm-ungated",
+          "kernel": "avx512"
+        }
+      },
+      "workers": 12,
+      "pairs_hps": [
+        {
+          "baseline": 11.298979978528962,
+          "candidate": 11.17590635572705
+        },
+        {
+          "baseline": 11.303681461805784,
+          "candidate": 11.18067131834212
+        }
+      ],
+      "paired_deltas_pct": [
+        -1.0892454277800612,
+        -1.0882308023213993
+      ],
+      "geometric_delta_pct": -1.0887381163517285
+    },
+    "enum-avx2": {
+      "cases": {
+        "baseline": {
+          "binary": "arm-ungated",
+          "kernel": "avx2"
+        },
+        "candidate": {
+          "binary": "arm-gated",
+          "kernel": "avx2"
+        }
+      },
+      "workers": 12,
+      "pairs_hps": [
+        {
+          "baseline": 10.897884152718074,
+          "candidate": 10.547649115817155
+        },
+        {
+          "baseline": 10.811931272734954,
+          "candidate": 10.855873271379542
+        },
+        {
+          "baseline": 10.979500724740374,
+          "candidate": 10.695733370448556
+        },
+        {
+          "baseline": 10.828786030489798,
+          "candidate": 10.66159971783302
+        }
+      ],
+      "paired_deltas_pct": [
+        -3.2137893190355316,
+        0.4064213648434789,
+        -2.5845196553646366,
+        -1.5439063269515496
+      ],
+      "geometric_delta_pct": -1.743477810716454
+    },
+    "enum-avx512": {
+      "cases": {
+        "baseline": {
+          "binary": "arm-ungated",
+          "kernel": "avx512"
+        },
+        "candidate": {
+          "binary": "arm-gated",
+          "kernel": "avx512"
+        }
+      },
+      "workers": 12,
+      "pairs_hps": [
+        {
+          "baseline": 11.156147675981012,
+          "candidate": 11.275836965331392
+        },
+        {
+          "baseline": 11.202151895179101,
+          "candidate": 11.17611899829271
+        },
+        {
+          "baseline": 11.07896808282994,
+          "candidate": 11.383082102194523
+        },
+        {
+          "baseline": 11.10315263328807,
+          "candidate": 11.175111401411066
+        }
+      ],
+      "paired_deltas_pct": [
+        1.0728550107674595,
+        -0.23239192906850947,
+        2.7449670139938043,
+        0.6480931182307303
+      ],
+      "geometric_delta_pct": 1.0526135892510835
+    }
+  },
+  "alignment_2x2": {
+    "protocol": {
+      "orders": [
+        [
+          "baseline21",
+          "arm-ungated",
+          "baseline21-aligned",
+          "arm-aligned"
+        ],
+        [
+          "arm-aligned",
+          "baseline21-aligned",
+          "arm-ungated",
+          "baseline21"
+        ],
+        [
+          "baseline21-aligned",
+          "arm-aligned",
+          "baseline21",
+          "arm-ungated"
+        ],
+        [
+          "arm-ungated",
+          "baseline21",
+          "arm-aligned",
+          "baseline21-aligned"
+        ]
+      ],
+      "workers": 12,
+      "kernel": "avx512",
+      "seconds": 15,
+      "rounds": 1,
+      "warmup": 1,
+      "aligned_rustflags": "-C llvm-args=-align-all-functions=6",
+      "deviation": "Main controller stopped early by Claude Code takeover (Codex usage exhausted); outcome COMPLETE precondition skipped. Miners stopped, hugepages 0 verified before start.",
+      "scope": "Fresh same-host original/aligned 2x2; layout ablation does not prove unique root cause."
+    },
+    "passes_completed_hps": [
+      {
+        "baseline21": 11.268515727686287,
+        "arm-ungated": 11.104514604525447,
+        "baseline21-aligned": 11.467304538012895,
+        "arm-aligned": 11.384556179443791
+      },
+      {
+        "arm-aligned": 11.432841933913034,
+        "baseline21-aligned": 11.405223307870788,
+        "arm-ungated": 11.227718260123124,
+        "baseline21": 11.325917077864537
+      },
+      {
+        "baseline21-aligned": 11.456898955586134,
+        "arm-aligned": 11.449931460115396,
+        "baseline21": 11.32657759722227,
+        "arm-ungated": 11.230405649672917
+      },
+      {
+        "arm-ungated": 11.24838258501368,
+        "baseline21": 11.39385437139711,
+        "arm-aligned": 11.377872041194665,
+        "baseline21-aligned": 11.132647179126925
+      }
+    ],
+    "summary": {
+      "original": {
+        "paired_deltas_pct": [
+          -1.4553924147959973,
+          -0.8670275180924003,
+          -0.8490821408660865,
+          -1.2767565886099064
+        ],
+        "geometric_delta_pct": -1.11241137399134
+      },
+      "aligned": {
+        "paired_deltas_pct": [
+          -0.7216025204074938,
+          0.24215769649320595,
+          -0.06081484612675547,
+          2.2027542786725807
+        ],
+        "geometric_delta_pct": 0.40975146707957766
+      }
+    },
+    "archive_sha256": "5b959ef4ec943a277fdcaf77e12eb061cc7ab4b164498bf515b1e7c76d803b9b"
+  },
+  "interpretation": "Original builds: ARM refactor -1.11% at AVX-512 (4/4 passes negative). With -align-all-functions=6 on both builds: +0.41% (mixed signs). The x86 delta follows function layout, not the ARM code; this is consistent with but does not uniquely prove a layout cause."
+}
