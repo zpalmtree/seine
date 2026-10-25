@@ -1,0 +1,15 @@
+{
+    "utc":  "2026-10-25T00:26:33.9362630Z",
+    "memory":  {
+                   "TotalVisibleMemorySize":  131473780,
+                   "FreePhysicalMemory":  62745288
+               },
+    "cpu":  [
+                {
+                    "Name":  "AMD Ryzen 9 9950X3D 16-Core Processor          ",
+                    "NumberOfCores":  16,
+                    "NumberOfLogicalProcessors":  32
+                }
+            ],
+    "process_affinity":  4294967295
+}

@@ -1,0 +1,1 @@
+   63.9s  WARN   BENCH     short-window/jitter warning | bench-secs=20 fence_spread=0.252s; prefer --bench-secs >= 10 and --bench-warmup-rounds 1 for stable A/B comparisons

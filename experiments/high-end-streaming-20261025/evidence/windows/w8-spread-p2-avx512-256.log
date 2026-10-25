@@ -1,0 +1,43 @@
+    0.0s  INFO   BENCH     CPU kernel: avx512-256 (explicit override)
+    0.0s  INFO   BACKEND   cpu: initializing 8 workers (~16.0 GiB RAM, precomputing refs)...
+    0.0s  INFO   BACKEND   cpu#1: ready in 0.0s
+
+╭────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                            │
+│                                      ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~                 │
+│                                ~ ~ ~    ╱╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲    ~ ~ ~                  │
+│                          ~ ~ ~       ╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲       ~ ~ ~                 │
+│                ~ ~         ╭──────────────  S E I N E  ──────────────╮         ~ ~         │
+│                     ~ ~ ~       ╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲╱       ~ ~ ~           │
+│                               ~ ~ ~    ╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲╱╲╱    ~ ~ ~                 │
+│                                      ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~                 │
+│                                                                                            │
+│───────────────────────────────────────── RUNTIME ──────────────────────────────────────────│
+│  Mode:              benchmark                                                              │
+│  Kind:              backend                                                                │
+│  Backends:          cpu#1                                                                  │
+│  Preemption:        cpu#1=per-hash                                                         │
+│  Lanes:             8                                                                      │
+│  Rounds:            1                                                                      │
+│  Warmup Rounds:     1                                                                      │
+│  Seconds/Round:     10                                                                     │
+│  CPU Page Mode:     regular                                                                │
+│  Hash Poll:         configured=200ms effective=200ms                                       │
+│  Assign Timeout:    1000ms                                                                 │
+│  Assign Strikes:    3                                                                      │
+│  Control Timeout:   60000ms                                                                │
+│  Accounting:        relaxed                                                                │
+│  Measurement:       counted window + end fence                                             │
+│  Regress Gate:      off                                                                    │
+│  Baseline Policy:   strict                                                                 │
+╰────────────────────────────────────────────────────────────────────────────────────────────╯
+
+   10.5s  INFO   BENCH     warmup 1/1 hashes=76 counted=68 late=8 late_pct=10.53% configured=10.00s actual=10.34s fence=0.339s startup=0.000s teardown=0.000s wall=10.34s rate=6.577 H/s backends=cpu#1=7.351 H/s
+   10.5s  INFO   BENCH     warmup telemetry | cpu#1:active_peak=8 pending_peak=1 memory_workers=large:0/large1g:0/thp:0/regular:8/heap:0 memory_mib=large:0.0/large1g:0.0/thp:0.0/regular:16384.0/heap:0.0 memory_alloc_failures=0 inflight_hashes_peak=68 inflight_secs_peak=10.018 drops=0 assignments=1 assignment_hashes=76 assignment_secs=10.357 assign_timeout_enq=0 assign_timeout_exec=0 control_timeout_enq=0 control_timeout_exec=0 assign_timeout_strike_peak=0 assign_enq_lat_samples=1 assign_enq_lat_p95_us=10 assign_enq_lat_max_us=7 assign_exec_lat_samples=1 assign_exec_lat_p95_us=50000 assign_exec_lat_max_us=32330 control_enq_lat_samples=4 control_enq_lat_p95_us=50 control_enq_lat_max_us=40 control_exec_lat_samples=4 control_exec_lat_p95_us=338764 control_exec_lat_max_us=338764
+   21.2s  INFO   BENCH     round 1/1 hashes=75 counted=67 late=8 late_pct=10.67% configured=10.00s actual=10.66s fence=0.657s startup=0.000s teardown=0.000s wall=10.66s rate=6.287 H/s backends=cpu#1=7.038 H/s
+   21.2s  INFO   BENCH     telemetry | cpu#1:active_peak=8 pending_peak=1 memory_workers=large:0/large1g:0/thp:0/regular:8/heap:0 memory_mib=large:0.0/large1g:0.0/thp:0.0/regular:16384.0/heap:0.0 memory_alloc_failures=0 inflight_hashes_peak=67 inflight_secs_peak=10.011 drops=0 assignments=1 assignment_hashes=75 assignment_secs=10.668 assign_timeout_enq=0 assign_timeout_exec=0 control_timeout_enq=0 control_timeout_exec=0 assign_timeout_strike_peak=0 assign_enq_lat_samples=1 assign_enq_lat_p95_us=10 assign_enq_lat_max_us=4 assign_exec_lat_samples=1 assign_exec_lat_p95_us=500 assign_exec_lat_max_us=498 control_enq_lat_samples=2 control_enq_lat_p95_us=100 control_enq_lat_max_us=52 control_exec_lat_samples=2 control_exec_lat_p95_us=656433 control_exec_lat_max_us=656433
+   21.2s   OK    BENCH     summary | avg=6.287 H/s | median=6.287 H/s | min=6.287 H/s | max=6.287 H/s
+   21.2s  INFO   BENCH     accounting | hashes=75 counted=67 late=8 late_pct=10.67%
+   21.2s  INFO   BENCH     fence | avg=0.657s median=0.657s min=0.657s max=0.657s
+   21.2s  INFO   BENCH     control-latency | enqueue_p95_max=0ms execution_p95_max=656ms
+   21.2s   OK    BENCH     wrote report to C:\Users\zp\AppData\Local\Temp\seine-high-end-20261025-archdispatch\reserved-run\w8-spread-p2-avx512-256.json

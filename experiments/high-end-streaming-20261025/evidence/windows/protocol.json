@@ -1,0 +1,45 @@
+{
+  "source": "published v0.2.22 Windows MSVC",
+  "binary_sha256": "733fc4c35898b2635701a3858d16392e128a8f1c7e828d06f090ffd1200e2b41",
+  "cases": {
+    "w8-spread": [
+      0,
+      2,
+      4,
+      6,
+      16,
+      18,
+      20,
+      22
+    ],
+    "w16-physical": [
+      0,
+      2,
+      4,
+      6,
+      8,
+      10,
+      12,
+      14,
+      16,
+      18,
+      20,
+      22,
+      24,
+      26,
+      28,
+      30
+    ]
+  },
+  "kernels": [
+    "avx2",
+    "avx512",
+    "avx512-256",
+    "avx512-256-stream"
+  ],
+  "page_mode": "regular",
+  "max_arena_bytes": 34359738368,
+  "screen": "Two reversed passes; 10s warmup + 10s measured",
+  "confirmation": "16 workers, stream vs strongest uniform screen kernel; four AB/BA pairs, 20s warmup + two 20s measured rounds",
+  "scope": "Native Windows, fixed physical CPU masks; no production eligibility changes"
+}

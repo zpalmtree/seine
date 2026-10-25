@@ -1,0 +1,26 @@
+{
+  "label": "w8-spread-p1-avx512-256-stream",
+  "cpus": [
+    0,
+    2,
+    4,
+    6,
+    16,
+    18,
+    20,
+    22
+  ],
+  "mask": 5570645,
+  "threads": 8,
+  "kernel": "avx512-256-stream",
+  "page": "regular",
+  "seconds": 10,
+  "rounds": 1,
+  "warmup": 1,
+  "exclusive_job_id": "d209288d65554e6997e2c7c6fe0cf9f3",
+  "exit_code": 0,
+  "wall_seconds": 21.97618842124939,
+  "stdout": "affinity_mask=5570645; elapsed=21.2474791\n",
+  "stderr": "",
+  "timestamp": "2026-10-25T00:50:40.771032+00:00"
+}

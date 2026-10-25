@@ -4,6 +4,21 @@ Owner: architecture session `01a16bd3-6dc7-70f2-a185-b86550c4dbeb`.
 Baseline: published v0.2.22, commit `6e5411768d5d67365ecaff3abc30d280fb30cb0d`.
 This branch contains research tooling and evidence, not an eligibility expansion.
 
+## What streaming means
+
+The shipping `avx512-256-stream` CPU kernel writes completed Argon2 blocks to the
+full arena with non-temporal stores. Ordinary stores to cold cache lines can
+first fetch their old contents even though the kernel will overwrite the entire
+line. Streaming stores can avoid that traffic and reduce cache pollution.
+
+Argon2 also reads earlier blocks. This implementation keeps 64 recent 1 KiB
+blocks in a cached ring, serves recent references there, and fences streaming
+writes before older arena reads. It retains the full 2 GiB per hash and computes
+the same PoW. This is a memory-access optimization, not a reduced-memory algorithm.
+It can help most when workers saturate memory bandwidth; a low-worker-count
+speedup is not guaranteed. See `pow-kernel/src/fixed_argon.rs::fill_streaming_ring`
+for the actual store, ring and fence rules.
+
 ## Scope and decision rule
 
 Compare the shipping `avx512-256-stream` kernel against `avx2`, `avx512`, and
@@ -49,9 +64,10 @@ after completion. Never commit SSH private keys, credentials or oversized binari
 
 ## Coordination and budget
 
-The EPYC session finished PR #48 and released its reservations. This session owns
-the next c7a slot; the research session owns PR #47/#49 and reduced-memory work.
+The EPYC session finished PR #48 and released its reservations. This session used
+and cleaned its c7a slot; the research session owns PR #47/#49 and reduced-memory work.
 The shared us-east-1 Standard quota is 32 vCPUs, so a c7a.8xlarge fills it.
+The research session subsequently reserved that quota for separate authorized work.
 
 Live c7a price checked via AWS Pricing: $1.64224/hour. The original campaign's
 closed conservative commitments are $37.44941333333335. Reserve $1 for the separate
@@ -69,6 +85,14 @@ admission before each run, watches Gaming Mode and TF2 process return, bounds ea
 owned miner to 180 seconds and 32 GiB of arenas, checks 10 GiB initial free headroom,
 and kills only its own miner on failure. Native correctness uses separately built
 MSVC verifiers from the exact release source (`verify-windows.ps1`).
+
+The first timing attempt overlapped another session's local compilation and was
+discarded. The accepted run used an owned `generic-exclusive` gpuq reservation
+for CPU timing isolation and explicit coordination to prevent local heavy work.
+The harness verifies that reservation before each invocation and during hashing.
+It completed, its native temporary tree was removed, and the desktop was released.
+Read `RESULTS.md` and cleanup receipts before starting any new reservation; no
+active lease or unfinished benchmark from this follow-up needs resuming.
 
 `audit_reports.py` independently checks all 24 reports per host for exact release
 identity, native environment, AMD family/model, current PoW, CPU-only execution,

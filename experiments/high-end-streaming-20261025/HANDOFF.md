@@ -46,6 +46,15 @@ attempt refused active TF2 before hashing. Coordinator preflight failures also
 produced no samples. Correctness results remain valid. Only the final reserved
 run may contribute to the results table; never merge the discarded samples back.
 
+The final reserved Windows run is complete and independently audited: 16 physical
+workers / 32 GiB ordinary pages, AVX-512-256 7.0658 -> streaming 10.3120 H/s,
+four fresh alternating pairs, +45.9424% geometric gain. Individual paired gains
+range from 43.37% to 51.70%; this is one desktop/session, not a universal Zen 5
+claim. The 8-worker screen also favors streaming but has no long confirmation.
+All 24 reports and invocation metadata passed identity/backing/affinity/health
+checks; harness and binary hashes are unchanged. See `evidence/windows/`, native
+parity logs, `windows-audit.json` and `windows-file-checksums.json`.
+
 ## Reservation and cleanup discipline
 
 Genoa instance `i-04f82f51670b91a3e`, root disk, security group and private key were
@@ -74,14 +83,21 @@ Do not leave a queued/running reservation or native miner at handoff completion.
 Retain raw evidence and frozen binaries in ignored local `data/`, then remove
 the owned native temporary tree after collection. Preserve unrelated jobs/files.
 
+Completed here: reservation `d209288d65554e6997e2c7c6fe0cf9f3` succeeded with exit 0
+at 2026-10-25 01:04:59 UTC. An owned-path native process scan was empty, evidence
+was collected, and the entire owned native temporary tree was removed. The desktop
+was explicitly released to the research session, which acknowledged the release.
+There is no remaining benchmark/reservation to resume for this follow-up. Receipts
+are in `evidence/windows-cleanup.json` and `windows-reservation-complete.json`.
+
 ## Coordination
 
 - Architecture/release owner: `01a16bd3-6dc7-70f2-a185-b86550c4dbeb`.
 - EPYC integration: `01a16bdf-d015-7131-b708-45a8a4676231`; PR #48 merged, rentals
   cleaned, no ongoing reservation from that work.
-- Research: `01a16d32-8101-72c0-bf3e-b714c85544d9`; owns PR #47 tuner integration,
-  PR #49 Intel regression isolation and reduced-memory prototype. It explicitly
-  agreed to avoid local heavy work until this session releases the desktop.
+- Research: `01a16d32-8101-72c0-bf3e-b714c85544d9`; owns PR #47 tuner integration
+  (now draft #50), PR #49 Intel regression isolation and reduced-memory prototype
+  (draft #51). Its desktop hold has ended; it acknowledged the explicit release.
 - Autotune session: `01a16c04-edcd-7ed0-b2a0-033e45efa841`.
 
 ## Next production work

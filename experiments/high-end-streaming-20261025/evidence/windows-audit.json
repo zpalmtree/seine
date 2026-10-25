@@ -1,0 +1,103 @@
+{
+  "reports_checked": 24,
+  "source_commit": "6e5411768d5d67365ecaff3abc30d280fb30cb0d",
+  "build_fingerprint": "source=7ad8df30888fb8f1;target=x86_64-pc-windows-msvc;profile=release;opt=3;rustc=rustc 1.93.0 (254b59607 2026-01-19);rustflags=;features=default,nvidia",
+  "reports": [
+    {
+      "path": "confirm-p1-baseline.json",
+      "sha256": "7685020d017827dac1eaba3c0951160e8010d33c1f4a6179a5becddf0433a430"
+    },
+    {
+      "path": "confirm-p1-candidate.json",
+      "sha256": "f1b547de95c82acc6e6c74b9df523531ed37b73b091aedeaefb2b702e7df8a85"
+    },
+    {
+      "path": "confirm-p2-baseline.json",
+      "sha256": "09e14c8fa4c99ac6f2b0745596471de0f4361b211525ffebdacb14aef371e48e"
+    },
+    {
+      "path": "confirm-p2-candidate.json",
+      "sha256": "4bad49baa4768609e09c1c22f2593ea01562727fd13797cbfd16cb1e49d11d80"
+    },
+    {
+      "path": "confirm-p3-baseline.json",
+      "sha256": "00c8620c6dbf24d0aee5eaabd38f3c9990c93bc8fc9da9d6fae8a05e68629830"
+    },
+    {
+      "path": "confirm-p3-candidate.json",
+      "sha256": "e0a24a9a93b892e539ee17b3a589d223d82ae81c8028f82b0f0e15c1a7a3ef86"
+    },
+    {
+      "path": "confirm-p4-baseline.json",
+      "sha256": "d50909d57b4d5dc3f06c6d3609b6be23073af2d112300c5fd5557b59484ea3b2"
+    },
+    {
+      "path": "confirm-p4-candidate.json",
+      "sha256": "36ee6b430b9b25191af35f1652d2f05ae68700a33dd0f0dd14a48bf1a3e85837"
+    },
+    {
+      "path": "w16-physical-p1-avx2.json",
+      "sha256": "22265a18d2e358ef177457f97f6d6042293e90938da7b6438c132b5f72c370bf"
+    },
+    {
+      "path": "w16-physical-p1-avx512-256-stream.json",
+      "sha256": "b1666e1eb953845f2222b17f08578b7d254c84e513abf75ba67aa71a3d66d35d"
+    },
+    {
+      "path": "w16-physical-p1-avx512-256.json",
+      "sha256": "162b0536491214f2cff00c941f78215c30eefc0a9e0897a7993b13b42444acbe"
+    },
+    {
+      "path": "w16-physical-p1-avx512.json",
+      "sha256": "cff088bfa1a2cc5d70ee129d15adc70f91fbbfa25011078a66a3ffc705d551ff"
+    },
+    {
+      "path": "w16-physical-p2-avx2.json",
+      "sha256": "85afbc80ceb2e858d4daa0be4098a0af192c6f5064fe51bdd5ad468f38d1c119"
+    },
+    {
+      "path": "w16-physical-p2-avx512-256-stream.json",
+      "sha256": "def091a71c6c6a9524a1f2f6945ca907b23bcae4c94a95c9a1af31c537fa7d96"
+    },
+    {
+      "path": "w16-physical-p2-avx512-256.json",
+      "sha256": "e43720c00c2fa34fc6a2e5079de1c4c1845f53ad15547ff86e1cbb1e1068cf3f"
+    },
+    {
+      "path": "w16-physical-p2-avx512.json",
+      "sha256": "fda639c520b0681711555ac8e9f9d7a45ea29d57ac5ed7443764e87987eb5fe9"
+    },
+    {
+      "path": "w8-spread-p1-avx2.json",
+      "sha256": "5e4730f5bed7b4f4c0f63c2f9be52bd48613fa51b2cf6541d150354d31e9d614"
+    },
+    {
+      "path": "w8-spread-p1-avx512-256-stream.json",
+      "sha256": "3413d973b4263c9b66dbf986ccab0af022275c3e692d313e0ab9a090f82aafcb"
+    },
+    {
+      "path": "w8-spread-p1-avx512-256.json",
+      "sha256": "5898a95a3ba398767a34dbce8ce90c4b9eb6a5158cef1bef415bcc3acde23255"
+    },
+    {
+      "path": "w8-spread-p1-avx512.json",
+      "sha256": "d7c82f6f53e61e726f0e02fe3323869a4d841e3704797ffee8dac8d7e7fd18d2"
+    },
+    {
+      "path": "w8-spread-p2-avx2.json",
+      "sha256": "6d5b8afad54779f464feddd769fd03424422162855ebd45dfbac2eecfd2c97fd"
+    },
+    {
+      "path": "w8-spread-p2-avx512-256-stream.json",
+      "sha256": "2f3b5712702e9a8c04fd788bf5b4be2aff63cd33a75c726a95b960d9f419f7a7"
+    },
+    {
+      "path": "w8-spread-p2-avx512-256.json",
+      "sha256": "e0ba5d95c507a3cae226e31fec3074fd8b7a3a52e71729f2cee464824528ff8a"
+    },
+    {
+      "path": "w8-spread-p2-avx512.json",
+      "sha256": "7ecb8f8abfb5078d7edc150ed64437174792f0af8129a7a17fd259b24c7676c4"
+    }
+  ]
+}

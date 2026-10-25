@@ -1,0 +1,12 @@
+{
+  "id": "d209288d65554e6997e2c7c6fe0cf9f3",
+  "state": "succeeded",
+  "exitCode": 0,
+  "createdAtUnixMs": 1792889172723,
+  "startedAtUnixMs": 1792889340781,
+  "completedAtUnixMs": 1792890299707,
+  "owned_native_processes": [],
+  "checked_at_utc": "2026-10-25T01:05:45.675205+00:00",
+  "harness_hashes_verified": true,
+  "metadata_reports_checked": 24
+}

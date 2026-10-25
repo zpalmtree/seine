@@ -1,0 +1,11 @@
+{
+  "checked_at_utc": "2026-10-25T01:06:07.020453+00:00",
+  "owned_native_tree": "/mnt/c/Users/zp/AppData/Local/Temp/seine-high-end-20261025-archdispatch",
+  "owned_native_tree_removed": true,
+  "reservation": "d209288d65554e6997e2c7c6fe0cf9f3",
+  "reservation_state": "succeeded",
+  "owned_native_processes": [],
+  "evidence_files_checksummed": 130,
+  "desktop_released_to_research_session": true,
+  "scope": "Only this campaign native tree/reservation. Other sessions jobs and files preserved."
+}

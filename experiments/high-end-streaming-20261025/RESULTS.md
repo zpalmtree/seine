@@ -52,7 +52,8 @@ The published Windows MSVC executable starts correctly. Native MSVC verifiers bu
 from the exact release source passed full-size reference parity and all 21 guarded
 dirty-arena/kernel transitions. Fresh native topology confirms 16 physical cores,
 adjacent SMT siblings, a 96 MiB L3 CCD on CPUs 0–15 and a 32 MiB L3 CCD on CPUs
-16–31. Performance validation is tracked separately from this correctness evidence.
+16–31. The accepted performance run uses ordinary pages, physical-core CPU masks,
+and 16 GiB / 32 GiB arenas at 8 / 16 workers respectively.
 
 The initial performance screen and partial confirmation were **discarded** after
 the research session reported overlapping local four-job Rust/fat-LTO builds.
@@ -61,6 +62,33 @@ retry then correctly refused an active TF2 benchmark before hashing. The clean
 rerun uses an owned `gpuq` exclusive reservation, plus explicit coordination that
 the research session will perform no local heavy work until the reservation is
 released. This reservation is for CPU timing isolation; no GPU hashing is used.
+
+The reserved run completed successfully at **2026-10-25 01:04:59 UTC**. All 24
+reports passed independent source/CPU/kernel/PoW/backing audits; all invocation
+metadata identify the owned reservation and confirm the requested affinity mask.
+The frozen harness and published binary hashes are unchanged. There were zero
+reported allocation failures, dropped events or control timeouts.
+
+| Workers | AVX2 | AVX-512 | 256-bit AVX-512 | Streaming | Evidence |
+|---|---:|---:|---:|---:|---|
+| 8, spread over both CCDs | 7.052 H/s | 7.255 H/s | 7.002 H/s | 10.001 H/s | Two opposite-order screening passes |
+| 16, one thread per core | 6.860 H/s | 7.010 H/s | 7.025 H/s | 10.216 H/s | Two opposite-order screening passes |
+| 16, one thread per core | — | — | 7.066 H/s | 10.312 H/s | Four fresh alternating confirmation pairs |
+
+Confirmation gain is **45.94%** geometrically across pairs, with individual gains
+of 43.37%, 45.38%, 43.48% and 51.70%. Each invocation has a 20-second warmup and
+two 20-second measured rounds. The control is the strongest mean uniform kernel
+from the independent 16-worker screen, although its lead over full AVX-512 is
+small. Some reports retain short-window/fence-jitter warnings; throughput includes
+the fence, all four pairs improve substantially, and the final pair varies more.
+These are within-session results on one desktop, not architecture-wide confidence
+bounds or evidence that 16 workers is the optimal automatic worker count.
+
+Raw reports, metadata, topology, summaries and generated native scripts are in
+`evidence/windows/`. Parity logs and audits are in `evidence/`; the complete native
+temporary tree was removed after collection. The reservation is terminal, no owned
+native processes remain, and the desktop was explicitly released to research.
+See `evidence/windows-cleanup.json` and `evidence/windows-reservation-complete.json`.
 
 ## Budget and cleanup
 
@@ -81,7 +109,8 @@ the research session. See `evidence/genoa-cleanup.json` and
 
 ## Production decision and remaining work
 
-Accepted for follow-up: Genoa streaming at high worker counts. Rejected: forcing
+Accepted for follow-up: Genoa streaming at high worker counts and native Windows
+9950X3D streaming with ordinary pages. Rejected: forcing
 it at low counts, treating one exposed NUMA node as multi-socket validation, and
 using contaminated desktop timings. No unproven default changes are included in
 v0.2.22 or this branch.
