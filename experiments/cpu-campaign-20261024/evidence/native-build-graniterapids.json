@@ -1,0 +1,18 @@
+{
+  "hardware": "Xeon6975P-C",
+  "source": "636e6887c405c41d732433b1eeb018cefcdc962d",
+  "workspace_passed": 495,
+  "workspace_ignored": 5,
+  "full_size_parity": "reference=[e9, fb, fa, cf, b6, 96, ae, f8, f8, 88, 20, 17, c5, 5b, 23, 4e, 4b, 31, 30, a4, b6, 23, 42, c6, 3d, f5, 61, 31, 8d, 5a, db, a8]\nscalar: PASS (full 2 GiB reference parity)\navx2: PASS (full 2 GiB reference parity)\navx512: PASS (full 2 GiB reference parity)\navx512-256: PASS (full 2 GiB reference parity)\nneon: unsupported\nneon-sha3: unsupported\n",
+  "real_arena_tests": "    Finished `release` profile [optimized] target(s) in 0.11s\n     Running unittests src/main.rs (/home/ubuntu/campaign/targets/hardened-636e688/release/deps/seine-5ed5c8415ff146d9)\n\nrunning 2 tests\ntest backend::cpu::kernel::tests::adaptive_kernel_real_arena_smoke ... ok\ntest backend::cpu::kernel::tests::adaptive_real_arena_smoke ... ok\n\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 491 filtered out; finished in 17.69s\n\n",
+  "strict_kernel_clippy": "passed",
+  "log_sha256": {
+    "real-arena-switches-and-growth.log": "846f5a140e00fffc61117eca3b0c25a35e003e8671ecfa35cc189a7078b76b4f",
+    "kernel-clippy.log": "b4d297ee8d89c47159ae1f7ee90b45c636db33a18cf7e69c1d3069b30b154993",
+    "identities.txt": "ef53aec25b55ad82d9060ad42885b6192ae9c11531c8fa208ca5955c26b0835d",
+    "full-size-parity.log": "934f030d49cd4c8615dd57d8eb8a6ae4f2f866146bb372be95eb7bf07d483a6c",
+    "COMPLETE": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "workspace-tests.log": "105e2e8dbfba734a88fc575f3c4a5a439a14e502ea927817140eaf5a0c8a4c16"
+  },
+  "archive_sha256": "205d31f05ad8c5fce08dd8aaaf7868daf8042d44c3da48f6665cddea59397899"
+}

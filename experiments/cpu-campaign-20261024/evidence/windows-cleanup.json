@@ -1,0 +1,10 @@
+{
+  "verified_at": "2026-10-24T12:53:59.736247+00:00",
+  "owned_executables_running": 0,
+  "benchmark_controller_completed": true,
+  "temporary_directory_removed": true,
+  "text_artifacts_copied_and_verified": true,
+  "binary_digests_retained": true,
+  "files": 450,
+  "source_sha256": "26175aa1d5f6ecadbf2fc8229a56f48bb836824d94a9f2e9eda6a6c5ceaf8a61"
+}

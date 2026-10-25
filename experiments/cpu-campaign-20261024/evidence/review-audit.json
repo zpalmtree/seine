@@ -1,0 +1,171 @@
+{
+  "reviewed_campaign_commit": "30be01c",
+  "reviewed_at": "2026-10-24T18:04:33.714740+00:00",
+  "reviewer": "independent existing research session",
+  "scope": [
+    "RESULTS architecture table",
+    "public normalized evidence",
+    "interhash rejection evidence",
+    "actual completed order",
+    "PR readiness and source-stack relationships",
+    "public artifact credential/resource-identity check"
+  ],
+  "reported_checks": {
+    "normalized_reports": 550,
+    "completed_rate_recomputation": "passed",
+    "retained_raw_report_sha256": "matched",
+    "interhash_reports": 14,
+    "interhash_equal_ram_topology_and_reversed_order": "passed",
+    "corrected_confirmation_order_matches_timestamps": "passed",
+    "public_cloud_ids_ips_or_credentials": "none found",
+    "pr_states_match_report": "passed; all unmerged"
+  },
+  "finding": "Stale alternating wording in order-limited Ice Lake evidence. Follow-up also removed the same stale wording from four earlier ARM/Intel metadata notes; raw timing data and digests are unchanged.",
+  "limitations": [
+    "Fresh G2/G3 confirmations and final f20 Intel regressions were still pending and are outside this review snapshot.",
+    "Read-only review; no new timing, resources or product edits."
+  ],
+  "followup_provenance_review": {
+    "reviewed_at": "2026-10-24T18:24:40.039552+00:00",
+    "finding": "Inherited runtime Git labels in six historical artifacts do not uniquely identify the builds. Archived binary SHA256, build identities and compiled source fingerprints establish the intended variant/source mappings. No executable/source ambiguity found.",
+    "method": "Independent reviewer recomputed build.rs FNV source fingerprints from retained source archives, using path-component sorting and CRLF normalization; applied the prefetch patch in memory. Checked archive Git-PAX IDs, input digests, experiment hashes and build identities.",
+    "sources": [
+      {
+        "source": "359265e325d85c9c7b6e3eed7b5b126fcec63f9c",
+        "compiled_source_fingerprint": "d8248e278baf1c66"
+      },
+      {
+        "source": "9ce67f60264c40ea9411212776a35e049213fdae",
+        "compiled_source_fingerprint": "fc57519602a2bdcb"
+      },
+      {
+        "source": "8280a66053de68a3888812b68e1fd039c720aefa",
+        "compiled_source_fingerprint": "ae4e99e4b6cc7d6d"
+      },
+      {
+        "source": "312289359a062703dcf883215537ace6adb01616",
+        "compiled_source_fingerprint": "7a88eaa07c02a4e0"
+      },
+      {
+        "source": "d283877f51e90766a28057c6a43000e66fc09674",
+        "compiled_source_fingerprint": "8ca7e180722c68eb"
+      },
+      {
+        "source": "636e6887c405c41d732433b1eeb018cefcdc962d",
+        "compiled_source_fingerprint": "3a9ef806ce58c7eb"
+      },
+      {
+        "source": "f20e7bb1772be024a12ac5cdcc92685ba89d3ddd",
+        "compiled_source_fingerprint": "f24ac20c126a52cc"
+      },
+      {
+        "source": "359265e plus arm-prefetch64.patch",
+        "patch_sha256": "52d2deeb1bdbe36c6ae7bb3ebfedc4ba4c45bc2a71c6339db724ae15f43db317",
+        "compiled_source_fingerprint": "39224e5427919a60"
+      }
+    ],
+    "affected_evidence": [
+      "graviton3-clean-confirmation.json",
+      "graviton3-clean-regular.json",
+      "graviton3-followup-screen.json",
+      "graviton2-prefetch-screen.json",
+      "icelake-clean-controls.json",
+      "graviton4-codegen-regression.json"
+    ],
+    "limitations": [
+      "Historical Graviton3 followup used shared targets and remains a screen; later clean confirmation used separate targets.",
+      "Identical source fingerprints can have different binaries when build flags differ; source fingerprint alone is not executable identity."
+    ]
+  },
+  "final_g2_g3_review": {
+    "reviewed_at": "2026-10-24T18:49:25.232189+00:00",
+    "status": "passed",
+    "normalized_reports": 48,
+    "checks": [
+      "Raw report SHA256 and completed rate arithmetic",
+      "Actual per-worker timestamp order reverses each pass",
+      "Means and pair ranges round to RESULTS table",
+      "Expected worker-count times2GiB backing; zero allocation/drop/control/assignment errors",
+      "Frozen baseline/candidate executable SHA and generic CPU-only profile",
+      "Parity text, hashes and identity files match retained originals",
+      "Both archive SHA256 and all54 G2/93 G3 manifest files verified",
+      "G2 unsupported SHA3 rejection and three dirty nonces; G3 NEON/SHA3/switchback three nonces"
+    ],
+    "new_timing_or_resources": false
+  },
+  "final_granite_review": {
+    "reviewed_at": "2026-10-24T19:26:50.815005+00:00",
+    "status": "evidence passed; performance gate not satisfied",
+    "reports": 24,
+    "archive_files": [
+      76,
+      26
+    ],
+    "checks": [
+      "Raw rates and SHA256 match",
+      "AB/BA/AB/BA timestamps verified",
+      "Frozen CPU-only executable identities and fingerprints match",
+      "Full-size scalar/AVX2/full512/256 parity passed",
+      "24GiB backing, zero swap/OOM/errors; max steal fraction 0.00133%"
+    ],
+    "finding": "Four longer full512 pairs all negative, mean -1.30408175%; two short full512 pairs also negative. Effect size and causal change within stack unresolved. Keep PR44 draft; do not discard negative data."
+  },
+  "joint_trajectory_review": {
+    "reviewed_at": "2026-10-24T19:31:23.097963+00:00",
+    "reviewer": "existing autotune owner; read-only",
+    "completed_windows": 4,
+    "disposition": "keep PR46 draft; no promotion",
+    "findings": [
+      "Both candidate logged-work rates lower than paired control",
+      "Quick connection startup retained at about1.8seconds",
+      "About197seconds extra productive kernel comparisons per candidate window; causal contribution not isolated",
+      "Final selections match paired controls9/8workers; no alternate kernel promoted",
+      "CandidateA count exploration can reject12workers during kernel cooldown without AVX2 comparison",
+      "CandidateB AVX2 +2.55% below uncertainty-adjusted +3.53% threshold; correctly unpromoted",
+      "Warm-cache and prototype changed-load/RAM behavior remain unvalidated; scope-stop is not product failure or lifecycle pass"
+    ]
+  },
+  "final_sapphire_review": {
+    "reviewed_at": "2026-10-24T19:41:59.879228+00:00",
+    "status": "passed",
+    "reports": 16,
+    "archive_files": 52,
+    "checks": [
+      "Raw report hashes and completed rate arithmetic match",
+      "Actual per-worker order reversed",
+      "Frozen binary SHA256, source fingerprints and generic CPU-only profiles match",
+      "Full-size scalar/AVX2/full512/256 parity passed",
+      "Expected HugeTLB backing; zero OOM/swap/timeout/drops; max steal0.00207%"
+    ],
+    "finding": "Small timing differences; twelve-worker full512 mixed +0.154%/-0.783%. Does not resolve separate Granite regression gate."
+  },
+  "final_ice_review": {
+    "reviewed_at": "2026-10-24T19:49:29.610998+00:00",
+    "status": "evidence passed; performance gate not satisfied",
+    "reports": 16,
+    "archive_files": 52,
+    "checks": [
+      "Raw report SHA256, rates and summaries match",
+      "Actual per-worker comparison order reverses",
+      "Frozen baseline/f20 executable identities, fingerprints and generic CPU-only flags match",
+      "Full-size scalar/AVX2/full512/256 parity passed",
+      "Expected24GiB HugeTLB backing; zero OOM/swap/errors/drops; max steal0.00207%"
+    ],
+    "finding": "All eight paired differences negative; twelve-worker means AVX2 -1.322%,full512 -1.307%. Do not characterize final combined x86 as near-flat across hosts; retain draft gate."
+  },
+  "final_subset_and_retry_review": {
+    "reviewed_at": "2026-10-24T20:18:25.727682+00:00",
+    "status": "artifact audit passed; both performance gates held",
+    "subset_reports": 16,
+    "retry_reports": 4,
+    "subset_archive_files": 69,
+    "retry_archive_files": 20,
+    "checks": [
+      "Raw SHA/rates and summaries match",
+      "Actual reverse-order timestamps, backing and error counters verified",
+      "Frozen binaries and source fingerprints match",
+      "Full-size parity logs verified"
+    ],
+    "finding": "Subset12wAVX2 -2.2768/-1.9295%; standalone retry -1.0105/-.8209%. No cause inferred from static similarity. PR41/43 held."
+  }
+}

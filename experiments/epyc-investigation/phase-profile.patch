@@ -1,0 +1,152 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 1f3cd41..9815e57 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -476,6 +476,7 @@ version = "0.1.0"
+ dependencies = [
+  "argon2",
+  "blake2",
++ "libc",
+ ]
+ 
+ [[package]]
+diff --git a/pow-kernel/Cargo.toml b/pow-kernel/Cargo.toml
+index 847a658..c3c5172 100644
+--- a/pow-kernel/Cargo.toml
++++ b/pow-kernel/Cargo.toml
+@@ -11,9 +11,15 @@ path = "src/lib.rs"
+ [features]
+ default = []
+ avx512 = []
++epyc-profile = []
++
++[[example]]
++name = "epyc_phase"
++required-features = ["epyc-profile"]
+ 
+ [dependencies]
+ blake2 = "0.10"
+ 
+ [dev-dependencies]
++libc = "0.2"
+ argon2 = "0.5"
+diff --git a/pow-kernel/src/fixed_argon.rs b/pow-kernel/src/fixed_argon.rs
+index f874759..1830724 100644
+--- a/pow-kernel/src/fixed_argon.rs
++++ b/pow-kernel/src/fixed_argon.rs
+@@ -43,6 +43,20 @@ pub enum Error {
+ 
+ pub type Result<T> = std::result::Result<T, Error>;
+ 
++/// CPU-only measurements of the candidate prework/completion boundary.
++/// Allocation, reference-index precomputation, device transfer and GPU work
++/// are not included. These durations do not predict hybrid throughput.
++#[cfg(feature = "epyc-profile")]
++#[derive(Debug, Clone, Copy)]
++pub struct SplitHashTimings {
++    pub seed: std::time::Duration,
++    pub data_independent: std::time::Duration,
++    pub data_dependent: std::time::Duration,
++    pub finalize: std::time::Duration,
++    pub total: std::time::Duration,
++    pub prefix_bytes: usize,
++}
++
+ #[inline(always)]
+ const fn isa_label(isa: u8) -> &'static str {
+     match isa {
+@@ -160,27 +174,88 @@ impl FixedArgon2id {
+         initialize_lane_blocks(memory_blocks, initial_hash)?;
+ 
+         match self.isa {
+-            ISA_AVX512 => self.fill_blocks::<ISA_AVX512, true, false>(memory_blocks),
+-            ISA_AVX512_256 => self.fill_blocks::<ISA_AVX512_256, true, false>(memory_blocks),
+-            ISA_AVX2 => self.fill_blocks::<ISA_AVX2, true, false>(memory_blocks),
+-            ISA_NEON => self.fill_blocks::<ISA_NEON, false, true>(memory_blocks),
+-            _ => self.fill_blocks::<ISA_SCALAR, false, false>(memory_blocks),
++            ISA_AVX512 => {
++                self.fill_blocks::<ISA_AVX512, true, false, 0, SYNC_POINTS>(memory_blocks)
++            }
++            ISA_AVX512_256 => {
++                self.fill_blocks::<ISA_AVX512_256, true, false, 0, SYNC_POINTS>(memory_blocks)
++            }
++            ISA_AVX2 => self.fill_blocks::<ISA_AVX2, true, false, 0, SYNC_POINTS>(memory_blocks),
++            ISA_NEON => self.fill_blocks::<ISA_NEON, false, true, 0, SYNC_POINTS>(memory_blocks),
++            _ => self.fill_blocks::<ISA_SCALAR, false, false, 0, SYNC_POINTS>(memory_blocks),
+         }
+ 
+         finalize(memory_blocks, out)
+     }
+ 
++    /// Hash on the CPU with timing at the slice-2 boundary. Experimental only;
++    /// no GPU calls, alternate PoW, or partial hashes are returned to the miner.
++    #[cfg(feature = "epyc-profile")]
++    pub fn profile_split_hash_with_memory(
++        &self,
++        pwd: &[u8],
++        salt: &[u8],
++        out: &mut [u8],
++        memory_blocks: &mut [PowBlock],
++    ) -> Result<SplitHashTimings> {
++        use std::time::Instant;
++
++        verify_inputs(pwd, salt, out)?;
++        let memory_blocks = memory_blocks
++            .get_mut(..self.block_count)
++            .ok_or(Error::MemoryTooLittle)?;
++        let start = Instant::now();
++        let initial = initial_hash(
++            self.requested_memory_kib,
++            ARGON2_T_COST,
++            ARGON2_LANES,
++            pwd,
++            salt,
++            out,
++        );
++        initialize_lane_blocks(memory_blocks, initial)?;
++        let seeded = Instant::now();
++        self.fill_profile_phase::<0, 2>(memory_blocks);
++        let prepared = Instant::now();
++        self.fill_profile_phase::<2, SYNC_POINTS>(memory_blocks);
++        let filled = Instant::now();
++        finalize(memory_blocks, out)?;
++        let finished = Instant::now();
++        Ok(SplitHashTimings {
++            seed: seeded - start,
++            data_independent: prepared - seeded,
++            data_dependent: filled - prepared,
++            finalize: finished - filled,
++            total: finished - start,
++            prefix_bytes: 2 * self.segment_length * PowBlock::SIZE,
++        })
++    }
++
++    #[cfg(feature = "epyc-profile")]
++    fn fill_profile_phase<const START: usize, const END: usize>(&self, memory: &mut [PowBlock]) {
++        match self.isa {
++            ISA_AVX512 => self.fill_blocks::<ISA_AVX512, true, false, START, END>(memory),
++            ISA_AVX512_256 => self.fill_blocks::<ISA_AVX512_256, true, false, START, END>(memory),
++            ISA_AVX2 => self.fill_blocks::<ISA_AVX2, true, false, START, END>(memory),
++            ISA_NEON => self.fill_blocks::<ISA_NEON, false, true, START, END>(memory),
++            _ => self.fill_blocks::<ISA_SCALAR, false, false, START, END>(memory),
++        }
++    }
++
+     fn fill_blocks<
+         const ISA: u8,
+         const USE_X86_MID_PREFETCH: bool,
+         const USE_AARCH64_MID_PREFETCH: bool,
++        const START_SLICE: usize,
++        const END_SLICE: usize,
+     >(
+         &self,
+         memory_blocks: &mut [PowBlock],
+     ) {
+         debug_assert_eq!(ARGON2_LANES, 1);
+         debug_assert_eq!(memory_blocks.len(), self.block_count);
+-        for slice in 0..SYNC_POINTS {
++        debug_assert!(START_SLICE <= END_SLICE && END_SLICE <= SYNC_POINTS);
++        for slice in START_SLICE..END_SLICE {
+             let data_independent_addressing = slice < (SYNC_POINTS / 2);
+ 
+             let first_block = if slice == 0 { 2 } else { 0 };

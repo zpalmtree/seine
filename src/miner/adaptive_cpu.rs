@@ -1,7 +1,7 @@
 //! Productive CPU tuning: startup uses a seed, and A/B/A trials run on real work.
 //! RAM limits constrain the operating count without replacing a remembered peak.
 use super::*;
-use crate::config::cpu_autotune_capacity;
+use crate::config::{cpu_autotune_capacity, cpu_autotune_worker_ceiling};
 use std::thread::{self, JoinHandle};
 
 const RECOVERY_SECS: u64 = 30;
@@ -9,14 +9,26 @@ const RETRY_SECS: u64 = 300;
 const MAX_DRIFT: f64 = 0.08;
 
 pub(super) fn limits(cfg: &Config, owned_bytes: u64) -> (usize, usize, usize) {
-    let (capacity, available) = cpu_autotune_capacity(cfg, owned_bytes);
+    let (_, available) = cpu_autotune_capacity(cfg, owned_bytes);
+    let (min, max) = worker_bounds(cfg, cpu_autotune_worker_ceiling(cfg));
+    (
+        min,
+        max,
+        available
+            .min(max)
+            .min(cfg.cpu_autotune_worker_slots.unwrap_or(max)),
+    )
+}
+
+fn worker_bounds(cfg: &Config, cpu_ceiling: usize) -> (usize, usize) {
+    // Parked slots and their nonce stride must survive a raised cgroup RAM
+    // ceiling. Only active arenas are bounded by the current memory budget.
     let max = cfg
         .cpu_autotune_max_threads
-        .unwrap_or(capacity)
-        .min(capacity)
+        .unwrap_or(cpu_ceiling)
+        .min(cpu_ceiling)
         .max(1);
-    let min = cfg.cpu_autotune_min_threads.max(1).min(max);
-    (min, max, available.min(max))
+    (cfg.cpu_autotune_min_threads.max(1).min(max), max)
 }
 
 fn instances(cfg: &Config) -> usize {
@@ -50,6 +62,7 @@ fn seed_threads(
     min: usize,
     max: usize,
     available: usize,
+    memory_capacity: usize,
 ) -> usize {
     if available == 0 {
         return 0;
@@ -57,21 +70,93 @@ fn seed_threads(
     let floor = min.min(available);
     record
         .map(|r| r.selected_threads)
-        .unwrap_or((max / 2).max(1))
+        .unwrap_or((max.min(memory_capacity) / 2).max(1))
         .clamp(floor, max.min(available))
 }
 
-pub(super) fn prepare(cfg: &mut Config) {
+// Threads already running (including the API's Tokio worker pool) are charged
+// in pids.current. Reserve only later work. DNS/blocking and GPU driver threads
+// are demand-driven, so the margin is best effort; startup also handles spawn
+// failure. Keep this accounting alongside the mining startup order.
+fn startup_task_reserve(cfg: &Config) -> usize {
+    let cpu = instances(cfg);
+    let backends = cfg.backend_specs.len();
+    let common = cpu + 2 * backends + 2; // event forwarders, executors, init/cleanup, fan-in, tuner
+    let network = match cfg.mode {
+        // User AND dev sessions: two Stratum + two HTTP runtimes + fetch worker.
+        MiningMode::Pool => 5 + 3, // three DNS/blocking slots
+        MiningMode::Daemon => 2 + usize::from(cfg.sse_enabled) + 2, // prefetch, submit, SSE, DNS
+    };
+    common + network
+        + if cfg.token.is_some() { 2 } else { 0 } // JSON and SSE HTTP runtimes
+        + if should_enable_tui(cfg) { 2 } else { 0 }
+        + usize::from(cfg.api_server_enabled || cfg.service_mode) // control worker may race prepare
+        + 2 * (backends - cpu) // additional accelerator/driver startup margin
+}
+
+fn provisioned_slots(max: usize, count: usize, headroom: Option<usize>, reserve: usize) -> usize {
+    headroom
+        .map_or(max, |remaining| {
+            remaining.saturating_sub(reserve) / count.max(1)
+        })
+        .min(max)
+}
+
+pub(super) fn manual_limit(cfg: &Config, backends: &[Arc<CpuBackend>]) -> usize {
+    let running: Vec<_> = backends
+        .iter()
+        .filter(|b| b.adaptive_snapshot().running)
+        .collect();
+    let slots = running
+        .iter()
+        .map(|b| b.worker_capacity())
+        .min()
+        .unwrap_or(0);
+    let owned = running
+        .iter()
+        .map(|b| b.adaptive_snapshot().committed_bytes)
+        .sum();
+    let current = running.iter().map(|b| b.enabled_lanes()).min().unwrap_or(0);
+    let (_, available) = cpu_autotune_capacity(cfg, owned);
+    available.min(slots).max(current)
+}
+
+pub(super) fn prepare(cfg: &mut Config) -> Result<()> {
     if instances(cfg) == 0 {
-        return;
+        return Ok(());
     }
-    let (min, max, available) = limits(cfg, 0);
+    let (memory_capacity, available) = cpu_autotune_capacity(cfg, 0);
+    prepare_with_resources(
+        cfg,
+        cpu_autotune_worker_ceiling(cfg),
+        memory_capacity,
+        available,
+        crate::config::cpu_task_headroom(),
+    )
+}
+
+fn prepare_with_resources(
+    cfg: &mut Config,
+    cpu_ceiling: usize,
+    memory_capacity: usize,
+    available: usize,
+    headroom: Option<usize>,
+) -> Result<()> {
+    let (min, max) = worker_bounds(cfg, cpu_ceiling);
+    let slots = provisioned_slots(max, instances(cfg), headroom, startup_task_reserve(cfg));
+    if slots == 0 {
+        bail!("insufficient task/thread headroom for automatic CPU mining and its control/network threads; increase the process task limit or stop other tasks in this cgroup");
+    }
+    let available = available.min(max).min(slots);
     let seed = read_seed(cfg);
-    let threads = seed_threads(seed.as_ref(), min, max, available);
+    let threads = seed_threads(seed.as_ref(), min, max, available, memory_capacity);
     // Zero is intentional here. A parked CPU backend stays connected and can
     // recover when a whole arena plus the configured reserve fits again.
     cfg.threads = threads;
-    cfg.cpu_auto_threads_cap = max;
+    cfg.cpu_autotune_worker_slots = Some(slots);
+    // This field also bounds manual controls/offline tuning; never replace its
+    // RAM ceiling with the larger parked-slot or CPU-only search maximum.
+    cfg.cpu_auto_threads_cap = memory_capacity.min(slots);
     for spec in cfg
         .backend_specs
         .iter_mut()
@@ -86,7 +171,8 @@ pub(super) fn prepare(cfg: &mut Config) {
     } else {
         "initial estimate"
     };
-    info("MINER", format!("cpu-autotune | starting with {threads} threads ({reason}); tuning while mining, capacity={max}, currently available={available}"));
+    info("MINER", format!("cpu-autotune | starting with {threads} threads ({reason}); tuning while mining, capacity={max}, worker slots={slots}, currently available={available}"));
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -120,6 +206,8 @@ struct Policy {
     allocation_retry_at: u64,
     headroom_since: u64,
     previous_cap: usize,
+    cap_observed: bool,
+    recovery_pending: bool,
     window_start: u64,
     window_hashes: u64,
     window_secs: u64,
@@ -153,6 +241,8 @@ impl Policy {
             allocation_retry_at: 0,
             headroom_since: 0,
             previous_cap: current,
+            cap_observed: false,
+            recovery_pending: false,
             window_start: 0,
             window_hashes: 0,
             window_secs: cfg.cpu_autotune_secs.saturating_mul(5).max(30),
@@ -165,6 +255,7 @@ impl Policy {
 
     fn change(&mut self, threads: usize, reason: &'static str) -> Decision {
         self.current = threads;
+        self.recovery_pending = false;
         self.sampling = false;
         self.idle_since = None;
         Decision {
@@ -180,6 +271,27 @@ impl Policy {
         self.sampling = false;
         self.idle_since = None;
         self.next_trial = now.saturating_add(delay);
+    }
+
+    fn observe_cap(&mut self, now: u64, cap: usize) {
+        if cap <= self.current {
+            self.recovery_pending = false;
+        } else if self.cap_observed && cap > self.previous_cap && self.previous_cap <= self.current
+        {
+            self.recovery_pending = true;
+        }
+        self.cap_observed = true;
+        if cap != self.previous_cap {
+            if cap <= self.current || self.previous_cap <= self.current {
+                self.headroom_since = now;
+            }
+            if cap > self.previous_cap {
+                self.up = true;
+                self.ramp = true;
+                self.next_trial = self.next_trial.min(now.saturating_add(RECOVERY_SECS));
+            }
+            self.previous_cap = cap;
+        }
     }
 
     fn tick_joint(
@@ -198,7 +310,15 @@ impl Policy {
                 && s.warmed == s.threads
                 && s.resident_bytes == s.threads as u64 * CPU_LANE_MEMORY_BYTES
         });
-        let safety_change = cap < actual
+        // Track recovery through kernel holds, but debounce transient headroom
+        // and honor allocation cooldowns before interrupting productive trials.
+        self.observe_cap(now, cap.min(self.max));
+        let recovering_capacity = self.recovery_pending && now >= self.allocation_retry_at;
+        let recovery_due = recovering_capacity
+            && now >= self.next_trial
+            && now.saturating_sub(self.headroom_since) >= RECOVERY_SECS;
+        let safety_change = (recovery_due && kernels.is_comparing())
+            || cap < actual
             || actual != self.current
             || allocation_failed
             || running.len() != snapshots.len()
@@ -206,7 +326,12 @@ impl Policy {
         let action = if safety_change {
             kernels.abort(now)
         } else {
-            kernels.tick(now, snapshots, ready, matches!(self.phase, Phase::Baseline))
+            kernels.tick(
+                now,
+                snapshots,
+                ready,
+                matches!(self.phase, Phase::Baseline) && !recovering_capacity,
+            )
         };
         if action.hold_counts {
             self.sampling = false;
@@ -250,17 +375,7 @@ impl Policy {
         actual: usize,
     ) -> Option<Decision> {
         let cap = cap.min(self.max);
-        if cap != self.previous_cap {
-            if cap <= self.current || self.previous_cap <= self.current {
-                self.headroom_since = now;
-            }
-            if cap > self.previous_cap {
-                self.up = true;
-                self.ramp = true;
-                self.next_trial = self.next_trial.min(now.saturating_add(RECOVERY_SECS));
-            }
-            self.previous_cap = cap;
-        }
+        self.observe_cap(now, cap);
         if allocation_failed || actual < self.current {
             self.reset(now, RETRY_SECS);
             self.allocation_retry_at = now.saturating_add(RETRY_SECS);
@@ -620,8 +735,13 @@ impl Controller {
                 thread::Builder::new()
                     .name("cpu-autotune".into())
                     .spawn(move || {
-                        let (min, max, _) = limits(&cfg, 0);
-                        let mut policy = Policy::new(&cfg, cfg.threads, min, max);
+                        let (min, max, available) = limits(&cfg, 0);
+                        let slots = backends.iter().filter(|b| b.adaptive_snapshot().running)
+                            .map(|b| b.worker_capacity()).min().unwrap_or(0);
+                        let current = backends.iter().filter(|b| b.adaptive_snapshot().running)
+                            .map(|b| b.enabled_lanes()).min().unwrap_or(0);
+                        let mut policy = Policy::new(&cfg, current, min, max);
+                        policy.observe_cap(0, available.min(slots));
                         let mut record = read_seed(&cfg);
                         discard_cached_scores(&mut record);
                         let host = cpu_autotune_host_fingerprint();
@@ -645,13 +765,16 @@ impl Controller {
                             if snapshots.is_empty() {
                                 break;
                             }
+                            let slots = backends.iter().zip(&all_snapshots)
+                                .filter(|(_, snapshot)| snapshot.running)
+                                .map(|(backend, _)| backend.worker_capacity()).min().unwrap_or(0);
                             let actual = snapshots.iter().map(|s| s.threads).min().unwrap_or(0);
                             let owned = snapshots.iter().map(|s| s.committed_bytes).sum();
                             let count_failures =
                                 snapshots.iter().map(|s| s.allocation_failures).sum();
                             let (_, available) = cpu_autotune_capacity(&cfg, owned);
                             let cap =
-                                pressure_backoff.cap(pressure.elevated(), available, actual, max);
+                                pressure_backoff.cap(pressure.elevated(), available.min(slots), actual, max);
                             let now = started.elapsed().as_secs();
                             let (action, decision) = policy.tick_joint(
                                 &mut kernels, now, &all_snapshots, cap, count_failures > failures,
@@ -720,7 +843,7 @@ impl Controller {
                                     state.threads = policy.current * snapshots.len();
                                     if let Some(control) = &mut state.thread_control {
                                         control.current_threads = policy.current;
-                                        control.max_threads = max;
+                                        control.max_threads = cap.max(policy.current);
                                     }
                                 }
                             }
@@ -827,6 +950,134 @@ mod tests {
     use super::*;
 
     #[test]
+    fn preparation_keeps_ram_manual_limit_separate_and_rejects_exhausted_pid_budget() {
+        let mut cfg = super::super::tests::test_config();
+        cfg.cpu_autotune_config_path =
+            std::env::temp_dir().join(format!("seine-no-seed-{}", std::process::id()));
+        let reserve = startup_task_reserve(&cfg);
+        prepare_with_resources(&mut cfg, 16, 1, 1, Some(reserve + 4)).unwrap();
+        assert_eq!(cfg.cpu_autotune_worker_slots, Some(4));
+        assert_eq!(cfg.cpu_auto_threads_cap, 1);
+        assert_eq!(cfg.threads, 1);
+        assert_eq!(cfg.backend_specs[0].cpu_threads, Some(1));
+        assert!(prepare_with_resources(&mut cfg, 16, 1, 1, Some(reserve)).is_err());
+        assert_eq!(cfg.cpu_autotune_worker_slots, Some(4), "failure is atomic");
+        prepare_with_resources(&mut cfg, 16, 16, 16, None).unwrap();
+        assert_eq!(
+            cfg.cpu_autotune_worker_slots,
+            Some(16),
+            "new session can reprovision"
+        );
+        assert_eq!(cfg.cpu_auto_threads_cap, 16);
+        assert_eq!(cfg.threads, 8);
+    }
+
+    #[test]
+    #[ignore = "requires an owned task-limited cgroup and a real 2 GiB arena; run optimized"]
+    fn pid_budget_startup_probe() {
+        let mut cfg = super::super::tests::test_config();
+        cfg.cpu_autotune_threads = true;
+        cfg.cpu_page_mode = CpuPageMode::Regular;
+        cfg.cpu_affinity = crate::config::CpuAffinityMode::Auto;
+        let (memory_capacity, available) = cpu_autotune_capacity(&cfg, 0);
+        assert_eq!(available, 1, "fixture must allow exactly one active arena");
+        let legacy = std::env::var_os("SEINE_PID_PROBE_LEGACY").is_some();
+        let capacity = if legacy {
+            memory_capacity
+        } else {
+            cpu_autotune_worker_ceiling(&cfg)
+        };
+        // Deliberately bypass PID preflight: this isolates the race/OS-limit
+        // fallback. Full mining needs more tasks than this backend-only fixture.
+        let backend = CpuBackend::adaptive(
+            1,
+            capacity,
+            cfg.cpu_affinity,
+            CpuBackendTuning {
+                page_mode: CpuPageMode::Regular,
+                ..CpuBackendTuning::default()
+            },
+        );
+        println!("PID_PROBE legacy={legacy} seed=1 capacity={capacity} preflight=bypassed");
+        let result = backend.start();
+        println!(
+            "PID_PROBE startup={result:?} provisioned={} stride={}",
+            backend.worker_capacity(),
+            backend.lanes()
+        );
+        backend.stop();
+        result.expect("bounded one-arena backend should start");
+    }
+
+    #[test]
+    fn pid_budget_shares_headroom_without_changing_cache_or_manual_bounds() {
+        assert_eq!(provisioned_slots(16, 2, Some(24), 8), 8);
+        assert_eq!(provisioned_slots(16, 2, Some(9), 8), 0);
+        assert_eq!(provisioned_slots(16, 1, Some(4), 8), 0);
+        assert_eq!(provisioned_slots(4, 1, Some(24), 8), 4);
+        assert_eq!(provisioned_slots(16, 2, None, 8), 16);
+        let mut cfg = super::super::tests::test_config();
+        cfg.cpu_auto_threads_cap = 1; // RAM-safe manual ceiling
+        cfg.cpu_autotune_worker_slots = Some(3);
+        assert_eq!(
+            worker_bounds(&cfg, 16).1,
+            16,
+            "PID slots are not the cache maximum"
+        );
+        let cached = record(&cfg, 12);
+        assert_eq!(seed_threads(Some(&cached), 1, 16, 3, 16), 3);
+        assert_eq!(cfg.cpu_auto_threads_cap, 1);
+        assert_eq!(
+            seed_threads(Some(&cached), 1, 16, 16, 16),
+            12,
+            "next unrestricted run recovers seed"
+        );
+    }
+
+    #[test]
+    fn count_trials_never_exceed_provisioned_slots_even_with_abundant_ram() {
+        let mut p = policy(1);
+        let mut hashes = 0;
+        for now in 0..3000 {
+            hashes += p.current as u64 * 10;
+            let _ = p.tick(now, hashes, true, 2, false, p.current);
+            assert!(p.current <= 2);
+        }
+        assert_eq!(
+            p.max, 16,
+            "resource cap does not replace cache/search maximum"
+        );
+        assert_eq!(p.current, 2);
+    }
+
+    #[test]
+    fn startup_task_reserve_accounts_for_both_pool_sessions_and_existing_api_pool() {
+        let mut cfg = super::super::tests::test_config();
+        cfg.mode = MiningMode::Pool;
+        cfg.token = None;
+        cfg.ui_mode = UiMode::Plain;
+        cfg.api_server_enabled = false;
+        cfg.service_mode = false;
+        assert_eq!(startup_task_reserve(&cfg), 13); // 5 common + 5 pool + 3 DNS
+        cfg.api_server_enabled = true;
+        assert_eq!(
+            startup_task_reserve(&cfg),
+            14,
+            "API workers already charged in pids.current"
+        );
+        cfg.token = Some("test".into());
+        assert_eq!(startup_task_reserve(&cfg), 16);
+        cfg.ui_mode = UiMode::Tui;
+        assert_eq!(startup_task_reserve(&cfg), 18);
+        cfg.backend_specs.push(cfg.backend_specs[0]);
+        assert_eq!(
+            startup_task_reserve(&cfg),
+            21,
+            "per-instance costs deducted before division"
+        );
+    }
+
+    #[test]
     #[ignore = "runs productive online tuning for up to five minutes with real 2 GiB arenas; run optimized"]
     fn productive_controller_real_smoke() {
         use crate::backend::{NonceChunk, WorkAssignment, WorkTemplate};
@@ -846,7 +1097,7 @@ mod tests {
         ));
         cfg.cpu_autotune_config_path = dir.join("tuning.json");
         let start = Instant::now();
-        prepare(&mut cfg);
+        prepare(&mut cfg).unwrap();
         assert_eq!(
             limits(&cfg, 0).2,
             2,
@@ -904,7 +1155,7 @@ mod tests {
             backend.stop();
             let mut cached = cfg.clone();
             let cached_start = Instant::now();
-            prepare(&mut cached);
+            prepare(&mut cached).unwrap();
             assert_eq!(cached.threads, record.selected_threads);
             println!("productive_controller_real_smoke elapsed_secs={elapsed:.3} completed_hashes={completed} selected_threads={} cached_prepare_secs={:.4} measurements={:?}", record.selected_threads, cached_start.elapsed().as_secs_f64(), record.measurements);
         }));
@@ -1067,6 +1318,233 @@ mod tests {
             recovered,
             "a busy interval must not permanently cap throughput"
         );
+    }
+
+    #[test]
+    fn constrained_start_provisions_stable_slots_and_keeps_user_ceiling() {
+        let mut cfg = super::super::tests::test_config();
+        cfg.cpu_autotune_max_threads = None;
+        cfg.cpu_autotune_min_threads = 1;
+        let (min, max) = worker_bounds(&cfg, 16);
+        assert_eq!((min, max), (1, 16));
+        assert_eq!(seed_threads(None, min, max, 1, 1), 1);
+        assert_eq!(seed_threads(None, min, max, 8, 8), 4);
+        cfg.cpu_autotune_max_threads = Some(4);
+        let (min, max) = worker_bounds(&cfg, 16);
+        let initial = seed_threads(None, min, max, 1, 1);
+        let backend =
+            CpuBackend::adaptive(initial, max, cfg.cpu_affinity, CpuBackendTuning::default());
+        assert_eq!(backend.adaptive_snapshot().threads, 1);
+        assert_eq!(backend.adaptive_snapshot().resident_bytes, 0);
+        backend.set_active_threads(2);
+        assert_eq!(backend.adaptive_snapshot().threads, 2);
+        backend.set_active_threads(usize::MAX);
+        assert_eq!(backend.adaptive_snapshot().threads, 4);
+        assert_eq!(
+            backend.adaptive_snapshot().resident_bytes,
+            0,
+            "parked slots allocate no arenas"
+        );
+        cfg.cpu_autotune_min_threads = 3;
+        assert_eq!(worker_bounds(&cfg, 16), (3, 4));
+        assert_eq!(seed_threads(None, 3, 4, 1, 1), 1);
+        assert_eq!(seed_threads(None, 3, 4, 4, 4), 3);
+    }
+
+    #[test]
+    fn recovered_ram_interrupts_constrained_kernel_trial_before_count_growth() {
+        use crate::backend::cpu::CpuAdaptiveSnapshot;
+        use blocknet_pow_kernel::CpuKernel;
+        let mut cfg = super::super::tests::test_config();
+        cfg.cpu_autotune_config_path = std::env::temp_dir().join(format!(
+            "seine-capacity-recovery-{}.json",
+            std::process::id()
+        ));
+        let path = std::path::PathBuf::from(format!(
+            "{}.kernels.json",
+            cfg.cpu_autotune_config_path.display()
+        ));
+        let _ = fs::remove_file(&path);
+        let mut kernels =
+            super::super::adaptive_kernel::Tuner::new(&cfg, CpuAutotuneHostFingerprint::default());
+        let mut policy = Policy::new(&cfg, 1, 1, 4);
+        let base = CpuKernel::preferred();
+        let can_trial = CpuKernel::ALL
+            .into_iter()
+            .filter(|k| k.is_supported() && !matches!(k.as_str(), "scalar" | "avx512-256"))
+            .count()
+            >= 2;
+        let mut s = CpuAdaptiveSnapshot {
+            kernel: base,
+            kernel_generation: 1,
+            kernel_ready: true,
+            backing_bytes: [0, 0, 0, CPU_LANE_MEMORY_BYTES, 0],
+            running: true,
+            threads: 1,
+            committed_bytes: CPU_LANE_MEMORY_BYTES,
+            resident_bytes: CPU_LANE_MEMORY_BYTES,
+            hashes: 0,
+            hashing: true,
+            allocation_failures: 0,
+            warmed: 1,
+        };
+        for now in 0..34 {
+            s.hashes += 100;
+            let (action, _) = policy.tick_joint(&mut kernels, now, &[s], 1, false);
+            if let Some(kernel) = action.kernel {
+                s.kernel = kernel;
+                s.kernel_generation += 1;
+            }
+        }
+        if can_trial {
+            assert_ne!(s.kernel, base);
+        }
+        let (action, _) = policy.tick_joint(&mut kernels, 34, &[s], 4, false);
+        assert_eq!(action.hold_counts, can_trial);
+        for now in 35..64 {
+            s.hashes += 100;
+            let (action, _) = policy.tick_joint(&mut kernels, now, &[s], 4, false);
+            if let Some(kernel) = action.kernel {
+                s.kernel = kernel;
+                s.kernel_generation += 1;
+            }
+        }
+        let (action, _) = policy.tick_joint(&mut kernels, 64, &[s], 4, false);
+        assert!(!action.hold_counts);
+        assert!(!kernels.is_comparing());
+        if can_trial {
+            assert_eq!(action.kernel, Some(base));
+        }
+        if let Some(kernel) = action.kernel {
+            s.kernel = kernel;
+            s.kernel_generation += 1;
+        }
+        let mut recovered = false;
+        for now in 65..155 {
+            s.hashes += 100 * policy.current as u64;
+            let (_, decision) = policy.tick_joint(&mut kernels, now, &[s], 4, false);
+            if let Some(decision) = decision {
+                assert!(decision.threads <= 4);
+                recovered |= decision.threads > 1;
+            }
+            s.threads = policy.current;
+            s.warmed = policy.current;
+            s.resident_bytes = policy.current as u64 * CPU_LANE_MEMORY_BYTES;
+            s.committed_bytes = s.resident_bytes;
+            s.backing_bytes[3] = s.resident_bytes;
+        }
+        assert!(
+            recovered,
+            "startup memory ceiling must not permanently cap workers"
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    fn recovery_fixture(
+        label: &str,
+    ) -> (
+        std::path::PathBuf,
+        super::super::adaptive_kernel::Tuner,
+        Policy,
+        crate::backend::cpu::CpuAdaptiveSnapshot,
+    ) {
+        use crate::backend::cpu::CpuAdaptiveSnapshot;
+        let mut cfg = super::super::tests::test_config();
+        cfg.cpu_autotune_config_path = std::env::temp_dir().join(format!(
+            "seine-recovery-{label}-{}.json",
+            std::process::id()
+        ));
+        let path = std::path::PathBuf::from(format!(
+            "{}.kernels.json",
+            cfg.cpu_autotune_config_path.display()
+        ));
+        let _ = fs::remove_file(&path);
+        let kernels =
+            super::super::adaptive_kernel::Tuner::new(&cfg, CpuAutotuneHostFingerprint::default());
+        let policy = Policy::new(&cfg, 1, 1, 4);
+        let snapshot = CpuAdaptiveSnapshot {
+            kernel: blocknet_pow_kernel::CpuKernel::preferred(),
+            kernel_generation: 1,
+            kernel_ready: true,
+            backing_bytes: [0, 0, 0, CPU_LANE_MEMORY_BYTES, 0],
+            running: true,
+            threads: 1,
+            committed_bytes: CPU_LANE_MEMORY_BYTES,
+            resident_bytes: CPU_LANE_MEMORY_BYTES,
+            hashes: 0,
+            hashing: true,
+            allocation_failures: 0,
+            warmed: 1,
+        };
+        (path, kernels, policy, snapshot)
+    }
+
+    #[test]
+    fn recovery_without_kernel_trial_does_not_start_one_before_count_growth() {
+        let (path, mut kernels, mut policy, mut s) = recovery_fixture("idle");
+        policy.observe_cap(0, 1);
+        let mut recovered = false;
+        for now in 1..90 {
+            s.hashes += 100;
+            let (action, decision) = policy.tick_joint(&mut kernels, now, &[s], 4, false);
+            assert!(
+                !action.hold_counts,
+                "fresh kernel trial delayed pending count recovery"
+            );
+            assert!(!kernels.is_comparing());
+            if let Some(decision) = decision {
+                if decision.threads > 1 {
+                    assert!(now >= RECOVERY_SECS);
+                    recovered = true;
+                    break;
+                }
+            }
+        }
+        assert!(recovered);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn transient_headroom_does_not_abort_active_kernel_trial() {
+        let (path, mut kernels, mut policy, mut s) = recovery_fixture("spike");
+        let (start, _) = policy.tick_joint(&mut kernels, 0, &[s], 1, false);
+        if !start.hold_counts {
+            return;
+        }
+        for (now, cap) in [(1, 1), (2, 2), (3, 1)] {
+            s.hashes += 100;
+            let (action, decision) = policy.tick_joint(&mut kernels, now, &[s], cap, false);
+            assert!(action.hold_counts);
+            assert!(decision.is_none());
+            assert!(kernels.is_comparing());
+        }
+        assert!(!policy.recovery_pending);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn pending_recovery_honors_allocation_cooldown_then_resumes() {
+        let (path, mut kernels, mut policy, mut s) = recovery_fixture("allocation");
+        policy.allocation_retry_at = 200;
+        let mut recovered = false;
+        for now in 0..270 {
+            s.hashes += 100;
+            let cap = if now < 2 { 1 } else { 4 };
+            let (action, decision) = policy.tick_joint(&mut kernels, now, &[s], cap, false);
+            if let Some(kernel) = action.kernel {
+                s.kernel = kernel;
+                s.kernel_generation += 1;
+            }
+            if let Some(decision) = decision {
+                if decision.threads > 1 {
+                    assert!(now >= 200, "allocation retry cooldown was bypassed");
+                    recovered = true;
+                    break;
+                }
+            }
+        }
+        assert!(recovered);
+        let _ = fs::remove_file(path);
     }
 
     #[test]
@@ -1398,12 +1876,12 @@ mod tests {
     fn cached_start_respects_current_ram_and_explicit_bounds() {
         let cfg = super::super::tests::test_config();
         let r = record(&cfg, 12);
-        assert_eq!(seed_threads(Some(&r), 1, 16, 16), 12);
-        assert_eq!(seed_threads(Some(&r), 1, 16, 3), 3);
-        assert_eq!(seed_threads(Some(&r), 1, 16, 0), 0);
-        assert_eq!(seed_threads(Some(&r), 1, 6, 16), 6);
-        assert_eq!(seed_threads(None, 8, 16, 3), 3);
-        assert_eq!(seed_threads(None, 1, 16, 16), 8);
+        assert_eq!(seed_threads(Some(&r), 1, 16, 16, 16), 12);
+        assert_eq!(seed_threads(Some(&r), 1, 16, 3, 16), 3);
+        assert_eq!(seed_threads(Some(&r), 1, 16, 0, 16), 0);
+        assert_eq!(seed_threads(Some(&r), 1, 6, 16, 6), 6);
+        assert_eq!(seed_threads(None, 8, 16, 3, 16), 3);
+        assert_eq!(seed_threads(None, 1, 16, 16, 16), 8);
     }
 
     fn record(cfg: &Config, selected_threads: usize) -> CpuAutotuneRecord {
@@ -1474,6 +1952,6 @@ mod tests {
             "do not relabel a kernel score as a mining score"
         );
         assert!(parsed.measurements.contains_key(&3));
-        assert_eq!(seed_threads(Some(&parsed), 1, 16, 16), 12);
+        assert_eq!(seed_threads(Some(&parsed), 1, 16, 16, 16), 12);
     }
 }

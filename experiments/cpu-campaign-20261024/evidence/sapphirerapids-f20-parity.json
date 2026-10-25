@@ -1,0 +1,28 @@
+{
+  "hardware": "sapphirerapids",
+  "status": "passed",
+  "logs": {
+    "candidate-full-size-parity.log": {
+      "text": "reference=[e9, fb, fa, cf, b6, 96, ae, f8, f8, 88, 20, 17, c5, 5b, 23, 4e, 4b, 31, 30, a4, b6, 23, 42, c6, 3d, f5, 61, 31, 8d, 5a, db, a8]\nscalar: PASS (full 2 GiB reference parity)\navx2: PASS (full 2 GiB reference parity)\navx512: PASS (full 2 GiB reference parity)\navx512-256: PASS (full 2 GiB reference parity)\nneon: unsupported\nneon-sha3: unsupported\n",
+      "sha256": "934f030d49cd4c8615dd57d8eb8a6ae4f2f866146bb372be95eb7bf07d483a6c"
+    },
+    "control-full-size-parity.log": {
+      "text": "reference=[e9, fb, fa, cf, b6, 96, ae, f8, f8, 88, 20, 17, c5, 5b, 23, 4e, 4b, 31, 30, a4, b6, 23, 42, c6, 3d, f5, 61, 31, 8d, 5a, db, a8]\nscalar: PASS (full 2 GiB reference parity)\navx2: PASS (full 2 GiB reference parity)\navx512: PASS (full 2 GiB reference parity)\navx512-256: PASS (full 2 GiB reference parity)\nneon: unsupported\n",
+      "sha256": "feada57af2b5abb829117d4d92f234d8c41f5720874f507ac3e27b4efe5acac4"
+    }
+  },
+  "identities": {
+    "source_control": "359265e325d85c9c7b6e3eed7b5b126fcec63f9c",
+    "source_candidate": "f20e7bb1772be024a12ac5cdcc92685ba89d3ddd",
+    "profile": "release --no-default-features, Rust1.93.0, generic x86_64, no RUSTFLAGS",
+    "sha256": {
+      "seine-portable-candidate": "24149835ff2468ba75f95c5e34c0d5f0ca4edd0a2848dc16da16534e0812d86f",
+      "seine-portable-control": "879203959abf3e1ac511e180d802cc20c7200f1f042db245f7095ba9568bd0e3",
+      "verify-portable-candidate": "9837aac9b855982444a8c4758d01d69d9023e6f78dc36aa8eb13946aaaad95a8",
+      "verify-portable-control": "3ecdce8a76d4d19f007e90c07b647907de795e8037b58ea59bc454212deafda4"
+    },
+    "created_at": "2026-10-24T16:51:41.528440+00:00",
+    "origin": "isolated source/target; x86 fill boundary only changed from636e688"
+  },
+  "source_archive_sha256": "9a875c6caddc94cd515e4d08def5f6189f59190d201741b423881e8527db679d"
+}

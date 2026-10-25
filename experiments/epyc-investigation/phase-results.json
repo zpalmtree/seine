@@ -1,0 +1,532 @@
+{
+  "scope": "Loop diagnostics; main backend results determine throughput",
+  "initial_streams": "same nonce counter per worker",
+  "pmu_core_streams": "cpu<<32 | counter, distinct across workers",
+  "streaming_store_scope": "Normal hashing API, distinct streams, one baseline then one candidate; zero phase fields are placeholders",
+  "profiles": {
+    "phase-results/w1-1-avx2": {
+      "source_sha256": "ba61b5d8f3f198ce8a07f5281e68c66d1ae151d6ae76d88cf0a43a324bc75d1a",
+      "kernel": "avx2",
+      "binary": "epyc-phase",
+      "cpus": [
+        0
+      ],
+      "hashes": 39,
+      "phase_seconds_per_hash": {
+        "seed": 7.144358974358974e-06,
+        "di": 0.14574094384615385,
+        "dd": 0.23965542738461537,
+        "finalize": 3.4892307692307696e-06
+      },
+      "counts_per_hash": {
+        "cycles": 1725841611.3076923,
+        "instructions": 2961845534.3589745,
+        "l2_dc_misses": 35215880.41025641,
+        "dtlb_walks": 532.6410256410256
+      },
+      "minimum_counter_running_fraction": 1.0
+    },
+    "phase-results/w1-1-avx512-256": {
+      "source_sha256": "facb0094faea75f21301cb3ff9f1e644580c933786482847c76479ce3fadcb32",
+      "kernel": "avx512-256",
+      "binary": "epyc-phase",
+      "cpus": [
+        0
+      ],
+      "hashes": 41,
+      "phase_seconds_per_hash": {
+        "seed": 7.413024390243903e-06,
+        "di": 0.13154474112195122,
+        "dd": 0.23484271646341465,
+        "finalize": 3.2097804878048776e-06
+      },
+      "counts_per_hash": {
+        "cycles": 1640756166.9268293,
+        "instructions": 2707566062.8536587,
+        "l2_dc_misses": 35397508.65853658,
+        "dtlb_walks": 297.5609756097561
+      },
+      "minimum_counter_running_fraction": 1.0
+    },
+    "phase-results/w1-1-avx512": {
+      "source_sha256": "b76dfb33c81296339eb21066bb24968dd70b08bf575763663e3b597d81310129",
+      "kernel": "avx512",
+      "binary": "epyc-phase",
+      "cpus": [
+        0
+      ],
+      "hashes": 45,
+      "phase_seconds_per_hash": {
+        "seed": 7.184666666666667e-06,
+        "di": 0.10691019933333333,
+        "dd": 0.22952569593333333,
+        "finalize": 3.5175555555555556e-06
+      },
+      "counts_per_hash": {
+        "cycles": 1505791386.911111,
+        "instructions": 1745498446.2444444,
+        "l2_dc_misses": 37530137.155555554,
+        "dtlb_walks": 507.1333333333333
+      },
+      "minimum_counter_running_fraction": 1.0
+    },
+    "phase-results/w24-1-avx2": {
+      "source_sha256": "8b35359d0db132e26336649dc4e54d2c10862e5a2743c25b7f428d3a59781d83",
+      "kernel": "avx2",
+      "binary": "epyc-phase",
+      "cpus": [
+        0,
+        8,
+        16,
+        24,
+        1,
+        9,
+        17,
+        25,
+        2,
+        10,
+        18,
+        26,
+        3,
+        11,
+        19,
+        27,
+        4,
+        12,
+        20,
+        28,
+        5,
+        13,
+        21,
+        29
+      ],
+      "hashes": 528,
+      "phase_seconds_per_hash": {
+        "seed": 8.114054924242425e-06,
+        "di": 0.32069850680681816,
+        "dd": 0.37108967727462117,
+        "finalize": 4.6386780303030306e-06
+      },
+      "counts_per_hash": {
+        "cycles": 3075243949.7670455,
+        "instructions": 2961846157.744318,
+        "l2_dc_misses": 38272512.35606061,
+        "dtlb_walks": 264.092803030303
+      },
+      "minimum_counter_running_fraction": 1.0
+    },
+    "phase-results/w24-1-avx512-256": {
+      "source_sha256": "d5e99c5569fc67d4b45bc959a71ed48998896f2eb9e1e65a1fe61f07b1678a85",
+      "kernel": "avx512-256",
+      "binary": "epyc-phase",
+      "cpus": [
+        0,
+        8,
+        16,
+        24,
+        1,
+        9,
+        17,
+        25,
+        2,
+        10,
+        18,
+        26,
+        3,
+        11,
+        19,
+        27,
+        4,
+        12,
+        20,
+        28,
+        5,
+        13,
+        21,
+        29
+      ],
+      "hashes": 528,
+      "phase_seconds_per_hash": {
+        "seed": 8.12763446969697e-06,
+        "di": 0.31526123404924244,
+        "dd": 0.3705154879810606,
+        "finalize": 4.594679924242425e-06
+      },
+      "counts_per_hash": {
+        "cycles": 3049354359.3958335,
+        "instructions": 2707566715.994318,
+        "l2_dc_misses": 38530508.92045455,
+        "dtlb_walks": 358.5719696969697
+      },
+      "minimum_counter_running_fraction": 1.0
+    },
+    "phase-results/w24-1-avx512": {
+      "source_sha256": "475aed45ea283c34456547fe03bb6997900d2d23eb0329c605b288b77179e8f7",
+      "kernel": "avx512",
+      "binary": "epyc-phase",
+      "cpus": [
+        0,
+        8,
+        16,
+        24,
+        1,
+        9,
+        17,
+        25,
+        2,
+        10,
+        18,
+        26,
+        3,
+        11,
+        19,
+        27,
+        4,
+        12,
+        20,
+        28,
+        5,
+        13,
+        21,
+        29
+      ],
+      "hashes": 523,
+      "phase_seconds_per_hash": {
+        "seed": 8.141017208413002e-06,
+        "di": 0.33451641237667307,
+        "dd": 0.372326109332696,
+        "finalize": 4.7436328871892926e-06
+      },
+      "counts_per_hash": {
+        "cycles": 3145332408.707457,
+        "instructions": 1745499201.2370937,
+        "l2_dc_misses": 38344696.00191204,
+        "dtlb_walks": 289.50860420650093
+      },
+      "minimum_counter_running_fraction": 1.0
+    },
+    "phase-results/w8-1-avx2": {
+      "source_sha256": "6614a3d0bfa8b34e833e81d5ec2d99c2d3b0f44af81c8fbc14da3c73778a6950",
+      "kernel": "avx2",
+      "binary": "epyc-phase",
+      "cpus": [
+        0,
+        8,
+        16,
+        24,
+        1,
+        9,
+        17,
+        25
+      ],
+      "hashes": 296,
+      "phase_seconds_per_hash": {
+        "seed": 1.0708962837837838e-05,
+        "di": 0.1460572990135135,
+        "dd": 0.26722077965202706,
+        "finalize": 3.7133783783783785e-06
+      },
+      "counts_per_hash": {
+        "cycles": 1849148871.4358108,
+        "instructions": 2961845586.402027,
+        "l2_dc_misses": 37936621.04391892,
+        "dtlb_walks": 212.34797297297297
+      },
+      "minimum_counter_running_fraction": 1.0
+    },
+    "phase-results/w8-1-avx512-256": {
+      "source_sha256": "6742eb5f73bbe3c35e8a9aaa87dd3b68414b4d2ffa8d7d4ff89ea99db33469bc",
+      "kernel": "avx512-256",
+      "binary": "epyc-phase",
+      "cpus": [
+        0,
+        8,
+        16,
+        24,
+        1,
+        9,
+        17,
+        25
+      ],
+      "hashes": 308,
+      "phase_seconds_per_hash": {
+        "seed": 7.543870129870129e-06,
+        "di": 0.13188898437012986,
+        "dd": 0.26289892571103896,
+        "finalize": 3.6390292207792207e-06
+      },
+      "counts_per_hash": {
+        "cycles": 1766705593.3538961,
+        "instructions": 2707566116.590909,
+        "l2_dc_misses": 38430618.28246753,
+        "dtlb_walks": 220.46103896103895
+      },
+      "minimum_counter_running_fraction": 1.0
+    },
+    "phase-results/w8-1-avx512": {
+      "source_sha256": "39dff53f1b878594aaf1829df4c80c049c65597fb298f314e9cb7388c426759b",
+      "kernel": "avx512",
+      "binary": "epyc-phase",
+      "cpus": [
+        0,
+        8,
+        16,
+        24,
+        1,
+        9,
+        17,
+        25
+      ],
+      "hashes": 328,
+      "phase_seconds_per_hash": {
+        "seed": 7.636225609756096e-06,
+        "di": 0.11313632191463414,
+        "dd": 0.25829471011280486,
+        "finalize": 3.7859786585365853e-06
+      },
+      "counts_per_hash": {
+        "cycles": 1661876094.695122,
+        "instructions": 1745498516.182927,
+        "l2_dc_misses": 40204105.63414634,
+        "dtlb_walks": 129.0487804878049
+      },
+      "minimum_counter_running_fraction": 1.0
+    },
+    "pmu-core/w24-1-avx2": {
+      "source_sha256": "a39eaa063fea61605d77ed5eee8f0ecf91f0346932ecccd08058baa5df2d6131",
+      "kernel": "avx2",
+      "binary": "epyc-phase-distinct",
+      "cpus": [
+        0,
+        8,
+        16,
+        24,
+        1,
+        9,
+        17,
+        25,
+        2,
+        10,
+        18,
+        26,
+        3,
+        11,
+        19,
+        27,
+        4,
+        12,
+        20,
+        28,
+        5,
+        13,
+        21,
+        29
+      ],
+      "hashes": 528,
+      "phase_seconds_per_hash": {
+        "seed": 8.188375000000001e-06,
+        "di": 0.32027007845454547,
+        "dd": 0.3700107879412879,
+        "finalize": 5.031287878787879e-06
+      },
+      "counts_per_hash": {
+        "cycles": 3071865586.649621,
+        "instructions": 2961846158.3977275,
+        "l2_dc_misses": 38228776.371212125,
+        "dtlb_walks": 253.7784090909091
+      },
+      "minimum_counter_running_fraction": 1.0
+    },
+    "pmu-core/w24-1-avx512-256": {
+      "source_sha256": "5e0f3a7868f77cdb0c6956bbf71bfc163c2d742d106674e65ba91596345a8eb4",
+      "kernel": "avx512-256",
+      "binary": "epyc-phase-distinct",
+      "cpus": [
+        0,
+        8,
+        16,
+        24,
+        1,
+        9,
+        17,
+        25,
+        2,
+        10,
+        18,
+        26,
+        3,
+        11,
+        19,
+        27,
+        4,
+        12,
+        20,
+        28,
+        5,
+        13,
+        21,
+        29
+      ],
+      "hashes": 529,
+      "phase_seconds_per_hash": {
+        "seed": 8.254712665406427e-06,
+        "di": 0.31559908441020795,
+        "dd": 0.37008940700756143,
+        "finalize": 5.05642911153119e-06
+      },
+      "counts_per_hash": {
+        "cycles": 3053056102.6238184,
+        "instructions": 2707566718.442344,
+        "l2_dc_misses": 39354000.48015123,
+        "dtlb_walks": 267.8790170132325
+      },
+      "minimum_counter_running_fraction": 1.0
+    },
+    "pmu-core/w24-1-avx512": {
+      "source_sha256": "47665bb986ddcbbb3ab677b70ddcee0e0cf12d7ce34e1a89e5448955473ac058",
+      "kernel": "avx512",
+      "binary": "epyc-phase-distinct",
+      "cpus": [
+        0,
+        8,
+        16,
+        24,
+        1,
+        9,
+        17,
+        25,
+        2,
+        10,
+        18,
+        26,
+        3,
+        11,
+        19,
+        27,
+        4,
+        12,
+        20,
+        28,
+        5,
+        13,
+        21,
+        29
+      ],
+      "hashes": 527,
+      "phase_seconds_per_hash": {
+        "seed": 8.162527514231499e-06,
+        "di": 0.33441499974383304,
+        "dd": 0.3719991231062619,
+        "finalize": 5.108426944971537e-06
+      },
+      "counts_per_hash": {
+        "cycles": 3145767669.096774,
+        "instructions": 1745499196.9411764,
+        "l2_dc_misses": 38258019.5256167,
+        "dtlb_walks": 321.44212523719165
+      },
+      "minimum_counter_running_fraction": 1.0
+    },
+    "pmu-streaming-stores/baseline": {
+      "source_sha256": "1be4498f3af2a7464edc05ab85be24f9daeb4bc26cf00b61dfae0a6eef1cc43d",
+      "kernel": "avx512-256",
+      "binary": "loops/baseline/epyc-loop",
+      "cpus": [
+        0,
+        8,
+        16,
+        24,
+        1,
+        9,
+        17,
+        25,
+        2,
+        10,
+        18,
+        26,
+        3,
+        11,
+        19,
+        27,
+        4,
+        12,
+        20,
+        28,
+        5,
+        13,
+        21,
+        29
+      ],
+      "hashes": 528,
+      "phase_seconds_per_hash": {
+        "seed": 0.0,
+        "di": 0.0,
+        "dd": 0.0,
+        "finalize": 0.0
+      },
+      "counts_per_hash": {
+        "cycles": 3100711457.001894,
+        "instructions": 2714905944.8352275,
+        "l2_dc_stores": 7107230.395833333,
+        "wcb_full_lines": 103102.10416666667
+      },
+      "minimum_counter_running_fraction": 1.0
+    },
+    "pmu-streaming-stores/streaming-ring": {
+      "source_sha256": "9b8f5091e733d347b1a40ef340674390305fc4e593fb52b9d5b6fa9b5ac67e18",
+      "kernel": "avx512-256",
+      "binary": "loops/streaming-ring/epyc-loop",
+      "cpus": [
+        0,
+        8,
+        16,
+        24,
+        1,
+        9,
+        17,
+        25,
+        2,
+        10,
+        18,
+        26,
+        3,
+        11,
+        19,
+        27,
+        4,
+        12,
+        20,
+        28,
+        5,
+        13,
+        21,
+        29
+      ],
+      "hashes": 698,
+      "phase_seconds_per_hash": {
+        "seed": 0.0,
+        "di": 0.0,
+        "dd": 0.0,
+        "finalize": 0.0
+      },
+      "counts_per_hash": {
+        "cycles": 2354752201.594556,
+        "instructions": 2950563731.4183383,
+        "l2_dc_stores": 4072710.9914040114,
+        "wcb_full_lines": 138601.82808022923
+      },
+      "minimum_counter_running_fraction": 1.0
+    }
+  },
+  "streaming_store_counts_per_hash_delta_pct": {
+    "cycles": -24.05768049532132,
+    "instructions": 8.680145514117,
+    "l2_dc_stores": -42.69622954967566,
+    "wcb_full_lines": 34.431619219115575
+  },
+  "counter_limits": [
+    "Guest core counters do not measure socket DRAM bandwidth",
+    "WCB closure counts are not validated as a count of all streaming cache lines",
+    "One ordered diagnostic pass does not establish counter repeatability"
+  ]
+}

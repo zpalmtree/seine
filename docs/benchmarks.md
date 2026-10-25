@@ -164,6 +164,14 @@ instructions. It requires AVX2, AVX-512F and AVX-512VL, including OS support.
 Select it explicitly for benchmarks; automatic mining and autotuning never
 choose it. Its report identity is distinct from the existing `avx512` path.
 
+`avx512-256-stream` is a separate implementation with cached recent blocks and
+non-temporal destination stores. It has the same ISA requirements and preserves
+the full arena and PoW output. Explicit benchmarks may select it on any supported
+host. Automatic mining trials initially include it only on AMD family 26/model 2,
+where repeated EPYC measurements justify testing it; promotion still requires
+two confirmed gains at the current worker count and page backing. Neither
+streaming nor the experimental uniform 256-bit path replaces the fallback ISA.
+
 ```sh
 ./target/release/seine --bench --bench-kind backend --backend cpu \
   --threads 1 --disable-cpu-autotune-threads --cpu-page-mode regular \

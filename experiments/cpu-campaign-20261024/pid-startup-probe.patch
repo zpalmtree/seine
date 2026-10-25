@@ -1,0 +1,55 @@
+diff --git a/src/miner/adaptive_cpu.rs b/src/miner/adaptive_cpu.rs
+index a1ca969..fdaa0bc 100644
+--- a/src/miner/adaptive_cpu.rs
++++ b/src/miner/adaptive_cpu.rs
+@@ -865,6 +865,50 @@ fn save_observation(
+ mod tests {
+     use super::*;
+ 
++    #[test]
++    #[ignore = "run only inside an owned cgroup with bounded RAM and TasksMax"]
++    fn pid_budget_startup_probe() {
++        let mut cfg = super::super::tests::test_config();
++        cfg.cpu_autotune_threads = true;
++        cfg.cpu_autotune_max_threads = None;
++        cfg.cpu_page_mode = CpuPageMode::Regular;
++        cfg.cpu_affinity = crate::config::CpuAffinityMode::Auto;
++        cfg.cpu_autotune_config_path = std::env::temp_dir().join(format!(
++            "seine-pid-probe-nonexistent-{}.json",
++            std::process::id()
++        ));
++        assert!(!cfg.cpu_autotune_config_path.exists());
++        prepare(&mut cfg);
++        let legacy = std::env::var_os("SEINE_PID_PROBE_LEGACY").is_some();
++        let capacity = if legacy {
++            // Exact old ceiling for this one-instance, no-explicit-max case.
++            cpu_autotune_capacity(&cfg, 0).0
++        } else {
++            cfg.cpu_auto_threads_cap
++        };
++        println!(
++            "PID_PROBE legacy={legacy} seed={} capacity={capacity}",
++            cfg.threads
++        );
++        assert_eq!(
++            cfg.threads, 1,
++            "fixture must allow exactly one active arena"
++        );
++        let backend = CpuBackend::adaptive(
++            cfg.threads,
++            capacity,
++            cfg.cpu_affinity,
++            CpuBackendTuning {
++                page_mode: CpuPageMode::Regular,
++                ..CpuBackendTuning::default()
++            },
++        );
++        let result = backend.start();
++        println!("PID_PROBE startup={result:?}");
++        backend.stop();
++        result.expect("bounded one-arena backend should start");
++    }
++
+     #[test]
+     #[ignore = "runs productive online tuning for up to five minutes with real 2 GiB arenas; run optimized"]
+     fn productive_controller_real_smoke() {

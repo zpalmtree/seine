@@ -1,0 +1,365 @@
+{
+  "scope": "SHA-verified raw archives retained locally in ignored campaign data; public normalized reports preserve per-report hashes. This index includes failed, excluded and order-limited stages as well as successful ones.",
+  "archives": [
+    {
+      "hardware": "cascadelake",
+      "stage": "final-validation",
+      "archive_relative_path": "cascadelake/final-validation-results.tar.gz",
+      "sha256": "22d2258d66fd292aaf998b86b753800bc0bc091b5eb450c1a39e4a7a545e0fdb",
+      "files": 193,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T17:31:56.656387+00:00"
+    },
+    {
+      "hardware": "graniterapids",
+      "stage": "f20-final-confirm",
+      "archive_relative_path": "graniterapids/f20-final-confirm-results.tar.gz",
+      "sha256": "61d90b4c20e72135a693e145e9886df05f0bde8d42d946c2c2b0ebaf5b409553",
+      "files": 76,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T19:19:50.437318+00:00"
+    },
+    {
+      "hardware": "graniterapids",
+      "stage": "f20-long-confirm",
+      "archive_relative_path": "graniterapids/f20-long-confirm-results.tar.gz",
+      "sha256": "fbbbb90d3df34968204ca7ee4abb1dd1b935692549eb9b65f1fdf9ffa1569d37",
+      "files": 26,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T19:19:46.850192+00:00"
+    },
+    {
+      "hardware": "graniterapids",
+      "stage": "final-regression",
+      "archive_relative_path": "graniterapids/final-regression-results.tar.gz",
+      "sha256": "ee325a9fb3a4144f451ac1a99355f80ca1cb35795aa6e76dac93afa8c14f8d2d",
+      "files": 49,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T16:09:46.680513+00:00"
+    },
+    {
+      "hardware": "graniterapids",
+      "stage": "hardened-build",
+      "archive_relative_path": "graniterapids/hardened-build-results.tar.gz",
+      "sha256": "205d31f05ad8c5fce08dd8aaaf7868daf8042d44c3da48f6665cddea59397899",
+      "files": 15,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T15:37:35.240333+00:00"
+    },
+    {
+      "hardware": "graniterapids",
+      "stage": "hardened-lifecycle",
+      "archive_relative_path": "graniterapids/hardened-lifecycle-results.tar.gz",
+      "sha256": "9abe3e1abe8d70fa68ffb51fe73017b5bbc932d3d30a583b1038c4c8fba30912",
+      "files": 19,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T15:54:08.918116+00:00"
+    },
+    {
+      "hardware": "graniterapids",
+      "stage": "pid24-baseline",
+      "archive_relative_path": "graniterapids/pid24-baseline-results.tar.gz",
+      "sha256": "12e8fdee7f30e6800af1aa62db3836a631dc8c8df7d70a9e530a68ad02ed54d2",
+      "files": 8,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T15:35:41.090865+00:00"
+    },
+    {
+      "hardware": "graniterapids",
+      "stage": "pid24-failure",
+      "archive_relative_path": "graniterapids/pid24-failure-results.tar.gz",
+      "sha256": "b1d2bdffbfe4eb4de1be8b92412a3b233461eb86b40cede06ad1da313e16cfb2",
+      "files": 10,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T15:33:05.734416+00:00"
+    },
+    {
+      "hardware": "graniterapids",
+      "stage": "screen",
+      "archive_relative_path": "graniterapids/screen-results.tar.gz",
+      "sha256": "5f22ce9bf15b38875dcfa0caa40d0afe6c66f4a2e4a2a38c0459d050139df336",
+      "files": 76,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T15:27:52.350475+00:00"
+    },
+    {
+      "hardware": "graviton2",
+      "stage": "f20-final-confirm",
+      "archive_relative_path": "graviton2/f20-final-confirm-results.tar.gz",
+      "sha256": "1e121ec86658eda068cc02f00abe4205f8e897a64be5f0182fe7cc1cb6a6bb8c",
+      "files": 54,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T18:15:40.567386+00:00"
+    },
+    {
+      "hardware": "graviton2",
+      "stage": "fallback-confirm",
+      "archive_relative_path": "graviton2/fallback-confirm-results.tar.gz",
+      "sha256": "f8475309f38f454bbad373729efa4b4339ce5ca8ca526d963bc3d943535d7107",
+      "files": 43,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T14:45:37.335734+00:00"
+    },
+    {
+      "hardware": "graviton2",
+      "stage": "generation",
+      "archive_relative_path": "graviton2/generation-results.tar.gz",
+      "sha256": "ba97a18d29c3e51a3a44ac24c4ee2a08ae58ea6d6aee6e2f10c89ecfb02e9e4d",
+      "files": 93,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T14:16:03.462914+00:00"
+    },
+    {
+      "hardware": "graviton2",
+      "stage": "recovery",
+      "archive_relative_path": "graviton2/recovery-results.tar.gz",
+      "sha256": "b550497400f238e3e7e8213640246dccbeda2cd05026c8f0889bd49026f28791",
+      "files": 24,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T15:04:31.935686+00:00"
+    },
+    {
+      "hardware": "graviton3",
+      "stage": "auto-validation",
+      "archive_relative_path": "graviton3/auto-validation-results.tar.gz",
+      "sha256": "86121c0dffd1b2adcd7e928259f1e41a900e01c2497c34fe901e6a64098f50d7",
+      "files": 28,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T13:29:16.966357+00:00"
+    },
+    {
+      "hardware": "graviton3",
+      "stage": "clean-confirm",
+      "archive_relative_path": "graviton3/clean-confirm-results.tar.gz",
+      "sha256": "53feaa4daf327cf5bc8512e284db1973f2ac4ac446bedfef75ed1d53797f0f4b",
+      "files": 68,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T12:59:01.451867+00:00"
+    },
+    {
+      "hardware": "graviton3",
+      "stage": "combined-screen",
+      "archive_relative_path": "graviton3/combined-screen-results.tar.gz",
+      "sha256": "f6c58a464ec5cf5c0de524ad6fd6d68c452d872213d8e5708e7b5e73d4a77ca6",
+      "files": 48,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T12:18:30.941257+00:00"
+    },
+    {
+      "hardware": "graviton3",
+      "stage": "f20-final-confirm",
+      "archive_relative_path": "graviton3/f20-final-confirm-results.tar.gz",
+      "sha256": "935799f8c78b0507ea8f68480ca98fbf7007809db5c6a26dd32123c2d99ae6c6",
+      "files": 93,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T18:41:06.322736+00:00"
+    },
+    {
+      "hardware": "graviton3",
+      "stage": "followup",
+      "archive_relative_path": "graviton3/followup-results.tar.gz",
+      "sha256": "9439f4eda1a2708723698b2e92d1a91256eddec149566795fdedff0cfc34360d",
+      "files": 77,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T12:00:35.432651+00:00"
+    },
+    {
+      "hardware": "graviton4",
+      "stage": "corrected-confirm",
+      "archive_relative_path": "graviton4/corrected-confirm-results.tar.gz",
+      "sha256": "59cf35e23f186d140526b6e0e4e6b0da48c4859088cd9c73d4c080cd84300e33",
+      "files": 41,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T16:17:34.278884+00:00"
+    },
+    {
+      "hardware": "graviton4",
+      "stage": "final-validation-all",
+      "archive_relative_path": "graviton4/final-validation-all-results.tar.gz",
+      "sha256": "34e36b972ce5d2da2a0ea28c511be3ac52503b38add2888ac1fc4c4fe94041b1",
+      "files": 221,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T17:02:18.740618+00:00"
+    },
+    {
+      "hardware": "graviton4",
+      "stage": "hardened-build",
+      "archive_relative_path": "graviton4/hardened-build-results.tar.gz",
+      "sha256": "88872d98594303c4be4ca7c08358e0b00f88f19cf8e44c64cce630f60d863d39",
+      "files": 16,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T16:24:37.164124+00:00"
+    },
+    {
+      "hardware": "graviton4",
+      "stage": "order-limited",
+      "archive_relative_path": "graviton4/order-limited-results.tar.gz",
+      "sha256": "6e9ee069259c8f2ed049bef4c28813611622067e1f083f3f049f9134ebe4c9cd",
+      "files": 55,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T15:50:51.732926+00:00"
+    },
+    {
+      "hardware": "graviton4",
+      "stage": "screen",
+      "archive_relative_path": "graviton4/screen-results.tar.gz",
+      "sha256": "9b731e1a865fe9a475c12ffdaaf281ad862ec69019314e8080b42d44a767048a",
+      "files": 36,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T15:26:00.797562+00:00"
+    },
+    {
+      "hardware": "haswell",
+      "stage": "final-validation",
+      "archive_relative_path": "haswell/final-validation-results.tar.gz",
+      "sha256": "9abdc98ce8888636c242be4a91daf1d8412947946b2d5256261714b9feb303d7",
+      "files": 71,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T17:26:13.454777+00:00"
+    },
+    {
+      "hardware": "icelake",
+      "stage": "accepted-final-confirm",
+      "archive_relative_path": "icelake/accepted-final-confirm-results.tar.gz",
+      "sha256": "af69380ed0a23e474e0484f999569bbdac81e13467f0616f399d16d53a83d2d4",
+      "files": 69,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T20:12:21.960921+00:00"
+    },
+    {
+      "hardware": "icelake",
+      "stage": "accepted-final-failed",
+      "archive_relative_path": "icelake/accepted-final-failed-results.tar.gz",
+      "sha256": "f6ed9714fdf81197c50d79297aff5acf39ece7cf994cad3eaa377900750316a2",
+      "files": 69,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T20:12:30.988992+00:00"
+    },
+    {
+      "hardware": "icelake",
+      "stage": "controls",
+      "archive_relative_path": "icelake/controls-results.tar.gz",
+      "sha256": "f64acd646db030feddc734a07ade57225c786c41c3aa5484934002d21d9dd86b",
+      "files": 69,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T12:36:53.118801+00:00"
+    },
+    {
+      "hardware": "icelake",
+      "stage": "f20-final-confirm",
+      "archive_relative_path": "icelake/f20-final-confirm-results.tar.gz",
+      "sha256": "4fe5b07b6d4fb94a555bb5121bf8795235604b3a5060dd4ab99ab0923857996d",
+      "files": 52,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T19:44:25.505556+00:00"
+    },
+    {
+      "hardware": "icelake",
+      "stage": "interhash",
+      "archive_relative_path": "icelake/interhash-results.tar.gz",
+      "sha256": "78b0d959dfda7ddc7034a545b20825bb5cf93580422098dceeb5038930f4c644",
+      "files": 24,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T12:08:51.864162+00:00"
+    },
+    {
+      "hardware": "icelake",
+      "stage": "retry-only-confirm",
+      "archive_relative_path": "icelake/retry-only-confirm-results.tar.gz",
+      "sha256": "02148ced3967e3fdfc46bdd8fc5ba685c056c42a138e4472ea079998e3be2a61",
+      "files": 20,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T20:12:18.458088+00:00"
+    },
+    {
+      "hardware": "icelake",
+      "stage": "streaming",
+      "archive_relative_path": "icelake/streaming-results.tar.gz",
+      "sha256": "19d82e6fb0d8e392835a9e85a4ba324f8ddb778640e70dc1ba1e71ec9f789492",
+      "files": 63,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T12:08:51.863334+00:00"
+    },
+    {
+      "hardware": "icelake",
+      "stage": "x86-regression",
+      "archive_relative_path": "icelake/x86-regression-results.tar.gz",
+      "sha256": "8b8ce6d525b8583c1ca075179900da27250728ec91d145879310db1d07b9e3f4",
+      "files": 49,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T13:31:06.935507+00:00"
+    },
+    {
+      "hardware": "sapphirerapids",
+      "stage": "f20-final-confirm",
+      "archive_relative_path": "sapphirerapids/f20-final-confirm-results.tar.gz",
+      "sha256": "9a875c6caddc94cd515e4d08def5f6189f59190d201741b423881e8527db679d",
+      "files": 52,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T19:39:00.509047+00:00"
+    },
+    {
+      "hardware": "sapphirerapids",
+      "stage": "isa-confirm",
+      "archive_relative_path": "sapphirerapids/isa-confirm-results.tar.gz",
+      "sha256": "ee9096c6adb6397bc7962227ee5e55be7b46bdf3004c711b23bbff68eec88867",
+      "files": 56,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T14:56:12.574476+00:00"
+    },
+    {
+      "hardware": "sapphirerapids",
+      "stage": "recovery",
+      "archive_relative_path": "sapphirerapids/recovery-results.tar.gz",
+      "sha256": "76dca6714fd3b7ebf8131673c9f28e3b5ca9712917cc234f633c619111678cd2",
+      "files": 24,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T14:17:09.015575+00:00"
+    },
+    {
+      "hardware": "sapphirerapids",
+      "stage": "ring",
+      "archive_relative_path": "sapphirerapids/ring-results.tar.gz",
+      "sha256": "df45cb8516a0ae9cf56deeed1ce7c041b0b426cc8802904e80417e0f7a4cfd7a",
+      "files": 38,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T15:13:07.311685+00:00"
+    },
+    {
+      "hardware": "sapphirerapids",
+      "stage": "screen",
+      "archive_relative_path": "sapphirerapids/screen-results.tar.gz",
+      "sha256": "229eb11a202c9fc1abc85a0fd25613bd6b0f9a02a906c019414c866f109d4056",
+      "files": 80,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T13:59:00.758966+00:00"
+    },
+    {
+      "hardware": "skylake",
+      "stage": "joint-final-confirm",
+      "archive_relative_path": "skylake/joint-final-confirm-results.tar.gz",
+      "sha256": "93cfb1e3fbff6fc4f63ebf7441fa994ba99d1d9cbb24cb0fe8628e3f74ce8dd5",
+      "files": 102,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T19:25:11.108170+00:00"
+    },
+    {
+      "hardware": "zen1",
+      "stage": "final-validation",
+      "archive_relative_path": "zen1/final-validation-results.tar.gz",
+      "sha256": "ba1795b2cbf221aba08242eae6426ecdf71f39e536dc4bc90f299fbd7c450309",
+      "files": 67,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T17:47:49.015133+00:00"
+    },
+    {
+      "hardware": "zen2",
+      "stage": "final-validation",
+      "archive_relative_path": "zen2/final-validation-results.tar.gz",
+      "sha256": "dc12773139e9a8b4b6030e0870249ca9a74cb1196214c8ec67514f9be0c3be00",
+      "files": 67,
+      "every_file_verified": true,
+      "verified_at": "2026-10-24T17:55:56.446877+00:00"
+    }
+  ]
+}

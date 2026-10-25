@@ -1,0 +1,169 @@
+{
+  "hardware": "Graviton4 Neoverse V2, frozen636e688",
+  "status": "passed",
+  "phases": [
+    {
+      "phase": "initial-stable",
+      "sample_count": 180,
+      "first_completed_hashes": 0,
+      "last_completed_hashes": 937,
+      "requested_threads_observed": [
+        2,
+        3
+      ],
+      "anonymous_bytes_min": 1335296,
+      "anonymous_bytes_max": 6472290304,
+      "memory_high_events_max": 0,
+      "oom_kills": 0,
+      "raw_samples_sha256": "ee32195aacdbbae1ced878dc0ee0d9e001e18b913c4e035e579c1f7d30365f89"
+    },
+    {
+      "phase": "one-arena-budget",
+      "sample_count": 15,
+      "first_completed_hashes": 958,
+      "last_completed_hashes": 968,
+      "requested_threads_observed": [
+        0,
+        1,
+        3
+      ],
+      "anonymous_bytes_min": 13053952,
+      "anonymous_bytes_max": 6472290304,
+      "memory_high_events_max": 34,
+      "oom_kills": 0,
+      "raw_samples_sha256": "ee32195aacdbbae1ced878dc0ee0d9e001e18b913c4e035e579c1f7d30365f89"
+    },
+    {
+      "phase": "no-arena-budget",
+      "sample_count": 15,
+      "first_completed_hashes": 968,
+      "last_completed_hashes": 968,
+      "requested_threads_observed": [
+        0
+      ],
+      "anonymous_bytes_min": 13058048,
+      "anonymous_bytes_max": 13058048,
+      "memory_high_events_max": 34,
+      "oom_kills": 0,
+      "raw_samples_sha256": "ee32195aacdbbae1ced878dc0ee0d9e001e18b913c4e035e579c1f7d30365f89"
+    },
+    {
+      "phase": "memory-recovery",
+      "sample_count": 30,
+      "first_completed_hashes": 968,
+      "last_completed_hashes": 999,
+      "requested_threads_observed": [
+        0,
+        1
+      ],
+      "anonymous_bytes_min": 13058048,
+      "anonymous_bytes_max": 2168963072,
+      "memory_high_events_max": 34,
+      "oom_kills": 0,
+      "raw_samples_sha256": "ee32195aacdbbae1ced878dc0ee0d9e001e18b913c4e035e579c1f7d30365f89"
+    },
+    {
+      "phase": "cpu-contention",
+      "sample_count": 24,
+      "first_completed_hashes": 1006,
+      "last_completed_hashes": 1109,
+      "requested_threads_observed": [
+        1,
+        2
+      ],
+      "anonymous_bytes_min": 2168963072,
+      "anonymous_bytes_max": 4324868096,
+      "memory_high_events_max": 34,
+      "oom_kills": 0,
+      "raw_samples_sha256": "ee32195aacdbbae1ced878dc0ee0d9e001e18b913c4e035e579c1f7d30365f89"
+    },
+    {
+      "phase": "load-recovery",
+      "sample_count": 45,
+      "first_completed_hashes": 1109,
+      "last_completed_hashes": 1368,
+      "requested_threads_observed": [
+        1,
+        2,
+        3
+      ],
+      "anonymous_bytes_min": 2177384448,
+      "anonymous_bytes_max": 6472355840,
+      "memory_high_events_max": 34,
+      "oom_kills": 0,
+      "raw_samples_sha256": "ee32195aacdbbae1ced878dc0ee0d9e001e18b913c4e035e579c1f7d30365f89"
+    },
+    {
+      "phase": "explicit-optout",
+      "sample_count": 18,
+      "first_completed_hashes": 0,
+      "last_completed_hashes": 52,
+      "requested_threads_observed": [],
+      "anonymous_bytes_min": 1617920,
+      "anonymous_bytes_max": 4316143616,
+      "memory_high_events_max": 0,
+      "oom_kills": 0,
+      "raw_samples_sha256": "2e312ae9d14d0da63b0458bd4a22e1e002251b38a43a054f4282d6fe39f1d4dc"
+    },
+    {
+      "phase": "constrained-restart",
+      "sample_count": 18,
+      "first_completed_hashes": 0,
+      "last_completed_hashes": 26,
+      "requested_threads_observed": [
+        1
+      ],
+      "anonymous_bytes_min": 1138688,
+      "anonymous_bytes_max": 2160340992,
+      "memory_high_events_max": 0,
+      "oom_kills": 0,
+      "raw_samples_sha256": "b5537be5d2bc08a42de2d79a9ffb32a2c71736a635e2fb4f7b06e0d9e08ad662"
+    },
+    {
+      "phase": "restart-recovery",
+      "sample_count": 105,
+      "first_completed_hashes": 31,
+      "last_completed_hashes": 351,
+      "requested_threads_observed": [
+        1,
+        2,
+        3
+      ],
+      "anonymous_bytes_min": 2160340992,
+      "anonymous_bytes_max": 6472343552,
+      "memory_high_events_max": 0,
+      "oom_kills": 0,
+      "raw_samples_sha256": "b5537be5d2bc08a42de2d79a9ffb32a2c71736a635e2fb4f7b06e0d9e08ad662"
+    }
+  ],
+  "cache_seeds": {
+    "seed-before-pressure": {
+      "selected_threads": 3,
+      "raw_sha256": "04fcbf22e1a74111b89a0f4bad1796101628ba5126bb8e464719b5b732f8561e"
+    },
+    "seed-before-restart": {
+      "selected_threads": 2,
+      "raw_sha256": "1daba762a40efa9ad4fc8bfe91e56eab91d97ea887187775aa3cc60500f75bcd"
+    },
+    "seed-during-constrained-restart": {
+      "selected_threads": 2,
+      "raw_sha256": "1daba762a40efa9ad4fc8bfe91e56eab91d97ea887187775aa3cc60500f75bcd"
+    }
+  },
+  "logs": {
+    "seine-campaign-lifecycle-first.service.log": {
+      "raw_sha256": "e085b023050f2d955b5cacbf09a03f4a107ffbae82d43498b25fb30722d2e8f6",
+      "autotune_messages": 16
+    },
+    "seine-campaign-lifecycle-optout.service.log": {
+      "raw_sha256": "4ae15c98340dafa079beeb4c66409c5867b7a0964a6bc3970befaec7d6b41962",
+      "autotune_messages": 0
+    },
+    "seine-campaign-lifecycle-restart.service.log": {
+      "raw_sha256": "bdf435973fd7ff882b479d4c07cccc1e52d5b7d334a317953b2687fe01cfebb4",
+      "autotune_messages": 8
+    }
+  },
+  "completion_sha256": "066183384f746a1f97e77163c41e9ac4bdb4f7eed1907246e74af113107b1b4c",
+  "interpretation": "Actual resident arena growth is checked in addition to requested thread count. Productive phase and pressure assertions are enforced by resource_lifecycle.py."
+}

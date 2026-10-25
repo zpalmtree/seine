@@ -1,0 +1,786 @@
+[
+  {
+    "label": "win-confirm-w1-ccd-pair1-baseline",
+    "comparison": "w1-ccd",
+    "pair": 1,
+    "role": "baseline",
+    "case": "cache32",
+    "cpus": [
+      16
+    ],
+    "workers": 1,
+    "kernel": "avx512",
+    "completed_hps": 2.125099641854633
+  },
+  {
+    "label": "win-confirm-w1-ccd-pair1-candidate",
+    "comparison": "w1-ccd",
+    "pair": 1,
+    "role": "candidate",
+    "case": "cache96",
+    "cpus": [
+      0
+    ],
+    "workers": 1,
+    "kernel": "avx512",
+    "completed_hps": 2.4167639651180863
+  },
+  {
+    "label": "win-confirm-w1-ccd-pair2-candidate",
+    "comparison": "w1-ccd",
+    "pair": 2,
+    "role": "candidate",
+    "case": "cache96",
+    "cpus": [
+      0
+    ],
+    "workers": 1,
+    "kernel": "avx512",
+    "completed_hps": 1.4513709775599706
+  },
+  {
+    "label": "win-confirm-w1-ccd-pair2-baseline",
+    "comparison": "w1-ccd",
+    "pair": 2,
+    "role": "baseline",
+    "case": "cache32",
+    "cpus": [
+      16
+    ],
+    "workers": 1,
+    "kernel": "avx512",
+    "completed_hps": 2.2953868316180746
+  },
+  {
+    "label": "win-confirm-w1-ccd-pair3-baseline",
+    "comparison": "w1-ccd",
+    "pair": 3,
+    "role": "baseline",
+    "case": "cache32",
+    "cpus": [
+      16
+    ],
+    "workers": 1,
+    "kernel": "avx512",
+    "completed_hps": 2.147332006961591
+  },
+  {
+    "label": "win-confirm-w1-ccd-pair3-candidate",
+    "comparison": "w1-ccd",
+    "pair": 3,
+    "role": "candidate",
+    "case": "cache96",
+    "cpus": [
+      0
+    ],
+    "workers": 1,
+    "kernel": "avx512",
+    "completed_hps": 2.5556714270428147
+  },
+  {
+    "label": "win-confirm-w1-ccd-pair4-candidate",
+    "comparison": "w1-ccd",
+    "pair": 4,
+    "role": "candidate",
+    "case": "cache96",
+    "cpus": [
+      0
+    ],
+    "workers": 1,
+    "kernel": "avx512",
+    "completed_hps": 2.4675557694059727
+  },
+  {
+    "label": "win-confirm-w1-ccd-pair4-baseline",
+    "comparison": "w1-ccd",
+    "pair": 4,
+    "role": "baseline",
+    "case": "cache32",
+    "cpus": [
+      16
+    ],
+    "workers": 1,
+    "kernel": "avx512",
+    "completed_hps": 2.2339577631397467
+  },
+  {
+    "label": "win-confirm-w4-spread-pair1-baseline",
+    "comparison": "w4-spread",
+    "pair": 1,
+    "role": "baseline",
+    "case": "cache96",
+    "cpus": [
+      0,
+      2,
+      4,
+      6
+    ],
+    "workers": 4,
+    "kernel": "avx512",
+    "completed_hps": 6.571645612201165
+  },
+  {
+    "label": "win-confirm-w4-spread-pair1-candidate",
+    "comparison": "w4-spread",
+    "pair": 1,
+    "role": "candidate",
+    "case": "spread",
+    "cpus": [
+      0,
+      2,
+      16,
+      18
+    ],
+    "workers": 4,
+    "kernel": "avx512",
+    "completed_hps": 6.743616174709479
+  },
+  {
+    "label": "win-confirm-w4-spread-pair2-candidate",
+    "comparison": "w4-spread",
+    "pair": 2,
+    "role": "candidate",
+    "case": "spread",
+    "cpus": [
+      0,
+      2,
+      16,
+      18
+    ],
+    "workers": 4,
+    "kernel": "avx512",
+    "completed_hps": 6.2623248326043175
+  },
+  {
+    "label": "win-confirm-w4-spread-pair2-baseline",
+    "comparison": "w4-spread",
+    "pair": 2,
+    "role": "baseline",
+    "case": "cache96",
+    "cpus": [
+      0,
+      2,
+      4,
+      6
+    ],
+    "workers": 4,
+    "kernel": "avx512",
+    "completed_hps": 6.596726627864103
+  },
+  {
+    "label": "win-confirm-w4-spread-pair3-baseline",
+    "comparison": "w4-spread",
+    "pair": 3,
+    "role": "baseline",
+    "case": "cache96",
+    "cpus": [
+      0,
+      2,
+      4,
+      6
+    ],
+    "workers": 4,
+    "kernel": "avx512",
+    "completed_hps": 6.680126755520077
+  },
+  {
+    "label": "win-confirm-w4-spread-pair3-candidate",
+    "comparison": "w4-spread",
+    "pair": 3,
+    "role": "candidate",
+    "case": "spread",
+    "cpus": [
+      0,
+      2,
+      16,
+      18
+    ],
+    "workers": 4,
+    "kernel": "avx512",
+    "completed_hps": 6.728926634775494
+  },
+  {
+    "label": "win-confirm-w4-spread-pair4-candidate",
+    "comparison": "w4-spread",
+    "pair": 4,
+    "role": "candidate",
+    "case": "spread",
+    "cpus": [
+      0,
+      2,
+      16,
+      18
+    ],
+    "workers": 4,
+    "kernel": "avx512",
+    "completed_hps": 6.705035880294424
+  },
+  {
+    "label": "win-confirm-w4-spread-pair4-baseline",
+    "comparison": "w4-spread",
+    "pair": 4,
+    "role": "baseline",
+    "case": "cache96",
+    "cpus": [
+      0,
+      2,
+      4,
+      6
+    ],
+    "workers": 4,
+    "kernel": "avx512",
+    "completed_hps": 6.580043822335152
+  },
+  {
+    "label": "win-confirm-w8-spread-pair1-baseline",
+    "comparison": "w8-spread",
+    "pair": 1,
+    "role": "baseline",
+    "case": "cache96",
+    "cpus": [
+      0,
+      2,
+      4,
+      6,
+      8,
+      10,
+      12,
+      14
+    ],
+    "workers": 8,
+    "kernel": "avx512",
+    "completed_hps": 7.521619876245298
+  },
+  {
+    "label": "win-confirm-w8-spread-pair1-candidate",
+    "comparison": "w8-spread",
+    "pair": 1,
+    "role": "candidate",
+    "case": "spread",
+    "cpus": [
+      0,
+      2,
+      4,
+      6,
+      16,
+      18,
+      20,
+      22
+    ],
+    "workers": 8,
+    "kernel": "avx512",
+    "completed_hps": 7.242749548694548
+  },
+  {
+    "label": "win-confirm-w8-spread-pair2-candidate",
+    "comparison": "w8-spread",
+    "pair": 2,
+    "role": "candidate",
+    "case": "spread",
+    "cpus": [
+      0,
+      2,
+      4,
+      6,
+      16,
+      18,
+      20,
+      22
+    ],
+    "workers": 8,
+    "kernel": "avx512",
+    "completed_hps": 7.55998211426562
+  },
+  {
+    "label": "win-confirm-w8-spread-pair2-baseline",
+    "comparison": "w8-spread",
+    "pair": 2,
+    "role": "baseline",
+    "case": "cache96",
+    "cpus": [
+      0,
+      2,
+      4,
+      6,
+      8,
+      10,
+      12,
+      14
+    ],
+    "workers": 8,
+    "kernel": "avx512",
+    "completed_hps": 7.617303051492585
+  },
+  {
+    "label": "win-confirm-w8-spread-pair3-baseline",
+    "comparison": "w8-spread",
+    "pair": 3,
+    "role": "baseline",
+    "case": "cache96",
+    "cpus": [
+      0,
+      2,
+      4,
+      6,
+      8,
+      10,
+      12,
+      14
+    ],
+    "workers": 8,
+    "kernel": "avx512",
+    "completed_hps": 7.6588721617034246
+  },
+  {
+    "label": "win-confirm-w8-spread-pair3-candidate",
+    "comparison": "w8-spread",
+    "pair": 3,
+    "role": "candidate",
+    "case": "spread",
+    "cpus": [
+      0,
+      2,
+      4,
+      6,
+      16,
+      18,
+      20,
+      22
+    ],
+    "workers": 8,
+    "kernel": "avx512",
+    "completed_hps": 7.556155668419044
+  },
+  {
+    "label": "win-confirm-w8-spread-pair4-candidate",
+    "comparison": "w8-spread",
+    "pair": 4,
+    "role": "candidate",
+    "case": "spread",
+    "cpus": [
+      0,
+      2,
+      4,
+      6,
+      16,
+      18,
+      20,
+      22
+    ],
+    "workers": 8,
+    "kernel": "avx512",
+    "completed_hps": 7.611289126887517
+  },
+  {
+    "label": "win-confirm-w8-spread-pair4-baseline",
+    "comparison": "w8-spread",
+    "pair": 4,
+    "role": "baseline",
+    "case": "cache96",
+    "cpus": [
+      0,
+      2,
+      4,
+      6,
+      8,
+      10,
+      12,
+      14
+    ],
+    "workers": 8,
+    "kernel": "avx512",
+    "completed_hps": 6.965873068728821
+  },
+  {
+    "label": "win-confirm-w4-smt-pair1-baseline",
+    "comparison": "w4-smt",
+    "pair": 1,
+    "role": "baseline",
+    "case": "physical",
+    "cpus": [
+      0,
+      2,
+      16,
+      18
+    ],
+    "workers": 4,
+    "kernel": "avx512",
+    "completed_hps": 6.549290135655676
+  },
+  {
+    "label": "win-confirm-w4-smt-pair1-candidate",
+    "comparison": "w4-smt",
+    "pair": 1,
+    "role": "candidate",
+    "case": "smt",
+    "cpus": [
+      0,
+      1,
+      16,
+      17
+    ],
+    "workers": 4,
+    "kernel": "avx512",
+    "completed_hps": 6.150476431527254
+  },
+  {
+    "label": "win-confirm-w4-smt-pair2-candidate",
+    "comparison": "w4-smt",
+    "pair": 2,
+    "role": "candidate",
+    "case": "smt",
+    "cpus": [
+      0,
+      1,
+      16,
+      17
+    ],
+    "workers": 4,
+    "kernel": "avx512",
+    "completed_hps": 6.217000897197332
+  },
+  {
+    "label": "win-confirm-w4-smt-pair2-baseline",
+    "comparison": "w4-smt",
+    "pair": 2,
+    "role": "baseline",
+    "case": "physical",
+    "cpus": [
+      0,
+      2,
+      16,
+      18
+    ],
+    "workers": 4,
+    "kernel": "avx512",
+    "completed_hps": 6.626437050842542
+  },
+  {
+    "label": "win-confirm-w4-smt-pair3-baseline",
+    "comparison": "w4-smt",
+    "pair": 3,
+    "role": "baseline",
+    "case": "physical",
+    "cpus": [
+      0,
+      2,
+      16,
+      18
+    ],
+    "workers": 4,
+    "kernel": "avx512",
+    "completed_hps": 6.382825731787976
+  },
+  {
+    "label": "win-confirm-w4-smt-pair3-candidate",
+    "comparison": "w4-smt",
+    "pair": 3,
+    "role": "candidate",
+    "case": "smt",
+    "cpus": [
+      0,
+      1,
+      16,
+      17
+    ],
+    "workers": 4,
+    "kernel": "avx512",
+    "completed_hps": 6.184598638372845
+  },
+  {
+    "label": "win-confirm-w4-smt-pair4-candidate",
+    "comparison": "w4-smt",
+    "pair": 4,
+    "role": "candidate",
+    "case": "smt",
+    "cpus": [
+      0,
+      1,
+      16,
+      17
+    ],
+    "workers": 4,
+    "kernel": "avx512",
+    "completed_hps": 6.145891637870828
+  },
+  {
+    "label": "win-confirm-w4-smt-pair4-baseline",
+    "comparison": "w4-smt",
+    "pair": 4,
+    "role": "baseline",
+    "case": "physical",
+    "cpus": [
+      0,
+      2,
+      16,
+      18
+    ],
+    "workers": 4,
+    "kernel": "avx512",
+    "completed_hps": 6.368536519762081
+  },
+  {
+    "label": "win-confirm-w1-isa-pair1-baseline",
+    "comparison": "w1-isa",
+    "pair": 1,
+    "role": "baseline",
+    "case": "avx2",
+    "cpus": [
+      0
+    ],
+    "workers": 1,
+    "kernel": "avx2",
+    "completed_hps": 2.4165569585669626
+  },
+  {
+    "label": "win-confirm-w1-isa-pair1-candidate",
+    "comparison": "w1-isa",
+    "pair": 1,
+    "role": "candidate",
+    "case": "avx512",
+    "cpus": [
+      0
+    ],
+    "workers": 1,
+    "kernel": "avx512",
+    "completed_hps": 2.4781140115726634
+  },
+  {
+    "label": "win-confirm-w1-isa-pair2-candidate",
+    "comparison": "w1-isa",
+    "pair": 2,
+    "role": "candidate",
+    "case": "avx512",
+    "cpus": [
+      0
+    ],
+    "workers": 1,
+    "kernel": "avx512",
+    "completed_hps": 2.6702872488862908
+  },
+  {
+    "label": "win-confirm-w1-isa-pair2-baseline",
+    "comparison": "w1-isa",
+    "pair": 2,
+    "role": "baseline",
+    "case": "avx2",
+    "cpus": [
+      0
+    ],
+    "workers": 1,
+    "kernel": "avx2",
+    "completed_hps": 2.424130405065715
+  },
+  {
+    "label": "win-confirm-w1-isa-pair3-baseline",
+    "comparison": "w1-isa",
+    "pair": 3,
+    "role": "baseline",
+    "case": "avx2",
+    "cpus": [
+      0
+    ],
+    "workers": 1,
+    "kernel": "avx2",
+    "completed_hps": 2.4089964820925958
+  },
+  {
+    "label": "win-confirm-w1-isa-pair3-candidate",
+    "comparison": "w1-isa",
+    "pair": 3,
+    "role": "candidate",
+    "case": "avx512",
+    "cpus": [
+      0
+    ],
+    "workers": 1,
+    "kernel": "avx512",
+    "completed_hps": 2.6768810372801624
+  },
+  {
+    "label": "win-confirm-w1-isa-pair4-candidate",
+    "comparison": "w1-isa",
+    "pair": 4,
+    "role": "candidate",
+    "case": "avx512",
+    "cpus": [
+      0
+    ],
+    "workers": 1,
+    "kernel": "avx512",
+    "completed_hps": 2.6578050352664566
+  },
+  {
+    "label": "win-confirm-w1-isa-pair4-baseline",
+    "comparison": "w1-isa",
+    "pair": 4,
+    "role": "baseline",
+    "case": "avx2",
+    "cpus": [
+      0
+    ],
+    "workers": 1,
+    "kernel": "avx2",
+    "completed_hps": 2.414135037110348
+  },
+  {
+    "label": "win-confirm-w8-isa-pair1-baseline",
+    "comparison": "w8-isa",
+    "pair": 1,
+    "role": "baseline",
+    "case": "avx2",
+    "cpus": [
+      0,
+      2,
+      4,
+      6,
+      16,
+      18,
+      20,
+      22
+    ],
+    "workers": 8,
+    "kernel": "avx2",
+    "completed_hps": 7.23504869162512
+  },
+  {
+    "label": "win-confirm-w8-isa-pair1-candidate",
+    "comparison": "w8-isa",
+    "pair": 1,
+    "role": "candidate",
+    "case": "avx512",
+    "cpus": [
+      0,
+      2,
+      4,
+      6,
+      16,
+      18,
+      20,
+      22
+    ],
+    "workers": 8,
+    "kernel": "avx512",
+    "completed_hps": 7.273522475442462
+  },
+  {
+    "label": "win-confirm-w8-isa-pair2-candidate",
+    "comparison": "w8-isa",
+    "pair": 2,
+    "role": "candidate",
+    "case": "avx512",
+    "cpus": [
+      0,
+      2,
+      4,
+      6,
+      16,
+      18,
+      20,
+      22
+    ],
+    "workers": 8,
+    "kernel": "avx512",
+    "completed_hps": 7.596644779792985
+  },
+  {
+    "label": "win-confirm-w8-isa-pair2-baseline",
+    "comparison": "w8-isa",
+    "pair": 2,
+    "role": "baseline",
+    "case": "avx2",
+    "cpus": [
+      0,
+      2,
+      4,
+      6,
+      16,
+      18,
+      20,
+      22
+    ],
+    "workers": 8,
+    "kernel": "avx2",
+    "completed_hps": 7.123249313828912
+  },
+  {
+    "label": "win-confirm-w8-isa-pair3-baseline",
+    "comparison": "w8-isa",
+    "pair": 3,
+    "role": "baseline",
+    "case": "avx2",
+    "cpus": [
+      0,
+      2,
+      4,
+      6,
+      16,
+      18,
+      20,
+      22
+    ],
+    "workers": 8,
+    "kernel": "avx2",
+    "completed_hps": 7.239546421320469
+  },
+  {
+    "label": "win-confirm-w8-isa-pair3-candidate",
+    "comparison": "w8-isa",
+    "pair": 3,
+    "role": "candidate",
+    "case": "avx512",
+    "cpus": [
+      0,
+      2,
+      4,
+      6,
+      16,
+      18,
+      20,
+      22
+    ],
+    "workers": 8,
+    "kernel": "avx512",
+    "completed_hps": 7.642869277174192
+  },
+  {
+    "label": "win-confirm-w8-isa-pair4-candidate",
+    "comparison": "w8-isa",
+    "pair": 4,
+    "role": "candidate",
+    "case": "avx512",
+    "cpus": [
+      0,
+      2,
+      4,
+      6,
+      16,
+      18,
+      20,
+      22
+    ],
+    "workers": 8,
+    "kernel": "avx512",
+    "completed_hps": 7.597911228094636
+  },
+  {
+    "label": "win-confirm-w8-isa-pair4-baseline",
+    "comparison": "w8-isa",
+    "pair": 4,
+    "role": "baseline",
+    "case": "avx2",
+    "cpus": [
+      0,
+      2,
+      4,
+      6,
+      16,
+      18,
+      20,
+      22
+    ],
+    "workers": 8,
+    "kernel": "avx2",
+    "completed_hps": 7.297622428885835
+  }
+]

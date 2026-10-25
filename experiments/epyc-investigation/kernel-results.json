@@ -1,0 +1,2016 @@
+{
+  "method": "Completed H/s, geometric mean of paired ratios; intervals descriptive only",
+  "comparisons": {
+    "dd-nta-512-screen/w24": {
+      "protocol": {
+        "cases": {
+          "baseline": {
+            "binary": "kernels/baseline/seine",
+            "kernel": "avx512",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          },
+          "candidate": {
+            "binary": "kernels/dd-nta-512/seine",
+            "kernel": "avx512",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          }
+        },
+        "sha256": {
+          "/home/ubuntu/epyc-exp/kernels/baseline/seine": "0b7710d4308519d7360c46d9e7dbed432680457ce0870c92db4ffb5c0cf8a983",
+          "/home/ubuntu/epyc-exp/kernels/dd-nta-512/seine": "5b12ff2ad09ecde91237d6cf3be085884e40c03ad5038f60c842d6d72f37a6f8"
+        },
+        "workers": 24,
+        "pairs": 2,
+        "seconds": 12,
+        "rounds": 1,
+        "warmup": 1,
+        "harness_sha256": "4a34a286734200d37e924d74df73a35f5ee13e4e9b8753149958f66567f671fb"
+      },
+      "pairs_sha256": "af643da52aee9b5d739cb56ef6cfc8352ea58dbe72046ca54b37a4f0051d115a",
+      "pairs": [
+        {
+          "baseline": {
+            "counted_hps": 32.32261569555735,
+            "completed_hps": 34.22394603059014
+          },
+          "candidate": {
+            "counted_hps": 32.39029037827685,
+            "completed_hps": 34.295601576999026
+          }
+        },
+        {
+          "candidate": {
+            "counted_hps": 32.4575688018368,
+            "completed_hps": 34.366837554886025
+          },
+          "baseline": {
+            "counted_hps": 32.42001252149562,
+            "completed_hps": 34.327072081583594
+          }
+        }
+      ],
+      "completed_hps": {
+        "baseline": 34.27550905608687,
+        "candidate": 34.331219565942526
+      },
+      "paired_delta_pct": 0.16259680131478493,
+      "paired_deltas_pct": [
+        0.20937254384645332,
+        0.11584289276964643
+      ],
+      "descriptive_resampling_interval_pct": [
+        0.11934943591053182,
+        0.2058643631565782
+      ],
+      "complete": true
+    },
+    "dd-nta-512-screen/w8": {
+      "protocol": {
+        "cases": {
+          "baseline": {
+            "binary": "kernels/baseline/seine",
+            "kernel": "avx512",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          },
+          "candidate": {
+            "binary": "kernels/dd-nta-512/seine",
+            "kernel": "avx512",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          }
+        },
+        "sha256": {
+          "/home/ubuntu/epyc-exp/kernels/baseline/seine": "0b7710d4308519d7360c46d9e7dbed432680457ce0870c92db4ffb5c0cf8a983",
+          "/home/ubuntu/epyc-exp/kernels/dd-nta-512/seine": "5b12ff2ad09ecde91237d6cf3be085884e40c03ad5038f60c842d6d72f37a6f8"
+        },
+        "workers": 8,
+        "pairs": 2,
+        "seconds": 12,
+        "rounds": 1,
+        "warmup": 1,
+        "harness_sha256": "4a34a286734200d37e924d74df73a35f5ee13e4e9b8753149958f66567f671fb"
+      },
+      "pairs_sha256": "b1cffc4db7afdb1416f0b099402b2a12a66bf054d02e7d0eedbecbfa70295a87",
+      "pairs": [
+        {
+          "baseline": {
+            "counted_hps": 20.996735773229954,
+            "completed_hps": 21.65288376614339
+          },
+          "candidate": {
+            "counted_hps": 21.02470188948098,
+            "completed_hps": 21.68172382352726
+          }
+        },
+        {
+          "candidate": {
+            "counted_hps": 20.929525996887257,
+            "completed_hps": 21.583573684289984
+          },
+          "baseline": {
+            "counted_hps": 20.891476093060323,
+            "completed_hps": 21.54433472096846
+          }
+        }
+      ],
+      "completed_hps": {
+        "baseline": 21.598609243555927,
+        "candidate": 21.632648753908622
+      },
+      "paired_delta_pct": 0.15765897223132264,
+      "paired_deltas_pct": [
+        0.1331926855348664,
+        0.18213123695731692
+      ],
+      "descriptive_resampling_interval_pct": [
+        0.13502765703710062,
+        0.18029581710286735
+      ],
+      "complete": true
+    },
+    "dd-nta-screen/w24": {
+      "protocol": {
+        "cases": {
+          "baseline": {
+            "binary": "kernels/baseline/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          },
+          "candidate": {
+            "binary": "kernels/dd-nta/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          }
+        },
+        "sha256": {
+          "/home/ubuntu/epyc-exp/kernels/baseline/seine": "0b7710d4308519d7360c46d9e7dbed432680457ce0870c92db4ffb5c0cf8a983",
+          "/home/ubuntu/epyc-exp/kernels/dd-nta/seine": "898c20e7ee353b8ef07a045228bc248a07315397c713d4bed5d91abe19d13a1f"
+        },
+        "workers": 24,
+        "pairs": 2,
+        "seconds": 12,
+        "rounds": 1,
+        "warmup": 1
+      },
+      "pairs_sha256": "ff20e99b0973f2f7f7240249f87128cea54fd633e50a635d51b3a2a104b6c943",
+      "pairs": [
+        {
+          "baseline": {
+            "counted_hps": 33.718799891419785,
+            "completed_hps": 35.543582003190735
+          },
+          "candidate": {
+            "counted_hps": 33.639594300992975,
+            "completed_hps": 35.54372228029447
+          }
+        },
+        {
+          "candidate": {
+            "counted_hps": 33.723537587288874,
+            "completed_hps": 35.62792559221813
+          },
+          "baseline": {
+            "counted_hps": 33.73459396715912,
+            "completed_hps": 35.63960633236341
+          }
+        }
+      ],
+      "completed_hps": {
+        "baseline": 35.591594167777075,
+        "candidate": 35.585823936256304
+      },
+      "paired_delta_pct": -0.016191346768101855,
+      "paired_deltas_pct": [
+        0.00039466225918438624,
+        -0.03277460484928385
+      ],
+      "descriptive_resampling_interval_pct": [
+        -0.0315308604931952,
+        -0.0008492884178620853
+      ],
+      "complete": true
+    },
+    "dd-nta-screen/w8": {
+      "protocol": {
+        "cases": {
+          "baseline": {
+            "binary": "kernels/baseline/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          },
+          "candidate": {
+            "binary": "kernels/dd-nta/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          }
+        },
+        "sha256": {
+          "/home/ubuntu/epyc-exp/kernels/baseline/seine": "0b7710d4308519d7360c46d9e7dbed432680457ce0870c92db4ffb5c0cf8a983",
+          "/home/ubuntu/epyc-exp/kernels/dd-nta/seine": "898c20e7ee353b8ef07a045228bc248a07315397c713d4bed5d91abe19d13a1f"
+        },
+        "workers": 8,
+        "pairs": 2,
+        "seconds": 12,
+        "rounds": 1,
+        "warmup": 1
+      },
+      "pairs_sha256": "27e27b03890bb19972f08a102d5baabadcf26497f9fba7f9ab99f826aacafc1a",
+      "pairs": [
+        {
+          "baseline": {
+            "counted_hps": 19.56429049316936,
+            "completed_hps": 20.216433509608336
+          },
+          "candidate": {
+            "counted_hps": 19.63573765333141,
+            "completed_hps": 20.29026224177579
+          }
+        },
+        {
+          "candidate": {
+            "counted_hps": 19.64735447594683,
+            "completed_hps": 20.302266291811723
+          },
+          "baseline": {
+            "counted_hps": 19.606893003879385,
+            "completed_hps": 20.2604561040087
+          }
+        }
+      ],
+      "completed_hps": {
+        "baseline": 20.238444806808516,
+        "candidate": 20.296264266793756
+      },
+      "paired_delta_pct": 0.2857461480195722,
+      "paired_deltas_pct": [
+        0.3651916750418094,
+        0.2063635072595993
+      ],
+      "descriptive_resampling_interval_pct": [
+        0.21231720531659726,
+        0.3592332605151416
+      ],
+      "complete": true
+    },
+    "dd-t1-512-screen/w24": {
+      "protocol": {
+        "cases": {
+          "baseline": {
+            "binary": "kernels/baseline/seine",
+            "kernel": "avx512",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          },
+          "candidate": {
+            "binary": "kernels/dd-t1-512/seine",
+            "kernel": "avx512",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          }
+        },
+        "sha256": {
+          "/home/ubuntu/epyc-exp/kernels/baseline/seine": "0b7710d4308519d7360c46d9e7dbed432680457ce0870c92db4ffb5c0cf8a983",
+          "/home/ubuntu/epyc-exp/kernels/dd-t1-512/seine": "56cb5b039184c943d8bc344d1a3395d078d4ab2a37719546ecb3545a542a5eb5"
+        },
+        "workers": 24,
+        "pairs": 2,
+        "seconds": 12,
+        "rounds": 1,
+        "warmup": 1
+      },
+      "pairs_sha256": "6050f50e8450e7e82ff283b04f1ab374aea4149a2db60b3db6009bb47e8b277a",
+      "pairs": [
+        {
+          "baseline": {
+            "counted_hps": 32.365696642873864,
+            "completed_hps": 34.26956115127821
+          },
+          "candidate": {
+            "counted_hps": 30.324408189996802,
+            "completed_hps": 32.2196837018716
+          }
+        },
+        {
+          "candidate": {
+            "counted_hps": 30.314442831943005,
+            "completed_hps": 32.20909550893944
+          },
+          "baseline": {
+            "counted_hps": 32.38189618472658,
+            "completed_hps": 34.286713607357555
+          }
+        }
+      ],
+      "completed_hps": {
+        "baseline": 34.27813737931788,
+        "candidate": 32.21438960540552
+      },
+      "paired_delta_pct": -6.0205931781436846,
+      "paired_deltas_pct": [
+        -5.981627370008358,
+        -6.0595428369439315
+      ],
+      "descriptive_resampling_interval_pct": [
+        -6.056621612533913,
+        -5.984549805618507
+      ],
+      "complete": true
+    },
+    "dd-t1-512-screen/w8": {
+      "protocol": {
+        "cases": {
+          "baseline": {
+            "binary": "kernels/baseline/seine",
+            "kernel": "avx512",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          },
+          "candidate": {
+            "binary": "kernels/dd-t1-512/seine",
+            "kernel": "avx512",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          }
+        },
+        "sha256": {
+          "/home/ubuntu/epyc-exp/kernels/baseline/seine": "0b7710d4308519d7360c46d9e7dbed432680457ce0870c92db4ffb5c0cf8a983",
+          "/home/ubuntu/epyc-exp/kernels/dd-t1-512/seine": "56cb5b039184c943d8bc344d1a3395d078d4ab2a37719546ecb3545a542a5eb5"
+        },
+        "workers": 8,
+        "pairs": 2,
+        "seconds": 12,
+        "rounds": 1,
+        "warmup": 1
+      },
+      "pairs_sha256": "049f04ed13a2d1f0a762aedd888034bb887b3eb0dd5bbb01d83439745b44c51c",
+      "pairs": [
+        {
+          "baseline": {
+            "counted_hps": 20.867179205148524,
+            "completed_hps": 21.519278555309416
+          },
+          "candidate": {
+            "counted_hps": 20.210950167346084,
+            "completed_hps": 20.862916301776604
+          }
+        },
+        {
+          "candidate": {
+            "counted_hps": 20.339977599574468,
+            "completed_hps": 20.99610590923816
+          },
+          "baseline": {
+            "counted_hps": 21.016140586922095,
+            "completed_hps": 21.67289498026341
+          }
+        }
+      ],
+      "completed_hps": {
+        "baseline": 21.596086767786414,
+        "candidate": 20.92951110550738
+      },
+      "paired_delta_pct": -3.0864352667762773,
+      "paired_deltas_pct": [
+        -3.050112724949461,
+        -3.122744200262928
+      ],
+      "descriptive_resampling_interval_pct": [
+        -3.1200210302514293,
+        -3.052836915586472
+      ],
+      "complete": true
+    },
+    "dd-t1-screen/w24": {
+      "protocol": {
+        "cases": {
+          "baseline": {
+            "binary": "kernels/baseline/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          },
+          "candidate": {
+            "binary": "kernels/dd-t1/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          }
+        },
+        "sha256": {
+          "/home/ubuntu/epyc-exp/kernels/baseline/seine": "0b7710d4308519d7360c46d9e7dbed432680457ce0870c92db4ffb5c0cf8a983",
+          "/home/ubuntu/epyc-exp/kernels/dd-t1/seine": "34a739e3719af37365888d7f46d59c21f88680d2a632e31564817589ebb85bec"
+        },
+        "workers": 24,
+        "pairs": 2,
+        "seconds": 12,
+        "rounds": 1,
+        "warmup": 1
+      },
+      "pairs_sha256": "78bd29cc3ae2ac7920839a836671e99845e986b76aa82ef6b98b184ff0f965f4",
+      "pairs": [
+        {
+          "baseline": {
+            "counted_hps": 33.48204270727317,
+            "completed_hps": 35.409066747979544
+          },
+          "candidate": {
+            "counted_hps": 31.822393739451027,
+            "completed_hps": 33.73173736381809
+          }
+        },
+        {
+          "candidate": {
+            "counted_hps": 32.01558002771473,
+            "completed_hps": 33.91279958491265
+          },
+          "baseline": {
+            "counted_hps": 33.633775694362804,
+            "completed_hps": 35.53757431857202
+          }
+        }
+      ],
+      "completed_hps": {
+        "baseline": 35.47332053327578,
+        "candidate": 33.82226847436537
+      },
+      "paired_delta_pct": -4.65453391891244,
+      "paired_deltas_pct": [
+        -4.737005344138767,
+        -4.57199109622477
+      ],
+      "descriptive_resampling_interval_pct": [
+        -4.730819987246792,
+        -4.578181807926345
+      ],
+      "complete": true
+    },
+    "dd-t1-screen/w8": {
+      "protocol": {
+        "cases": {
+          "baseline": {
+            "binary": "kernels/baseline/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          },
+          "candidate": {
+            "binary": "kernels/dd-t1/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          }
+        },
+        "sha256": {
+          "/home/ubuntu/epyc-exp/kernels/baseline/seine": "0b7710d4308519d7360c46d9e7dbed432680457ce0870c92db4ffb5c0cf8a983",
+          "/home/ubuntu/epyc-exp/kernels/dd-t1/seine": "34a739e3719af37365888d7f46d59c21f88680d2a632e31564817589ebb85bec"
+        },
+        "workers": 8,
+        "pairs": 2,
+        "seconds": 12,
+        "rounds": 1,
+        "warmup": 1
+      },
+      "pairs_sha256": "0d857e43243c22e37392dc22236ef55c9fb9b208f737b02f3f8293e5bdb35bf2",
+      "pairs": [
+        {
+          "baseline": {
+            "counted_hps": 19.550847661185824,
+            "completed_hps": 20.202542583225352
+          },
+          "candidate": {
+            "counted_hps": 18.166222426781673,
+            "completed_hps": 18.81501608488102
+          }
+        },
+        {
+          "candidate": {
+            "counted_hps": 18.093372628902337,
+            "completed_hps": 18.739564508505993
+          },
+          "baseline": {
+            "counted_hps": 19.568566471160956,
+            "completed_hps": 20.220852020199654
+          }
+        }
+      ],
+      "completed_hps": {
+        "baseline": 20.211697301712505,
+        "candidate": 18.777290296693508
+      },
+      "paired_delta_pct": -7.09709311042298,
+      "paired_deltas_pct": [
+        -6.86807857292393,
+        -7.325544493446301
+      ],
+      "descriptive_resampling_interval_pct": [
+        -7.308410639719552,
+        -6.885254663236359
+      ],
+      "complete": true
+    },
+    "early-screen/w1": {
+      "protocol": {
+        "cases": {
+          "baseline": {
+            "binary": "kernels/baseline/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          },
+          "candidate": {
+            "binary": "kernels/early-seed/seine",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          }
+        },
+        "sha256": {
+          "/home/ubuntu/epyc-exp/kernels/baseline/seine": "0b7710d4308519d7360c46d9e7dbed432680457ce0870c92db4ffb5c0cf8a983",
+          "/home/ubuntu/epyc-exp/kernels/early-seed/seine": "8908d2e8f4e987f0c18dc1ba22002221bf9b2ea6f800ac70dcbe5d31d5bca466"
+        },
+        "workers": 1,
+        "pairs": 2,
+        "seconds": 12,
+        "rounds": 1,
+        "warmup": 1
+      },
+      "pairs_sha256": "77595050336a95a8a25bd06e75733d7a4a85cad4b468476e45b22f72635bee2b",
+      "pairs": [
+        {
+          "baseline": {
+            "counted_hps": 2.664984617874931,
+            "completed_hps": 2.7482653871835225
+          },
+          "candidate": {
+            "counted_hps": 2.62149360851583,
+            "completed_hps": 2.7034152837819496
+          }
+        },
+        {
+          "candidate": {
+            "counted_hps": 2.620852631436015,
+            "completed_hps": 2.7027542761683905
+          },
+          "baseline": {
+            "counted_hps": 2.6655739592704277,
+            "completed_hps": 2.7488731454976283
+          }
+        }
+      ],
+      "completed_hps": {
+        "baseline": 2.748569266340575,
+        "candidate": 2.7030847799751703
+      },
+      "paired_delta_pct": -1.6548424159184894,
+      "paired_deltas_pct": [
+        -1.6319422283863294,
+        -1.677737272262847
+      ],
+      "descriptive_resampling_interval_pct": [
+        -1.6760201580370202,
+        -1.6336597424512413
+      ],
+      "complete": true
+    },
+    "early-screen/w24": {
+      "protocol": {
+        "cases": {
+          "baseline": {
+            "binary": "kernels/baseline/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          },
+          "candidate": {
+            "binary": "kernels/early-seed/seine",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          }
+        },
+        "sha256": {
+          "/home/ubuntu/epyc-exp/kernels/baseline/seine": "0b7710d4308519d7360c46d9e7dbed432680457ce0870c92db4ffb5c0cf8a983",
+          "/home/ubuntu/epyc-exp/kernels/early-seed/seine": "8908d2e8f4e987f0c18dc1ba22002221bf9b2ea6f800ac70dcbe5d31d5bca466"
+        },
+        "workers": 24,
+        "pairs": 2,
+        "seconds": 12,
+        "rounds": 1,
+        "warmup": 1
+      },
+      "pairs_sha256": "b6ba456d5584543cdf9ca21484d46f6b45ba9d49f7c6965cc7bd00ff4ddf496f",
+      "pairs": [
+        {
+          "baseline": {
+            "counted_hps": 33.94038898999382,
+            "completed_hps": 35.84804551402158
+          },
+          "candidate": {
+            "counted_hps": 31.95758555753255,
+            "completed_hps": 33.8750406909845
+          }
+        },
+        {
+          "candidate": {
+            "counted_hps": 31.873473344145278,
+            "completed_hps": 33.78588174479399
+          },
+          "baseline": {
+            "counted_hps": 33.439072788693984,
+            "completed_hps": 35.34533822082856
+          }
+        }
+      ],
+      "completed_hps": {
+        "baseline": 35.596691867425065,
+        "candidate": 33.830461217889244
+      },
+      "paired_delta_pct": -4.959496253437834,
+      "paired_deltas_pct": [
+        -5.503800262319347,
+        -4.412057019490057
+      ],
+      "descriptive_resampling_interval_pct": [
+        -5.462977461653233,
+        -4.45311496203614
+      ],
+      "complete": true
+    },
+    "early-screen/w8": {
+      "protocol": {
+        "cases": {
+          "baseline": {
+            "binary": "kernels/baseline/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          },
+          "candidate": {
+            "binary": "kernels/early-seed/seine",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          }
+        },
+        "sha256": {
+          "/home/ubuntu/epyc-exp/kernels/baseline/seine": "0b7710d4308519d7360c46d9e7dbed432680457ce0870c92db4ffb5c0cf8a983",
+          "/home/ubuntu/epyc-exp/kernels/early-seed/seine": "8908d2e8f4e987f0c18dc1ba22002221bf9b2ea6f800ac70dcbe5d31d5bca466"
+        },
+        "workers": 8,
+        "pairs": 2,
+        "seconds": 12,
+        "rounds": 1,
+        "warmup": 1
+      },
+      "pairs_sha256": "3e4f128c56e52044a3971a5e3423ea56719d9a19f1d4611d9efab299db29417b",
+      "pairs": [
+        {
+          "baseline": {
+            "counted_hps": 19.552235800701528,
+            "completed_hps": 20.203976994058245
+          },
+          "candidate": {
+            "counted_hps": 19.42541721276121,
+            "completed_hps": 20.07293111985325
+          }
+        },
+        {
+          "candidate": {
+            "counted_hps": 19.419076293671797,
+            "completed_hps": 20.06637883679419
+          },
+          "baseline": {
+            "counted_hps": 19.636273708656468,
+            "completed_hps": 20.290816165611684
+          }
+        }
+      ],
+      "completed_hps": {
+        "baseline": 20.247396579834962,
+        "candidate": 20.06965497832372
+      },
+      "paired_delta_pct": -0.8776225679727689,
+      "paired_deltas_pct": [
+        -0.6486142517561411,
+        -1.1061030122477944
+      ],
+      "descriptive_resampling_interval_pct": [
+        -1.0889669789271674,
+        -0.6657898754723882
+      ],
+      "complete": true
+    },
+    "early512-screen/w1": {
+      "protocol": {
+        "cases": {
+          "baseline": {
+            "binary": "kernels/baseline/seine",
+            "kernel": "avx512",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          },
+          "candidate": {
+            "binary": "kernels/early-seed-512/seine",
+            "kernel": "avx512",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          }
+        },
+        "sha256": {
+          "/home/ubuntu/epyc-exp/kernels/baseline/seine": "0b7710d4308519d7360c46d9e7dbed432680457ce0870c92db4ffb5c0cf8a983",
+          "/home/ubuntu/epyc-exp/kernels/early-seed-512/seine": "e6a6c1b2181192235905996d7cf74fa7fe8af65d036e8fb8aeae18fb0f52fe50"
+        },
+        "workers": 1,
+        "pairs": 2,
+        "seconds": 12,
+        "rounds": 1,
+        "warmup": 1
+      },
+      "pairs_sha256": "722179cc4580b0a263dd9cefb8c3d64650c95d286068067d5eca133458c3e5ca",
+      "pairs": [
+        {
+          "baseline": {
+            "counted_hps": 2.8743433113896955,
+            "completed_hps": 2.95646740600083
+          },
+          "candidate": {
+            "counted_hps": 2.884015162349791,
+            "completed_hps": 2.966415595559785
+          }
+        },
+        {
+          "candidate": {
+            "counted_hps": 2.889285412272543,
+            "completed_hps": 2.9718364240517583
+          },
+          "baseline": {
+            "counted_hps": 2.8762471910547336,
+            "completed_hps": 2.958425682227726
+          }
+        }
+      ],
+      "completed_hps": {
+        "baseline": 2.957446544114278,
+        "candidate": 2.9691260098057715
+      },
+      "paired_delta_pct": 0.39488089197461385,
+      "paired_deltas_pct": [
+        0.3364890659292685,
+        0.453306699728695
+      ],
+      "descriptive_resampling_interval_pct": [
+        0.3408684528826694,
+        0.4489247641471389
+      ],
+      "complete": true
+    },
+    "early512-screen/w24": {
+      "protocol": {
+        "cases": {
+          "baseline": {
+            "binary": "kernels/baseline/seine",
+            "kernel": "avx512",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          },
+          "candidate": {
+            "binary": "kernels/early-seed-512/seine",
+            "kernel": "avx512",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          }
+        },
+        "sha256": {
+          "/home/ubuntu/epyc-exp/kernels/baseline/seine": "0b7710d4308519d7360c46d9e7dbed432680457ce0870c92db4ffb5c0cf8a983",
+          "/home/ubuntu/epyc-exp/kernels/early-seed-512/seine": "e6a6c1b2181192235905996d7cf74fa7fe8af65d036e8fb8aeae18fb0f52fe50"
+        },
+        "workers": 24,
+        "pairs": 2,
+        "seconds": 12,
+        "rounds": 1,
+        "warmup": 1
+      },
+      "pairs_sha256": "9a835aeb9d4c7cb017698759d18f8c034daa6746a99211455b93606a1a217b38",
+      "pairs": [
+        {
+          "baseline": {
+            "counted_hps": 32.226929223367456,
+            "completed_hps": 34.12728868617045
+          },
+          "candidate": {
+            "counted_hps": 32.10430152768779,
+            "completed_hps": 34.00209275099938
+          }
+        },
+        {
+          "candidate": {
+            "counted_hps": 31.951671675494627,
+            "completed_hps": 33.854500757906216
+          },
+          "baseline": {
+            "counted_hps": 32.271111506063114,
+            "completed_hps": 34.169412182890355
+          }
+        }
+      ],
+      "completed_hps": {
+        "baseline": 34.1483504345304,
+        "candidate": 33.9282967544528
+      },
+      "paired_delta_pct": -0.6446211291588955,
+      "paired_deltas_pct": [
+        -0.366849931508928,
+        -0.9216179175064232
+      ],
+      "descriptive_resampling_interval_pct": [
+        -0.9008431583803586,
+        -0.3876827713326756
+      ],
+      "complete": true
+    },
+    "hybrid-256-512-w1/w1": {
+      "protocol": {
+        "cases": {
+          "baseline": {
+            "binary": "kernels/baseline/seine",
+            "kernel": "avx512",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          },
+          "candidate": {
+            "binary": "kernels/di256-dd512/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          }
+        },
+        "sha256": {
+          "/home/ubuntu/epyc-exp/kernels/baseline/seine": "0b7710d4308519d7360c46d9e7dbed432680457ce0870c92db4ffb5c0cf8a983",
+          "/home/ubuntu/epyc-exp/kernels/di256-dd512/seine": "0c6781851381f6bcf12ec32e6bad6999a4fe44224b516df05d3a1f7ad17926e2"
+        },
+        "workers": 1,
+        "pairs": 2,
+        "seconds": 12,
+        "rounds": 1,
+        "warmup": 1
+      },
+      "pairs_sha256": "81067b5ecd56fded07dc919f01da80d2c3916a04d4a23a99bc30bb3cea0aa5d9",
+      "pairs": [
+        {
+          "baseline": {
+            "counted_hps": 2.887201362276567,
+            "completed_hps": 2.969692829770183
+          },
+          "candidate": {
+            "counted_hps": 2.6919521830938526,
+            "completed_hps": 2.7735264916724542
+          }
+        },
+        {
+          "candidate": {
+            "counted_hps": 2.69054103721684,
+            "completed_hps": 2.7720725837991687
+          },
+          "baseline": {
+            "counted_hps": 2.8856833838048783,
+            "completed_hps": 2.9681314804850176
+          }
+        }
+      ],
+      "completed_hps": {
+        "baseline": 2.9689121551276,
+        "candidate": 2.7727995377358114
+      },
+      "paired_delta_pct": -6.6055378731163295,
+      "paired_deltas_pct": [
+        -6.605610389439153,
+        -6.605465356737206
+      ],
+      "descriptive_resampling_interval_pct": [
+        -6.605604950714942,
+        -6.60547079546564
+      ],
+      "complete": true
+    },
+    "hybrid-256-512-w24/w24": {
+      "protocol": {
+        "cases": {
+          "baseline": {
+            "binary": "kernels/baseline/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          },
+          "candidate": {
+            "binary": "kernels/di256-dd512/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          }
+        },
+        "sha256": {
+          "/home/ubuntu/epyc-exp/kernels/baseline/seine": "0b7710d4308519d7360c46d9e7dbed432680457ce0870c92db4ffb5c0cf8a983",
+          "/home/ubuntu/epyc-exp/kernels/di256-dd512/seine": "0c6781851381f6bcf12ec32e6bad6999a4fe44224b516df05d3a1f7ad17926e2"
+        },
+        "workers": 24,
+        "pairs": 2,
+        "seconds": 12,
+        "rounds": 1,
+        "warmup": 1
+      },
+      "pairs_sha256": "5725250bc55cdce82765409f7a7b1fcded218696f2ed819b55be08595c52fc50",
+      "pairs": [
+        {
+          "baseline": {
+            "counted_hps": 33.856862956713925,
+            "completed_hps": 35.75982480908192
+          },
+          "candidate": {
+            "counted_hps": 32.575196954113885,
+            "completed_hps": 34.49138501023823
+          }
+        },
+        {
+          "candidate": {
+            "counted_hps": 32.50969711317107,
+            "completed_hps": 34.42203223747525
+          },
+          "baseline": {
+            "counted_hps": 33.84158497309052,
+            "completed_hps": 35.75714638666168
+          }
+        }
+      ],
+      "completed_hps": {
+        "baseline": 35.7584855978718,
+        "candidate": 34.45670862385674
+      },
+      "paired_delta_pct": -3.64051882181633,
+      "paired_deltas_pct": [
+        -3.5471085376277967,
+        -3.7338386423488856
+      ],
+      "descriptive_resampling_interval_pct": [
+        -3.726839655808944,
+        -3.5541143089419367
+      ],
+      "complete": true
+    },
+    "hybrid-512-256-screen/w1": {
+      "protocol": {
+        "cases": {
+          "baseline": {
+            "binary": "kernels/baseline/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          },
+          "candidate": {
+            "binary": "kernels/di512-dd256/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          }
+        },
+        "sha256": {
+          "/home/ubuntu/epyc-exp/kernels/baseline/seine": "0b7710d4308519d7360c46d9e7dbed432680457ce0870c92db4ffb5c0cf8a983",
+          "/home/ubuntu/epyc-exp/kernels/di512-dd256/seine": "0a03049d9976c312073efd4d5db5fd4fdd856aa6951d39d34bbaf7181254b6df"
+        },
+        "workers": 1,
+        "pairs": 2,
+        "seconds": 12,
+        "rounds": 1,
+        "warmup": 1
+      },
+      "pairs_sha256": "d366c90c155fef86cb6bd336f6b98040eb41380097d65a259f7ad32710e0a843",
+      "pairs": [
+        {
+          "baseline": {
+            "counted_hps": 2.6630687484947178,
+            "completed_hps": 2.746289646885178
+          },
+          "candidate": {
+            "counted_hps": 2.861660602785365,
+            "completed_hps": 2.943422334293518
+          }
+        },
+        {
+          "candidate": {
+            "counted_hps": 2.8612347853868902,
+            "completed_hps": 2.9429843506836586
+          },
+          "baseline": {
+            "counted_hps": 2.6647824343157294,
+            "completed_hps": 2.748056885388096
+          }
+        }
+      ],
+      "completed_hps": {
+        "baseline": 2.747173266136637,
+        "candidate": 2.943203342488588
+      },
+      "paired_delta_pct": 7.135706468467973,
+      "paired_deltas_pct": [
+        7.178146253871165,
+        7.0932834881267
+      ],
+      "descriptive_resampling_interval_pct": [
+        7.096465211652296,
+        7.174963269965925
+      ],
+      "complete": true
+    },
+    "hybrid-512-256-screen/w24": {
+      "protocol": {
+        "cases": {
+          "baseline": {
+            "binary": "kernels/baseline/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          },
+          "candidate": {
+            "binary": "kernels/di512-dd256/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          }
+        },
+        "sha256": {
+          "/home/ubuntu/epyc-exp/kernels/baseline/seine": "0b7710d4308519d7360c46d9e7dbed432680457ce0870c92db4ffb5c0cf8a983",
+          "/home/ubuntu/epyc-exp/kernels/di512-dd256/seine": "0a03049d9976c312073efd4d5db5fd4fdd856aa6951d39d34bbaf7181254b6df"
+        },
+        "workers": 24,
+        "pairs": 2,
+        "seconds": 12,
+        "rounds": 1,
+        "warmup": 1
+      },
+      "pairs_sha256": "15266bffcf3d816e6abcb1aa20721a65387f2135738e9e2fea97b359ad272948",
+      "pairs": [
+        {
+          "baseline": {
+            "counted_hps": 33.948989441755934,
+            "completed_hps": 35.852671092695516
+          },
+          "candidate": {
+            "counted_hps": 31.71315343712119,
+            "completed_hps": 33.62550439815362
+          }
+        },
+        {
+          "candidate": {
+            "counted_hps": 32.01798246519758,
+            "completed_hps": 33.83628764223349
+          },
+          "baseline": {
+            "counted_hps": 33.960849171653635,
+            "completed_hps": 35.86519585417627
+          }
+        }
+      ],
+      "completed_hps": {
+        "baseline": 35.8589334734359,
+        "candidate": 33.730896020193555
+      },
+      "paired_delta_pct": -5.934927172410875,
+      "paired_deltas_pct": [
+        -6.211996558871869,
+        -5.657039265008013
+      ],
+      "descriptive_resampling_interval_pct": [
+        -6.1912163548872945,
+        -5.677880858063228
+      ],
+      "complete": true
+    },
+    "hybrid-512-256-screen/w8": {
+      "protocol": {
+        "cases": {
+          "baseline": {
+            "binary": "kernels/baseline/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          },
+          "candidate": {
+            "binary": "kernels/di512-dd256/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          }
+        },
+        "sha256": {
+          "/home/ubuntu/epyc-exp/kernels/baseline/seine": "0b7710d4308519d7360c46d9e7dbed432680457ce0870c92db4ffb5c0cf8a983",
+          "/home/ubuntu/epyc-exp/kernels/di512-dd256/seine": "0a03049d9976c312073efd4d5db5fd4fdd856aa6951d39d34bbaf7181254b6df"
+        },
+        "workers": 8,
+        "pairs": 2,
+        "seconds": 12,
+        "rounds": 1,
+        "warmup": 1
+      },
+      "pairs_sha256": "099626bff0abf06f30ccf4c3d14c49740c52fbd2693af11ca42b430a6e0b08bb",
+      "pairs": [
+        {
+          "baseline": {
+            "counted_hps": 19.559120905267303,
+            "completed_hps": 20.211091602109548
+          },
+          "candidate": {
+            "counted_hps": 20.43855338767663,
+            "completed_hps": 21.09786156147265
+          }
+        },
+        {
+          "candidate": {
+            "counted_hps": 20.49215728246654,
+            "completed_hps": 21.153194614159005
+          },
+          "baseline": {
+            "counted_hps": 19.62746865599244,
+            "completed_hps": 20.28171761119219
+          }
+        }
+      ],
+      "completed_hps": {
+        "baseline": 20.24640460665087,
+        "candidate": 21.12552808781583
+      },
+      "paired_delta_pct": 4.342190699425963,
+      "paired_deltas_pct": [
+        4.387541142362372,
+        4.296859958674815
+      ],
+      "descriptive_resampling_interval_pct": [
+        4.300259764231151,
+        4.384139859142142
+      ],
+      "complete": true
+    },
+    "hybrid-vs512-screen/w1": {
+      "protocol": {
+        "cases": {
+          "baseline": {
+            "binary": "kernels/baseline/seine",
+            "kernel": "avx512",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          },
+          "candidate": {
+            "binary": "kernels/di512-dd256/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          }
+        },
+        "sha256": {
+          "/home/ubuntu/epyc-exp/kernels/baseline/seine": "0b7710d4308519d7360c46d9e7dbed432680457ce0870c92db4ffb5c0cf8a983",
+          "/home/ubuntu/epyc-exp/kernels/di512-dd256/seine": "0a03049d9976c312073efd4d5db5fd4fdd856aa6951d39d34bbaf7181254b6df"
+        },
+        "workers": 1,
+        "pairs": 2,
+        "seconds": 12,
+        "rounds": 1,
+        "warmup": 1
+      },
+      "pairs_sha256": "e9d16b06530a907955b1cd993a72204af75e69615e638ffeadcb1111383ae5ab",
+      "pairs": [
+        {
+          "baseline": {
+            "counted_hps": 2.892382143993835,
+            "completed_hps": 2.9750216338222306
+          },
+          "candidate": {
+            "counted_hps": 2.868762246084676,
+            "completed_hps": 2.9507268816870953
+          }
+        },
+        {
+          "candidate": {
+            "counted_hps": 2.8273842875386093,
+            "completed_hps": 2.910542648936804
+          },
+          "baseline": {
+            "counted_hps": 2.8924455018221753,
+            "completed_hps": 2.9750868018742374
+          }
+        }
+      ],
+      "completed_hps": {
+        "baseline": 2.9750542178482338,
+        "candidate": 2.9306347653119493
+      },
+      "paired_delta_pct": -1.495378726079244,
+      "paired_deltas_pct": [
+        -0.8166243854812572,
+        -2.1694880598701283
+      ],
+      "descriptive_resampling_interval_pct": [
+        -2.118929859835812,
+        -0.8675309610261063
+      ],
+      "complete": true
+    },
+    "hybrid-vs512-screen/w8": {
+      "protocol": {
+        "cases": {
+          "baseline": {
+            "binary": "kernels/baseline/seine",
+            "kernel": "avx512",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          },
+          "candidate": {
+            "binary": "kernels/di512-dd256/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          }
+        },
+        "sha256": {
+          "/home/ubuntu/epyc-exp/kernels/baseline/seine": "0b7710d4308519d7360c46d9e7dbed432680457ce0870c92db4ffb5c0cf8a983",
+          "/home/ubuntu/epyc-exp/kernels/di512-dd256/seine": "0a03049d9976c312073efd4d5db5fd4fdd856aa6951d39d34bbaf7181254b6df"
+        },
+        "workers": 8,
+        "pairs": 2,
+        "seconds": 12,
+        "rounds": 1,
+        "warmup": 1
+      },
+      "pairs_sha256": "1e2dd43f1d47fc601527fc19bd56b66da66d44dfd87a9b96501da955c35b0089",
+      "pairs": [
+        {
+          "baseline": {
+            "counted_hps": 20.942259781830646,
+            "completed_hps": 21.596705400012855
+          },
+          "candidate": {
+            "counted_hps": 20.50223597827865,
+            "completed_hps": 21.163598429190866
+          }
+        },
+        {
+          "candidate": {
+            "counted_hps": 20.440406474161453,
+            "completed_hps": 21.099774424940854
+          },
+          "baseline": {
+            "counted_hps": 20.88211046642995,
+            "completed_hps": 21.534676418505885
+          }
+        }
+      ],
+      "completed_hps": {
+        "baseline": 21.56569090925937,
+        "candidate": 21.13168642706586
+      },
+      "paired_delta_pct": -2.012486996996743,
+      "paired_deltas_pct": [
+        -2.0054307488110212,
+        -2.019542737086577
+      ],
+      "descriptive_resampling_interval_pct": [
+        -2.0190135565798393,
+        -2.00595996742495
+      ],
+      "complete": true
+    },
+    "quad-screen/w1": {
+      "protocol": {
+        "cases": {
+          "baseline": {
+            "binary": "kernels/baseline/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          },
+          "candidate": {
+            "binary": "kernels/quad-rows/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          }
+        },
+        "sha256": {
+          "/home/ubuntu/epyc-exp/kernels/baseline/seine": "0b7710d4308519d7360c46d9e7dbed432680457ce0870c92db4ffb5c0cf8a983",
+          "/home/ubuntu/epyc-exp/kernels/quad-rows/seine": "6bd34da10935de2dcf4a23a36cd86289cbf9e1ecc3b83d2a471bd92e1c356b51"
+        },
+        "workers": 1,
+        "pairs": 2,
+        "seconds": 12,
+        "rounds": 1,
+        "warmup": 1,
+        "harness_sha256": "4a34a286734200d37e924d74df73a35f5ee13e4e9b8753149958f66567f671fb"
+      },
+      "pairs_sha256": "0b1be564bdd911b0240ca9da1cde79ea1d2a8b324bdb9d1aff806e6746dbcde3",
+      "pairs": [
+        {
+          "baseline": {
+            "counted_hps": 2.6786070803533453,
+            "completed_hps": 2.759776991879204
+          },
+          "candidate": {
+            "counted_hps": 2.8018682222105693,
+            "completed_hps": 2.8842761110991155
+          }
+        },
+        {
+          "candidate": {
+            "counted_hps": 2.8010485359080652,
+            "completed_hps": 2.8834323163759494
+          },
+          "baseline": {
+            "counted_hps": 2.6486527506690627,
+            "completed_hps": 2.7314231491274708
+          }
+        }
+      ],
+      "completed_hps": {
+        "baseline": 2.7456000705033374,
+        "candidate": 2.8838542137375325
+      },
+      "paired_delta_pct": 5.036879150218154,
+      "paired_deltas_pct": [
+        4.511202158227157,
+        5.565200225275846
+      ],
+      "descriptive_resampling_interval_pct": [
+        4.550627932626481,
+        5.525576144646519
+      ],
+      "complete": true
+    },
+    "quad-screen/w24": {
+      "protocol": {
+        "cases": {
+          "baseline": {
+            "binary": "kernels/baseline/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          },
+          "candidate": {
+            "binary": "kernels/quad-rows/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          }
+        },
+        "sha256": {
+          "/home/ubuntu/epyc-exp/kernels/baseline/seine": "0b7710d4308519d7360c46d9e7dbed432680457ce0870c92db4ffb5c0cf8a983",
+          "/home/ubuntu/epyc-exp/kernels/quad-rows/seine": "6bd34da10935de2dcf4a23a36cd86289cbf9e1ecc3b83d2a471bd92e1c356b51"
+        },
+        "workers": 24,
+        "pairs": 2,
+        "seconds": 12,
+        "rounds": 1,
+        "warmup": 1,
+        "harness_sha256": "4a34a286734200d37e924d74df73a35f5ee13e4e9b8753149958f66567f671fb"
+      },
+      "pairs_sha256": "dc26d72f8db44068aa0e9262734efacae6e0e67ec20e0832ca4994dfde241645",
+      "pairs": [
+        {
+          "baseline": {
+            "counted_hps": 34.20268437573651,
+            "completed_hps": 36.10283350772187
+          },
+          "candidate": {
+            "counted_hps": 33.62060406568966,
+            "completed_hps": 35.537218074185034
+          }
+        },
+        {
+          "candidate": {
+            "counted_hps": 33.736139675295384,
+            "completed_hps": 35.654782690004126
+          },
+          "baseline": {
+            "counted_hps": 34.07809230418298,
+            "completed_hps": 35.9801253630211
+          }
+        }
+      ],
+      "completed_hps": {
+        "baseline": 36.041479435371485,
+        "candidate": 35.59600038209458
+      },
+      "paired_delta_pct": -1.236009229990842,
+      "paired_deltas_pct": [
+        -1.5666787855193043,
+        -0.904228847827615
+      ],
+      "descriptive_resampling_interval_pct": [
+        -1.5418785688546697,
+        -0.9291123764898571
+      ],
+      "complete": true
+    },
+    "quad-screen/w8": {
+      "protocol": {
+        "cases": {
+          "baseline": {
+            "binary": "kernels/baseline/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          },
+          "candidate": {
+            "binary": "kernels/quad-rows/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          }
+        },
+        "sha256": {
+          "/home/ubuntu/epyc-exp/kernels/baseline/seine": "0b7710d4308519d7360c46d9e7dbed432680457ce0870c92db4ffb5c0cf8a983",
+          "/home/ubuntu/epyc-exp/kernels/quad-rows/seine": "6bd34da10935de2dcf4a23a36cd86289cbf9e1ecc3b83d2a471bd92e1c356b51"
+        },
+        "workers": 8,
+        "pairs": 2,
+        "seconds": 12,
+        "rounds": 1,
+        "warmup": 1,
+        "harness_sha256": "4a34a286734200d37e924d74df73a35f5ee13e4e9b8753149958f66567f671fb"
+      },
+      "pairs_sha256": "102f3453cc7bfa699ab08a83a6083846f9550112d05ac6cff4d0eaad0dd7495b",
+      "pairs": [
+        {
+          "baseline": {
+            "counted_hps": 19.60226583940127,
+            "completed_hps": 20.255674700714643
+          },
+          "candidate": {
+            "counted_hps": 20.42162142303871,
+            "completed_hps": 21.080383404427057
+          }
+        },
+        {
+          "candidate": {
+            "counted_hps": 20.431007874289783,
+            "completed_hps": 21.090072644428165
+          },
+          "baseline": {
+            "counted_hps": 19.597791364417894,
+            "completed_hps": 20.251051076565158
+          }
+        }
+      ],
+      "completed_hps": {
+        "baseline": 20.2533628886399,
+        "candidate": 21.08522802442761
+      },
+      "paired_delta_pct": 4.107291816980196,
+      "paired_deltas_pct": [
+        4.071494610265036,
+        4.143101336769317
+      ],
+      "descriptive_resampling_interval_pct": [
+        4.074179400768673,
+        4.140415622785133
+      ],
+      "complete": true
+    },
+    "quad-vs512-screen/w1": {
+      "protocol": {
+        "cases": {
+          "baseline": {
+            "binary": "kernels/baseline/seine",
+            "kernel": "avx512",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          },
+          "candidate": {
+            "binary": "kernels/quad-rows/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          }
+        },
+        "sha256": {
+          "/home/ubuntu/epyc-exp/kernels/baseline/seine": "0b7710d4308519d7360c46d9e7dbed432680457ce0870c92db4ffb5c0cf8a983",
+          "/home/ubuntu/epyc-exp/kernels/quad-rows/seine": "6bd34da10935de2dcf4a23a36cd86289cbf9e1ecc3b83d2a471bd92e1c356b51"
+        },
+        "workers": 1,
+        "pairs": 2,
+        "seconds": 12,
+        "rounds": 1,
+        "warmup": 1,
+        "harness_sha256": "4a34a286734200d37e924d74df73a35f5ee13e4e9b8753149958f66567f671fb"
+      },
+      "pairs_sha256": "6aade7358057caebeca005ba363f8bf5c3c484d7cb2fa82ede587babaf93bec9",
+      "pairs": [
+        {
+          "baseline": {
+            "counted_hps": 2.9027637998631146,
+            "completed_hps": 2.9856999084306324
+          },
+          "candidate": {
+            "counted_hps": 2.7975532428193866,
+            "completed_hps": 2.8798342205493688
+          }
+        },
+        {
+          "candidate": {
+            "counted_hps": 2.7982934716232144,
+            "completed_hps": 2.880596220788603
+          },
+          "baseline": {
+            "counted_hps": 2.9004532925280704,
+            "completed_hps": 2.983323386600301
+          }
+        }
+      ],
+      "completed_hps": {
+        "baseline": 2.9845116475154665,
+        "candidate": 2.880215220668986
+      },
+      "paired_delta_pct": -3.49458256766374,
+      "paired_deltas_pct": [
+        -3.5457578165285053,
+        -3.44338016700102
+      ],
+      "descriptive_resampling_interval_pct": [
+        -3.541919672863648,
+        -3.447220347050724
+      ],
+      "complete": true
+    },
+    "quad-vs512-screen/w8": {
+      "protocol": {
+        "cases": {
+          "baseline": {
+            "binary": "kernels/baseline/seine",
+            "kernel": "avx512",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          },
+          "candidate": {
+            "binary": "kernels/quad-rows/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          }
+        },
+        "sha256": {
+          "/home/ubuntu/epyc-exp/kernels/baseline/seine": "0b7710d4308519d7360c46d9e7dbed432680457ce0870c92db4ffb5c0cf8a983",
+          "/home/ubuntu/epyc-exp/kernels/quad-rows/seine": "6bd34da10935de2dcf4a23a36cd86289cbf9e1ecc3b83d2a471bd92e1c356b51"
+        },
+        "workers": 8,
+        "pairs": 2,
+        "seconds": 12,
+        "rounds": 1,
+        "warmup": 1,
+        "harness_sha256": "4a34a286734200d37e924d74df73a35f5ee13e4e9b8753149958f66567f671fb"
+      },
+      "pairs_sha256": "d215f2aba114cbe5525fd03c165793db9c5557fa81389e18d86b909411c229c2",
+      "pairs": [
+        {
+          "baseline": {
+            "counted_hps": 20.928880476981384,
+            "completed_hps": 21.582907991887055
+          },
+          "candidate": {
+            "counted_hps": 20.506425155858377,
+            "completed_hps": 21.16792274153123
+          }
+        },
+        {
+          "candidate": {
+            "counted_hps": 20.47958124958917,
+            "completed_hps": 21.140212902801725
+          },
+          "baseline": {
+            "counted_hps": 20.921451976030404,
+            "completed_hps": 21.57524735028135
+          }
+        }
+      ],
+      "completed_hps": {
+        "baseline": 21.579077671084203,
+        "candidate": 21.154067822166475
+      },
+      "paired_delta_pct": -1.969565424936326,
+      "paired_deltas_pct": [
+        -1.9227494761679842,
+        -2.016359026697112
+      ],
+      "descriptive_resampling_interval_pct": [
+        -2.012849506565053,
+        -1.92626067232561
+      ],
+      "complete": true
+    },
+    "streaming-confirm-avx2/w24": {
+      "protocol": {
+        "cases": {
+          "baseline": {
+            "binary": "kernels/baseline/seine",
+            "kernel": "avx2",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          },
+          "candidate": {
+            "binary": "kernels/streaming-ring/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          }
+        },
+        "sha256": {
+          "/home/ubuntu/epyc-exp/kernels/baseline/seine": "0b7710d4308519d7360c46d9e7dbed432680457ce0870c92db4ffb5c0cf8a983",
+          "/home/ubuntu/epyc-exp/kernels/streaming-ring/seine": "5df259d5cd2daa215b6f44f0f8ce85d1bda92d0893828e9dcaef428ac44f0064"
+        },
+        "workers": 24,
+        "pairs": 3,
+        "seconds": 20,
+        "rounds": 2,
+        "warmup": 1,
+        "harness_sha256": "4a34a286734200d37e924d74df73a35f5ee13e4e9b8753149958f66567f671fb"
+      },
+      "pairs_sha256": "22c8fcec40be8f0f2bd4ae2ffbf6c524aa6e0f8f617e8408862b45eb751e6078",
+      "pairs": [
+        {
+          "baseline": {
+            "counted_hps": 34.08902978832073,
+            "completed_hps": 35.262827083757884
+          },
+          "candidate": {
+            "counted_hps": 44.10247758475032,
+            "completed_hps": 45.28379394862756
+          }
+        },
+        {
+          "candidate": {
+            "counted_hps": 43.83919536004841,
+            "completed_hps": 45.01477059688895
+          },
+          "baseline": {
+            "counted_hps": 34.17246358126627,
+            "completed_hps": 35.34998161987011
+          }
+        },
+        {
+          "baseline": {
+            "counted_hps": 34.19448292593104,
+            "completed_hps": 35.37191131936339
+          },
+          "candidate": {
+            "counted_hps": 43.95212972225572,
+            "completed_hps": 45.12942070873492
+          }
+        }
+      ],
+      "completed_hps": {
+        "baseline": 35.328240007663794,
+        "candidate": 45.142661751417144
+      },
+      "paired_delta_pct": 27.780402786854673,
+      "paired_deltas_pct": [
+        28.417933823250795,
+        27.340294207073356,
+        27.585473969086994
+      ],
+      "descriptive_resampling_interval_pct": [
+        27.393382431557004,
+        28.237176374726243
+      ],
+      "complete": true
+    },
+    "streaming-confirm-avx512-256/w24": {
+      "protocol": {
+        "cases": {
+          "baseline": {
+            "binary": "kernels/baseline/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          },
+          "candidate": {
+            "binary": "kernels/streaming-ring/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          }
+        },
+        "sha256": {
+          "/home/ubuntu/epyc-exp/kernels/baseline/seine": "0b7710d4308519d7360c46d9e7dbed432680457ce0870c92db4ffb5c0cf8a983",
+          "/home/ubuntu/epyc-exp/kernels/streaming-ring/seine": "5df259d5cd2daa215b6f44f0f8ce85d1bda92d0893828e9dcaef428ac44f0064"
+        },
+        "workers": 24,
+        "pairs": 3,
+        "seconds": 20,
+        "rounds": 2,
+        "warmup": 1,
+        "harness_sha256": "4a34a286734200d37e924d74df73a35f5ee13e4e9b8753149958f66567f671fb"
+      },
+      "pairs_sha256": "9ca5fa40a223f4011d6cd8437801b89a1617796ee8889ebad36e4117461508f5",
+      "pairs": [
+        {
+          "baseline": {
+            "counted_hps": 34.860734118202416,
+            "completed_hps": 36.02599542577464
+          },
+          "candidate": {
+            "counted_hps": 44.03741030995808,
+            "completed_hps": 45.2182988899586
+          }
+        },
+        {
+          "candidate": {
+            "counted_hps": 43.83998140815606,
+            "completed_hps": 45.01821159157795
+          },
+          "baseline": {
+            "counted_hps": 34.875587140413316,
+            "completed_hps": 36.01704992377745
+          }
+        },
+        {
+          "baseline": {
+            "counted_hps": 34.90293693217352,
+            "completed_hps": 36.06879708780431
+          },
+          "candidate": {
+            "counted_hps": 44.01665239138194,
+            "completed_hps": 45.1956698661511
+          }
+        }
+      ],
+      "completed_hps": {
+        "baseline": 36.03728081245213,
+        "candidate": 45.14406011589588
+      },
+      "paired_delta_pct": 25.270218029594126,
+      "paired_deltas_pct": [
+        25.515751488735727,
+        24.991390707594263,
+        25.304067546607456
+      ],
+      "descriptive_resampling_interval_pct": [
+        25.059080943047956,
+        25.469860826532116
+      ],
+      "complete": true
+    },
+    "streaming-screen/w1": {
+      "protocol": {
+        "cases": {
+          "baseline": {
+            "binary": "kernels/baseline/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          },
+          "candidate": {
+            "binary": "kernels/streaming-ring/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          }
+        },
+        "sha256": {
+          "/home/ubuntu/epyc-exp/kernels/baseline/seine": "0b7710d4308519d7360c46d9e7dbed432680457ce0870c92db4ffb5c0cf8a983",
+          "/home/ubuntu/epyc-exp/kernels/streaming-ring/seine": "5df259d5cd2daa215b6f44f0f8ce85d1bda92d0893828e9dcaef428ac44f0064"
+        },
+        "workers": 1,
+        "pairs": 2,
+        "seconds": 12,
+        "rounds": 1,
+        "warmup": 1,
+        "harness_sha256": "4a34a286734200d37e924d74df73a35f5ee13e4e9b8753149958f66567f671fb"
+      },
+      "pairs_sha256": "ecadcbccfb6c70161d38859e8677d3ab18fa000437e90e14dcd468645af7eb00",
+      "pairs": [
+        {
+          "baseline": {
+            "counted_hps": 2.6782472430469224,
+            "completed_hps": 2.7594062504119807
+          },
+          "candidate": {
+            "counted_hps": 2.5786946411717597,
+            "completed_hps": 2.661878339274075
+          }
+        },
+        {
+          "candidate": {
+            "counted_hps": 2.580593423534006,
+            "completed_hps": 2.663838372680264
+          },
+          "baseline": {
+            "counted_hps": 2.6801704419696546,
+            "completed_hps": 2.761387728089947
+          }
+        }
+      ],
+      "completed_hps": {
+        "baseline": 2.760396989250964,
+        "candidate": 2.6628583559771695
+      },
+      "paired_delta_pct": -3.533500524770594,
+      "paired_deltas_pct": [
+        -3.5343803082037994,
+        -3.5326207333136073
+      ],
+      "descriptive_resampling_interval_pct": [
+        -3.534314324446309,
+        -3.532686717672881
+      ],
+      "complete": true
+    },
+    "streaming-screen/w24": {
+      "protocol": {
+        "cases": {
+          "baseline": {
+            "binary": "kernels/baseline/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          },
+          "candidate": {
+            "binary": "kernels/streaming-ring/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          }
+        },
+        "sha256": {
+          "/home/ubuntu/epyc-exp/kernels/baseline/seine": "0b7710d4308519d7360c46d9e7dbed432680457ce0870c92db4ffb5c0cf8a983",
+          "/home/ubuntu/epyc-exp/kernels/streaming-ring/seine": "5df259d5cd2daa215b6f44f0f8ce85d1bda92d0893828e9dcaef428ac44f0064"
+        },
+        "workers": 24,
+        "pairs": 2,
+        "seconds": 12,
+        "rounds": 1,
+        "warmup": 1,
+        "harness_sha256": "4a34a286734200d37e924d74df73a35f5ee13e4e9b8753149958f66567f671fb"
+      },
+      "pairs_sha256": "f582d245e67e6e1f304c06af5ba30fe0fd3079e16d2829cb753a74ac38c9f18b",
+      "pairs": [
+        {
+          "baseline": {
+            "counted_hps": 34.141429914132246,
+            "completed_hps": 36.04257682350388
+          },
+          "candidate": {
+            "counted_hps": 42.74275008830074,
+            "completed_hps": 44.67827084701624
+          }
+        },
+        {
+          "candidate": {
+            "counted_hps": 42.90068594117606,
+            "completed_hps": 44.847030861002565
+          },
+          "baseline": {
+            "counted_hps": 34.171893246745476,
+            "completed_hps": 36.079161707028945
+          }
+        }
+      ],
+      "completed_hps": {
+        "baseline": 36.06086926526641,
+        "candidate": 44.76265085400941
+      },
+      "paired_delta_pct": 24.13061025610135,
+      "paired_deltas_pct": [
+        23.959702065144526,
+        24.301754085005435
+      ],
+      "descriptive_resampling_interval_pct": [
+        23.972520179466287,
+        24.28891829783763
+      ],
+      "complete": true
+    },
+    "streaming-screen/w8": {
+      "protocol": {
+        "cases": {
+          "baseline": {
+            "binary": "kernels/baseline/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          },
+          "candidate": {
+            "binary": "kernels/streaming-ring/seine",
+            "kernel": "avx512-256",
+            "env": {
+              "SEINE_EXPERIMENT_ARENA_POLICY": "audit"
+            }
+          }
+        },
+        "sha256": {
+          "/home/ubuntu/epyc-exp/kernels/baseline/seine": "0b7710d4308519d7360c46d9e7dbed432680457ce0870c92db4ffb5c0cf8a983",
+          "/home/ubuntu/epyc-exp/kernels/streaming-ring/seine": "5df259d5cd2daa215b6f44f0f8ce85d1bda92d0893828e9dcaef428ac44f0064"
+        },
+        "workers": 8,
+        "pairs": 2,
+        "seconds": 12,
+        "rounds": 1,
+        "warmup": 1,
+        "harness_sha256": "4a34a286734200d37e924d74df73a35f5ee13e4e9b8753149958f66567f671fb"
+      },
+      "pairs_sha256": "e5189296cf05ad190ce2d6183c8acb83750787a5ac37e12bcd56b2adeb7dfc34",
+      "pairs": [
+        {
+          "baseline": {
+            "counted_hps": 19.583291946527712,
+            "completed_hps": 20.236068344745306
+          },
+          "candidate": {
+            "counted_hps": 19.55916699738481,
+            "completed_hps": 20.21113923063097
+          }
+        },
+        {
+          "candidate": {
+            "counted_hps": 19.54493547738803,
+            "completed_hps": 20.1964333266343
+          },
+          "baseline": {
+            "counted_hps": 19.59729744403736,
+            "completed_hps": 20.25054069217194
+          }
+        }
+      ],
+      "completed_hps": {
+        "baseline": 20.243304518458622,
+        "candidate": 20.203786278632634
+      },
+      "paired_delta_pct": -0.19521658139937115,
+      "paired_deltas_pct": [
+        -0.12319149001495111,
+        -0.26718973266010027
+      ],
+      "descriptive_resampling_interval_pct": [
+        -0.2617917463155456,
+        -0.1285933718687826
+      ],
+      "complete": true
+    }
+  }
+}

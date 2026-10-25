@@ -1,0 +1,28 @@
+{
+  "source": "0ee751e5f9641541b042e6da2b93c1799db47d77",
+  "includes_prs": [
+    40,
+    41,
+    43,
+    44,
+    45
+  ],
+  "additional_candidate": "f20e7bb1772be024a12ac5cdcc92685ba89d3ddd",
+  "workspace_tests": {
+    "passed": 497,
+    "failed": 0,
+    "ignored": 5
+  },
+  "all_features_all_targets": "passed",
+  "windows_gnu_test_cross_compilation": "passed; compilation only, not native execution",
+  "strict_kernel_clippy": "passed",
+  "formatting": "pinned Rust1.93 scoped checks passed",
+  "workspace_clippy": "Existing124diagnostics remain disclosed separately; no clean workspace claim",
+  "logs_sha256": {
+    "integration-codegen-workspace.log": "0f31bb5bd58fdb1fdc4282dc1af64bbc964817c6bc73ae51eb76943708b60d96",
+    "integration-codegen-all-features.log": "a094fc62a15de413077ef768c5c04b56b1e563afcec7a2eae4028c74759c3196",
+    "integration-codegen-windows.log": "fa57834c9b827fd98ceb80c1306915009d40362d22d941b7dd72e6020f56a4e5",
+    "integration-codegen-kernel-clippy.log": "8a9ec6c177572b81139f19dc328f8587a23c99a891943873b304609570d1909f"
+  },
+  "created_at": "2026-10-24T16:56:39.323707+00:00"
+}

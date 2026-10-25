@@ -676,7 +676,7 @@ struct Cli {
     #[arg(long, value_enum, default_value_t = BenchKind::Backend)]
     bench_kind: BenchKind,
 
-    /// Force a supported CPU kernel for offline benchmarks (scalar, avx2, avx512, avx512-256, neon).
+    /// Force a supported CPU kernel for offline benchmarks (scalar, avx2, avx512, avx512-256, avx512-256-stream, neon).
     /// Requires --bench, CPU-only backends, fixed --threads, and no CPU autotuning.
     #[arg(long, requires_all = ["bench", "threads"])]
     bench_cpu_kernel: Option<blocknet_pow_kernel::CpuKernel>,
@@ -730,6 +730,9 @@ pub struct Config {
     pub backend_specs: Vec<BackendSpec>,
     pub threads: usize,
     pub cpu_auto_threads_cap: usize,
+    /// Frozen automatic worker slots for this run; distinct from the RAM-safe
+    /// manual/offline ceiling and the CPU-only cache/search maximum.
+    pub cpu_autotune_worker_slots: Option<usize>,
     pub cpu_memory_reserve_percent: u8,
     pub cpu_affinity: CpuAffinityMode,
     pub cpu_page_mode: CpuPageMode,
@@ -1231,6 +1234,7 @@ impl Config {
             backend_specs,
             threads: resolved_threads,
             cpu_auto_threads_cap: auto_threads_cap,
+            cpu_autotune_worker_slots: None,
             cpu_memory_reserve_percent: cli.cpu_memory_reserve_percent,
             cpu_affinity: cli.cpu_affinity,
             cpu_page_mode: cli.cpu_page_mode,
@@ -2879,6 +2883,18 @@ struct MemoryBudgetBytes {
     effective_available: u64,
 }
 
+/// Search/cache maximum from CPU availability and instance count only.
+/// Dynamic RAM limits govern active arenas, never the fixed nonce-lane stride.
+pub(crate) fn cpu_autotune_worker_ceiling(cfg: &Config) -> usize {
+    let instances = cfg
+        .backend_specs
+        .iter()
+        .filter(|s| s.kind == BackendKind::Cpu)
+        .count()
+        .max(1);
+    (cpu_parallelism_cap(cfg.cpu_affinity) / instances).max(1)
+}
+
 /// Total capacity is stable across temporary RAM use; available capacity includes
 /// only arenas this miner already owns, so they are not subtracted twice.
 pub(crate) fn cpu_autotune_capacity(cfg: &Config, owned_bytes: u64) -> (usize, usize) {
@@ -3007,6 +3023,53 @@ pub(crate) fn linux_cgroup_v2_path() -> Option<PathBuf> {
     }
     let dir = std::path::Path::new("/sys/fs/cgroup").join(relative);
     dir.is_dir().then_some(dir)
+}
+
+/// Remaining tasks in the tightest ancestor, including sibling/descendant use.
+/// This is a startup hint, not a reservation: clone() can still fail afterward.
+pub(crate) fn cpu_task_headroom() -> Option<usize> {
+    #[cfg(target_os = "linux")]
+    {
+        cgroup_v2_pid_headroom_at(Path::new("/sys/fs/cgroup"), &linux_cgroup_v2_path()?)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn cgroup_v2_pid_headroom_at(root: &Path, current: &Path) -> Option<usize> {
+    let relative = current.strip_prefix(root).ok()?;
+    if relative.components().any(|part| {
+        !matches!(
+            part,
+            std::path::Component::Normal(_) | std::path::Component::CurDir
+        )
+    }) {
+        return None;
+    }
+    let mut headroom = None;
+    for dir in current.ancestors().take_while(|dir| dir.starts_with(root)) {
+        let raw = match fs::read_to_string(dir.join("pids.max")) {
+            Ok(raw) => raw,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
+            Err(_) => return Some(0),
+        };
+        if raw.trim() == "max" {
+            continue;
+        }
+        // A present but unreadable/malformed finite budget cannot authorize
+        // more threads. Missing controller files mean this level has no limit.
+        let limit = raw.trim().parse::<u64>().unwrap_or(0);
+        let used = fs::read_to_string(dir.join("pids.current"))
+            .ok()
+            .and_then(|s| s.trim().parse::<u64>().ok())
+            .unwrap_or(limit);
+        let remaining = usize::try_from(limit.saturating_sub(used)).unwrap_or(usize::MAX);
+        headroom = Some(headroom.map_or(remaining, |old: usize| old.min(remaining)));
+    }
+    headroom
 }
 
 #[cfg(target_os = "linux")]
@@ -3182,6 +3245,34 @@ mod tests {
     use super::*;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn pid_headroom_uses_tightest_ancestor_and_fails_closed_on_bad_usage() {
+        let root = unique_temp_dir();
+        let group = root.join("service/worker");
+        fs::create_dir_all(&group).unwrap();
+        fs::write(root.join("pids.max"), "max\n").unwrap();
+        fs::write(root.join("service/pids.max"), "64\n").unwrap();
+        fs::write(root.join("service/pids.current"), "60\n").unwrap();
+        fs::write(group.join("pids.max"), "32\n").unwrap();
+        fs::write(group.join("pids.current"), "10\n").unwrap();
+        assert_eq!(cgroup_v2_pid_headroom_at(&root, &group), Some(4));
+        fs::write(group.join("pids.current"), "34\n").unwrap();
+        assert_eq!(cgroup_v2_pid_headroom_at(&root, &group), Some(0));
+        fs::write(group.join("pids.current"), "bad\n").unwrap();
+        assert_eq!(cgroup_v2_pid_headroom_at(&root, &group), Some(0));
+        fs::remove_file(group.join("pids.current")).unwrap();
+        assert_eq!(cgroup_v2_pid_headroom_at(&root, &group), Some(0));
+        fs::write(group.join("pids.max"), "max\n").unwrap();
+        assert_eq!(cgroup_v2_pid_headroom_at(&root, &group), Some(4));
+        fs::write(root.join("service/pids.max"), "max\n").unwrap();
+        assert_eq!(cgroup_v2_pid_headroom_at(&root, &group), None);
+        assert_eq!(
+            cgroup_v2_pid_headroom_at(&root, &root.join("../outside")),
+            None
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
 
     fn unique_temp_dir() -> PathBuf {
         let mut dir = std::env::temp_dir();

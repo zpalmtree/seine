@@ -1,0 +1,208 @@
+{
+  "numa-results": {
+    "balanced_local_vs_default_pct": 0.05686242766027583,
+    "paired_deltas_pct": [
+      -0.03784405239595223,
+      -0.09896740314766506,
+      0.3078794026856846
+    ],
+    "rates": {
+      "balanced-1-audit": {
+        "counted_hps": 11.758332775287755,
+        "completed_hps": 12.15027720113068,
+        "local_fraction": 1.0
+      },
+      "balanced-1-local": {
+        "counted_hps": 11.753094179901233,
+        "completed_hps": 12.14567904386043,
+        "local_fraction": 1.0
+      },
+      "balanced-2-local": {
+        "counted_hps": 11.778275926007016,
+        "completed_hps": 12.170885123540582,
+        "local_fraction": 1.0
+      },
+      "balanced-2-audit": {
+        "counted_hps": 11.789944127542604,
+        "completed_hps": 12.182942265127359,
+        "local_fraction": 1.0
+      },
+      "balanced-3-audit": {
+        "counted_hps": 11.737163598236414,
+        "completed_hps": 12.128402384844293,
+        "local_fraction": 1.0
+      },
+      "balanced-3-local": {
+        "counted_hps": 11.773299907414906,
+        "completed_hps": 12.165743237662067,
+        "local_fraction": 1.0
+      },
+      "remote-control-1-audit": {
+        "counted_hps": 11.524098174900905,
+        "completed_hps": 12.16432585128429,
+        "local_fraction": 1.0
+      },
+      "remote-control-1-remote": {
+        "counted_hps": 10.600703416863828,
+        "completed_hps": 11.263247380417816,
+        "local_fraction": 0.0
+      },
+      "remote-control-2-remote": {
+        "counted_hps": 10.622008064238813,
+        "completed_hps": 11.285883568253738,
+        "local_fraction": 0.0
+      },
+      "remote-control-2-audit": {
+        "counted_hps": 11.441515003953237,
+        "completed_hps": 12.081599759419152,
+        "local_fraction": 1.0
+      },
+      "imbalanced-audit": {
+        "counted_hps": 7.980911752640455,
+        "completed_hps": 8.61938469285169,
+        "local_fraction": 0.5
+      },
+      "regular-audit": {
+        "counted_hps": 9.581562614466007,
+        "completed_hps": 10.225701277623386,
+        "local_fraction": 1.0
+      },
+      "regular-local": {
+        "counted_hps": 9.547925209547431,
+        "completed_hps": 10.184453556850594,
+        "local_fraction": 1.0
+      }
+    }
+  },
+  "imbalance-results": {
+    "paired_delta_pct": 40.39995432123518,
+    "paired_deltas_pct": [
+      40.907196333354,
+      39.6256630033573,
+      40.67032065476239
+    ],
+    "rates": {
+      "auto-1-audit": {
+        "counted_hps": 8.262089242875206,
+        "completed_hps": 8.6555220639645,
+        "local_fraction": 0.5,
+        "backing": {
+          "memory_explicit_large": 8,
+          "memory_explicit_large_1g": 0,
+          "memory_transparent_huge": 0,
+          "memory_regular": 0,
+          "memory_heap": 0
+        }
+      },
+      "auto-1-local": {
+        "counted_hps": 11.802825937110228,
+        "completed_hps": 12.196253468347233,
+        "local_fraction": 1.0,
+        "backing": {
+          "memory_explicit_large": 4,
+          "memory_explicit_large_1g": 0,
+          "memory_transparent_huge": 4,
+          "memory_regular": 0,
+          "memory_heap": 0
+        }
+      },
+      "auto-2-local": {
+        "counted_hps": 11.7214190553915,
+        "completed_hps": 12.112133023904551,
+        "local_fraction": 1.0,
+        "backing": {
+          "memory_explicit_large": 4,
+          "memory_explicit_large_1g": 0,
+          "memory_transparent_huge": 4,
+          "memory_regular": 0,
+          "memory_heap": 0
+        }
+      },
+      "auto-2-audit": {
+        "counted_hps": 8.280412980055095,
+        "completed_hps": 8.674718360057717,
+        "local_fraction": 0.5,
+        "backing": {
+          "memory_explicit_large": 8,
+          "memory_explicit_large_1g": 0,
+          "memory_transparent_huge": 0,
+          "memory_regular": 0,
+          "memory_heap": 0
+        }
+      },
+      "auto-3-audit": {
+        "counted_hps": 8.24252639567781,
+        "completed_hps": 8.635027652614848,
+        "local_fraction": 0.5,
+        "backing": {
+          "memory_explicit_large": 8,
+          "memory_explicit_large_1g": 0,
+          "memory_transparent_huge": 0,
+          "memory_regular": 0,
+          "memory_heap": 0
+        }
+      },
+      "auto-3-local": {
+        "counted_hps": 11.755084923445848,
+        "completed_hps": 12.14692108756071,
+        "local_fraction": 1.0,
+        "backing": {
+          "memory_explicit_large": 4,
+          "memory_explicit_large_1g": 0,
+          "memory_transparent_huge": 4,
+          "memory_regular": 0,
+          "memory_heap": 0
+        }
+      }
+    }
+  },
+  "page-results": {
+    "completed_hps": {
+      "baseline": 12.51743203383695,
+      "candidate": 12.52438717044272
+    },
+    "paired_deltas_pct": [
+      -0.17605335964704372,
+      0.09897174553237242,
+      0.24487210520587332
+    ],
+    "paired_geometric_delta_pct": 0.05577790578914499,
+    "paired_resampling_interval_pct": [
+      -0.17605335964704372,
+      0.19621503853324285
+    ],
+    "scope": "within-host repeatability; not whole-architecture uncertainty"
+  },
+  "evidence_tar_sha256": "839949574b95e80f701dc4e1b84c61f82f36062394f6ef194c2635b021189858",
+  "host": {
+    "cpu": "AMD EPYC 7R13",
+    "instance_type": "c6a.8xlarge",
+    "vcpus": 32,
+    "physical_cores": 16,
+    "numa_nodes": 2,
+    "l3_groups": 2,
+    "memory_gib_advertised": 64,
+    "report_evidence": {
+      "cpu_brand": "AMD EPYC 7R13 Processor",
+      "cpu_identity": {
+        "vendor": "AuthenticAMD",
+        "family": 25,
+        "model": 1,
+        "stepping": 1
+      },
+      "logical_cores": 32,
+      "physical_cores": 16,
+      "total_memory_bytes": 66030739456,
+      "kernel_version": "7.0.0-1014-aws",
+      "rustc_version": "rustc 1.93.0 (254b59607 2026-01-19)",
+      "build_rustflags": ""
+    }
+  },
+  "cleanup": {
+    "instance_terminated": true,
+    "root_volume_deleted": true,
+    "security_group_deleted": true,
+    "private_key_removed": true,
+    "completed_at": "2026-10-24T09:41:30.466383+00:00"
+  }
+}

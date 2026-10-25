@@ -1,0 +1,32 @@
+{
+  "source": "be242364db5665f26fb978652e113509a62a8d41",
+  "base": "0a63aec2c717d1c2209a381f738063967b342cb7",
+  "accepted_prs": [
+    40,
+    41,
+    43,
+    45
+  ],
+  "excluded_prs": [
+    44,
+    46
+  ],
+  "workspace_tests": {
+    "passed": 496,
+    "ignored": 5,
+    "failed": 0
+  },
+  "all_features_all_targets": "passed",
+  "isolated_cpu_only_release_build": "passed",
+  "kernel_verifier_matches_baseline_sha256": "3ecdce8a76d4d19f007e90c07b647907de795e8037b58ea59bc454212deafda4",
+  "native_performance_confirmation": "complete; repeated AVX2 loss; PR41/43 held, only40/45 merged",
+  "logs_sha256": {
+    "accepted-merge-workspace.log": "da2c52dbdf96a4ccea1fc9659e439d9c8959fd57c1dac34a748065174683af70",
+    "accepted-merge-all-features.log": "f53b2310e3d926f6f4434091781d1c8ef29ac4567e653d78a2d3cef2d474b930",
+    "accepted-merge-release.log": "f001a80b1429652d4e262f6047123457698815530d227d3d7d6fddee0afe065c"
+  },
+  "at": "2026-10-24T19:50:02.530039+00:00",
+  "scoped_rustfmt": "Rust1.93.0 check passed on10changed Rust files, skip_children=true",
+  "source_archive_sha256": "19d03d87a4c5f93d7faf7ccc8b62c6b9bb1ae6555509f61c28560da0e15bc385",
+  "parity_export_recovery": "Extra standalone retry log broke exact-two glob; explicit filenames recovered export; raw failure retained"
+}

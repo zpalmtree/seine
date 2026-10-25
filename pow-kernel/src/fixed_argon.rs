@@ -1,6 +1,9 @@
 #[cfg(target_arch = "x86_64")]
 mod avx512_256;
 
+#[cfg(feature = "cpu-research")]
+pub(crate) mod research;
+
 use crate::CpuKernel;
 use std::convert::TryInto;
 use std::num::Wrapping;
@@ -22,6 +25,8 @@ const ISA_AVX512: u8 = 2;
 const ISA_NEON: u8 = 3;
 #[allow(dead_code)]
 const ISA_AVX512_256: u8 = 4;
+#[allow(dead_code)]
+const ISA_AVX512_256_STREAM: u8 = 5;
 const ADDRESSES_IN_BLOCK: usize = 128;
 const SYNC_POINTS: usize = 4;
 const MAX_PWD_LEN: usize = 0xFFFF_FFFF;
@@ -49,6 +54,7 @@ const fn isa_label(isa: u8) -> &'static str {
         ISA_AVX2 => "avx2",
         ISA_AVX512 => "avx512",
         ISA_AVX512_256 => "avx512-256",
+        ISA_AVX512_256_STREAM => "avx512-256-stream",
         ISA_NEON => "neon",
         _ => "scalar",
     }
@@ -65,6 +71,7 @@ const fn kernel_isa(kernel: CpuKernel) -> u8 {
         CpuKernel::Avx2 => ISA_AVX2,
         CpuKernel::Avx512 => ISA_AVX512,
         CpuKernel::Avx512256 => ISA_AVX512_256,
+        CpuKernel::Avx512256Stream => ISA_AVX512_256_STREAM,
         CpuKernel::Neon => ISA_NEON,
     }
 }
@@ -76,7 +83,13 @@ pub fn active_isa_label() -> &'static str {
 pub fn compiled_isa_variants() -> &'static [&'static str] {
     #[cfg(target_arch = "x86_64")]
     {
-        &["scalar", "avx2", "avx512", "avx512-256"]
+        &[
+            "scalar",
+            "avx2",
+            "avx512",
+            "avx512-256",
+            "avx512-256-stream",
+        ]
     }
     #[cfg(target_arch = "aarch64")]
     {
@@ -172,12 +185,92 @@ impl FixedArgon2id {
         match self.isa {
             ISA_AVX512 => self.fill_blocks::<ISA_AVX512, true, false>(memory_blocks),
             ISA_AVX512_256 => self.fill_blocks::<ISA_AVX512_256, true, false>(memory_blocks),
+            #[cfg(target_arch = "x86_64")]
+            ISA_AVX512_256_STREAM => unsafe { self.fill_streaming_ring(memory_blocks) },
             ISA_AVX2 => self.fill_blocks::<ISA_AVX2, true, false>(memory_blocks),
             ISA_NEON => self.fill_blocks::<ISA_NEON, false, true>(memory_blocks),
             _ => self.fill_blocks::<ISA_SCALAR, false, false>(memory_blocks),
         }
 
         finalize(memory_blocks, out)
+    }
+
+    // Fixed one-pass, one-lane Argon2id: retain recent blocks in a cached ring.
+    // The ring serves recent references until a whole batch of streaming writes is
+    // fenced. At cur % 64 == 0 all older arena references are therefore committed.
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "avx2,avx512f,avx512vl")]
+    unsafe fn fill_streaming_ring(&self, memory: &mut [PowBlock]) {
+        use std::arch::x86_64::{__m256i, _mm256_load_si256, _mm256_stream_si256, _mm_mfence};
+        const RING: usize = 64;
+        const MASK: usize = RING - 1;
+        let mut ring = Box::new([PowBlock::default(); RING]);
+        ring[0] = memory[0];
+        ring[1] = memory[1];
+        let arena = memory.as_mut_ptr();
+        let cache = ring.as_mut_ptr();
+        debug_assert_eq!(arena as usize % 64, 0);
+        debug_assert_eq!(cache as usize % 64, 0);
+        for slice in 0..SYNC_POINTS {
+            let first = if slice == 0 { 2 } else { 0 };
+            let di = slice < 2;
+            let base = slice * self.segment_length;
+            for block in first..self.segment_length {
+                let cur = base + block;
+                if cur & MASK == 0 {
+                    // MFENCE orders prior WC stores before subsequent arena loads.
+                    _mm_mfence();
+                }
+                let prev = &*cache.add((cur - 1) & MASK);
+                let reference = if di {
+                    self.data_independent_ref_indexes[cur]
+                } else {
+                    reference_index(cur - 1, prev.0[0])
+                };
+                debug_assert!(reference < cur - 1);
+                // A distance of exactly RING aliases the output slot, so use the
+                // already-fenced arena in that case, never the cached ring.
+                let reference_ptr = if cur - reference < RING {
+                    cache.add(reference & MASK)
+                } else {
+                    arena.add(reference)
+                };
+                let dst = cache.add(cur & MASK);
+                debug_assert_ne!(dst, reference_ptr);
+                if di {
+                    if block + 3 < self.segment_length {
+                        let ahead = self.data_independent_ref_indexes[cur + 3];
+                        // Recent references are already cached, or are not yet
+                        // produced. Only issue an arena prefetch for older blocks.
+                        if ahead < cur && cur - ahead >= RING {
+                            prefetch_pow_block(&*arena.add(ahead));
+                        }
+                    }
+                    avx512_256::compress_into(prev, &*reference_ptr, &mut *dst);
+                } else if block + 1 < self.segment_length {
+                    avx512_256::compress_into_mid_prefetch_ring(
+                        prev,
+                        &*reference_ptr,
+                        &mut *dst,
+                        cur,
+                        arena,
+                        cache,
+                        cur + 1,
+                    );
+                } else {
+                    avx512_256::compress_into(prev, &*reference_ptr, &mut *dst);
+                }
+                // Contiguous stores fill each complete 64-byte cache line. The
+                // arena is never used as a pre-round backup in this candidate.
+                let src = (*dst).0.as_ptr();
+                let output = (*arena.add(cur)).0.as_mut_ptr();
+                for vector in 0..32 {
+                    let value = _mm256_load_si256(src.add(vector * 4).cast::<__m256i>());
+                    _mm256_stream_si256(output.add(vector * 4).cast::<__m256i>(), value);
+                }
+            }
+        }
+        _mm_mfence(); // Finalization consumes the final arena block.
     }
 
     fn fill_blocks<

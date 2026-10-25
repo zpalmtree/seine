@@ -1,0 +1,902 @@
+[
+  {
+    "label": "win-screen-r1-cache96-w1-avx2",
+    "repeat": 1,
+    "case": "cache96-w1",
+    "threads": 1,
+    "cpus": [
+      0
+    ],
+    "kernel": "avx2",
+    "completed_hps": 2.0574099878966488
+  },
+  {
+    "label": "win-screen-r1-cache96-w1-avx512",
+    "repeat": 1,
+    "case": "cache96-w1",
+    "threads": 1,
+    "cpus": [
+      0
+    ],
+    "kernel": "avx512",
+    "completed_hps": 2.4808790464985506
+  },
+  {
+    "label": "win-screen-r1-cache96-w1-avx512-256",
+    "repeat": 1,
+    "case": "cache96-w1",
+    "threads": 1,
+    "cpus": [
+      0
+    ],
+    "kernel": "avx512-256",
+    "completed_hps": 2.4228434832255497
+  },
+  {
+    "label": "win-screen-r1-cache32-w1-avx512",
+    "repeat": 1,
+    "case": "cache32-w1",
+    "threads": 1,
+    "cpus": [
+      16
+    ],
+    "kernel": "avx512",
+    "completed_hps": 2.1181116177831134
+  },
+  {
+    "label": "win-screen-r1-cache32-w1-avx512-256",
+    "repeat": 1,
+    "case": "cache32-w1",
+    "threads": 1,
+    "cpus": [
+      16
+    ],
+    "kernel": "avx512-256",
+    "completed_hps": 2.160309953809284
+  },
+  {
+    "label": "win-screen-r1-cache32-w1-avx2",
+    "repeat": 1,
+    "case": "cache32-w1",
+    "threads": 1,
+    "cpus": [
+      16
+    ],
+    "kernel": "avx2",
+    "completed_hps": 1.9773587088962863
+  },
+  {
+    "label": "win-screen-r1-cache96-w4-avx512-256",
+    "repeat": 1,
+    "case": "cache96-w4",
+    "threads": 4,
+    "cpus": [
+      0,
+      2,
+      4,
+      6
+    ],
+    "kernel": "avx512-256",
+    "completed_hps": 5.78649328024578
+  },
+  {
+    "label": "win-screen-r1-cache96-w4-avx2",
+    "repeat": 1,
+    "case": "cache96-w4",
+    "threads": 4,
+    "cpus": [
+      0,
+      2,
+      4,
+      6
+    ],
+    "kernel": "avx2",
+    "completed_hps": 5.551735625959896
+  },
+  {
+    "label": "win-screen-r1-cache96-w4-avx512",
+    "repeat": 1,
+    "case": "cache96-w4",
+    "threads": 4,
+    "cpus": [
+      0,
+      2,
+      4,
+      6
+    ],
+    "kernel": "avx512",
+    "completed_hps": 5.878404348384828
+  },
+  {
+    "label": "win-screen-r1-cache32-w4-avx2",
+    "repeat": 1,
+    "case": "cache32-w4",
+    "threads": 4,
+    "cpus": [
+      16,
+      18,
+      20,
+      22
+    ],
+    "kernel": "avx2",
+    "completed_hps": 5.525302565806663
+  },
+  {
+    "label": "win-screen-r1-cache32-w4-avx512",
+    "repeat": 1,
+    "case": "cache32-w4",
+    "threads": 4,
+    "cpus": [
+      16,
+      18,
+      20,
+      22
+    ],
+    "kernel": "avx512",
+    "completed_hps": 5.739052238948233
+  },
+  {
+    "label": "win-screen-r1-cache32-w4-avx512-256",
+    "repeat": 1,
+    "case": "cache32-w4",
+    "threads": 4,
+    "cpus": [
+      16,
+      18,
+      20,
+      22
+    ],
+    "kernel": "avx512-256",
+    "completed_hps": 5.472495264971059
+  },
+  {
+    "label": "win-screen-r1-spread-w4-avx512",
+    "repeat": 1,
+    "case": "spread-w4",
+    "threads": 4,
+    "cpus": [
+      0,
+      2,
+      16,
+      18
+    ],
+    "kernel": "avx512",
+    "completed_hps": 6.060611179805195
+  },
+  {
+    "label": "win-screen-r1-spread-w4-avx512-256",
+    "repeat": 1,
+    "case": "spread-w4",
+    "threads": 4,
+    "cpus": [
+      0,
+      2,
+      16,
+      18
+    ],
+    "kernel": "avx512-256",
+    "completed_hps": 6.044451993719795
+  },
+  {
+    "label": "win-screen-r1-spread-w4-avx2",
+    "repeat": 1,
+    "case": "spread-w4",
+    "threads": 4,
+    "cpus": [
+      0,
+      2,
+      16,
+      18
+    ],
+    "kernel": "avx2",
+    "completed_hps": 6.063217119603433
+  },
+  {
+    "label": "win-screen-r1-smt-w4-avx512-256",
+    "repeat": 1,
+    "case": "smt-w4",
+    "threads": 4,
+    "cpus": [
+      0,
+      1,
+      16,
+      17
+    ],
+    "kernel": "avx512-256",
+    "completed_hps": 5.798154276448256
+  },
+  {
+    "label": "win-screen-r1-smt-w4-avx2",
+    "repeat": 1,
+    "case": "smt-w4",
+    "threads": 4,
+    "cpus": [
+      0,
+      1,
+      16,
+      17
+    ],
+    "kernel": "avx2",
+    "completed_hps": 5.744784116614062
+  },
+  {
+    "label": "win-screen-r1-smt-w4-avx512",
+    "repeat": 1,
+    "case": "smt-w4",
+    "threads": 4,
+    "cpus": [
+      0,
+      1,
+      16,
+      17
+    ],
+    "kernel": "avx512",
+    "completed_hps": 6.172902348557377
+  },
+  {
+    "label": "win-screen-r1-cache96-w8-avx2",
+    "repeat": 1,
+    "case": "cache96-w8",
+    "threads": 8,
+    "cpus": [
+      0,
+      2,
+      4,
+      6,
+      8,
+      10,
+      12,
+      14
+    ],
+    "kernel": "avx2",
+    "completed_hps": 6.198128538001286
+  },
+  {
+    "label": "win-screen-r1-cache96-w8-avx512",
+    "repeat": 1,
+    "case": "cache96-w8",
+    "threads": 8,
+    "cpus": [
+      0,
+      2,
+      4,
+      6,
+      8,
+      10,
+      12,
+      14
+    ],
+    "kernel": "avx512",
+    "completed_hps": 6.7829946824222
+  },
+  {
+    "label": "win-screen-r1-cache96-w8-avx512-256",
+    "repeat": 1,
+    "case": "cache96-w8",
+    "threads": 8,
+    "cpus": [
+      0,
+      2,
+      4,
+      6,
+      8,
+      10,
+      12,
+      14
+    ],
+    "kernel": "avx512-256",
+    "completed_hps": 7.0301728500683875
+  },
+  {
+    "label": "win-screen-r1-cache32-w8-avx512",
+    "repeat": 1,
+    "case": "cache32-w8",
+    "threads": 8,
+    "cpus": [
+      16,
+      18,
+      20,
+      22,
+      24,
+      26,
+      28,
+      30
+    ],
+    "kernel": "avx512",
+    "completed_hps": 7.1497949638716385
+  },
+  {
+    "label": "win-screen-r1-cache32-w8-avx512-256",
+    "repeat": 1,
+    "case": "cache32-w8",
+    "threads": 8,
+    "cpus": [
+      16,
+      18,
+      20,
+      22,
+      24,
+      26,
+      28,
+      30
+    ],
+    "kernel": "avx512-256",
+    "completed_hps": 7.135107786433945
+  },
+  {
+    "label": "win-screen-r1-cache32-w8-avx2",
+    "repeat": 1,
+    "case": "cache32-w8",
+    "threads": 8,
+    "cpus": [
+      16,
+      18,
+      20,
+      22,
+      24,
+      26,
+      28,
+      30
+    ],
+    "kernel": "avx2",
+    "completed_hps": 6.957258995798257
+  },
+  {
+    "label": "win-screen-r1-spread-w8-avx512-256",
+    "repeat": 1,
+    "case": "spread-w8",
+    "threads": 8,
+    "cpus": [
+      0,
+      2,
+      4,
+      6,
+      16,
+      18,
+      20,
+      22
+    ],
+    "kernel": "avx512-256",
+    "completed_hps": 7.011577037731567
+  },
+  {
+    "label": "win-screen-r1-spread-w8-avx2",
+    "repeat": 1,
+    "case": "spread-w8",
+    "threads": 8,
+    "cpus": [
+      0,
+      2,
+      4,
+      6,
+      16,
+      18,
+      20,
+      22
+    ],
+    "kernel": "avx2",
+    "completed_hps": 6.974797161697291
+  },
+  {
+    "label": "win-screen-r1-spread-w8-avx512",
+    "repeat": 1,
+    "case": "spread-w8",
+    "threads": 8,
+    "cpus": [
+      0,
+      2,
+      4,
+      6,
+      16,
+      18,
+      20,
+      22
+    ],
+    "kernel": "avx512",
+    "completed_hps": 7.128588702686271
+  },
+  {
+    "label": "win-screen-r1-smt-w8-avx2",
+    "repeat": 1,
+    "case": "smt-w8",
+    "threads": 8,
+    "cpus": [
+      0,
+      1,
+      2,
+      3,
+      16,
+      17,
+      18,
+      19
+    ],
+    "kernel": "avx2",
+    "completed_hps": 6.624703663732222
+  },
+  {
+    "label": "win-screen-r1-smt-w8-avx512",
+    "repeat": 1,
+    "case": "smt-w8",
+    "threads": 8,
+    "cpus": [
+      0,
+      1,
+      2,
+      3,
+      16,
+      17,
+      18,
+      19
+    ],
+    "kernel": "avx512",
+    "completed_hps": 7.017804380246818
+  },
+  {
+    "label": "win-screen-r1-smt-w8-avx512-256",
+    "repeat": 1,
+    "case": "smt-w8",
+    "threads": 8,
+    "cpus": [
+      0,
+      1,
+      2,
+      3,
+      16,
+      17,
+      18,
+      19
+    ],
+    "kernel": "avx512-256",
+    "completed_hps": 6.762039441426428
+  },
+  {
+    "label": "win-screen-r2-smt-w8-avx512-256",
+    "repeat": 2,
+    "case": "smt-w8",
+    "threads": 8,
+    "cpus": [
+      0,
+      1,
+      2,
+      3,
+      16,
+      17,
+      18,
+      19
+    ],
+    "kernel": "avx512-256",
+    "completed_hps": 6.979606571396371
+  },
+  {
+    "label": "win-screen-r2-smt-w8-avx512",
+    "repeat": 2,
+    "case": "smt-w8",
+    "threads": 8,
+    "cpus": [
+      0,
+      1,
+      2,
+      3,
+      16,
+      17,
+      18,
+      19
+    ],
+    "kernel": "avx512",
+    "completed_hps": 7.1902414421580785
+  },
+  {
+    "label": "win-screen-r2-smt-w8-avx2",
+    "repeat": 2,
+    "case": "smt-w8",
+    "threads": 8,
+    "cpus": [
+      0,
+      1,
+      2,
+      3,
+      16,
+      17,
+      18,
+      19
+    ],
+    "kernel": "avx2",
+    "completed_hps": 6.978191787590319
+  },
+  {
+    "label": "win-screen-r2-spread-w8-avx2",
+    "repeat": 2,
+    "case": "spread-w8",
+    "threads": 8,
+    "cpus": [
+      0,
+      2,
+      4,
+      6,
+      16,
+      18,
+      20,
+      22
+    ],
+    "kernel": "avx2",
+    "completed_hps": 6.994657975885968
+  },
+  {
+    "label": "win-screen-r2-spread-w8-avx512-256",
+    "repeat": 2,
+    "case": "spread-w8",
+    "threads": 8,
+    "cpus": [
+      0,
+      2,
+      4,
+      6,
+      16,
+      18,
+      20,
+      22
+    ],
+    "kernel": "avx512-256",
+    "completed_hps": 6.892477413717383
+  },
+  {
+    "label": "win-screen-r2-spread-w8-avx512",
+    "repeat": 2,
+    "case": "spread-w8",
+    "threads": 8,
+    "cpus": [
+      0,
+      2,
+      4,
+      6,
+      16,
+      18,
+      20,
+      22
+    ],
+    "kernel": "avx512",
+    "completed_hps": 6.086042740077826
+  },
+  {
+    "label": "win-screen-r2-cache32-w8-avx512",
+    "repeat": 2,
+    "case": "cache32-w8",
+    "threads": 8,
+    "cpus": [
+      16,
+      18,
+      20,
+      22,
+      24,
+      26,
+      28,
+      30
+    ],
+    "kernel": "avx512",
+    "completed_hps": 7.187480899559327
+  },
+  {
+    "label": "win-screen-r2-cache32-w8-avx2",
+    "repeat": 2,
+    "case": "cache32-w8",
+    "threads": 8,
+    "cpus": [
+      16,
+      18,
+      20,
+      22,
+      24,
+      26,
+      28,
+      30
+    ],
+    "kernel": "avx2",
+    "completed_hps": 7.069604364172818
+  },
+  {
+    "label": "win-screen-r2-cache32-w8-avx512-256",
+    "repeat": 2,
+    "case": "cache32-w8",
+    "threads": 8,
+    "cpus": [
+      16,
+      18,
+      20,
+      22,
+      24,
+      26,
+      28,
+      30
+    ],
+    "kernel": "avx512-256",
+    "completed_hps": 7.187043044002423
+  },
+  {
+    "label": "win-screen-r2-cache96-w8-avx512-256",
+    "repeat": 2,
+    "case": "cache96-w8",
+    "threads": 8,
+    "cpus": [
+      0,
+      2,
+      4,
+      6,
+      8,
+      10,
+      12,
+      14
+    ],
+    "kernel": "avx512-256",
+    "completed_hps": 7.2227781358905805
+  },
+  {
+    "label": "win-screen-r2-cache96-w8-avx512",
+    "repeat": 2,
+    "case": "cache96-w8",
+    "threads": 8,
+    "cpus": [
+      0,
+      2,
+      4,
+      6,
+      8,
+      10,
+      12,
+      14
+    ],
+    "kernel": "avx512",
+    "completed_hps": 7.3065035317418365
+  },
+  {
+    "label": "win-screen-r2-cache96-w8-avx2",
+    "repeat": 2,
+    "case": "cache96-w8",
+    "threads": 8,
+    "cpus": [
+      0,
+      2,
+      4,
+      6,
+      8,
+      10,
+      12,
+      14
+    ],
+    "kernel": "avx2",
+    "completed_hps": 7.024331048748762
+  },
+  {
+    "label": "win-screen-r2-smt-w4-avx2",
+    "repeat": 2,
+    "case": "smt-w4",
+    "threads": 4,
+    "cpus": [
+      0,
+      1,
+      16,
+      17
+    ],
+    "kernel": "avx2",
+    "completed_hps": 5.885318415215351
+  },
+  {
+    "label": "win-screen-r2-smt-w4-avx512-256",
+    "repeat": 2,
+    "case": "smt-w4",
+    "threads": 4,
+    "cpus": [
+      0,
+      1,
+      16,
+      17
+    ],
+    "kernel": "avx512-256",
+    "completed_hps": 5.973361849720333
+  },
+  {
+    "label": "win-screen-r2-smt-w4-avx512",
+    "repeat": 2,
+    "case": "smt-w4",
+    "threads": 4,
+    "cpus": [
+      0,
+      1,
+      16,
+      17
+    ],
+    "kernel": "avx512",
+    "completed_hps": 6.151507790988758
+  },
+  {
+    "label": "win-screen-r2-spread-w4-avx512",
+    "repeat": 2,
+    "case": "spread-w4",
+    "threads": 4,
+    "cpus": [
+      0,
+      2,
+      16,
+      18
+    ],
+    "kernel": "avx512",
+    "completed_hps": 6.437297617848231
+  },
+  {
+    "label": "win-screen-r2-spread-w4-avx2",
+    "repeat": 2,
+    "case": "spread-w4",
+    "threads": 4,
+    "cpus": [
+      0,
+      2,
+      16,
+      18
+    ],
+    "kernel": "avx2",
+    "completed_hps": 6.302547823239744
+  },
+  {
+    "label": "win-screen-r2-spread-w4-avx512-256",
+    "repeat": 2,
+    "case": "spread-w4",
+    "threads": 4,
+    "cpus": [
+      0,
+      2,
+      16,
+      18
+    ],
+    "kernel": "avx512-256",
+    "completed_hps": 6.211690213185931
+  },
+  {
+    "label": "win-screen-r2-cache32-w4-avx512-256",
+    "repeat": 2,
+    "case": "cache32-w4",
+    "threads": 4,
+    "cpus": [
+      16,
+      18,
+      20,
+      22
+    ],
+    "kernel": "avx512-256",
+    "completed_hps": 5.820260349557852
+  },
+  {
+    "label": "win-screen-r2-cache32-w4-avx512",
+    "repeat": 2,
+    "case": "cache32-w4",
+    "threads": 4,
+    "cpus": [
+      16,
+      18,
+      20,
+      22
+    ],
+    "kernel": "avx512",
+    "completed_hps": 5.921342361188414
+  },
+  {
+    "label": "win-screen-r2-cache32-w4-avx2",
+    "repeat": 2,
+    "case": "cache32-w4",
+    "threads": 4,
+    "cpus": [
+      16,
+      18,
+      20,
+      22
+    ],
+    "kernel": "avx2",
+    "completed_hps": 5.777798772586577
+  },
+  {
+    "label": "win-screen-r2-cache96-w4-avx2",
+    "repeat": 2,
+    "case": "cache96-w4",
+    "threads": 4,
+    "cpus": [
+      0,
+      2,
+      4,
+      6
+    ],
+    "kernel": "avx2",
+    "completed_hps": 6.246498910561789
+  },
+  {
+    "label": "win-screen-r2-cache96-w4-avx512-256",
+    "repeat": 2,
+    "case": "cache96-w4",
+    "threads": 4,
+    "cpus": [
+      0,
+      2,
+      4,
+      6
+    ],
+    "kernel": "avx512-256",
+    "completed_hps": 6.2916567274055675
+  },
+  {
+    "label": "win-screen-r2-cache96-w4-avx512",
+    "repeat": 2,
+    "case": "cache96-w4",
+    "threads": 4,
+    "cpus": [
+      0,
+      2,
+      4,
+      6
+    ],
+    "kernel": "avx512",
+    "completed_hps": 6.485132325979339
+  },
+  {
+    "label": "win-screen-r2-cache32-w1-avx512",
+    "repeat": 2,
+    "case": "cache32-w1",
+    "threads": 1,
+    "cpus": [
+      16
+    ],
+    "kernel": "avx512",
+    "completed_hps": 2.228306478502202
+  },
+  {
+    "label": "win-screen-r2-cache32-w1-avx2",
+    "repeat": 2,
+    "case": "cache32-w1",
+    "threads": 1,
+    "cpus": [
+      16
+    ],
+    "kernel": "avx2",
+    "completed_hps": 1.9934158931645771
+  },
+  {
+    "label": "win-screen-r2-cache32-w1-avx512-256",
+    "repeat": 2,
+    "case": "cache32-w1",
+    "threads": 1,
+    "cpus": [
+      16
+    ],
+    "kernel": "avx512-256",
+    "completed_hps": 2.0913449882206208
+  },
+  {
+    "label": "win-screen-r2-cache96-w1-avx512-256",
+    "repeat": 2,
+    "case": "cache96-w1",
+    "threads": 1,
+    "cpus": [
+      0
+    ],
+    "kernel": "avx512-256",
+    "completed_hps": 2.516258346928488
+  },
+  {
+    "label": "win-screen-r2-cache96-w1-avx512",
+    "repeat": 2,
+    "case": "cache96-w1",
+    "threads": 1,
+    "cpus": [
+      0
+    ],
+    "kernel": "avx512",
+    "completed_hps": 2.6620062889701392
+  },
+  {
+    "label": "win-screen-r2-cache96-w1-avx2",
+    "repeat": 2,
+    "case": "cache96-w1",
+    "threads": 1,
+    "cpus": [
+      0
+    ],
+    "kernel": "avx2",
+    "completed_hps": 2.373315285457245
+  }
+]

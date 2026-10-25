@@ -1,0 +1,406 @@
+{
+  "status": "research-only; not promoted",
+  "controller_outcome": {
+    "status": "FAILED",
+    "reason": "InterruptedError(15)",
+    "gain_required": false,
+    "finished_at": "2026-10-24T19:25:01.483588+00:00"
+  },
+  "campaign_scope_decision": {
+    "at": "2026-10-24T19:24:57.229969+00:00",
+    "reason": "All four cold ABBA windows complete; intentionally defer prototype lifecycle to prioritize final Intel regressions within campaign deadline. No promotion; interrupted lifecycle is not a product failure or pass."
+  },
+  "hardware": {
+    "CPU(s):": "16",
+    "Model name:": "Intel(R) Xeon(R) Platinum 8124M CPU @ 3.00GHz",
+    "Thread(s) per core:": "2",
+    "Core(s) per socket:": "8",
+    "Socket(s):": "1",
+    "L3 cache:": "24.8 MiB (1 instance)"
+  },
+  "identities": {
+    "source_control": "f20e7bb1772be024a12ac5cdcc92685ba89d3ddd",
+    "source_candidate": "e6809bb78b51c6b94c6a6b7ebcff2cf21f95faa3",
+    "profile": "release --no-default-features, Rust1.93.0, generic x86_64, no RUSTFLAGS",
+    "sha256": {
+      "seine-joint-candidate": "1200135d8d7b6b6cfebc56e1da8612e50fa334d4e0423f59f7cc2c776f53e1f4",
+      "seine-joint-control": "24149835ff2468ba75f95c5e34c0d5f0ca4edd0a2848dc16da16534e0812d86f",
+      "verify-joint-candidate": "9837aac9b855982444a8c4758d01d69d9023e6f78dc36aa8eb13946aaaad95a8",
+      "verify-joint-control": "9837aac9b855982444a8c4758d01d69d9023e6f78dc36aa8eb13946aaaad95a8"
+    },
+    "created_at": "2026-10-24T17:37:21.095619+00:00",
+    "scope": "Joint count/kernel prototype on the confirmed x86 boundary fix; no hash-kernel source changes versus control."
+  },
+  "parity": {
+    "control-full-size-parity.log": "reference=[e9, fb, fa, cf, b6, 96, ae, f8, f8, 88, 20, 17, c5, 5b, 23, 4e, 4b, 31, 30, a4, b6, 23, 42, c6, 3d, f5, 61, 31, 8d, 5a, db, a8]\nscalar: PASS (full 2 GiB reference parity)\navx2: PASS (full 2 GiB reference parity)\navx512: PASS (full 2 GiB reference parity)\navx512-256: PASS (full 2 GiB reference parity)\nneon: unsupported\nneon-sha3: unsupported\n",
+    "candidate-full-size-parity.log": "reference=[e9, fb, fa, cf, b6, 96, ae, f8, f8, 88, 20, 17, c5, 5b, 23, 4e, 4b, 31, 30, a4, b6, 23, 42, c6, 3d, f5, 61, 31, 8d, 5a, db, a8]\nscalar: PASS (full 2 GiB reference parity)\navx2: PASS (full 2 GiB reference parity)\navx512: PASS (full 2 GiB reference parity)\navx512-256: PASS (full 2 GiB reference parity)\nneon: unsupported\nneon-sha3: unsupported\n"
+  },
+  "fixed_kernel_gate": {
+    "paired_gain_percent": {
+      "avx2": [
+        -3.032408556982924,
+        -0.003930359952331042
+      ],
+      "avx512": [
+        -2.015401675232964,
+        0.9270918323586397
+      ]
+    },
+    "reject_if_same_kernel_both_pairs_below_percent": -3
+  },
+  "actual_started_window_order": [
+    "joint-control-a",
+    "joint-candidate-a",
+    "joint-candidate-b",
+    "joint-control-b"
+  ],
+  "windows": [
+    {
+      "label": "joint-control-a",
+      "variant": "control",
+      "binary_sha256": "24149835ff2468ba75f95c5e34c0d5f0ca4edd0a2848dc16da16534e0812d86f",
+      "productive_window": {
+        "completed_hashes_lower_bound": 5651,
+        "elapsed_start_request_through_stopped_seconds": 900.857943835,
+        "completed_hps_lower_bound": 6.272909107004589,
+        "scope": "Cold-cache real pool runtime including startup, productive trials and shutdown; log counters may omit final unreported hashes. Not a fixed-kernel throughput benchmark."
+      },
+      "vm_delta": {
+        "pswpin": 0,
+        "pswpout": 0,
+        "oom_kill": 0,
+        "cpu_total": 1445103,
+        "cpu_steal": 39
+      },
+      "cleanup_passed": true,
+      "requested_threads_observed": null,
+      "cached_selected_threads": 9,
+      "autotune_trajectory": [
+        "    0.0s  INFO   MINER     cpu-autotune | starting with 6 threads (initial estimate); tuning while mining, capacity=12, worker slots=12, currently available=12",
+        "    3.8s  INFO   MINER     cpu-autotune | comparing avx512 and avx2 while mining",
+        "   99.9s  INFO   MINER     cpu-autotune | keeping current kernel; no confirmed gain",
+        "  129.9s  INFO   MINER     cpu-autotune | 9 threads per CPU backend: measuring useful mining work (available=13, effective cap=12)",
+        "  163.9s  INFO   MINER     cpu-autotune | 6 threads per CPU backend: checking baseline again (available=13, effective cap=12)",
+        "  196.9s  INFO   MINER     cpu-autotune | done \u2014 9 threads per CPU backend: confirmed better setting (available=13, effective cap=12)",
+        "  200.9s  INFO   MINER     cpu-autotune | comparing avx512 and avx2 while mining",
+        "  300.0s  INFO   MINER     cpu-autotune | keeping current kernel; no confirmed gain",
+        "  330.0s  INFO   MINER     cpu-autotune | 12 threads per CPU backend: measuring useful mining work (available=13, effective cap=12)",
+        "  364.1s  INFO   MINER     cpu-autotune | 9 threads per CPU backend: checking baseline again (available=13, effective cap=12)",
+        "  397.1s  INFO   MINER     cpu-autotune | done \u2014 9 threads per CPU backend: keeping confirmed setting (available=13, effective cap=12)",
+        "  428.1s  INFO   MINER     cpu-autotune | 8 threads per CPU backend: measuring useful mining work (available=13, effective cap=12)",
+        "  460.1s  INFO   MINER     cpu-autotune | 9 threads per CPU backend: checking baseline again (available=13, effective cap=12)",
+        "  493.2s  INFO   MINER     cpu-autotune | done \u2014 9 threads per CPU backend: keeping confirmed setting (available=13, effective cap=12)",
+        "  803.4s  INFO   MINER     cpu-autotune | 10 threads per CPU backend: measuring useful mining work (available=13, effective cap=12)",
+        "  836.4s  INFO   MINER     cpu-autotune | 9 threads per CPU backend: checking baseline again (available=13, effective cap=12)",
+        "  867.5s  INFO   MINER     cpu-autotune | done \u2014 9 threads per CPU backend: keeping confirmed setting (available=13, effective cap=12)"
+      ]
+    },
+    {
+      "label": "joint-candidate-a",
+      "variant": "candidate",
+      "binary_sha256": "1200135d8d7b6b6cfebc56e1da8612e50fa334d4e0423f59f7cc2c776f53e1f4",
+      "productive_window": {
+        "completed_hashes_lower_bound": 5544,
+        "elapsed_start_request_through_stopped_seconds": 901.891956253,
+        "completed_hps_lower_bound": 6.147077775294838,
+        "scope": "Cold-cache real pool runtime including startup, productive trials and shutdown; log counters may omit final unreported hashes. Not a fixed-kernel throughput benchmark."
+      },
+      "vm_delta": {
+        "pswpin": 0,
+        "pswpout": 0,
+        "oom_kill": 0,
+        "cpu_total": 1445160,
+        "cpu_steal": 38
+      },
+      "cleanup_passed": true,
+      "requested_threads_observed": null,
+      "cached_selected_threads": 9,
+      "autotune_trajectory": [
+        "    0.0s  INFO   MINER     cpu-autotune | starting with 6 threads (initial estimate); tuning while mining, capacity=12, worker slots=12, currently available=12",
+        "    3.8s  INFO   MINER     cpu-autotune | comparing avx512 and avx2 while mining",
+        "  100.8s  INFO   MINER     cpu-autotune | keeping current kernel; no confirmed gain",
+        "  130.9s  INFO   MINER     cpu-autotune | 9 threads per CPU backend: measuring useful mining work (available=13, effective cap=12)",
+        "  134.9s  INFO   MINER     cpu-autotune | comparing avx512 and avx2 while mining",
+        "  234.9s  INFO   MINER     cpu-autotune | 6 threads per CPU backend: joint comparison interrupted; restoring safe baseline (available=13, effective cap=12)",
+        "  267.0s  INFO   MINER     cpu-autotune | 9 threads per CPU backend: measuring useful mining work (available=13, effective cap=12)",
+        "  300.0s  INFO   MINER     cpu-autotune | 6 threads per CPU backend: checking baseline again (available=13, effective cap=12)",
+        "  332.0s  INFO   MINER     cpu-autotune | 6 threads per CPU backend: load changed; discarding comparison (available=13, effective cap=12)",
+        "  363.0s  INFO   MINER     cpu-autotune | 9 threads per CPU backend: measuring useful mining work (available=13, effective cap=12)",
+        "  397.1s  INFO   MINER     cpu-autotune | 6 threads per CPU backend: checking baseline again (available=13, effective cap=12)",
+        "  428.1s  INFO   MINER     cpu-autotune | done \u2014 9 threads per CPU backend: confirmed better setting (available=13, effective cap=12)",
+        "  462.1s  INFO   MINER     cpu-autotune | 12 threads per CPU backend: measuring useful mining work (available=13, effective cap=12)",
+        "  496.1s  INFO   MINER     cpu-autotune | 9 threads per CPU backend: checking baseline again (available=13, effective cap=12)",
+        "  529.2s  INFO   MINER     cpu-autotune | done \u2014 9 threads per CPU backend: keeping confirmed setting (available=13, effective cap=12)",
+        "  535.2s  INFO   MINER     cpu-autotune | comparing avx512 and avx2 while mining",
+        "  633.2s  INFO   MINER     cpu-autotune | keeping current kernel; no confirmed gain",
+        "  663.3s  INFO   MINER     cpu-autotune | 8 threads per CPU backend: measuring useful mining work (available=13, effective cap=12)",
+        "  665.3s  INFO   MINER     cpu-autotune | comparing avx512 and avx2 while mining",
+        "  762.3s  INFO   MINER     cpu-autotune | keeping current kernel; no confirmed gain",
+        "  792.4s  INFO   MINER     cpu-autotune | 9 threads per CPU backend: checking baseline again (available=13, effective cap=12)",
+        "  825.4s  INFO   MINER     cpu-autotune | done \u2014 9 threads per CPU backend: keeping confirmed setting (available=13, effective cap=12)"
+      ]
+    },
+    {
+      "label": "joint-candidate-b",
+      "variant": "candidate",
+      "binary_sha256": "1200135d8d7b6b6cfebc56e1da8612e50fa334d4e0423f59f7cc2c776f53e1f4",
+      "productive_window": {
+        "completed_hashes_lower_bound": 5548,
+        "elapsed_start_request_through_stopped_seconds": 901.1168094559998,
+        "completed_hps_lower_bound": 6.15680446949969,
+        "scope": "Cold-cache real pool runtime including startup, productive trials and shutdown; log counters may omit final unreported hashes. Not a fixed-kernel throughput benchmark."
+      },
+      "vm_delta": {
+        "pswpin": 0,
+        "pswpout": 0,
+        "oom_kill": 0,
+        "cpu_total": 1445167,
+        "cpu_steal": 38
+      },
+      "cleanup_passed": true,
+      "requested_threads_observed": null,
+      "cached_selected_threads": 8,
+      "autotune_trajectory": [
+        "    0.0s  INFO   MINER     cpu-autotune | starting with 6 threads (initial estimate); tuning while mining, capacity=12, worker slots=12, currently available=12",
+        "    3.8s  INFO   MINER     cpu-autotune | comparing avx512 and avx2 while mining",
+        "  100.8s  INFO   MINER     cpu-autotune | keeping current kernel; no confirmed gain",
+        "  130.9s  INFO   MINER     cpu-autotune | 9 threads per CPU backend: measuring useful mining work (available=13, effective cap=12)",
+        "  134.9s  INFO   MINER     cpu-autotune | comparing avx512 and avx2 while mining",
+        "  234.9s  INFO   MINER     cpu-autotune | keeping current kernel; no confirmed gain",
+        "  265.0s  INFO   MINER     cpu-autotune | 6 threads per CPU backend: checking baseline again (available=13, effective cap=12)",
+        "  297.0s  INFO   MINER     cpu-autotune | done \u2014 9 threads per CPU backend: confirmed better setting (available=13, effective cap=12)",
+        "  331.0s  INFO   MINER     cpu-autotune | 12 threads per CPU backend: measuring useful mining work (available=13, effective cap=12)",
+        "  335.0s  INFO   MINER     cpu-autotune | comparing avx512 and avx2 while mining",
+        "  435.1s  INFO   MINER     cpu-autotune | keeping current kernel; no confirmed gain",
+        "  465.1s  INFO   MINER     cpu-autotune | 9 threads per CPU backend: checking baseline again (available=13, effective cap=12)",
+        "  498.2s  INFO   MINER     cpu-autotune | done \u2014 9 threads per CPU backend: keeping confirmed setting (available=13, effective cap=12)",
+        "  529.2s  INFO   MINER     cpu-autotune | 8 threads per CPU backend: measuring useful mining work (available=13, effective cap=12)",
+        "  530.2s  INFO   MINER     cpu-autotune | comparing avx512 and avx2 while mining",
+        "  627.3s  INFO   MINER     cpu-autotune | keeping current kernel; no confirmed gain",
+        "  657.3s  INFO   MINER     cpu-autotune | 9 threads per CPU backend: checking baseline again (available=13, effective cap=12)",
+        "  690.3s  INFO   MINER     cpu-autotune | done \u2014 8 threads per CPU backend: confirmed better setting (available=13, effective cap=12)",
+        "  721.3s  INFO   MINER     cpu-autotune | 7 threads per CPU backend: measuring useful mining work (available=13, effective cap=12)",
+        "  722.3s  INFO   MINER     cpu-autotune | comparing avx512 and avx2 while mining",
+        "  819.4s  INFO   MINER     cpu-autotune | keeping current kernel; no confirmed gain",
+        "  849.4s  INFO   MINER     cpu-autotune | 8 threads per CPU backend: checking baseline again (available=13, effective cap=12)",
+        "  881.4s  INFO   MINER     cpu-autotune | done \u2014 8 threads per CPU backend: keeping confirmed setting (available=13, effective cap=12)"
+      ]
+    },
+    {
+      "label": "joint-control-b",
+      "variant": "control",
+      "binary_sha256": "24149835ff2468ba75f95c5e34c0d5f0ca4edd0a2848dc16da16534e0812d86f",
+      "productive_window": {
+        "completed_hashes_lower_bound": 5593,
+        "elapsed_start_request_through_stopped_seconds": 900.8286817450003,
+        "completed_hps_lower_bound": 6.208727711872771,
+        "scope": "Cold-cache real pool runtime including startup, productive trials and shutdown; log counters may omit final unreported hashes. Not a fixed-kernel throughput benchmark."
+      },
+      "vm_delta": {
+        "pswpin": 0,
+        "pswpout": 0,
+        "oom_kill": 0,
+        "cpu_total": 1445051,
+        "cpu_steal": 38
+      },
+      "cleanup_passed": true,
+      "requested_threads_observed": null,
+      "cached_selected_threads": 8,
+      "autotune_trajectory": [
+        "    0.0s  INFO   MINER     cpu-autotune | starting with 6 threads (initial estimate); tuning while mining, capacity=12, worker slots=12, currently available=12",
+        "    3.8s  INFO   MINER     cpu-autotune | comparing avx512 and avx2 while mining",
+        "  100.9s  INFO   MINER     cpu-autotune | keeping current kernel; no confirmed gain",
+        "  130.9s  INFO   MINER     cpu-autotune | 9 threads per CPU backend: measuring useful mining work (available=13, effective cap=12)",
+        "  164.9s  INFO   MINER     cpu-autotune | 6 threads per CPU backend: checking baseline again (available=13, effective cap=12)",
+        "  197.9s  INFO   MINER     cpu-autotune | done \u2014 9 threads per CPU backend: confirmed better setting (available=13, effective cap=12)",
+        "  201.9s  INFO   MINER     cpu-autotune | comparing avx512 and avx2 while mining",
+        "  302.0s  INFO   MINER     cpu-autotune | keeping current kernel; no confirmed gain",
+        "  332.0s  INFO   MINER     cpu-autotune | 12 threads per CPU backend: measuring useful mining work (available=13, effective cap=12)",
+        "  366.1s  INFO   MINER     cpu-autotune | 9 threads per CPU backend: checking baseline again (available=13, effective cap=12)",
+        "  399.1s  INFO   MINER     cpu-autotune | done \u2014 9 threads per CPU backend: keeping confirmed setting (available=13, effective cap=12)",
+        "  430.1s  INFO   MINER     cpu-autotune | 8 threads per CPU backend: measuring useful mining work (available=13, effective cap=12)",
+        "  462.1s  INFO   MINER     cpu-autotune | 9 threads per CPU backend: checking baseline again (available=13, effective cap=12)",
+        "  495.2s  INFO   MINER     cpu-autotune | done \u2014 8 threads per CPU backend: confirmed better setting (available=13, effective cap=12)",
+        "  496.2s  INFO   MINER     cpu-autotune | comparing avx512 and avx2 while mining",
+        "  593.2s  INFO   MINER     cpu-autotune | keeping current kernel; no confirmed gain",
+        "  623.3s  INFO   MINER     cpu-autotune | 7 threads per CPU backend: measuring useful mining work (available=13, effective cap=12)",
+        "  654.3s  INFO   MINER     cpu-autotune | 8 threads per CPU backend: checking baseline again (available=13, effective cap=12)",
+        "  686.3s  INFO   MINER     cpu-autotune | done \u2014 8 threads per CPU backend: keeping confirmed setting (available=13, effective cap=12)",
+        "  717.3s  INFO   MINER     cpu-autotune | 9 threads per CPU backend: measuring useful mining work (available=13, effective cap=12)",
+        "  750.4s  INFO   MINER     cpu-autotune | 8 threads per CPU backend: checking baseline again (available=13, effective cap=12)",
+        "  781.4s  INFO   MINER     cpu-autotune | done \u2014 8 threads per CPU backend: keeping confirmed setting (available=13, effective cap=12)"
+      ]
+    }
+  ],
+  "comparisons": {
+    "pairs": [
+      {
+        "pair": "a",
+        "control_logged_hps": 6.272909107004589,
+        "candidate_logged_hps": 6.147077775294838,
+        "logged_rate_difference_percent": -2.005948588817308
+      },
+      {
+        "pair": "b",
+        "control_logged_hps": 6.208727711872771,
+        "candidate_logged_hps": 6.15680446949969,
+        "logged_rate_difference_percent": -0.8362944033411202
+      }
+    ],
+    "aggregate_logged_hps": {
+      "control": 6.240818930639685,
+      "candidate": 6.151939031554445
+    },
+    "aggregate_logged_rate_difference_percent": -1.424170450593898,
+    "interpretation": "Ratios compare logged completed-work rates across fresh-process, fresh-tuning-cache windows. They include startup, trials and shutdown; OS caches were not cleared. Last unreported hashes can be omitted, so these are not fixed-kernel rates or a mathematical lower bound on relative gain."
+  },
+  "global_cleanup": {
+    "failures": [],
+    "unit_states": {
+      "seine-campaign-cpu-load.service": {
+        "LoadState": "not-found",
+        "ActiveState": "inactive"
+      },
+      "seine-campaign-joint-candidate-a.service": {
+        "LoadState": "not-found",
+        "ActiveState": "inactive"
+      },
+      "seine-campaign-joint-candidate-b.service": {
+        "LoadState": "not-found",
+        "ActiveState": "inactive"
+      },
+      "seine-campaign-joint-control-a.service": {
+        "LoadState": "not-found",
+        "ActiveState": "inactive"
+      },
+      "seine-campaign-joint-control-b.service": {
+        "LoadState": "not-found",
+        "ActiveState": "inactive"
+      },
+      "seine-campaign-lifecycle-first.service": {
+        "LoadState": "not-found",
+        "ActiveState": "inactive"
+      },
+      "seine-campaign-lifecycle-optout.service": {
+        "LoadState": "not-found",
+        "ActiveState": "inactive"
+      },
+      "seine-campaign-lifecycle-restart.service": {
+        "LoadState": "not-found",
+        "ActiveState": "inactive"
+      }
+    },
+    "pool_zero": true
+  },
+  "stages": [
+    {
+      "name": "input-verification",
+      "started_at": "2026-10-24T18:17:26.156598+00:00",
+      "finished_at": "2026-10-24T18:17:26.220722+00:00",
+      "passed": true
+    },
+    {
+      "name": "topology",
+      "started_at": "2026-10-24T18:17:26.230122+00:00",
+      "finished_at": "2026-10-24T18:17:26.245899+00:00",
+      "passed": true
+    },
+    {
+      "name": "control-full-size-parity",
+      "started_at": "2026-10-24T18:17:26.246158+00:00",
+      "finished_at": "2026-10-24T18:17:35.926834+00:00",
+      "passed": true
+    },
+    {
+      "name": "candidate-full-size-parity",
+      "started_at": "2026-10-24T18:17:35.927349+00:00",
+      "finished_at": "2026-10-24T18:17:45.657954+00:00",
+      "passed": true
+    },
+    {
+      "name": "fixed-kernel-matrix",
+      "started_at": "2026-10-24T18:17:45.658470+00:00",
+      "finished_at": "2026-10-24T18:23:51.804050+00:00",
+      "passed": true
+    },
+    {
+      "name": "joint-control-a",
+      "started_at": "2026-10-24T18:23:51.805004+00:00",
+      "finished_at": "2026-10-24T18:38:57.247515+00:00",
+      "passed": true
+    },
+    {
+      "name": "joint-candidate-a",
+      "started_at": "2026-10-24T18:38:57.248140+00:00",
+      "finished_at": "2026-10-24T18:54:03.713422+00:00",
+      "passed": true
+    },
+    {
+      "name": "joint-candidate-b",
+      "started_at": "2026-10-24T18:54:03.714061+00:00",
+      "finished_at": "2026-10-24T19:09:09.615389+00:00",
+      "passed": true
+    },
+    {
+      "name": "joint-control-b",
+      "started_at": "2026-10-24T19:09:09.615951+00:00",
+      "finished_at": "2026-10-24T19:24:15.030997+00:00",
+      "passed": true
+    },
+    {
+      "name": "candidate-lifecycle",
+      "started_at": "2026-10-24T19:24:15.031731+00:00",
+      "finished_at": "2026-10-24T19:24:57.233583+00:00",
+      "passed": false
+    }
+  ],
+  "source_sha256": {
+    "results/outcome.json": "24860514470f3069c794c5656136475f3737565d9d135d5eb57e497100f7aab6",
+    "results/cleanup.json": "9f22bcdace896abcabbbb6699d17b54a3aa8db10c4079ea95f541effac6de8a5",
+    "joint-binary-identities.json": "2d51f43d543eff1f1151317e612f4a82e09249f90f2373f400719db093a084c8",
+    "results/stages.json": "8bb739a367d759296ef30f8d75263e028fc61c0cfeec4cb1d7bc8efdf1df6832",
+    "results/topology.log": "4da8d4fd2955cde6adff34936602a35107ad72cab98996c8c1e2f10fb7b0b0ef",
+    "results/joint-control-a/COMPLETE": "0bc6f484f14269087ff6102473e3990100a979fab9f7cafe3c9d089f5b45a2a6",
+    "results/joint-control-a/identity.json": "1a2d09b2b85e1227c771ce610e827e82e6a365abb894fc7fa6dbaede1f989511",
+    "results/joint-control-a/productive-window.json": "aea5e25d18ff7ae3a5f88b5871588192b0c033da95f6d5e3cbed506063583b88",
+    "results/joint-control-a/observation.json": "929c26b9cf95df68cd956b98144489168a9ac1ccff06eb6c8dd6d22c92c461b7",
+    "results/joint-control-a/cleanup.json": "d5d181f3a980de727ae4813ab450aa266df42d26e749c9b5db6e0362aeac6d9f",
+    "results/joint-control-a/samples.json": "fa59c828f25f775cff24cd3c05a4390443046a4f022f0f81e6e57aeb146b775d",
+    "results/joint-control-a/miner.log": "4ea1e18885a47e929395a395d754179d0f009312754dd502e9c3f5c5652b8562",
+    "results/joint-control-a/tuning.json": "a7e0fa2eaccd72e2cd9a1b8929cfdef5ceb53c31099167dce45e4eaeb2fdfeb2",
+    "results/joint-candidate-a/COMPLETE": "060b1cd70dd3c8436edf399da11b8f1d11a528715fee4fdbaf93314207e4f1a8",
+    "results/joint-candidate-a/identity.json": "4bd481c6867c58be6066ae3a026901a68a68119bfefbfc80a11c624ad9fa2545",
+    "results/joint-candidate-a/productive-window.json": "d19a962558d777a943470617df8edb5fab6841d8ec29480d6a48589839c598f3",
+    "results/joint-candidate-a/observation.json": "8a794a350f3d8949c39a282e2ace0ef2d60dc3b6266f94645d3d01ae81a7790b",
+    "results/joint-candidate-a/cleanup.json": "d5d181f3a980de727ae4813ab450aa266df42d26e749c9b5db6e0362aeac6d9f",
+    "results/joint-candidate-a/samples.json": "b5c24eb518e9b64540b34ed440d04eca0f6a6750af3b7aeec2cc380bcf1d58c6",
+    "results/joint-candidate-a/miner.log": "4d01b6d96b1e6966de1c294f4ec2c10b5ce52daa835d84ab71a2ac87006d3fcf",
+    "results/joint-candidate-a/tuning.json": "9d5250feb5a680213ec1ee5b17812b88ccd2c56a76c0647b1412f2bdc5c4b326",
+    "results/joint-candidate-b/COMPLETE": "be928aba64025caa168732d948028f5c1b3821a8c5061cf9ae0a24da7a9c5529",
+    "results/joint-candidate-b/identity.json": "661ae5956bcfd3e62099511c2b04c66446bde30f864c5b6c3ee749caa55a77ba",
+    "results/joint-candidate-b/productive-window.json": "9a7890b2f096aa0cafd5b06ec2a5f322ef0fd839cf80d6e085d2f97d684f35fa",
+    "results/joint-candidate-b/observation.json": "436662d2c4977baceab9d7609571501723d4fb9585afd2503065522908908dee",
+    "results/joint-candidate-b/cleanup.json": "d5d181f3a980de727ae4813ab450aa266df42d26e749c9b5db6e0362aeac6d9f",
+    "results/joint-candidate-b/samples.json": "848bd39b18fa6cf0546896652c089cb496bf43ad5de8e2197f460e4770e75d2f",
+    "results/joint-candidate-b/miner.log": "22dbfe45b3c4f3b1bc7f55edaa362b61978a44c287a5448be277771ed8fba024",
+    "results/joint-candidate-b/tuning.json": "dd3202f690e9d976b42e1e7362e779139e7d46a1a043dce2b31014b327ba2895",
+    "results/joint-control-b/COMPLETE": "4fe5c4bd4181426e75ae7bc36c8a4f8a5c361aec890385c39cf9e8b0201c173a",
+    "results/joint-control-b/identity.json": "3d76e8c20beb367dd4b6fa57b68b28177b59536bdf51e07c108daca20ecac35c",
+    "results/joint-control-b/productive-window.json": "58801fcc11883ae9ccb1fe2347810f15b057f673449739d4811d1eae4590f278",
+    "results/joint-control-b/observation.json": "4cd843f9e91447a0ddbcc54855ffe834ccbe28537f0a4ae84c316756269f9669",
+    "results/joint-control-b/cleanup.json": "d5d181f3a980de727ae4813ab450aa266df42d26e749c9b5db6e0362aeac6d9f",
+    "results/joint-control-b/samples.json": "c0f25f9a086964c5aa0e13cc67600bfa6c1352f7bfba7398c9f6e52f3190a34a",
+    "results/joint-control-b/miner.log": "b85a0f393664698a9a7e493c33c5cfccdb39d267ee4538b286c3cd7bcda50da0",
+    "results/joint-control-b/tuning.json": "4bb524a1d8f509b25d163ed661a8b94856f110099b2224ff2d03eef9625a77f5",
+    "results/control-full-size-parity.log": "934f030d49cd4c8615dd57d8eb8a6ae4f2f866146bb372be95eb7bf07d483a6c",
+    "results/candidate-full-size-parity.log": "934f030d49cd4c8615dd57d8eb8a6ae4f2f866146bb372be95eb7bf07d483a6c",
+    "results/CAMPAIGN-SCOPE-STOP.json": "c8f623be79a19f1bf4181cd94fd519a70192bdfec16c7b458ab9a93bcaea9bba",
+    "results/fixed-kernel-gate.json": "c0e9b04e4577184cd85499346256cdb4cf6187bdad041487bacccb6041adeb14"
+  },
+  "limitations": [
+    "The guest is identified by its actual CPU model, not the C5 instance label.",
+    "Cold start means a new process and separate tuning cache, not flushed OS/file caches.",
+    "This does not replicate the earlier Cascade Lake crossover if the model differs.",
+    "A passed execution/cleanup protocol does not establish a performance improvement."
+  ]
+}

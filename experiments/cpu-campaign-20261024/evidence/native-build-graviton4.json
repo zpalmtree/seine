@@ -1,0 +1,29 @@
+{
+  "hardware": "Graviton4 NeoverseV2",
+  "source": "636e6887c405c41d732433b1eeb018cefcdc962d",
+  "workspace_passed": 493,
+  "workspace_ignored": 4,
+  "full_size_parity": "reference=[e9, fb, fa, cf, b6, 96, ae, f8, f8, 88, 20, 17, c5, 5b, 23, 4e, 4b, 31, 30, a4, b6, 23, 42, c6, 3d, f5, 61, 31, 8d, 5a, db, a8]\nscalar: PASS (full 2 GiB reference parity)\navx2: unsupported\navx512: unsupported\navx512-256: unsupported\nneon: PASS (full 2 GiB reference parity)\nneon-sha3: PASS (full 2 GiB reference parity)\n",
+  "runtime_dispatch_parity": "PASS nonce=0 kernel=neon full_size_bytes=2147483648 dirty_reuse=true\nPASS nonce=0 kernel=neon-sha3 full_size_bytes=2147483648 dirty_reuse=true\nPASS nonce=0 kernel=neon full_size_bytes=2147483648 dirty_reuse=true\nPASS nonce=12345 kernel=neon full_size_bytes=2147483648 dirty_reuse=true\nPASS nonce=12345 kernel=neon-sha3 full_size_bytes=2147483648 dirty_reuse=true\nPASS nonce=12345 kernel=neon full_size_bytes=2147483648 dirty_reuse=true\nPASS nonce=18446744073709551615 kernel=neon full_size_bytes=2147483648 dirty_reuse=true\nPASS nonce=18446744073709551615 kernel=neon-sha3 full_size_bytes=2147483648 dirty_reuse=true\nPASS nonce=18446744073709551615 kernel=neon full_size_bytes=2147483648 dirty_reuse=true\n",
+  "real_arena_tests": "    Finished `release` profile [optimized] target(s) in 0.12s\n     Running unittests src/main.rs (/home/ubuntu/campaign/targets/hardened-636e688/release/deps/seine-19d5fecab3730a0d)\n\nrunning 2 tests\ntest backend::cpu::kernel::tests::adaptive_kernel_real_arena_smoke ... ok\ntest backend::cpu::kernel::tests::adaptive_real_arena_smoke ... ok\n\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 490 filtered out; finished in 27.37s\n\n",
+  "strict_kernel_clippy": "passed",
+  "pid_pool": {
+    "status": "passed",
+    "capacity": 16,
+    "worker_slots": 9,
+    "available_arenas": 1,
+    "completed_hashes": 54,
+    "task_limit": 40,
+    "max_tasks": 35,
+    "scope": "full CPU-only plain pool runtime; no TUI/API/accelerators"
+  },
+  "log_sha256": {
+    "real-arena-switches-and-growth.log": "f8473cbdadfe2007434d65b00a34cd0222b9bf1b70a48aedb6e78c20097b3c80",
+    "kernel-clippy.log": "2b1359cfed5e399f2b69a35403b9b0c8c5c7a4257120907fed48d1c9caa256fb",
+    "identities.txt": "68ca84e241f9225ee7322ae10b96e853493c61f5d9977d1969f6a9e09069afe2",
+    "full-size-parity.log": "31b7fd8ee9206977e60454472d1c33e04d1587f9d58da2b0419d3c6b67165ec4",
+    "COMPLETE": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "workspace-tests.log": "d00e13322a2d88506e93230fc0830072c10b8dacd62f67e137f75373fb156873",
+    "arm-runtime-dispatch-parity.log": "28743ef10282d206e04539835703cacac8ba404b2ca740ed0b975ac0ca26a687"
+  }
+}

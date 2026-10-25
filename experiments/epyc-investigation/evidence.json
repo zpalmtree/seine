@@ -1,0 +1,62 @@
+{
+  "base_commit": "785a06f",
+  "archives": {
+    "milan": {
+      "local_directory": "data/epyc-investigation/epyc-numa-20261024",
+      "cleanup": {
+        "instance_terminated": true,
+        "root_volume_deleted": true,
+        "security_group_deleted": true,
+        "private_key_removed": true,
+        "completed_at": "2026-10-24T09:41:30.466383+00:00"
+      },
+      "archive": {
+        "sha256": "839949574b95e80f701dc4e1b84c61f82f36062394f6ef194c2635b021189858",
+        "verified_files": 136,
+        "manifest_sha256": "ccd03f9f308522112df8b977c20ec2faf7532f219af6cf83410374a01eba1e80"
+      }
+    },
+    "turin": {
+      "local_directory": "data/epyc-investigation/epyc-turin-20261024",
+      "cleanup": {
+        "instance_terminated": true,
+        "root_volume_deleted": true,
+        "security_group_deleted": true,
+        "private_key_removed": true,
+        "completed_at": "2026-10-24T11:06:33.983561+00:00"
+      },
+      "archive": {
+        "sha256": "cabe0cde6b60eafadd8bef8458f6026c4e83728243667ed3e8a83781e80a12af",
+        "files": 786,
+        "bytes": 120340480,
+        "verified_files": 786,
+        "verified_at": "2026-10-24T11:06:04.305182+00:00",
+        "manifest_sha256": "8306cf3c74792f8279a32a0763a8d128e984db2f13e2da25ece6bf6106bdae2c"
+      }
+    }
+  },
+  "turin_health": {
+    "comparisons": 30,
+    "invocations": 124,
+    "measured_rounds": 136,
+    "max_aggregate_steal_pct": 0.0012965123816932453,
+    "max_single_cpu_steal_upper_pct": 0.08333333333333333,
+    "maximum_invocation_steal_ticks": 2,
+    "swap_or_oom_events": 0,
+    "backing": "All accepted kernel runs: strict 2 MiB HugeTLB, sampled 100% guest-local"
+  },
+  "fence_example": {
+    "hashes": 920,
+    "counted_hashes": 896,
+    "late_hashes": 24,
+    "late_hash_pct": 2.608695652173913,
+    "elapsed_secs": 20.279572179,
+    "configured_secs": 20.0,
+    "actual_elapsed_secs": 20.279572179,
+    "window_overrun_secs": 0.27957217899999875,
+    "wall_secs": 20.279572179,
+    "startup_secs": 0.0,
+    "teardown_secs": 0.0,
+    "fence_secs": 0.279572179
+  }
+}

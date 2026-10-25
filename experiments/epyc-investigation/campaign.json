@@ -1,0 +1,177 @@
+{
+  "base_commit": "785a06f",
+  "scope": "Sequential, offline EPYC throughput investigation; unchanged PoW; no autotuner or automatic dispatch changes",
+  "experiments": [
+    {
+      "order": 1,
+      "name": "Actual arena NUMA placement and strict binding",
+      "status": "measured",
+      "host": "EPYC 7R13, c6a.8xlarge, two NUMA nodes",
+      "results": {
+        "balanced_local_bind_delta_pct": 0.0568624,
+        "imbalanced_local_fallback_delta_pct": 40.3999543,
+        "scope": "8 workers; forced one-node huge-page exhaustion; local fallback 4 HugeTLB + 4 THP versus 8 HugeTLB with half remote"
+      }
+    },
+    {
+      "order": 2,
+      "name": "One-GiB versus two-MiB HugeTLB pages",
+      "status": "measured",
+      "host": "EPYC 7R13 c6a.8xlarge",
+      "workers": 12,
+      "paired_delta_pct": 0.05577790578914499,
+      "paired_deltas_pct": [
+        -0.17605335964704372,
+        0.09897174553237242,
+        0.24487210520587332
+      ],
+      "conclusion": "No useful measured gain; guest page sizes only"
+    },
+    {
+      "order": 3,
+      "name": "Earlier data-dependent reference prefetch",
+      "status": "measured",
+      "host": "EPYC 9R45 c8a.8xlarge",
+      "results": {
+        "early256_pct": {
+          "1": -1.6548424159184894,
+          "8": -0.8776225679727689,
+          "24": -4.959496253437834
+        },
+        "early512_pct": {
+          "1": 0.39488089197461385,
+          "24": -0.6446211291588955
+        }
+      },
+      "conclusion": "Reject both candidates; no useful worker-count gain"
+    },
+    {
+      "order": 4,
+      "name": "Separate kernels for data-independent and data-dependent phases",
+      "status": "measured",
+      "conclusion": "No hybrid beats stronger uniform controls; reject tested mixtures",
+      "results": {
+        "di512_dd256_vs_uniform256_pct": {
+          "1": 7.135706468467973,
+          "8": 4.342190699425963,
+          "24": -5.934927172410875
+        },
+        "di512_dd256_vs_uniform512_pct": {
+          "1": -1.495378726079244,
+          "8": -2.012486996996743
+        },
+        "di256_dd512_vs_stronger_uniform_pct": {
+          "1": -6.6055378731163295,
+          "24": -3.64051882181633
+        }
+      }
+    },
+    {
+      "order": 5,
+      "name": "Zen 5 prefetch hints and cache retention",
+      "status": "measured",
+      "results": {
+        "dd_t1_256_pct": {
+          "8": -7.09709311042298,
+          "24": -4.65453391891244
+        },
+        "dd_nta_256_pct": {
+          "8": 0.2857461480195722,
+          "24": -0.016191346768101855
+        },
+        "dd_t1_512_pct": {
+          "8": -3.0864352667762773,
+          "24": -6.0205931781436846
+        },
+        "dd_nta_512_pct": {
+          "8": 0.15765897223132264,
+          "24": 0.16259680131478493
+        }
+      },
+      "conclusion": "Keep T0: T1 regresses 3-7%; NTA effectively neutral (within 0.3%)"
+    },
+    {
+      "order": 6,
+      "name": "Destination streaming stores with a cached recent-block buffer",
+      "status": "measured",
+      "results": {
+        "streaming_ring_pct": {
+          "1": -3.533500524770594,
+          "8": -0.19521658139937115,
+          "24": 24.13061025610135
+        },
+        "long_confirmation_vs_uniform256": {
+          "workers": 24,
+          "pairs": 3,
+          "seconds": 20,
+          "measured_rounds": 2,
+          "warmup_rounds": 1,
+          "baseline_completed_hps": 36.03728081245213,
+          "candidate_completed_hps": 45.14406011589588,
+          "paired_delta_pct": 25.270218029594126,
+          "paired_deltas_pct": [
+            25.515751488735727,
+            24.991390707594263,
+            25.304067546607456
+          ]
+        },
+        "long_confirmation_vs_avx2": {
+          "workers": 24,
+          "pairs": 3,
+          "seconds": 20,
+          "measured_rounds": 2,
+          "warmup_rounds": 1,
+          "baseline_completed_hps": 35.328240007663794,
+          "candidate_completed_hps": 45.142661751417144,
+          "paired_delta_pct": 27.780402786854673,
+          "paired_deltas_pct": [
+            28.417933823250795,
+            27.340294207073356,
+            27.585473969086994
+          ]
+        }
+      },
+      "conclusion": "Retain experimental high-count candidate; confirmed against both controls, regresses at one worker, no universal worker threshold established"
+    },
+    {
+      "order": 7,
+      "name": "Additional independent rounds using the AVX-512 register namespace",
+      "status": "measured",
+      "results": {
+        "quad_rows_vs_uniform256_pct": {
+          "1": 5.036879150218154,
+          "8": 4.107291816980196,
+          "24": -1.236009229990842
+        },
+        "quad_rows_vs_uniform512_pct": {
+          "1": -3.49458256766374,
+          "8": -1.969565424936326
+        }
+      },
+      "conclusion": "Reject as replacement; low-count gains against 256-bit control disappear against stronger full-width control"
+    },
+    {
+      "order": 8,
+      "name": "Bare-metal NPS, memory channels, clocks and hardware counters",
+      "status": "core_counters_measured_physical_controls_unavailable",
+      "limits": [
+        "No BIOS/NPS/channel controls in VM",
+        "No IBS, L3, or memory-controller PMU",
+        "Scaleway disallows BIOS changes"
+      ],
+      "available": "Four simultaneous core PMCs; phase and normal-loop probes",
+      "conclusion": "Core PMCs and normal-loop store diagnostics complete; no BIOS/NPS/channel/clock/power conclusions from guests",
+      "diagnostics": "phase-results.json",
+      "optional_deferred": "Broader request/fill groups deferred before timed measurement to prioritize longer throughput confirmation"
+    }
+  ],
+  "adoption": "Full-size reference parity and repeated backend improvement at useful worker counts; reject or retain experimental when inconclusive",
+  "limits": [
+    "Small guests do not establish full-socket behavior",
+    "Measured guest page size does not establish hypervisor page size",
+    "Profiled phase loops guide hypotheses; persistent backend measurements determine throughput"
+  ],
+  "state": "investigation_complete",
+  "production_changes": "None; generators and exact candidate patch only. Architecture-dispatch owner handles feature gating and broader validation.",
+  "archives": "evidence.json"
+}

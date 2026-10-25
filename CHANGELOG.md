@@ -6,6 +6,27 @@ appends the auto-generated compare link). Write for miners deciding whether to
 upgrade: lead with what they gain, keep it brief, skip internal refactors.
 `scripts/release_tag.sh` refuses to tag a version that has no section here.
 
+## v0.2.22
+
+**Faster CPU mining on validated AMD EPYC Turin processors.** Automatic tuning
+can now compare a streaming-store kernel with the existing CPU kernels while
+mining, selecting it only after two confirmed gains. On a tested EPYC 9R45 at
+24 workers with 48 GiB of explicit 2 MiB pages, it delivered 44.7 H/s versus
+34.5 H/s for AVX2. Results depend on the processor, worker count and memory
+backing; automatic eligibility currently covers the validated Turin CPU identity.
+No configuration is required.
+
+**More reliable kernel comparisons.** Tuning retains the best confirmed kernel
+while checking other candidates and retries inconclusive comparisons without
+caching a partial sweep. Cached choices include the eligible kernel set.
+
+**Windows tuning follows CPU affinity changes.** Cached worker counts and kernel
+choices are refreshed when the permitted CPU mask or physical-core grouping
+changes, including equal-sized masks that select a different CCD or SMT layout.
+
+**Native Linux ARM downloads.** Releases now include a CPU-only Linux ARM64
+archive, built and checked on an ARM runner with full-size reference parity.
+
 ## v0.2.21
 
 **Start mining sooner and adapt as conditions change.** Automatic CPU tuning

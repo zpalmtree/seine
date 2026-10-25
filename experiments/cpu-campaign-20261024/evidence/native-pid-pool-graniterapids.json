@@ -1,0 +1,24 @@
+{
+  "hardware": "Xeon6975P-C, 16 allowed CPUs, MemoryHigh3GiB/Max4GiB",
+  "baseline24": {
+    "status": "failed pool client spawn EAGAIN",
+    "source": "359265e",
+    "raw_result_sha256": "2def7d26678e346c01f91a023a92697da23df11d06386fa63e147950b730d76c"
+  },
+  "candidate24": {
+    "status": "clear insufficient task/thread headroom error",
+    "source": "636e688",
+    "raw_log_sha256": "4fb6b7c29944ed7746be40cb4dc607ea772a0eff2cfdd84afda3c44583ba9e4e"
+  },
+  "candidate40": {
+    "status": "passed",
+    "capacity": 16,
+    "worker_slots": 9,
+    "available_arenas": 1,
+    "completed_hashes": 84,
+    "task_limit": 40,
+    "max_tasks": 35,
+    "scope": "full CPU-only plain pool runtime; no TUI/API/accelerators"
+  },
+  "interpretation": "Existing sysinfo multithread process discovery creates16 persistent Rayon workers before mining. Neither full pool runtime fits24tasks. Candidate40 acceptance uses default environment, no Rayon override; separately, backend-only Tasks12 deliberately bypasses preflight and exercises adaptive spawn retry."
+}

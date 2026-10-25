@@ -1,0 +1,37 @@
+diff --git a/src/backend/cpu.rs b/src/backend/cpu.rs
+index 18993e9..112d936 100644
+--- a/src/backend/cpu.rs
++++ b/src/backend/cpu.rs
+@@ -21,6 +21,8 @@ use crate::config::{CpuAffinityMode, CpuPageMode};
+ mod events;
+ #[path = "cpu/kernel.rs"]
+ mod kernel;
++#[cfg(target_os = "linux")]
++mod epyc_arena_audit;
+ #[path = "cpu/sampling.rs"]
+ mod sampling;
+ #[cfg(target_os = "linux")]
+diff --git a/src/backend/cpu/kernel.rs b/src/backend/cpu/kernel.rs
+index 3fbc8df..9147ee0 100644
+--- a/src/backend/cpu/kernel.rs
++++ b/src/backend/cpu/kernel.rs
+@@ -94,6 +94,8 @@ pub(super) fn cpu_worker_loop(
+     #[cfg(any(target_os = "linux", target_os = "windows"))]
+     let block_bytes = block_count * std::mem::size_of::<fixed_argon::PowBlock>();
+ 
++    #[cfg(target_os = "linux")]
++    let experiment_policy = super::epyc_arena_audit::Policy::begin();
+     let mut arena = match PowArena::new(block_count, shared.page_mode) {
+         Ok(arena) => arena,
+         Err(err) => {
+@@ -122,6 +124,10 @@ pub(super) fn cpu_worker_loop(
+     #[cfg(target_os = "windows")]
+     emit_windows_large_page_diagnostics(&shared, thread_idx, &arena, block_bytes);
+     let memory_blocks = arena.as_mut_slice();
++    #[cfg(target_os = "linux")]
++    if let Some(policy) = experiment_policy {
++        policy.observe(memory_blocks.as_mut_ptr().cast(), block_bytes, thread_idx);
++    }
+ 
+     let mut output = [0u8; POW_OUTPUT_LEN];
+     mark_worker_ready(&shared);

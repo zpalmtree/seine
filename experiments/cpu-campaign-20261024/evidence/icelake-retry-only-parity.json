@@ -1,0 +1,21 @@
+{
+  "status": "passed",
+  "candidate_log": {
+    "text": "reference=[e9, fb, fa, cf, b6, 96, ae, f8, f8, 88, 20, 17, c5, 5b, 23, 4e, 4b, 31, 30, a4, b6, 23, 42, c6, 3d, f5, 61, 31, 8d, 5a, db, a8]\nscalar: PASS (full 2 GiB reference parity)\navx2: PASS (full 2 GiB reference parity)\navx512: PASS (full 2 GiB reference parity)\navx512-256: PASS (full 2 GiB reference parity)\nneon: unsupported\n",
+    "sha256": "feada57af2b5abb829117d4d92f234d8c41f5720874f507ac3e27b4efe5acac4"
+  },
+  "identities": {
+    "source_control": "359265e325d85c9c7b6e3eed7b5b126fcec63f9c",
+    "source_candidate": "c65493705619b6a8d38790ae9afa31adbe3f58af",
+    "profile": "Rust1.93.0 generic CPU-only release; isolated target; no RUSTFLAGS",
+    "scope": "PR41 alone; excludes43/44/46",
+    "sha256": {
+      "seine-portable-candidate": "abdee56eac34f0e644aef9026939bc694721d859f3efc84cafd406a23a3d0cbf",
+      "verify-portable-control": "3ecdce8a76d4d19f007e90c07b647907de795e8037b58ea59bc454212deafda4",
+      "seine-portable-control": "879203959abf3e1ac511e180d802cc20c7200f1f042db245f7095ba9568bd0e3",
+      "verify-portable-candidate": "75fd431672c81a40cd0c56db74af9c53af6cda8657a26deac055b674a08869d7"
+    }
+  },
+  "source_archive_sha256": "02148ced3967e3fdfc46bdd8fc5ba685c056c42a138e4472ea079998e3be2a61",
+  "baseline_parity_evidence": "icelake-accepted-parity.json; same frozen baseline verifier/binary on same guest before these matrices"
+}

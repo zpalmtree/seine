@@ -185,6 +185,7 @@ struct Shared {
 pub struct CpuBackend {
     threads: usize,
     initial_workers: usize,
+    worker_capacity: AtomicUsize,
     affinity_mode: CpuAffinityMode,
     shared: Arc<Shared>,
     worker_handles: Mutex<Vec<JoinHandle<()>>>,
@@ -207,6 +208,7 @@ impl CpuBackend {
         Self {
             threads,
             initial_workers: lanes,
+            worker_capacity: AtomicUsize::new(lanes),
             affinity_mode,
             shared: Arc::new(Shared {
                 started: AtomicBool::new(false),
@@ -278,9 +280,10 @@ impl CpuBackend {
     }
 
     fn reset_runtime_state(&self) {
-        self.shared
-            .desired_workers
-            .store(self.initial_workers, Ordering::Release);
+        self.shared.desired_workers.store(
+            self.initial_workers.min(self.worker_capacity()),
+            Ordering::Release,
+        );
         self.shared.lifetime_hashes.store(0, Ordering::Release);
         for ack in &self.shared.kernel_acknowledgements {
             ack.store(0, Ordering::Release);
@@ -380,6 +383,150 @@ impl CpuBackend {
     }
 }
 
+fn resource_spawn_error(err: &std::io::Error) -> bool {
+    if matches!(
+        err.kind(),
+        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::OutOfMemory
+    ) {
+        return true;
+    }
+    #[cfg(target_os = "windows")]
+    if err
+        .raw_os_error()
+        .is_some_and(windows_thread_resource_error)
+    {
+        return true;
+    }
+    false
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_thread_resource_error(code: i32) -> bool {
+    // WinError.h: NOT_ENOUGH_MEMORY/OUTOFMEMORY (8/14), TOO_MANY_TCBS/
+    // MAX_THRDS_REACHED (155/164), and system/pool/working-set/pagefile/commit
+    // exhaustion (1450..=1455). Keep unrelated failures out of the retry path.
+    // https://learn.microsoft.com/en-us/windows/win32/debug/system-error-codes--0-499-
+    // https://learn.microsoft.com/en-us/windows/win32/debug/system-error-codes--1300-1699-
+    matches!(code, 8 | 14 | 155 | 164 | 1450..=1455)
+}
+
+impl CpuBackend {
+    /// Provisioned OS workers. The scheduling lanes/nonce stride stay fixed at
+    /// construction, including when startup must fall back to fewer workers.
+    pub(crate) fn worker_capacity(&self) -> usize {
+        self.worker_capacity.load(Ordering::Acquire)
+    }
+
+    fn start_with_spawner(
+        &self,
+        mut spawn: impl FnMut(
+            Arc<Shared>,
+            usize,
+            Option<core_affinity::CoreId>,
+        ) -> std::io::Result<JoinHandle<()>>,
+    ) -> Result<()> {
+        if !self.shared.kernel.is_supported() {
+            return Err(anyhow!("unsupported CPU kernel {}", self.shared.kernel));
+        }
+        if self.shared.started.swap(true, Ordering::SeqCst) {
+            return Ok(());
+        }
+
+        self.stop_event_forwarder();
+        self.reset_runtime_state();
+        if let Err(err) = self.start_event_forwarder() {
+            self.shared.started.store(false, Ordering::SeqCst);
+            self.stop_event_forwarder();
+            self.reset_runtime_state();
+            return Err(err);
+        }
+
+        let core_ids = resolve_affinity_core_ids(self.affinity_mode);
+
+        let spawned_handles = loop {
+            let capacity = self.worker_capacity();
+            let mut spawned_handles = Vec::with_capacity(capacity);
+            let mut spawn_error = None;
+            for thread_idx in 0..capacity {
+                let core_id = core_ids
+                    .as_ref()
+                    .and_then(|ids| ids.get(thread_idx % ids.len()))
+                    .copied();
+                match spawn(Arc::clone(&self.shared), thread_idx, core_id) {
+                    Ok(handle) => spawned_handles.push(handle),
+                    Err(err) => {
+                        spawn_error = Some((thread_idx, err));
+                        break;
+                    }
+                }
+            }
+            let Some((thread_idx, err)) = spawn_error else {
+                break spawned_handles;
+            };
+            // No work has been assigned yet. Tear down the whole attempt before
+            // retrying so no lane/arena leaks and no partially initialized state
+            // reach the scheduler. Halving leaves room for later control/network
+            // threads, even if a limit raced the cgroup snapshot or is not v2.
+            request_shutdown(&self.shared);
+            for handle in spawned_handles {
+                let _ = handle.join();
+            }
+            if self.shared.adaptive && thread_idx > 0 && resource_spawn_error(&err) {
+                let reduced = (thread_idx / 2).max(1);
+                self.worker_capacity.store(reduced, Ordering::Release);
+                self.reset_runtime_state();
+                emit_warning(&self.shared, format!(
+                    "CPU thread capacity reduced from {capacity} to {reduced} after worker spawn failed: {err}; restart to retry higher capacity"
+                ));
+                continue;
+            }
+            self.shared.started.store(false, Ordering::SeqCst);
+            self.stop_event_forwarder();
+            self.reset_runtime_state();
+            return Err(anyhow!(
+                "failed to spawn CPU worker thread {thread_idx}: {err}"
+            ));
+        };
+
+        let mut handles = match self.worker_handles.lock() {
+            Ok(guard) => guard,
+            Err(_) => {
+                request_shutdown(&self.shared);
+                for handle in spawned_handles {
+                    let _ = handle.join();
+                }
+                self.shared.started.store(false, Ordering::SeqCst);
+                self.stop_event_forwarder();
+                self.reset_runtime_state();
+                return Err(anyhow!("CPU worker handle lock poisoned"));
+            }
+        };
+        *handles = spawned_handles;
+        drop(handles);
+
+        if let Err(err) = wait_for_workers_ready(
+            &self.shared,
+            self.worker_capacity(),
+            startup_ready_timeout(self.worker_capacity()),
+        ) {
+            request_shutdown(&self.shared);
+            let handles = match self.worker_handles.lock() {
+                Ok(mut guard) => std::mem::take(&mut *guard),
+                Err(_) => Vec::new(),
+            };
+            for handle in handles {
+                let _ = handle.join();
+            }
+            self.shared.started.store(false, Ordering::SeqCst);
+            self.stop_event_forwarder();
+            self.reset_runtime_state();
+            return Err(err);
+        }
+
+        Ok(())
+    }
+}
+
 impl PowBackend for CpuBackend {
     fn name(&self) -> &'static str {
         "cpu"
@@ -404,93 +551,11 @@ impl PowBackend for CpuBackend {
     }
 
     fn start(&self) -> Result<()> {
-        if !self.shared.kernel.is_supported() {
-            return Err(anyhow!("unsupported CPU kernel {}", self.shared.kernel));
-        }
-        if self.shared.started.swap(true, Ordering::SeqCst) {
-            return Ok(());
-        }
-
-        self.stop_event_forwarder();
-        self.reset_runtime_state();
-        if let Err(err) = self.start_event_forwarder() {
-            self.shared.started.store(false, Ordering::SeqCst);
-            self.stop_event_forwarder();
-            self.reset_runtime_state();
-            return Err(err);
-        }
-
-        let core_ids = resolve_affinity_core_ids(self.affinity_mode);
-
-        let mut spawned_handles = Vec::with_capacity(self.threads.max(1));
-        let mut spawn_error = None;
-        for thread_idx in 0..self.threads.max(1) {
-            let shared = Arc::clone(&self.shared);
-            let core_id = core_ids
-                .as_ref()
-                .and_then(|ids| ids.get(thread_idx % ids.len()))
-                .copied();
-            let handle = thread::Builder::new()
-                .name(format!("seine-cpu-worker-{thread_idx}"))
-                .spawn(move || cpu_worker_loop(shared, thread_idx, core_id));
-            match handle {
-                Ok(handle) => spawned_handles.push(handle),
-                Err(err) => {
-                    spawn_error = Some((thread_idx, err));
-                    break;
-                }
-            }
-        }
-
-        if let Some((thread_idx, err)) = spawn_error {
-            request_shutdown(&self.shared);
-            for handle in spawned_handles {
-                let _ = handle.join();
-            }
-            self.shared.started.store(false, Ordering::SeqCst);
-            self.stop_event_forwarder();
-            self.reset_runtime_state();
-            return Err(anyhow!(
-                "failed to spawn CPU worker thread {thread_idx}: {err}"
-            ));
-        }
-
-        let mut handles = match self.worker_handles.lock() {
-            Ok(guard) => guard,
-            Err(_) => {
-                request_shutdown(&self.shared);
-                for handle in spawned_handles {
-                    let _ = handle.join();
-                }
-                self.shared.started.store(false, Ordering::SeqCst);
-                self.stop_event_forwarder();
-                self.reset_runtime_state();
-                return Err(anyhow!("CPU worker handle lock poisoned"));
-            }
-        };
-        *handles = spawned_handles;
-        drop(handles);
-
-        if let Err(err) = wait_for_workers_ready(
-            &self.shared,
-            self.threads.max(1),
-            startup_ready_timeout(self.threads.max(1)),
-        ) {
-            request_shutdown(&self.shared);
-            let handles = match self.worker_handles.lock() {
-                Ok(mut guard) => std::mem::take(&mut *guard),
-                Err(_) => Vec::new(),
-            };
-            for handle in handles {
-                let _ = handle.join();
-            }
-            self.shared.started.store(false, Ordering::SeqCst);
-            self.stop_event_forwarder();
-            self.reset_runtime_state();
-            return Err(err);
-        }
-
-        Ok(())
+        self.start_with_spawner(|shared, index, core_id| {
+            thread::Builder::new()
+                .name(format!("seine-cpu-worker-{index}"))
+                .spawn(move || cpu_worker_loop(shared, index, core_id))
+        })
     }
 
     fn stop(&self) {
@@ -736,7 +801,7 @@ impl CpuBackend {
         if let Ok(_control) = self.shared.work_control.lock() {
             self.shared
                 .desired_workers
-                .store(count.min(self.threads), Ordering::Release);
+                .store(count.min(self.worker_capacity()), Ordering::Release);
             self.shared.work_cv.notify_all();
         }
     }
@@ -952,8 +1017,34 @@ pub(crate) fn affinity_topology_fingerprint() -> String {
         // Cache identity must change on cpuset/NUMA/L3 changes even at equal CPU counts.
         format!("{available:?}:{:?}", topology::detect(&available))
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
+    {
+        let available = core_affinity::get_core_ids()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|cpu| cpu.id)
+            .collect();
+        physical_topology_fingerprint(&available, platform_physical_core_groups(&available))
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     String::new()
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn physical_topology_fingerprint(
+    available: &BTreeSet<usize>,
+    groups: Option<Vec<Vec<usize>>>,
+) -> String {
+    let groups = groups.map(|mut groups| {
+        for group in &mut groups {
+            group.sort_unstable();
+        }
+        groups.sort_unstable();
+        groups
+    });
+    // Equal-sized process masks can select different CCDs or SMT siblings.
+    // Keep the mask even when Windows cannot supply complete core topology.
+    format!("{available:?}:{groups:?}")
 }
 
 /// Orders native Windows logical CPUs so one hardware thread from every physical core is used
@@ -1585,6 +1676,50 @@ mod tests {
     use std::time::{Duration, Instant};
 
     #[test]
+    fn windows_thread_resource_codes_are_retryable() {
+        for code in [8, 14, 155, 164, 1450, 1451, 1452, 1453, 1454, 1455] {
+            assert!(
+                super::windows_thread_resource_error(code),
+                "Windows code {code}"
+            );
+            #[cfg(target_os = "windows")]
+            assert!(super::resource_spawn_error(
+                &std::io::Error::from_raw_os_error(code)
+            ));
+        }
+        // Permission/parameter errors and adjacent unrelated WinError values.
+        for code in [
+            0, 5, 6, 7, 9, 13, 15, 87, 154, 156, 163, 165, 1449, 1456, -1,
+        ] {
+            assert!(
+                !super::windows_thread_resource_error(code),
+                "Windows code {code}"
+            );
+        }
+    }
+
+    #[test]
+    fn spawn_error_retry_excludes_non_resource_failures() {
+        use std::io::ErrorKind;
+        for kind in [ErrorKind::WouldBlock, ErrorKind::OutOfMemory] {
+            assert!(super::resource_spawn_error(&kind.into()));
+        }
+        for kind in [
+            ErrorKind::PermissionDenied,
+            ErrorKind::InvalidInput,
+            ErrorKind::Unsupported,
+            ErrorKind::Other,
+        ] {
+            assert!(!super::resource_spawn_error(&kind.into()));
+        }
+        #[cfg(not(target_os = "windows"))]
+        assert!(
+            !super::resource_spawn_error(&std::io::Error::from_raw_os_error(1455)),
+            "do not interpret another OS's raw error codes as Windows errors"
+        );
+    }
+
+    #[test]
     fn adaptive_resume_reopens_accounting_without_resetting_hash_totals() {
         let backend = CpuBackend::adaptive(
             1,
@@ -1655,6 +1790,76 @@ mod tests {
             .map(|core| core.id)
             .collect::<Vec<_>>();
         assert_eq!(ordered, vec![0, 2, 4, 6, 1, 3, 5, 7]);
+    }
+
+    #[test]
+    fn affinity_fingerprint_distinguishes_equal_sized_cpu_masks() {
+        let left = [0, 2, 4, 6].into_iter().collect();
+        let right = [16, 18, 20, 22].into_iter().collect();
+        assert_ne!(
+            super::physical_topology_fingerprint(&left, None),
+            super::physical_topology_fingerprint(&right, None),
+        );
+    }
+
+    #[test]
+    fn affinity_fingerprint_distinguishes_smt_layout_and_canonicalizes_order() {
+        let cpus = [0, 1, 2, 3].into_iter().collect();
+        let paired =
+            super::physical_topology_fingerprint(&cpus, Some(vec![vec![0, 1], vec![2, 3]]));
+        assert_eq!(
+            paired,
+            super::physical_topology_fingerprint(&cpus, Some(vec![vec![3, 2], vec![1, 0]]),),
+        );
+        assert_ne!(
+            paired,
+            super::physical_topology_fingerprint(
+                &cpus,
+                Some(vec![vec![0], vec![1], vec![2], vec![3]]),
+            ),
+        );
+        assert_ne!(paired, super::physical_topology_fingerprint(&cpus, None));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    #[ignore = "changes this test process's CPU mask; run alone with --test-threads=1"]
+    fn windows_fingerprint_changes_with_process_cpu_mask() {
+        use windows_sys::Win32::System::Threading::{
+            GetCurrentProcess, GetProcessAffinityMask, SetProcessAffinityMask,
+        };
+        let process = unsafe { GetCurrentProcess() };
+        let mut original = 0usize;
+        let mut system = 0usize;
+        assert_ne!(
+            unsafe { GetProcessAffinityMask(process, &mut original, &mut system) },
+            0
+        );
+        if original.count_ones() < 2 {
+            eprintln!("requires two available logical CPUs; native mask check skipped");
+            return;
+        }
+        struct RestoreMask(usize);
+        impl Drop for RestoreMask {
+            fn drop(&mut self) {
+                assert_ne!(
+                    unsafe { SetProcessAffinityMask(GetCurrentProcess(), self.0) },
+                    0
+                );
+            }
+        }
+        let restore = RestoreMask(original);
+        let before = super::affinity_topology_fingerprint();
+        let first = 1usize << original.trailing_zeros();
+        let last = 1usize << (usize::BITS - 1 - original.leading_zeros());
+        assert_ne!(unsafe { SetProcessAffinityMask(process, first) }, 0);
+        let first_fingerprint = super::affinity_topology_fingerprint();
+        assert_ne!(unsafe { SetProcessAffinityMask(process, last) }, 0);
+        let last_fingerprint = super::affinity_topology_fingerprint();
+        drop(restore);
+        assert_eq!(before, super::affinity_topology_fingerprint());
+        assert_ne!(first_fingerprint, last_fingerprint);
+        println!("native masks {first:#x} => {first_fingerprint}; {last:#x} => {last_fingerprint}; restored {original:#x}");
     }
 
     #[test]

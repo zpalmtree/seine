@@ -8,15 +8,18 @@ pub enum CpuKernel {
     /// Experimental 256-bit AVX-512 path; never selected automatically.
     Avx512256,
     Neon,
+    /// Cached recent blocks with non-temporal arena stores; selected by measured tuning.
+    Avx512256Stream,
 }
 
 impl CpuKernel {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Scalar,
         Self::Avx2,
         Self::Avx512,
         Self::Avx512256,
         Self::Neon,
+        Self::Avx512256Stream,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -26,6 +29,7 @@ impl CpuKernel {
             Self::Avx512 => "avx512",
             Self::Avx512256 => "avx512-256",
             Self::Neon => "neon",
+            Self::Avx512256Stream => "avx512-256-stream",
         }
     }
 
@@ -40,7 +44,7 @@ impl CpuKernel {
                     && std::arch::is_x86_feature_detected!("avx512vl")
             }
             #[cfg(target_arch = "x86_64")]
-            Self::Avx512256 => {
+            Self::Avx512256 | Self::Avx512256Stream => {
                 std::arch::is_x86_feature_detected!("avx2")
                     && std::arch::is_x86_feature_detected!("avx512f")
                     && std::arch::is_x86_feature_detected!("avx512vl")
@@ -73,6 +77,8 @@ impl std::str::FromStr for CpuKernel {
         Self::ALL
             .into_iter()
             .find(|kernel| kernel.as_str() == value)
-            .ok_or_else(|| "expected scalar, avx2, avx512, avx512-256, or neon".to_string())
+            .ok_or_else(|| {
+                "expected scalar, avx2, avx512, avx512-256, avx512-256-stream, or neon".to_string()
+            })
     }
 }

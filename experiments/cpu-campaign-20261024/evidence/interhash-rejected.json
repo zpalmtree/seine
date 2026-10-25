@@ -1,0 +1,515 @@
+{
+  "hardware": "Intel Xeon Platinum 8375C / Ice Lake",
+  "status": "rejected",
+  "source": "8432f45e837d7fddffa83863315a5513aaf300fd",
+  "binary_sha256": "23510b999b17b19814291600ab83860e7c5d252f4d46c8a83ff9a53b70674db8",
+  "archive_sha256": "78b0d959dfda7ddc7034a545b20825bb5cf93580422098dceeb5038930f4c644",
+  "cases": {
+    "cases": [
+      [
+        "sequential",
+        0,
+        0
+      ],
+      [
+        "pair1",
+        0,
+        0
+      ],
+      [
+        "pair4",
+        0,
+        0
+      ],
+      [
+        "pair16",
+        0,
+        0
+      ],
+      [
+        "workers",
+        0,
+        0
+      ],
+      [
+        "workers",
+        0,
+        1
+      ],
+      [
+        "workers",
+        0,
+        8
+      ]
+    ],
+    "physical_core_groups": [
+      [
+        0,
+        8
+      ],
+      [
+        1,
+        9
+      ],
+      [
+        2,
+        10
+      ],
+      [
+        3,
+        11
+      ],
+      [
+        4,
+        12
+      ],
+      [
+        5,
+        13
+      ],
+      [
+        6,
+        14
+      ],
+      [
+        7,
+        15
+      ]
+    ],
+    "arena_bytes": 4294967296,
+    "reference_t_cost": 1,
+    "reference_lanes": 1
+  },
+  "actual_completed_order_reversed": true,
+  "full_size_reference_checks": [
+    "PASS kernel=avx512 mode=sequential nonce=0 memory_kib=2097152 dirty_reuse=true",
+    "PASS kernel=avx512 mode=sequential nonce=12345 memory_kib=2097152 dirty_reuse=true",
+    "PASS kernel=avx512 mode=sequential nonce=18446744073709551614 memory_kib=2097152 dirty_reuse=true",
+    "PASS kernel=avx512 mode=pair1 nonce=0 memory_kib=2097152 dirty_reuse=true",
+    "PASS kernel=avx512 mode=pair1 nonce=12345 memory_kib=2097152 dirty_reuse=true",
+    "PASS kernel=avx512 mode=pair1 nonce=18446744073709551614 memory_kib=2097152 dirty_reuse=true",
+    "PASS kernel=avx512 mode=pair4 nonce=0 memory_kib=2097152 dirty_reuse=true",
+    "PASS kernel=avx512 mode=pair4 nonce=12345 memory_kib=2097152 dirty_reuse=true",
+    "PASS kernel=avx512 mode=pair4 nonce=18446744073709551614 memory_kib=2097152 dirty_reuse=true",
+    "PASS kernel=avx512 mode=pair16 nonce=0 memory_kib=2097152 dirty_reuse=true",
+    "PASS kernel=avx512 mode=pair16 nonce=12345 memory_kib=2097152 dirty_reuse=true",
+    "PASS kernel=avx512 mode=pair16 nonce=18446744073709551614 memory_kib=2097152 dirty_reuse=true"
+  ],
+  "early_rejection": {
+    "reason": "Every interleaving variant trails the strongest equal-RAM same-physical-core ordinary control by over 5% in both opposite-order passes",
+    "completed_passes": 2
+  },
+  "reports": [
+    {
+      "label": "r1-sequential-cpu0-0",
+      "repeat": 1,
+      "result": {
+        "mode": "sequential",
+        "kernel": "avx512",
+        "page": "large",
+        "cpu0": 0,
+        "cpu1": 0,
+        "arena_bytes": 4294967296,
+        "hashes": 48,
+        "elapsed_secs": 25.763375288,
+        "completed_hps": 1.863109917
+      },
+      "vm_delta": {
+        "pswpin": 0,
+        "pswpout": 0,
+        "oom_kill": 0,
+        "cpu_total": 43469,
+        "cpu_steal": 1
+      }
+    },
+    {
+      "label": "r1-pair1-cpu0-0",
+      "repeat": 1,
+      "result": {
+        "mode": "pair1",
+        "kernel": "avx512",
+        "page": "large",
+        "cpu0": 0,
+        "cpu1": 0,
+        "arena_bytes": 4294967296,
+        "hashes": 50,
+        "elapsed_secs": 25.447089256,
+        "completed_hps": 1.964861266
+      },
+      "vm_delta": {
+        "pswpin": 0,
+        "pswpout": 0,
+        "oom_kill": 0,
+        "cpu_total": 42985,
+        "cpu_steal": 0
+      }
+    },
+    {
+      "label": "r1-pair4-cpu0-0",
+      "repeat": 1,
+      "result": {
+        "mode": "pair4",
+        "kernel": "avx512",
+        "page": "large",
+        "cpu0": 0,
+        "cpu1": 0,
+        "arena_bytes": 4294967296,
+        "hashes": 48,
+        "elapsed_secs": 25.601100224,
+        "completed_hps": 1.874919421
+      },
+      "vm_delta": {
+        "pswpin": 0,
+        "pswpout": 0,
+        "oom_kill": 0,
+        "cpu_total": 43225,
+        "cpu_steal": 0
+      }
+    },
+    {
+      "label": "r1-pair16-cpu0-0",
+      "repeat": 1,
+      "result": {
+        "mode": "pair16",
+        "kernel": "avx512",
+        "page": "large",
+        "cpu0": 0,
+        "cpu1": 0,
+        "arena_bytes": 4294967296,
+        "hashes": 48,
+        "elapsed_secs": 26.073829592,
+        "completed_hps": 1.840926352
+      },
+      "vm_delta": {
+        "pswpin": 0,
+        "pswpout": 0,
+        "oom_kill": 0,
+        "cpu_total": 43946,
+        "cpu_steal": 0
+      }
+    },
+    {
+      "label": "r1-workers-cpu0-0",
+      "repeat": 1,
+      "result": {
+        "mode": "workers",
+        "kernel": "avx512",
+        "page": "large",
+        "cpu0": 0,
+        "cpu1": 0,
+        "arena_bytes": 4294967296,
+        "hashes": 46,
+        "elapsed_secs": 25.183901522,
+        "completed_hps": 1.826563686
+      },
+      "vm_delta": {
+        "pswpin": 0,
+        "pswpout": 0,
+        "oom_kill": 0,
+        "cpu_total": 42586,
+        "cpu_steal": 1
+      }
+    },
+    {
+      "label": "r1-workers-cpu0-1",
+      "repeat": 1,
+      "result": {
+        "mode": "workers",
+        "kernel": "avx512",
+        "page": "large",
+        "cpu0": 0,
+        "cpu1": 1,
+        "arena_bytes": 4294967296,
+        "hashes": 91,
+        "elapsed_secs": 25.354191231,
+        "completed_hps": 3.589150179
+      },
+      "vm_delta": {
+        "pswpin": 0,
+        "pswpout": 0,
+        "oom_kill": 0,
+        "cpu_total": 42807,
+        "cpu_steal": 0
+      }
+    },
+    {
+      "label": "r1-workers-cpu0-8",
+      "repeat": 1,
+      "result": {
+        "mode": "workers",
+        "kernel": "avx512",
+        "page": "large",
+        "cpu0": 0,
+        "cpu1": 8,
+        "arena_bytes": 4294967296,
+        "hashes": 56,
+        "elapsed_secs": 25.075187261,
+        "completed_hps": 2.233283421
+      },
+      "vm_delta": {
+        "pswpin": 0,
+        "pswpout": 0,
+        "oom_kill": 0,
+        "cpu_total": 42313,
+        "cpu_steal": 0
+      }
+    },
+    {
+      "label": "r2-workers-cpu0-8",
+      "repeat": 2,
+      "result": {
+        "mode": "workers",
+        "kernel": "avx512",
+        "page": "large",
+        "cpu0": 0,
+        "cpu1": 8,
+        "arena_bytes": 4294967296,
+        "hashes": 57,
+        "elapsed_secs": 25.555076284,
+        "completed_hps": 2.230476613
+      },
+      "vm_delta": {
+        "pswpin": 0,
+        "pswpout": 0,
+        "oom_kill": 0,
+        "cpu_total": 43115,
+        "cpu_steal": 0
+      }
+    },
+    {
+      "label": "r2-workers-cpu0-1",
+      "repeat": 2,
+      "result": {
+        "mode": "workers",
+        "kernel": "avx512",
+        "page": "large",
+        "cpu0": 0,
+        "cpu1": 1,
+        "arena_bytes": 4294967296,
+        "hashes": 92,
+        "elapsed_secs": 25.486699098,
+        "completed_hps": 3.609725985
+      },
+      "vm_delta": {
+        "pswpin": 0,
+        "pswpout": 0,
+        "oom_kill": 0,
+        "cpu_total": 43033,
+        "cpu_steal": 0
+      }
+    },
+    {
+      "label": "r2-workers-cpu0-0",
+      "repeat": 2,
+      "result": {
+        "mode": "workers",
+        "kernel": "avx512",
+        "page": "large",
+        "cpu0": 0,
+        "cpu1": 0,
+        "arena_bytes": 4294967296,
+        "hashes": 46,
+        "elapsed_secs": 25.041591338,
+        "completed_hps": 1.836943962
+      },
+      "vm_delta": {
+        "pswpin": 0,
+        "pswpout": 0,
+        "oom_kill": 0,
+        "cpu_total": 42308,
+        "cpu_steal": 0
+      }
+    },
+    {
+      "label": "r2-pair16-cpu0-0",
+      "repeat": 2,
+      "result": {
+        "mode": "pair16",
+        "kernel": "avx512",
+        "page": "large",
+        "cpu0": 0,
+        "cpu1": 0,
+        "arena_bytes": 4294967296,
+        "hashes": 48,
+        "elapsed_secs": 26.002922593,
+        "completed_hps": 1.845946348
+      },
+      "vm_delta": {
+        "pswpin": 0,
+        "pswpout": 0,
+        "oom_kill": 0,
+        "cpu_total": 43837,
+        "cpu_steal": 0
+      }
+    },
+    {
+      "label": "r2-pair4-cpu0-0",
+      "repeat": 2,
+      "result": {
+        "mode": "pair4",
+        "kernel": "avx512",
+        "page": "large",
+        "cpu0": 0,
+        "cpu1": 0,
+        "arena_bytes": 4294967296,
+        "hashes": 48,
+        "elapsed_secs": 25.611109217,
+        "completed_hps": 1.87418669
+      },
+      "vm_delta": {
+        "pswpin": 0,
+        "pswpout": 0,
+        "oom_kill": 0,
+        "cpu_total": 43198,
+        "cpu_steal": 0
+      }
+    },
+    {
+      "label": "r2-pair1-cpu0-0",
+      "repeat": 2,
+      "result": {
+        "mode": "pair1",
+        "kernel": "avx512",
+        "page": "large",
+        "cpu0": 0,
+        "cpu1": 0,
+        "arena_bytes": 4294967296,
+        "hashes": 50,
+        "elapsed_secs": 25.139348872,
+        "completed_hps": 1.988913884
+      },
+      "vm_delta": {
+        "pswpin": 0,
+        "pswpout": 0,
+        "oom_kill": 0,
+        "cpu_total": 42477,
+        "cpu_steal": 1
+      }
+    },
+    {
+      "label": "r2-sequential-cpu0-0",
+      "repeat": 2,
+      "result": {
+        "mode": "sequential",
+        "kernel": "avx512",
+        "page": "large",
+        "cpu0": 0,
+        "cpu1": 0,
+        "arena_bytes": 4294967296,
+        "hashes": 48,
+        "elapsed_secs": 25.663134325,
+        "completed_hps": 1.87038728
+      },
+      "vm_delta": {
+        "pswpin": 0,
+        "pswpout": 0,
+        "oom_kill": 0,
+        "cpu_total": 43278,
+        "cpu_steal": 0
+      }
+    }
+  ],
+  "summary": [
+    {
+      "mode": "sequential",
+      "cpu0": 0,
+      "cpu1": 0,
+      "per_pass_hps": [
+        1.863109917,
+        1.87038728
+      ],
+      "mean_hps": 1.8667485985,
+      "arena_bytes": 4294967296
+    },
+    {
+      "mode": "pair1",
+      "cpu0": 0,
+      "cpu1": 0,
+      "per_pass_hps": [
+        1.964861266,
+        1.988913884
+      ],
+      "mean_hps": 1.9768875750000001,
+      "arena_bytes": 4294967296
+    },
+    {
+      "mode": "pair4",
+      "cpu0": 0,
+      "cpu1": 0,
+      "per_pass_hps": [
+        1.874919421,
+        1.87418669
+      ],
+      "mean_hps": 1.8745530554999998,
+      "arena_bytes": 4294967296
+    },
+    {
+      "mode": "pair16",
+      "cpu0": 0,
+      "cpu1": 0,
+      "per_pass_hps": [
+        1.840926352,
+        1.845946348
+      ],
+      "mean_hps": 1.8434363500000002,
+      "arena_bytes": 4294967296
+    },
+    {
+      "mode": "workers",
+      "cpu0": 0,
+      "cpu1": 0,
+      "per_pass_hps": [
+        1.826563686,
+        1.836943962
+      ],
+      "mean_hps": 1.8317538240000002,
+      "arena_bytes": 4294967296
+    },
+    {
+      "mode": "workers",
+      "cpu0": 0,
+      "cpu1": 1,
+      "per_pass_hps": [
+        3.589150179,
+        3.609725985
+      ],
+      "mean_hps": 3.599438082,
+      "arena_bytes": 4294967296
+    },
+    {
+      "mode": "workers",
+      "cpu0": 0,
+      "cpu1": 8,
+      "per_pass_hps": [
+        2.233283421,
+        2.230476613
+      ],
+      "mean_hps": 2.231880017,
+      "arena_bytes": 4294967296
+    }
+  ],
+  "source_sha256": {
+    "results.json": "86b855a0cac22730366ce648387a7ea0f336441f06a716ada1ecdfcabc9be98d",
+    "r2-workers-cpu0-8.log": "197b8874bdea01fa086b1992ecdb8c37518257266217ae7259cd14ceb657af81",
+    "r1-pair4-cpu0-0.log": "87957d6026bf9024f7b3ddb4ec6bc12fcf53ffc5077b9e1611327397d55c6e59",
+    "r2-pair4-cpu0-0.log": "d73270384336d17529f53640b61164bf39917d5f1ded5fcdf822d571c9cda73a",
+    "reserve.log": "dc85b81a668e7a7b87d5074ed0330e77a558ad015e633acb94feeee3ca529879",
+    "r1-sequential-cpu0-0.log": "989dd6e87b159a77916665727e09a3c31912da98076a25cc4bc427bee848c8a6",
+    "r2-sequential-cpu0-0.log": "41d8a32211687473271251281247361b97b725ce0060e2524d3f7fd31583bb6b",
+    "r1-workers-cpu0-8.log": "04203a10681f059226e6dd2628721c338e90c8eb6734ae16154e84808a9adcbe",
+    "r2-workers-cpu0-0.log": "9ea26f1f9f07844b236665192a95ee6692440cf3bf22d4976f74e8ff53412e21",
+    "EARLY-REJECTION.json": "0a91eb8ba981282f977bd158c2009d19118d6bfbc469691c8426b527a6c8fcf3",
+    "r1-workers-cpu0-0.log": "6fae9dd221ea7d2d3ed2446f1453dc740e0e732146da9d9d99d34d456233ecb2",
+    "full-size-parity.log": "4e19633d5b213dcdf641f52e5e88f292cc01f6cbe3f2577e17c85e26bf79fed6",
+    "r1-pair1-cpu0-0.log": "17904b8b7e48add5d75478033f5a895c90cccdce9b1150315f0a3341c1b1debb",
+    "COMPLETE": "f0a32479c23e4b1823ed09e7f6db3147325f7882df76f2bfa528bf54cdc6d282",
+    "cases.json": "090da458262bd42f0c8df34577904eb6e086ca7ab7247e23dc189494d14097e7",
+    "r2-workers-cpu0-1.log": "94991663e6032a08694a8c84b60e1aa06ddf61769e800a76086910ef271649ed",
+    "release.log": "41e6f70827a48442ab2ef9f3993295be8616815bd80fae8fe286f23cf3cd02e3",
+    "r1-pair16-cpu0-0.log": "0f10ecd5e36a8d3eed3b6b5200604146e02eac09cdb060d7759bc741452a2ff9",
+    "r2-pair16-cpu0-0.log": "03b1ee3d33adad02061c6ac5f1d72f22d920d7b7105ff6375db34bda7253122e",
+    "r1-workers-cpu0-1.log": "4addb9046e32edc345a95dfc2d56f99de118dbd17544b4307aa0698aefa289f8",
+    "r2-pair1-cpu0-0.log": "17b1149d554018636a808120c29927526919449a7d88de4cc044264010aa5125"
+  },
+  "interpretation": "Pair throughput is total completed hashes, not divided per lane. All cases allocate two full 2 GiB arenas. Same-physical-core SMT is the strongest applicable ordinary control; two physical cores are separately labelled. This rejects the tested implementation on this guest, not all possible interleaving on all CPUs."
+}

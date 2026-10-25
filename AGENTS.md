@@ -45,6 +45,15 @@ This file preserves the full engineering reference for AI agents doing optimizat
 
 ### CPU Backend Tuning
 
+- `avx512-256-stream` is a distinct CPU kernel with a 64 KiB recent-block ring
+  and non-temporal arena stores. It preserves the full 2 GiB arena. ISA support
+  requires AVX2 + AVX-512F/VL; automatic trials additionally require validated
+  AMD family 26/model 2. The existing fallback remains unchanged. Mining tuning
+  visits every eligible challenger and caches only complete comparisons for the
+  current worker counts/backing; schema 2 also fingerprints the candidate set.
+  Full-size parity and dirty arena/kernel-switch checks are available through
+  `pow-kernel/examples/verify_streaming_dispatch.rs` and the optimized ignored
+  `adaptive_kernel_real_arena_smoke` test. Keep these with future ring changes.
 - `--cpu-page-mode` (`auto`, `regular`, `large`, `large-1g`; default `auto`) controls the CPU arena page contract.
   - `auto` prefers explicit Windows large pages/Linux HugeTLB, then retains the platform fallback chain.
   - `regular` forces ordinary pages and disables Linux THP for a controlled baseline.
@@ -62,6 +71,7 @@ This file preserves the full engineering reference for AI agents doing optimizat
   - Mining starts from a compatible cached count or half the stable automatic capacity, capped by currently available RAM. It does not run the offline kernel search before connecting.
   - `src/miner/adaptive_cpu.rs` performs productive A/B/A trials using cumulative completed hashes. Arenas must each finish a warmup hash before measurement. Windows last `max(30, 5 * cpu_autotune_secs)` seconds and collect at least 20 hashes. Interrupted/unstable comparisons are discarded.
   - CPU workers use a fixed nonce stride at the backend's capacity. Changing enabled workers parks/resumes existing lanes without resetting their cursors or restarting the session. Parked workers release arenas and reference tables; survivors retain theirs. Scheduling capacity (`lanes`) and enabled workers (`enabled_lanes`) are intentionally distinct.
+  - Automatic mining provisions parked slots within Linux cgroup-v2 PID headroom, reserving later control/network threads. Resource-related worker spawn failures clean up and retry a smaller pool before any assignment; `worker_capacity()` may then be below scheduling lanes, whose nonce stride stays fixed. The controller and TUI honor actual provisioned capacity while the cache retains the CPU/user maximum. `cpu_auto_threads_cap` remains the RAM-safe manual/offline bound; `cpu_autotune_worker_slots` is the separate startup slot ceiling. Increasing a PID limit requires a new session. PID preflight is best effort (DNS, drivers and competing tasks can race it); explicit fixed counts fail rather than silently downsize.
   - Memory budgets are refreshed once per second, crediting resident and in-progress arena allocations. Linux cgroup-v2 membership and ancestor `memory.high`/`memory.max` limits apply, with clean inactive file-cache credit. PSI uses the miner's own cgroup when available, otherwise system pressure. Three consecutive Linux PSI/Windows low-memory samples with tight headroom also shed workers. Zero enabled workers is allowed in automatic mining; recovery requires sustained headroom. Allocation failures back off rather than quarantine healthy CPU workers.
   - Cache schema 11 records measurements and resource limitation. Schema 10 warmed records remain seeds for mining. A lower available-RAM ceiling does not discard a compatible seed or overwrite a remembered higher count. Kernel and mining scores remain distinct. Host/build/topology/page-mode compatibility still applies.
   - `--cpu-autotune-threads` enables tuning even with `--threads`; `--disable-cpu-autotune-threads` disables it. Manual TUI counts disable automatic adjustment for that run.

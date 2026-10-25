@@ -1,0 +1,21 @@
+{
+  "hardware": "Graviton4 NeoverseV2",
+  "source": "f20e7bb1772be024a12ac5cdcc92685ba89d3ddd",
+  "full_size_parity": "reference=[e9, fb, fa, cf, b6, 96, ae, f8, f8, 88, 20, 17, c5, 5b, 23, 4e, 4b, 31, 30, a4, b6, 23, 42, c6, 3d, f5, 61, 31, 8d, 5a, db, a8]\nscalar: PASS (full 2 GiB reference parity)\navx2: unsupported\navx512: unsupported\navx512-256: unsupported\nneon: PASS (full 2 GiB reference parity)\nneon-sha3: PASS (full 2 GiB reference parity)\n",
+  "dirty_dispatch_parity": "PASS nonce=0 kernel=neon full_size_bytes=2147483648 dirty_reuse=true\nPASS nonce=0 kernel=neon-sha3 full_size_bytes=2147483648 dirty_reuse=true\nPASS nonce=0 kernel=neon full_size_bytes=2147483648 dirty_reuse=true\nPASS nonce=12345 kernel=neon full_size_bytes=2147483648 dirty_reuse=true\nPASS nonce=12345 kernel=neon-sha3 full_size_bytes=2147483648 dirty_reuse=true\nPASS nonce=12345 kernel=neon full_size_bytes=2147483648 dirty_reuse=true\nPASS nonce=18446744073709551615 kernel=neon full_size_bytes=2147483648 dirty_reuse=true\nPASS nonce=18446744073709551615 kernel=neon-sha3 full_size_bytes=2147483648 dirty_reuse=true\nPASS nonce=18446744073709551615 kernel=neon full_size_bytes=2147483648 dirty_reuse=true\n",
+  "kernel_test_results": [
+    "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s",
+    "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s",
+    "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+  ],
+  "strict_kernel_clippy": "passed",
+  "log_sha256": {
+    "kernel-tests.log": "dc0a311c87d4dc6c48c1f411ca1a6439266a60457c959b7bf90972f62f889bf7",
+    "kernel-clippy.log": "06f854748e535016157ca0e3fd7ed2a10732941b82eeae2ed4c6c0df89a7a73a",
+    "identities.txt": "3c591ab8d97bd0a0452197770408fce9495b73e77ef56b6154903e32dda24031",
+    "dispatch-parity.log": "28743ef10282d206e04539835703cacac8ba404b2ca740ed0b975ac0ca26a687",
+    "full-size-parity.log": "31b7fd8ee9206977e60454472d1c33e04d1587f9d58da2b0419d3c6b67165ec4",
+    "COMPLETE": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "scope": "x86-only noinline attribute; ARM kernel/control source unchanged. Complete636nativeworkspace/lifecycle evidence remains separate."
+}

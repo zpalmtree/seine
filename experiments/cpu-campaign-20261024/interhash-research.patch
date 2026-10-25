@@ -1,0 +1,500 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 5edc882..48f2282 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -476,6 +476,7 @@ version = "0.1.0"
+ dependencies = [
+  "argon2",
+  "blake2",
++ "libc",
+ ]
+ 
+ [[package]]
+diff --git a/pow-kernel/Cargo.toml b/pow-kernel/Cargo.toml
+index 847a658..9449ce5 100644
+--- a/pow-kernel/Cargo.toml
++++ b/pow-kernel/Cargo.toml
+@@ -11,9 +11,15 @@ path = "src/lib.rs"
+ [features]
+ default = []
+ avx512 = []
++interhash-experiment = []
+ 
+ [dependencies]
+ blake2 = "0.10"
+ 
+ [dev-dependencies]
+ argon2 = "0.5"
++libc = "0.2"
++
++[[example]]
++name = "interhash_experiment"
++required-features = ["interhash-experiment"]
+diff --git a/pow-kernel/examples/interhash_experiment.rs b/pow-kernel/examples/interhash_experiment.rs
+new file mode 100644
+index 0000000..2c64762
+--- /dev/null
++++ b/pow-kernel/examples/interhash_experiment.rs
+@@ -0,0 +1,257 @@
++//! Linux-only bounded research runner. All modes retain two full 2 GiB arenas;
++//! timings exclude allocation/address precomputation and include completed work.
++#[cfg(target_os = "linux")]
++mod linux {
++    use argon2::{Algorithm, Argon2, Params, Version};
++    use blocknet_pow_kernel::{CpuKernel, FixedArgon2id, PowBlock};
++    use std::hint::black_box;
++    use std::time::{Duration, Instant};
++
++    const MEMORY_KIB: u32 = 2 * 1024 * 1024;
++    const SALT: &[u8] = b"interhash-full-size";
++
++    struct Arena {
++        ptr: *mut PowBlock,
++        bytes: usize,
++    }
++
++    // The mapping has one owner, moves to at most one worker, and is never shared.
++    unsafe impl Send for Arena {}
++
++    impl Arena {
++        fn new(large: bool) -> Self {
++            let bytes = MEMORY_KIB as usize * 1024;
++            let flags = libc::MAP_PRIVATE
++                | libc::MAP_ANONYMOUS
++                | if large {
++                    libc::MAP_HUGETLB | libc::MAP_HUGE_2MB
++                } else {
++                    0
++                };
++            let raw = unsafe {
++                libc::mmap(
++                    std::ptr::null_mut(),
++                    bytes,
++                    libc::PROT_READ | libc::PROT_WRITE,
++                    flags,
++                    -1,
++                    0,
++                )
++            };
++            assert_ne!(
++                raw,
++                libc::MAP_FAILED,
++                "arena mmap: {}",
++                std::io::Error::last_os_error()
++            );
++            if !large {
++                assert_eq!(
++                    unsafe { libc::madvise(raw, bytes, libc::MADV_NOHUGEPAGE) },
++                    0
++                );
++            }
++            Self {
++                ptr: raw.cast(),
++                bytes,
++            }
++        }
++
++        fn blocks(&mut self) -> &mut [PowBlock] {
++            assert_eq!(std::mem::size_of::<PowBlock>(), 1024);
++            // Anonymous mappings are zeroed and all bit patterns are valid PowBlocks.
++            unsafe { std::slice::from_raw_parts_mut(self.ptr, MEMORY_KIB as usize) }
++        }
++    }
++
++    impl Drop for Arena {
++        fn drop(&mut self) {
++            assert_eq!(unsafe { libc::munmap(self.ptr.cast(), self.bytes) }, 0);
++        }
++    }
++
++    fn pin(cpu: usize) {
++        assert!(cpu < libc::CPU_SETSIZE as usize);
++        let mut set = unsafe { std::mem::zeroed::<libc::cpu_set_t>() };
++        unsafe { libc::CPU_SET(cpu, &mut set) };
++        assert_eq!(
++            unsafe { libc::sched_setaffinity(0, std::mem::size_of_val(&set), &set) },
++            0
++        );
++    }
++
++    fn pair(
++        mode: &str,
++        hasher: &FixedArgon2id,
++        nonce: u64,
++        left: &mut Arena,
++        right: &mut Arena,
++    ) -> [[u8; 32]; 2] {
++        let a = nonce.to_le_bytes();
++        let b = nonce.wrapping_add(1).to_le_bytes();
++        let mut output = [[0u8; 32]; 2];
++        match mode {
++            "pair1" => hasher
++                .hash_pair_interleaved::<1>(
++                    [&a, &b],
++                    SALT,
++                    &mut output,
++                    left.blocks(),
++                    right.blocks(),
++                )
++                .unwrap(),
++            "pair4" => hasher
++                .hash_pair_interleaved::<4>(
++                    [&a, &b],
++                    SALT,
++                    &mut output,
++                    left.blocks(),
++                    right.blocks(),
++                )
++                .unwrap(),
++            "pair16" => hasher
++                .hash_pair_interleaved::<16>(
++                    [&a, &b],
++                    SALT,
++                    &mut output,
++                    left.blocks(),
++                    right.blocks(),
++                )
++                .unwrap(),
++            "sequential" => {
++                hasher
++                    .hash_password_into_with_memory(&a, SALT, &mut output[0], left.blocks())
++                    .unwrap();
++                hasher
++                    .hash_password_into_with_memory(&b, SALT, &mut output[1], right.blocks())
++                    .unwrap();
++            }
++            _ => panic!("unknown pair mode"),
++        }
++        output
++    }
++
++    fn verify(kernel: CpuKernel, large: bool) {
++        // Compute references before retaining the two candidate arenas: peak is 4 GiB.
++        let reference = Argon2::new(
++            Algorithm::Argon2id,
++            Version::V0x13,
++            Params::new(MEMORY_KIB, 1, 1, Some(32)).unwrap(),
++        );
++        let mut expected = Vec::new();
++        for nonce in [0u64, 12345, u64::MAX - 1] {
++            let mut outputs = [[0u8; 32]; 2];
++            for (offset, output) in outputs.iter_mut().enumerate() {
++                reference
++                    .hash_password_into(
++                        &nonce.wrapping_add(offset as u64).to_le_bytes(),
++                        SALT,
++                        output,
++                    )
++                    .unwrap();
++            }
++            expected.push((nonce, outputs));
++        }
++        let hasher = FixedArgon2id::with_kernel(MEMORY_KIB, kernel).unwrap();
++        let mut left = Arena::new(large);
++        let mut right = Arena::new(large);
++        for mode in ["sequential", "pair1", "pair4", "pair16"] {
++            for (nonce, outputs) in &expected {
++                assert_eq!(
++                    pair(mode, &hasher, *nonce, &mut left, &mut right),
++                    *outputs,
++                    "full-size reference parity: kernel={kernel},mode={mode},nonce={nonce}"
++                );
++                println!("PASS kernel={kernel} mode={mode} nonce={nonce} memory_kib={MEMORY_KIB} dirty_reuse=true");
++            }
++        }
++    }
++
++    pub fn main() {
++        let args: Vec<_> = std::env::args().collect();
++        assert_eq!(
++            args.len(),
++            7,
++            "usage: interhash_experiment MODE KERNEL PAGE SECONDS CPU0 CPU1"
++        );
++        let mode = &args[1];
++        let kernel: CpuKernel = args[2].parse().unwrap();
++        assert!(matches!(args[3].as_str(), "regular" | "large"));
++        let large = args[3] == "large";
++        let seconds: u64 = args[4].parse().unwrap();
++        assert!((1..=120).contains(&seconds));
++        let cpu0: usize = args[5].parse().unwrap();
++        let cpu1: usize = args[6].parse().unwrap();
++        pin(cpu0);
++        if mode == "verify" {
++            verify(kernel, large);
++            return;
++        }
++        let hasher = FixedArgon2id::with_kernel(MEMORY_KIB, kernel).unwrap();
++        let mut left = Arena::new(large);
++        let mut right = Arena::new(large);
++        let warm = pair("sequential", &hasher, 0, &mut left, &mut right);
++        black_box(warm);
++        let (hashes, elapsed) = if mode == "workers" {
++            let barrier = std::sync::Barrier::new(3);
++            let start = std::sync::OnceLock::new();
++            let results = std::thread::scope(|scope| {
++                let mut handles = Vec::new();
++                for (lane, (mut arena, cpu)) in
++                    [(left, cpu0), (right, cpu1)].into_iter().enumerate()
++                {
++                    let barrier = &barrier;
++                    let start = &start;
++                    let hasher = &hasher;
++                    handles.push(scope.spawn(move || {
++                        pin(cpu);
++                        barrier.wait();
++                        let begin: Instant = *start.get().unwrap();
++                        let mut completed = 0u64;
++                        while begin.elapsed() < Duration::from_secs(seconds) {
++                            let nonce = completed * 2 + lane as u64 + 2;
++                            let mut output = [0u8; 32];
++                            hasher
++                                .hash_password_into_with_memory(
++                                    &nonce.to_le_bytes(),
++                                    SALT,
++                                    &mut output,
++                                    arena.blocks(),
++                                )
++                                .unwrap();
++                            black_box(output);
++                            completed += 1;
++                        }
++                        (completed, begin.elapsed().as_secs_f64())
++                    }));
++                }
++                start.set(Instant::now()).unwrap();
++                barrier.wait();
++                handles
++                    .into_iter()
++                    .map(|h| h.join().unwrap())
++                    .collect::<Vec<_>>()
++            });
++            (
++                results.iter().map(|r| r.0).sum(),
++                results.iter().map(|r| r.1).fold(0.0, f64::max),
++            )
++        } else {
++            let start = Instant::now();
++            let mut completed = 0;
++            while start.elapsed() < Duration::from_secs(seconds) {
++                black_box(pair(mode, &hasher, completed + 2, &mut left, &mut right));
++                completed += 2;
++            }
++            (completed, start.elapsed().as_secs_f64())
++        };
++        println!("{{\"mode\":\"{mode}\",\"kernel\":\"{kernel}\",\"page\":\"{}\",\"cpu0\":{cpu0},\"cpu1\":{cpu1},\"arena_bytes\":4294967296,\"hashes\":{hashes},\"elapsed_secs\":{elapsed:.9},\"completed_hps\":{:.9}}}",
++        args[3], hashes as f64 / elapsed);
++    }
++}
++
++fn main() {
++    #[cfg(target_os = "linux")]
++    linux::main();
++    #[cfg(not(target_os = "linux"))]
++    panic!("this research runner requires Linux mmap and hard CPU affinity");
++}
+diff --git a/pow-kernel/src/fixed_argon.rs b/pow-kernel/src/fixed_argon.rs
+index 9a0b05d..1d5923e 100644
+--- a/pow-kernel/src/fixed_argon.rs
++++ b/pow-kernel/src/fixed_argon.rs
+@@ -1,5 +1,7 @@
+ #[cfg(target_arch = "x86_64")]
+ mod avx512_256;
++#[cfg(feature = "interhash-experiment")]
++mod interhash;
+ 
+ use crate::CpuKernel;
+ use std::convert::TryInto;
+diff --git a/pow-kernel/src/fixed_argon/interhash.rs b/pow-kernel/src/fixed_argon/interhash.rs
+new file mode 100644
+index 0000000..6ff6ce3
+--- /dev/null
++++ b/pow-kernel/src/fixed_argon/interhash.rs
+@@ -0,0 +1,187 @@
++//! Research only: two independent full-size hashes on one core. The ordinary
++//! data-independent phase is unchanged; only data-dependent blocks interleave.
++//! This avoids doubling the already-prefetched DI loop's instruction footprint.
++use super::*;
++
++impl FixedArgon2id {
++    /// Experimental scheduling, never selected by the miner or default features.
++    /// Both arenas retain the full consensus memory requirement independently.
++    pub fn hash_pair_interleaved<const CHUNK: usize>(
++        &self,
++        passwords: [&[u8]; 2],
++        salt: &[u8],
++        outputs: &mut [[u8; 32]; 2],
++        left: &mut [PowBlock],
++        right: &mut [PowBlock],
++    ) -> Result<()> {
++        assert!(CHUNK > 0 && CHUNK <= 64);
++        for (password, output) in passwords.iter().zip(outputs.iter()) {
++            verify_inputs(password, salt, output)?;
++        }
++        let left = left
++            .get_mut(..self.block_count)
++            .ok_or(Error::MemoryTooLittle)?;
++        let right = right
++            .get_mut(..self.block_count)
++            .ok_or(Error::MemoryTooLittle)?;
++        for (lane, memory) in [&mut *left, &mut *right].into_iter().enumerate() {
++            initialize_lane_blocks(
++                memory,
++                initial_hash(
++                    self.requested_memory_kib,
++                    ARGON2_T_COST,
++                    ARGON2_LANES,
++                    passwords[lane],
++                    salt,
++                    &outputs[lane],
++                ),
++            )?;
++        }
++        match self.isa {
++            ISA_AVX2 => self.fill_pair::<ISA_AVX2, CHUNK>(left, right),
++            ISA_AVX512 => self.fill_pair::<ISA_AVX512, CHUNK>(left, right),
++            ISA_AVX512_256 => self.fill_pair::<ISA_AVX512_256, CHUNK>(left, right),
++            ISA_NEON => self.fill_pair::<ISA_NEON, CHUNK>(left, right),
++            _ => self.fill_pair::<ISA_SCALAR, CHUNK>(left, right),
++        }
++        finalize(left, &mut outputs[0])?;
++        finalize(right, &mut outputs[1])
++    }
++
++    fn fill_pair<const ISA: u8, const CHUNK: usize>(
++        &self,
++        left: &mut [PowBlock],
++        right: &mut [PowBlock],
++    ) {
++        // Both sequential DI phases use the baseline distance-three prefetch.
++        for memory in [&mut *left, &mut *right] {
++            for slice in 0..2 {
++                let first = if slice == 0 { 2 } else { 0 };
++                let base = slice * self.segment_length;
++                for pre in first..(first + 3).min(self.segment_length) {
++                    prefetch_pow_block(&memory[self.data_independent_ref_indexes[base + pre]]);
++                }
++                for block in first..self.segment_length {
++                    if block + 3 < self.segment_length {
++                        prefetch_pow_block(
++                            &memory[self.data_independent_ref_indexes[base + block + 3]],
++                        );
++                    }
++                    let current = base + block;
++                    fill_block_from_refs::<ISA>(
++                        memory,
++                        current - 1,
++                        self.data_independent_ref_indexes[current],
++                        current,
++                    );
++                }
++            }
++        }
++        for slice in 2..SYNC_POINTS {
++            let base = slice * self.segment_length;
++            for block in (0..self.segment_length).step_by(CHUNK) {
++                let current = base + block;
++                // Expose both upcoming references before doing either chain.
++                for memory in [&*left, &*right] {
++                    let reference = reference_index(current - 1, memory[current - 1].as_ref()[0]);
++                    prefetch_pow_block(&memory[reference]);
++                }
++                for memory in [&mut *left, &mut *right] {
++                    for offset in block..(block + CHUNK).min(self.segment_length) {
++                        let current = base + offset;
++                        let reference =
++                            reference_index(current - 1, memory[current - 1].as_ref()[0]);
++                        if offset + 1 < self.segment_length {
++                            #[cfg(target_arch = "x86_64")]
++                            if ISA == ISA_AVX2 || ISA == ISA_AVX512 || ISA == ISA_AVX512_256 {
++                                fill_block_from_refs_mid_prefetch::<ISA>(
++                                    memory,
++                                    current - 1,
++                                    reference,
++                                    current,
++                                    current,
++                                );
++                                continue;
++                            }
++                            #[cfg(target_arch = "aarch64")]
++                            if ISA == ISA_NEON {
++                                fill_block_from_refs_mid_prefetch(
++                                    memory,
++                                    current - 1,
++                                    reference,
++                                    current,
++                                    current,
++                                );
++                                continue;
++                            }
++                        }
++                        fill_block_from_refs::<ISA>(memory, current - 1, reference, current);
++                    }
++                }
++            }
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use argon2::{Algorithm, Argon2, Params, Version};
++
++    #[test]
++    fn pair_matches_reference_at_slice_boundaries_and_dirty_reuse() {
++        for memory in [8, 12, 32, 68, 128, 1024] {
++            let mut left = vec![PowBlock::default(); memory as usize];
++            let mut right = left.clone();
++            for kernel in CpuKernel::ALL.into_iter().filter(|k| k.is_supported()) {
++                let hasher = FixedArgon2id::with_kernel(memory, kernel).unwrap();
++                for nonce in 0u64..3 {
++                    let a = nonce.to_le_bytes();
++                    let b = (nonce + 100).to_le_bytes();
++                    let salt = b"interhash-experiment";
++                    let mut expected = [[0u8; 32]; 2];
++                    for (password, out) in [&a, &b].into_iter().zip(&mut expected) {
++                        Argon2::new(
++                            Algorithm::Argon2id,
++                            Version::V0x13,
++                            Params::new(memory, 1, 1, Some(32)).unwrap(),
++                        )
++                        .hash_password_into(password, salt, out)
++                        .unwrap();
++                    }
++                    for chunk in [1, 4, 16] {
++                        let mut actual = [[0u8; 32]; 2];
++                        match chunk {
++                            1 => hasher.hash_pair_interleaved::<1>(
++                                [&a, &b],
++                                salt,
++                                &mut actual,
++                                &mut left,
++                                &mut right,
++                            ),
++                            4 => hasher.hash_pair_interleaved::<4>(
++                                [&a, &b],
++                                salt,
++                                &mut actual,
++                                &mut left,
++                                &mut right,
++                            ),
++                            _ => hasher.hash_pair_interleaved::<16>(
++                                [&a, &b],
++                                salt,
++                                &mut actual,
++                                &mut left,
++                                &mut right,
++                            ),
++                        }
++                        .unwrap();
++                        assert_eq!(
++                            actual, expected,
++                            "kernel={kernel},memory={memory},chunk={chunk},nonce={nonce}"
++                        );
++                    }
++                }
++            }
++        }
++    }
++}

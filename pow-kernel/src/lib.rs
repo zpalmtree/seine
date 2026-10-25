@@ -2,6 +2,9 @@ mod cpu_kernel;
 mod fixed_argon;
 pub use cpu_kernel::CpuKernel;
 
+#[cfg(feature = "cpu-research")]
+pub use fixed_argon::research::{trace_hash, ReferenceTrace, Replay, ReplayError};
+
 pub use fixed_argon::{
     active_isa_label, compiled_isa_variants, Error, FixedArgon2id, PowBlock, Result,
 };

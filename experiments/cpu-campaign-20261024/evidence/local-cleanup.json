@@ -1,0 +1,43 @@
+{
+  "verified_at": "2026-10-24T20:16:22.342969+00:00",
+  "owned_local_systemd_units": [],
+  "scope": "Campaign-prefixed local PID/resource test services; native Windows cleanup recorded separately. Source worktrees and raw evidence intentionally retained.",
+  "build_target_cleanup": {
+    "verified_at": "2026-10-24T18:25:58.608923+00:00",
+    "removed_directories": [
+      "seine-interhash-campaign/target",
+      "seine-neon-sha3-campaign/target",
+      "seine-windows-cache-review/target",
+      "seine-kernel-retry-review/target",
+      "seine-memory-recovery-review/target",
+      "seine-pid-hardening/target",
+      "seine-joint-crossover-campaign/target",
+      "seine-campaign-integration-check/target",
+      "seine-arm-x86-codegen-fix/target",
+      "seine-joint-review/target",
+      "seine-architecture-campaign/data/cpu-campaign-20261024/targets"
+    ],
+    "count": 11,
+    "frozen_binaries_and_raw_evidence_retained": true,
+    "source_review_worktrees_retained": true
+  },
+  "accepted_merge_build_target_cleanup": {
+    "verified_at": "2026-10-24T20:00:00.195790+00:00",
+    "removed_directories": [
+      "seine-campaign-accepted-merge/target",
+      "seine-campaign-accepted-merge/target-accepted"
+    ],
+    "count": 2,
+    "frozen_binaries_logs_source_archive_retained": true
+  },
+  "final_merge_build_target_cleanup": {
+    "verified_at": "2026-10-24T20:16:22.337646+00:00",
+    "removed_directories": [
+      "seine-kernel-retry-review/target-merge-check",
+      "seine-campaign-final-merge/target"
+    ],
+    "count": 2
+  },
+  "owned_campaign_controllers_running": [],
+  "source_sha256": "0483507e270c10b165143856177577e2eb27dd3a04bb6989f4a30085c330caa1"
+}

@@ -114,9 +114,14 @@ invocations with arguments, and redirected input/output do not pause.
 | Platform | CPU | GPU (NVIDIA) |
 |----------|-----|--------------|
 | Linux x86_64 | works out of the box | CUDA driver + NVRTC libs |
+| Linux ARM64 | CPU-only `seine-linux-aarch64.tar.gz` | — |
 | macOS x86_64 | works out of the box | — |
 | macOS ARM | works out of the box (Metal experimental) | — |
 | Windows x86_64 | works out of the box | CUDA driver + NVRTC libs |
+
+The Linux ARM64 archive is built on Ubuntu 24.04 and requires glibc 2.39 or
+newer. On older distributions, build the CPU-only miner from source with
+`cargo build --release --locked --no-default-features`.
 
 Each CPU thread needs ~2 GB RAM (Argon2id parameters). Seine auto-sizes thread count from available cores and memory.
 On x86_64, CPU builds include both AVX2 and AVX-512 kernels and dispatch at runtime when the host supports them.
@@ -165,9 +170,20 @@ active throughout. Kernel windows last 30–60 seconds and require 32 hashes, wi
 a ten-minute limit for each trial. Interrupted or noisy trials retain the previous
 path. Workers switch between complete hashes without reallocating their arenas.
 
+On validated Zen 5 EPYC processors (AMD family 26, model 2), tuning also compares
+`avx512-256-stream`: a 256-bit AVX-512 kernel that keeps recent blocks cached and
+streams outputs into the normal 2 GiB arena. It requires AVX2 and AVX-512F/VL.
+Every eligible path is considered before caching the result; slower paths are
+rejected using the same repeated comparisons. No worker-count cutoff forces
+this kernel. A 24-worker EPYC 9R45 test improved 27.78% over AVX2, while the
+one-worker screen regressed 3.53%, so selection remains specific to the measured
+worker count and memory backing. Other CPU families retain their existing
+automatic candidates. See the [integrated validation report](experiments/epyc-investigation/INTEGRATED_VALIDATION.md)
+for native comparisons and automatic-selection evidence.
+
 Confirmed kernel choices are cached alongside the thread cache in
 `seine.cpu-autotune.json.kernels.json`, keyed by worker counts, observed page
-backing, CPU/build identity, placement and tuning settings. Known contexts reuse
+backing, CPU/build identity, eligible kernels, placement and tuning settings. Known contexts reuse
 that choice; stable contexts are reconsidered after 30 minutes. Experimental
 `avx512-256` remains benchmark-only. AVX2-only CPUs and ARM/NEON keep their existing
 paths. No extra configuration is needed: `--disable-cpu-autotune-threads` disables
@@ -183,7 +199,15 @@ low-memory notifications reduce the operating count when arena headroom is also
 tight; brief reclaim spikes do not force a reduction.
 The CPU backend can pause at zero workers when no complete arena fits, then retry
 after 30 seconds of sustained headroom. Released Linux HugeTLB arenas return to the
-reserved hugepage pool; the miner does not resize that OS pool. Returning capacity
+reserved hugepage pool; the miner does not resize that OS pool. Parked worker slots
+follow the CPU and configured worker ceiling, with a startup cap for Linux
+cgroup-v2 task limits that leaves room for control and networking threads. If
+automatic worker creation still runs out of resources, startup cleans up and
+retries with fewer slots; explicit fixed counts report failure instead. The nonce
+stride remains fixed. Raising a RAM limit can activate more provisioned workers;
+raising a task limit requires restarting to provision additional slots. A task
+budget too small for the CPU and supporting threads reports a startup error.
+Only active arenas count against the refreshed memory allowance. Returning capacity
 and sustained throughput changes prompt new probes. Stable settings are revisited
 periodically; failed allocation attempts back off for five minutes.
 
@@ -191,7 +215,7 @@ Tuning does not reconnect to the pool or restart GPU backends. Surviving CPU
 workers keep their arenas; parked lanes retain their nonce positions and resume
 within the same disjoint nonce allocation. Manual thread changes disable automatic
 adjustment for that run. The tuner preserves a previously learned higher count when
-a later run is temporarily limited by RAM. Cache schema 10 records remain usable
+a later run is temporarily limited by RAM or worker slots. Cache schema 10 records remain usable
 as starting points; schema 11 also stores measurements and the resource-limit flag.
 Hardware, build, affinity/topology, and page-mode mismatches discard the seed.
 

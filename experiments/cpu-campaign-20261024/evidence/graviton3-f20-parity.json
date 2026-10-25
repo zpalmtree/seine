@@ -1,0 +1,28 @@
+{
+  "hardware": "graviton3",
+  "status": "passed",
+  "logs": {
+    "candidate-full-size-runtime-parity.log": {
+      "text": "PASS nonce=0 kernel=neon full_size_bytes=2147483648 dirty_reuse=true\nPASS nonce=0 kernel=neon-sha3 full_size_bytes=2147483648 dirty_reuse=true\nPASS nonce=0 kernel=neon full_size_bytes=2147483648 dirty_reuse=true\nPASS nonce=12345 kernel=neon full_size_bytes=2147483648 dirty_reuse=true\nPASS nonce=12345 kernel=neon-sha3 full_size_bytes=2147483648 dirty_reuse=true\nPASS nonce=12345 kernel=neon full_size_bytes=2147483648 dirty_reuse=true\nPASS nonce=18446744073709551615 kernel=neon full_size_bytes=2147483648 dirty_reuse=true\nPASS nonce=18446744073709551615 kernel=neon-sha3 full_size_bytes=2147483648 dirty_reuse=true\nPASS nonce=18446744073709551615 kernel=neon full_size_bytes=2147483648 dirty_reuse=true\n",
+      "sha256": "28743ef10282d206e04539835703cacac8ba404b2ca740ed0b975ac0ca26a687"
+    },
+    "control-full-size-parity.log": {
+      "text": "reference=[e9, fb, fa, cf, b6, 96, ae, f8, f8, 88, 20, 17, c5, 5b, 23, 4e, 4b, 31, 30, a4, b6, 23, 42, c6, 3d, f5, 61, 31, 8d, 5a, db, a8]\nscalar: PASS (full 2 GiB reference parity)\navx2: unsupported\navx512: unsupported\navx512-256: unsupported\nneon: PASS (full 2 GiB reference parity)\n",
+      "sha256": "aaabe9c0988279e4132a8664f96be51fd2b475e516f678d8d010b669d345cb13"
+    }
+  },
+  "identities": {
+    "source_control": "359265e325d85c9c7b6e3eed7b5b126fcec63f9c",
+    "source_candidate": "f20e7bb1772be024a12ac5cdcc92685ba89d3ddd",
+    "profile": "release --no-default-features, Rust1.93.0, generic aarch64, no RUSTFLAGS",
+    "sha256": {
+      "seine-arm-candidate": "4e4b0bbdba495a44d7605a2bbc453b4f1d6d6761e1374761835a2de2fa74455e",
+      "seine-arm-control": "82bbb59089dedd5851e013c9760acaf791fa5e4b07a9bc7c00cb2a47dd7f7fb4",
+      "verify-arm-candidate": "bfb079866282221bd0c1ea0cbe06a9512b0ff1279b33be1f1468ddc6579847ce",
+      "verify-arm-control": "eac0e1dd77ca5628d0dae2b2fdf1b67e96c7002773bd723960f1ac8383a5e6ce"
+    },
+    "origin": "isolated native G4 f20target, fullparity/3nonce dirtydispatch and corrected two-pair ARMregression complete; baseline frozenunchanged",
+    "created_at": "2026-10-24T17:02:39.371602+00:00"
+  },
+  "source_archive_sha256": "935799f8c78b0507ea8f68480ca98fbf7007809db5c6a26dd32123c2d99ae6c6"
+}

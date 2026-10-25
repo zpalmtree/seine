@@ -11,6 +11,12 @@ path = "src/lib.rs"
 [features]
 default = []
 avx512 = []
+# Offline dependency/recomputation research; never enabled by the miner.
+cpu-research = []
+
+[[example]]
+name = "cpu_tmto"
+required-features = ["cpu-research"]
 
 [dependencies]
 blake2 = "0.10"

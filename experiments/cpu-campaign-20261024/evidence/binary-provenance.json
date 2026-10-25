@@ -1,0 +1,2178 @@
+{
+  "scope": "Provenance only, not acceptance. Includes incomplete, excluded and order-limited matrices; consult each normalized evidence status and RESULTS.md.",
+  "git_annotation_caveat": "Benchmark git_commit may be overridden by inherited SEINE_GIT_COMMIT or BNMINER_GIT_COMMIT. It is not sufficient executable identity. Raw annotations are preserved; binary SHA256 and compiled source fingerprints distinguish the actual builds.",
+  "frozen_bundles": {
+    "portable-final-arm": {
+      "source_control": "359265e325d85c9c7b6e3eed7b5b126fcec63f9c",
+      "source_candidate": "636e6887c405c41d732433b1eeb018cefcdc962d",
+      "profile": "release --no-default-features, Rust1.93.0, generic aarch64, no RUSTFLAGS",
+      "sha256": {
+        "seine-arm-control": "82bbb59089dedd5851e013c9760acaf791fa5e4b07a9bc7c00cb2a47dd7f7fb4",
+        "verify-arm-control": "eac0e1dd77ca5628d0dae2b2fdf1b67e96c7002773bd723960f1ac8383a5e6ce",
+        "seine-arm-candidate": "ce1ac5c9abf9d8e4af8d95c5b32a233012937eb52b02a04256a038177813fef1",
+        "verify-arm-candidate": "c590c348f34a8b579fb51670394368795059818c1d702d738cc4d621a029a4ac"
+      },
+      "identity_file_sha256": "6f4bb1abf8ccedfeb40b653960a26638aba376651e6669108dd60cd24c0203c9"
+    },
+    "portable-codegen-arm": {
+      "source_control": "359265e325d85c9c7b6e3eed7b5b126fcec63f9c",
+      "source_candidate": "f20e7bb1772be024a12ac5cdcc92685ba89d3ddd",
+      "profile": "release --no-default-features, Rust1.93.0, generic aarch64, no RUSTFLAGS",
+      "sha256": {
+        "seine-arm-candidate": "4e4b0bbdba495a44d7605a2bbc453b4f1d6d6761e1374761835a2de2fa74455e",
+        "seine-arm-control": "82bbb59089dedd5851e013c9760acaf791fa5e4b07a9bc7c00cb2a47dd7f7fb4",
+        "verify-arm-candidate": "bfb079866282221bd0c1ea0cbe06a9512b0ff1279b33be1f1468ddc6579847ce",
+        "verify-arm-control": "eac0e1dd77ca5628d0dae2b2fdf1b67e96c7002773bd723960f1ac8383a5e6ce"
+      },
+      "identity_file_sha256": "dc04f32ffdd5746783f0bec66cce0d02aa75f6e56108c0cba574be3ccb2afc5d"
+    },
+    "portable-final-x86": {
+      "source_control": "359265e325d85c9c7b6e3eed7b5b126fcec63f9c",
+      "source_candidate": "636e6887c405c41d732433b1eeb018cefcdc962d",
+      "profile": "release --no-default-features, Rust1.93.0, generic x86_64, no RUSTFLAGS",
+      "sha256": {
+        "seine-portable-candidate": "dab8eb50ade3e9981243f8b2b647c139a84a10b0778f157820a2e62a06565287",
+        "verify-portable-candidate": "c0ffeaa5f817082fdaf31160a733c91683464662115ff927c9f2ae467fd7b8aa",
+        "seine-portable-control": "879203959abf3e1ac511e180d802cc20c7200f1f042db245f7095ba9568bd0e3",
+        "verify-portable-control": "3ecdce8a76d4d19f007e90c07b647907de795e8037b58ea59bc454212deafda4"
+      },
+      "identity_file_sha256": "feaaeb8cf3212797726e4e25c2f7ac7db6dadf2d09e9ef55ad6cc7d4fc927c1e"
+    },
+    "portable-codegen-x86": {
+      "source_control": "359265e325d85c9c7b6e3eed7b5b126fcec63f9c",
+      "source_candidate": "f20e7bb1772be024a12ac5cdcc92685ba89d3ddd",
+      "profile": "release --no-default-features, Rust1.93.0, generic x86_64, no RUSTFLAGS",
+      "sha256": {
+        "seine-portable-candidate": "24149835ff2468ba75f95c5e34c0d5f0ca4edd0a2848dc16da16534e0812d86f",
+        "seine-portable-control": "879203959abf3e1ac511e180d802cc20c7200f1f042db245f7095ba9568bd0e3",
+        "verify-portable-candidate": "9837aac9b855982444a8c4758d01d69d9023e6f78dc36aa8eb13946aaaad95a8",
+        "verify-portable-control": "3ecdce8a76d4d19f007e90c07b647907de795e8037b58ea59bc454212deafda4"
+      },
+      "identity_file_sha256": "d7c993ea415ae17039b8932d42edfb1138fa2cb4745e19c35a9ee5cec0b29d09"
+    },
+    "portable-joint-x86": {
+      "source_control": "f20e7bb1772be024a12ac5cdcc92685ba89d3ddd",
+      "source_candidate": "e6809bb78b51c6b94c6a6b7ebcff2cf21f95faa3",
+      "profile": "release --no-default-features, Rust1.93.0, generic x86_64, no RUSTFLAGS",
+      "sha256": {
+        "seine-joint-candidate": "1200135d8d7b6b6cfebc56e1da8612e50fa334d4e0423f59f7cc2c776f53e1f4",
+        "seine-joint-control": "24149835ff2468ba75f95c5e34c0d5f0ca4edd0a2848dc16da16534e0812d86f",
+        "verify-joint-candidate": "9837aac9b855982444a8c4758d01d69d9023e6f78dc36aa8eb13946aaaad95a8",
+        "verify-joint-control": "9837aac9b855982444a8c4758d01d69d9023e6f78dc36aa8eb13946aaaad95a8"
+      },
+      "identity_file_sha256": "2d51f43d543eff1f1151317e612f4a82e09249f90f2373f400719db093a084c8"
+    },
+    "portable-accepted-x86": {
+      "source_control": "359265e325d85c9c7b6e3eed7b5b126fcec63f9c",
+      "source_candidate": "be242364db5665f26fb978652e113509a62a8d41",
+      "profile": "Rust1.93.0 generic x86_64 CPU-only release; isolated target; no RUSTFLAGS",
+      "sha256": {
+        "seine-portable-candidate": "8eec17aec005fdf94dca1b8d798d65058edb4d8c55bdf099f96e015ddb404558",
+        "verify-portable-control": "3ecdce8a76d4d19f007e90c07b647907de795e8037b58ea59bc454212deafda4",
+        "seine-portable-control": "879203959abf3e1ac511e180d802cc20c7200f1f042db245f7095ba9568bd0e3",
+        "verify-portable-candidate": "3ecdce8a76d4d19f007e90c07b647907de795e8037b58ea59bc454212deafda4"
+      },
+      "identity_file_sha256": "e1946be3bd6ff4aaab60074dc0bd773acac9a1df366bb5d5f495aa4a02d7656b"
+    },
+    "portable-retry-only-x86": {
+      "source_control": "359265e325d85c9c7b6e3eed7b5b126fcec63f9c",
+      "source_candidate": "c65493705619b6a8d38790ae9afa31adbe3f58af",
+      "profile": "Rust1.93.0 generic CPU-only release; isolated target; no RUSTFLAGS",
+      "sha256": {
+        "seine-portable-candidate": "abdee56eac34f0e644aef9026939bc694721d859f3efc84cafd406a23a3d0cbf",
+        "verify-portable-control": "3ecdce8a76d4d19f007e90c07b647907de795e8037b58ea59bc454212deafda4",
+        "seine-portable-control": "879203959abf3e1ac511e180d802cc20c7200f1f042db245f7095ba9568bd0e3",
+        "verify-portable-candidate": "75fd431672c81a40cd0c56db74af9c53af6cda8657a26deac055b674a08869d7"
+      },
+      "identity_file_sha256": "d4add4b3004b462a7f0779a4488fdbd6503f784a410d8bfadfda77d6da4f24e6"
+    }
+  },
+  "matrices": [
+    {
+      "hardware": "cascadelake",
+      "stage": "final-validation",
+      "experiment_relative_path": "results/c5-regression-confirm/experiment.json",
+      "experiment_sha256": "b828cfd37b2c5407ba8a9e889e5650885f6facbb9fe658bafed95f2bfea68e42",
+      "archive_sha256": "22d2258d66fd292aaf998b86b753800bc0bc091b5eb450c1a39e4a7a545e0fdb",
+      "completion_marker_present": true,
+      "workers": [
+        12
+      ],
+      "passes": 4,
+      "variants": {
+        "control": {
+          "binary_name": "seine-portable-control",
+          "binary_sha256": "879203959abf3e1ac511e180d802cc20c7200f1f042db245f7095ba9568bd0e3",
+          "kernel": "avx512",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "candidate": {
+          "binary_name": "seine-portable-candidate",
+          "binary_sha256": "dab8eb50ade3e9981243f8b2b647c139a84a10b0778f157820a2e62a06565287",
+          "kernel": "avx512",
+          "compiled_source_fingerprints": [
+            "3a9ef806ce58c7eb"
+          ],
+          "reported_git_annotations": [
+            "636e6887c405c41d732433b1eeb018cefcdc962d"
+          ],
+          "matching_frozen_sources": [
+            "636e6887c405c41d732433b1eeb018cefcdc962d"
+          ]
+        },
+        "codegen-fix": {
+          "binary_name": "seine-codegen-fix",
+          "binary_sha256": "24149835ff2468ba75f95c5e34c0d5f0ca4edd0a2848dc16da16534e0812d86f",
+          "kernel": "avx512",
+          "compiled_source_fingerprints": [
+            "f24ac20c126a52cc"
+          ],
+          "reported_git_annotations": [
+            "f20e7bb1772b"
+          ],
+          "matching_frozen_sources": [
+            "f20e7bb1772be024a12ac5cdcc92685ba89d3ddd"
+          ]
+        }
+      }
+    },
+    {
+      "hardware": "cascadelake",
+      "stage": "final-validation",
+      "experiment_relative_path": "results/crossover-confirm/experiment.json",
+      "experiment_sha256": "2f777c631deb97c7d1d145590e2eb6d76e069a1c7080bae87069ad6b577f8974",
+      "archive_sha256": "22d2258d66fd292aaf998b86b753800bc0bc091b5eb450c1a39e4a7a545e0fdb",
+      "completion_marker_present": true,
+      "workers": [
+        12
+      ],
+      "passes": 4,
+      "variants": {
+        "avx2": {
+          "binary_name": "seine-generic",
+          "binary_sha256": "e2574ed0867d8f645b6f4b39daeac7fdb047a957d048b7c7c85a91d82754d908",
+          "kernel": "avx2",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d8"
+          ],
+          "matching_frozen_sources": []
+        },
+        "full": {
+          "binary_name": "seine-generic",
+          "binary_sha256": "e2574ed0867d8f645b6f4b39daeac7fdb047a957d048b7c7c85a91d82754d908",
+          "kernel": "avx512",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d8"
+          ],
+          "matching_frozen_sources": []
+        },
+        "narrow": {
+          "binary_name": "seine-generic",
+          "binary_sha256": "e2574ed0867d8f645b6f4b39daeac7fdb047a957d048b7c7c85a91d82754d908",
+          "kernel": "avx512-256",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d8"
+          ],
+          "matching_frozen_sources": []
+        }
+      }
+    },
+    {
+      "hardware": "cascadelake",
+      "stage": "final-validation",
+      "experiment_relative_path": "results/portable-regression/experiment.json",
+      "experiment_sha256": "54f0d146037986acfd680795fba947dd1441740244bdd64adc044072839f8958",
+      "archive_sha256": "22d2258d66fd292aaf998b86b753800bc0bc091b5eb450c1a39e4a7a545e0fdb",
+      "completion_marker_present": true,
+      "workers": [
+        1,
+        12
+      ],
+      "passes": 2,
+      "variants": {
+        "control-avx2": {
+          "binary_name": "seine-portable-control",
+          "binary_sha256": "879203959abf3e1ac511e180d802cc20c7200f1f042db245f7095ba9568bd0e3",
+          "kernel": "avx2",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "candidate-avx2": {
+          "binary_name": "seine-portable-candidate",
+          "binary_sha256": "dab8eb50ade3e9981243f8b2b647c139a84a10b0778f157820a2e62a06565287",
+          "kernel": "avx2",
+          "compiled_source_fingerprints": [
+            "3a9ef806ce58c7eb"
+          ],
+          "reported_git_annotations": [
+            "636e6887c405c41d732433b1eeb018cefcdc962d"
+          ],
+          "matching_frozen_sources": [
+            "636e6887c405c41d732433b1eeb018cefcdc962d"
+          ]
+        },
+        "control-avx512": {
+          "binary_name": "seine-portable-control",
+          "binary_sha256": "879203959abf3e1ac511e180d802cc20c7200f1f042db245f7095ba9568bd0e3",
+          "kernel": "avx512",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "candidate-avx512": {
+          "binary_name": "seine-portable-candidate",
+          "binary_sha256": "dab8eb50ade3e9981243f8b2b647c139a84a10b0778f157820a2e62a06565287",
+          "kernel": "avx512",
+          "compiled_source_fingerprints": [
+            "3a9ef806ce58c7eb"
+          ],
+          "reported_git_annotations": [
+            "636e6887c405c41d732433b1eeb018cefcdc962d"
+          ],
+          "matching_frozen_sources": [
+            "636e6887c405c41d732433b1eeb018cefcdc962d"
+          ]
+        }
+      }
+    },
+    {
+      "hardware": "graniterapids",
+      "stage": "f20-final-confirm",
+      "experiment_relative_path": "results/final-x86-confirm/experiment.json",
+      "experiment_sha256": "f9b38f871a3ef33f21e0fe062da0d26971b986902a692414537ab4a27f8c81b6",
+      "archive_sha256": "61d90b4c20e72135a693e145e9886df05f0bde8d42d946c2c2b0ebaf5b409553",
+      "completion_marker_present": true,
+      "workers": [
+        1,
+        12
+      ],
+      "passes": 2,
+      "variants": {
+        "control-avx2": {
+          "binary_name": "seine-portable-control",
+          "binary_sha256": "879203959abf3e1ac511e180d802cc20c7200f1f042db245f7095ba9568bd0e3",
+          "kernel": "avx2",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "candidate-avx2": {
+          "binary_name": "seine-portable-candidate",
+          "binary_sha256": "24149835ff2468ba75f95c5e34c0d5f0ca4edd0a2848dc16da16534e0812d86f",
+          "kernel": "avx2",
+          "compiled_source_fingerprints": [
+            "f24ac20c126a52cc"
+          ],
+          "reported_git_annotations": [
+            "f20e7bb1772b"
+          ],
+          "matching_frozen_sources": [
+            "f20e7bb1772be024a12ac5cdcc92685ba89d3ddd"
+          ]
+        },
+        "control-avx512": {
+          "binary_name": "seine-portable-control",
+          "binary_sha256": "879203959abf3e1ac511e180d802cc20c7200f1f042db245f7095ba9568bd0e3",
+          "kernel": "avx512",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "candidate-avx512": {
+          "binary_name": "seine-portable-candidate",
+          "binary_sha256": "24149835ff2468ba75f95c5e34c0d5f0ca4edd0a2848dc16da16534e0812d86f",
+          "kernel": "avx512",
+          "compiled_source_fingerprints": [
+            "f24ac20c126a52cc"
+          ],
+          "reported_git_annotations": [
+            "f20e7bb1772b"
+          ],
+          "matching_frozen_sources": [
+            "f20e7bb1772be024a12ac5cdcc92685ba89d3ddd"
+          ]
+        }
+      }
+    },
+    {
+      "hardware": "graniterapids",
+      "stage": "f20-final-confirm",
+      "experiment_relative_path": "results/final-x86-long/experiment.json",
+      "experiment_sha256": "dba5c2dabdf0bb6032a134e9ee6a20decff28833bc02157d205266b007ffc176",
+      "archive_sha256": "61d90b4c20e72135a693e145e9886df05f0bde8d42d946c2c2b0ebaf5b409553",
+      "completion_marker_present": true,
+      "workers": [
+        12
+      ],
+      "passes": 4,
+      "variants": {
+        "control-full": {
+          "binary_name": "seine-portable-control",
+          "binary_sha256": "879203959abf3e1ac511e180d802cc20c7200f1f042db245f7095ba9568bd0e3",
+          "kernel": "avx512",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "candidate-full": {
+          "binary_name": "seine-portable-candidate",
+          "binary_sha256": "24149835ff2468ba75f95c5e34c0d5f0ca4edd0a2848dc16da16534e0812d86f",
+          "kernel": "avx512",
+          "compiled_source_fingerprints": [
+            "f24ac20c126a52cc"
+          ],
+          "reported_git_annotations": [
+            "f20e7bb1772b"
+          ],
+          "matching_frozen_sources": [
+            "f20e7bb1772be024a12ac5cdcc92685ba89d3ddd"
+          ]
+        }
+      }
+    },
+    {
+      "hardware": "graniterapids",
+      "stage": "f20-long-confirm",
+      "experiment_relative_path": "results/final-x86-long/experiment.json",
+      "experiment_sha256": "dba5c2dabdf0bb6032a134e9ee6a20decff28833bc02157d205266b007ffc176",
+      "archive_sha256": "fbbbb90d3df34968204ca7ee4abb1dd1b935692549eb9b65f1fdf9ffa1569d37",
+      "completion_marker_present": true,
+      "workers": [
+        12
+      ],
+      "passes": 4,
+      "variants": {
+        "control-full": {
+          "binary_name": "seine-portable-control",
+          "binary_sha256": "879203959abf3e1ac511e180d802cc20c7200f1f042db245f7095ba9568bd0e3",
+          "kernel": "avx512",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "candidate-full": {
+          "binary_name": "seine-portable-candidate",
+          "binary_sha256": "24149835ff2468ba75f95c5e34c0d5f0ca4edd0a2848dc16da16534e0812d86f",
+          "kernel": "avx512",
+          "compiled_source_fingerprints": [
+            "f24ac20c126a52cc"
+          ],
+          "reported_git_annotations": [
+            "f20e7bb1772b"
+          ],
+          "matching_frozen_sources": [
+            "f20e7bb1772be024a12ac5cdcc92685ba89d3ddd"
+          ]
+        }
+      }
+    },
+    {
+      "hardware": "graniterapids",
+      "stage": "final-regression",
+      "experiment_relative_path": "results/portable-regression/experiment.json",
+      "experiment_sha256": "54f0d146037986acfd680795fba947dd1441740244bdd64adc044072839f8958",
+      "archive_sha256": "ee325a9fb3a4144f451ac1a99355f80ca1cb35795aa6e76dac93afa8c14f8d2d",
+      "completion_marker_present": true,
+      "workers": [
+        1,
+        12
+      ],
+      "passes": 2,
+      "variants": {
+        "control-avx2": {
+          "binary_name": "seine-portable-control",
+          "binary_sha256": "879203959abf3e1ac511e180d802cc20c7200f1f042db245f7095ba9568bd0e3",
+          "kernel": "avx2",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "candidate-avx2": {
+          "binary_name": "seine-portable-candidate",
+          "binary_sha256": "dab8eb50ade3e9981243f8b2b647c139a84a10b0778f157820a2e62a06565287",
+          "kernel": "avx2",
+          "compiled_source_fingerprints": [
+            "3a9ef806ce58c7eb"
+          ],
+          "reported_git_annotations": [
+            "636e6887c405c41d732433b1eeb018cefcdc962d"
+          ],
+          "matching_frozen_sources": [
+            "636e6887c405c41d732433b1eeb018cefcdc962d"
+          ]
+        },
+        "control-avx512": {
+          "binary_name": "seine-portable-control",
+          "binary_sha256": "879203959abf3e1ac511e180d802cc20c7200f1f042db245f7095ba9568bd0e3",
+          "kernel": "avx512",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "candidate-avx512": {
+          "binary_name": "seine-portable-candidate",
+          "binary_sha256": "dab8eb50ade3e9981243f8b2b647c139a84a10b0778f157820a2e62a06565287",
+          "kernel": "avx512",
+          "compiled_source_fingerprints": [
+            "3a9ef806ce58c7eb"
+          ],
+          "reported_git_annotations": [
+            "636e6887c405c41d732433b1eeb018cefcdc962d"
+          ],
+          "matching_frozen_sources": [
+            "636e6887c405c41d732433b1eeb018cefcdc962d"
+          ]
+        }
+      }
+    },
+    {
+      "hardware": "graviton2",
+      "stage": "f20-final-confirm",
+      "experiment_relative_path": "results/arm-final-confirm/experiment.json",
+      "experiment_sha256": "25708d8068a3efbb03abdc7f9954b1562e62723b16bcf534873d5dadbb7d3043",
+      "archive_sha256": "1e121ec86658eda068cc02f00abe4205f8e897a64be5f0182fe7cc1cb6a6bb8c",
+      "completion_marker_present": true,
+      "workers": [
+        1,
+        16
+      ],
+      "passes": 4,
+      "variants": {
+        "baseline": {
+          "binary_name": "seine-arm-control",
+          "binary_sha256": "82bbb59089dedd5851e013c9760acaf791fa5e4b07a9bc7c00cb2a47dd7f7fb4",
+          "kernel": "neon",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d8"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "candidate": {
+          "binary_name": "seine-arm-candidate",
+          "binary_sha256": "4e4b0bbdba495a44d7605a2bbc453b4f1d6d6761e1374761835a2de2fa74455e",
+          "kernel": "neon",
+          "compiled_source_fingerprints": [
+            "f24ac20c126a52cc"
+          ],
+          "reported_git_annotations": [
+            "f20e7bb"
+          ],
+          "matching_frozen_sources": [
+            "f20e7bb1772be024a12ac5cdcc92685ba89d3ddd"
+          ]
+        }
+      }
+    },
+    {
+      "hardware": "graviton2",
+      "stage": "fallback-confirm",
+      "experiment_relative_path": "results/graviton2-fallback-confirm/experiment.json",
+      "experiment_sha256": "7a0fc42e8480d83be30255b0e79d628765796dd0c2f1c5ac0e3262e44e86fcfb",
+      "archive_sha256": "f8475309f38f454bbad373729efa4b4339ce5ca8ca526d963bc3d943535d7107",
+      "completion_marker_present": true,
+      "workers": [
+        1,
+        16
+      ],
+      "passes": 4,
+      "variants": {
+        "baseline": {
+          "binary_name": "seine-generic",
+          "binary_sha256": "82bbb59089dedd5851e013c9760acaf791fa5e4b07a9bc7c00cb2a47dd7f7fb4",
+          "kernel": "neon",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d8"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "fallback": {
+          "binary_name": "seine-generation-auto",
+          "binary_sha256": "b095afbf7563fa86fbc6880c393e55a4ea0c80783c0efdcab0a5221013d0374e",
+          "kernel": "neon",
+          "compiled_source_fingerprints": [
+            "7a88eaa07c02a4e0"
+          ],
+          "reported_git_annotations": [
+            "3122893"
+          ],
+          "matching_frozen_sources": []
+        }
+      }
+    },
+    {
+      "hardware": "graviton2",
+      "stage": "generation",
+      "experiment_relative_path": "results/arm-generation-prefetch-screen/experiment.json",
+      "experiment_sha256": "db705b28f8b9dd2f0ef786879882674aed60b8ba36f5f8180033cd59a036f15e",
+      "archive_sha256": "ba97a18d29c3e51a3a44ac24c4ee2a08ae58ea6d6aee6e2f10c89ecfb02e9e4d",
+      "completion_marker_present": true,
+      "workers": [
+        1,
+        8,
+        16
+      ],
+      "passes": 2,
+      "variants": {
+        "baseline": {
+          "binary_name": "seine-generic",
+          "binary_sha256": "82bbb59089dedd5851e013c9760acaf791fa5e4b07a9bc7c00cb2a47dd7f7fb4",
+          "kernel": "neon",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "fallback": {
+          "binary_name": "seine-generation-auto",
+          "binary_sha256": "b095afbf7563fa86fbc6880c393e55a4ea0c80783c0efdcab0a5221013d0374e",
+          "kernel": "neon",
+          "compiled_source_fingerprints": [
+            "7a88eaa07c02a4e0"
+          ],
+          "reported_git_annotations": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ],
+          "matching_frozen_sources": []
+        },
+        "prefetch64": {
+          "binary_name": "seine-generation-prefetch64",
+          "binary_sha256": "1768cfeaa92aa55a6ca8a78456c47461faac2f3ff8b13aa536a9ea5fc6bfc122",
+          "kernel": "neon",
+          "compiled_source_fingerprints": [
+            "39224e5427919a60"
+          ],
+          "reported_git_annotations": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ],
+          "matching_frozen_sources": []
+        }
+      }
+    },
+    {
+      "hardware": "graviton3",
+      "stage": "clean-confirm",
+      "experiment_relative_path": "results/arm-clean-confirm/experiment.json",
+      "experiment_sha256": "c3f6a284250bb85a0f9bcdce2ac5a690ea23f7c272b6fc0cfab7de2e8978ed4e",
+      "archive_sha256": "53feaa4daf327cf5bc8512e284db1973f2ac4ac446bedfef75ed1d53797f0f4b",
+      "completion_marker_present": true,
+      "workers": [
+        1,
+        16
+      ],
+      "passes": 4,
+      "variants": {
+        "baseline": {
+          "binary_name": "seine-clean-baseline",
+          "binary_sha256": "48740a28148836aae648f40b64794bc15dde629a250d7bc13c1968c3391bfa9b",
+          "kernel": "neon",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "8280a66"
+          ],
+          "matching_frozen_sources": []
+        },
+        "combined": {
+          "binary_name": "seine-clean-combined",
+          "binary_sha256": "bef061b338e235930d9ac1767cd136484109d6e36e69669eb3ae63d7682ab3b2",
+          "kernel": "neon-sha3",
+          "compiled_source_fingerprints": [
+            "ae4e99e4b6cc7d6d"
+          ],
+          "reported_git_annotations": [
+            "8280a66"
+          ],
+          "matching_frozen_sources": []
+        }
+      }
+    },
+    {
+      "hardware": "graviton3",
+      "stage": "clean-confirm",
+      "experiment_relative_path": "results/arm-clean-regular/experiment.json",
+      "experiment_sha256": "2048d41d7f98b54d6f07c9012dd56e4dbb44d2d0b887721051b3f9aec25bf7c8",
+      "archive_sha256": "53feaa4daf327cf5bc8512e284db1973f2ac4ac446bedfef75ed1d53797f0f4b",
+      "completion_marker_present": true,
+      "workers": [
+        1,
+        8
+      ],
+      "passes": 2,
+      "variants": {
+        "baseline": {
+          "binary_name": "seine-clean-baseline",
+          "binary_sha256": "48740a28148836aae648f40b64794bc15dde629a250d7bc13c1968c3391bfa9b",
+          "kernel": "neon",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "8280a66"
+          ],
+          "matching_frozen_sources": []
+        },
+        "combined": {
+          "binary_name": "seine-clean-combined",
+          "binary_sha256": "bef061b338e235930d9ac1767cd136484109d6e36e69669eb3ae63d7682ab3b2",
+          "kernel": "neon-sha3",
+          "compiled_source_fingerprints": [
+            "ae4e99e4b6cc7d6d"
+          ],
+          "reported_git_annotations": [
+            "8280a66"
+          ],
+          "matching_frozen_sources": []
+        }
+      }
+    },
+    {
+      "hardware": "graviton3",
+      "stage": "combined-screen",
+      "experiment_relative_path": "results/arm-combined-screen/experiment.json",
+      "experiment_sha256": "1c5dde2aa4f044c1c55ce7ba081a6997312f24cb61c84338a9d58287d364acca",
+      "archive_sha256": "f6c58a464ec5cf5c0de524ad6fd6d68c452d872213d8e5708e7b5e73d4a77ca6",
+      "completion_marker_present": true,
+      "workers": [
+        1,
+        16
+      ],
+      "passes": 2,
+      "variants": {
+        "baseline": {
+          "binary_name": "seine-generic",
+          "binary_sha256": "82bbb59089dedd5851e013c9760acaf791fa5e4b07a9bc7c00cb2a47dd7f7fb4",
+          "kernel": "neon",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "8280a66"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "fallback": {
+          "binary_name": "seine-combined",
+          "binary_sha256": "bef061b338e235930d9ac1767cd136484109d6e36e69669eb3ae63d7682ab3b2",
+          "kernel": "neon",
+          "compiled_source_fingerprints": [
+            "ae4e99e4b6cc7d6d"
+          ],
+          "reported_git_annotations": [
+            "8280a66"
+          ],
+          "matching_frozen_sources": []
+        },
+        "combined": {
+          "binary_name": "seine-combined",
+          "binary_sha256": "bef061b338e235930d9ac1767cd136484109d6e36e69669eb3ae63d7682ab3b2",
+          "kernel": "neon-sha3",
+          "compiled_source_fingerprints": [
+            "ae4e99e4b6cc7d6d"
+          ],
+          "reported_git_annotations": [
+            "8280a66"
+          ],
+          "matching_frozen_sources": []
+        },
+        "build-prefetch64": {
+          "binary_name": "seine-prefetch64",
+          "binary_sha256": "799ef011cf02ba2f6cdb9976e64983d3d9d45eb9f772f22628f4fb7a7e492edb",
+          "kernel": "neon",
+          "compiled_source_fingerprints": [
+            "39224e5427919a60"
+          ],
+          "reported_git_annotations": [
+            "8280a66"
+          ],
+          "matching_frozen_sources": []
+        }
+      }
+    },
+    {
+      "hardware": "graviton3",
+      "stage": "f20-final-confirm",
+      "experiment_relative_path": "results/arm-final-confirm/experiment.json",
+      "experiment_sha256": "59e83a7ef0426194818cd223be3e2d270c5a37910454e8c7a8f26d41db945b4f",
+      "archive_sha256": "935799f8c78b0507ea8f68480ca98fbf7007809db5c6a26dd32123c2d99ae6c6",
+      "completion_marker_present": true,
+      "workers": [
+        1,
+        16
+      ],
+      "passes": 4,
+      "variants": {
+        "baseline": {
+          "binary_name": "seine-arm-control",
+          "binary_sha256": "82bbb59089dedd5851e013c9760acaf791fa5e4b07a9bc7c00cb2a47dd7f7fb4",
+          "kernel": "neon",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d8"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "candidate": {
+          "binary_name": "seine-arm-candidate",
+          "binary_sha256": "4e4b0bbdba495a44d7605a2bbc453b4f1d6d6761e1374761835a2de2fa74455e",
+          "kernel": "neon-sha3",
+          "compiled_source_fingerprints": [
+            "f24ac20c126a52cc"
+          ],
+          "reported_git_annotations": [
+            "f20e7bb"
+          ],
+          "matching_frozen_sources": [
+            "f20e7bb1772be024a12ac5cdcc92685ba89d3ddd"
+          ]
+        }
+      }
+    },
+    {
+      "hardware": "graviton3",
+      "stage": "f20-final-confirm",
+      "experiment_relative_path": "results/arm-final-regular/experiment.json",
+      "experiment_sha256": "3d5e29ce06a55fc66ae9b52b60cac61f68e0fa521ed16874aada55a5d1ebb11b",
+      "archive_sha256": "935799f8c78b0507ea8f68480ca98fbf7007809db5c6a26dd32123c2d99ae6c6",
+      "completion_marker_present": true,
+      "workers": [
+        1,
+        8
+      ],
+      "passes": 4,
+      "variants": {
+        "baseline": {
+          "binary_name": "seine-arm-control",
+          "binary_sha256": "82bbb59089dedd5851e013c9760acaf791fa5e4b07a9bc7c00cb2a47dd7f7fb4",
+          "kernel": "neon",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d8"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "candidate": {
+          "binary_name": "seine-arm-candidate",
+          "binary_sha256": "4e4b0bbdba495a44d7605a2bbc453b4f1d6d6761e1374761835a2de2fa74455e",
+          "kernel": "neon-sha3",
+          "compiled_source_fingerprints": [
+            "f24ac20c126a52cc"
+          ],
+          "reported_git_annotations": [
+            "f20e7bb"
+          ],
+          "matching_frozen_sources": [
+            "f20e7bb1772be024a12ac5cdcc92685ba89d3ddd"
+          ]
+        }
+      }
+    },
+    {
+      "hardware": "graviton3",
+      "stage": "followup",
+      "experiment_relative_path": "results/arm-followup-screen/experiment.json",
+      "experiment_sha256": "6b9d27ff6267c941df693b27d0fedda3ec5a5d1a0784877c6c02a43953d9a937",
+      "archive_sha256": "9439f4eda1a2708723698b2e92d1a91256eddec149566795fdedff0cfc34360d",
+      "completion_marker_present": true,
+      "workers": [
+        1,
+        8,
+        16
+      ],
+      "passes": 2,
+      "variants": {
+        "generic": {
+          "binary_name": "seine-generic",
+          "binary_sha256": "82bbb59089dedd5851e013c9760acaf791fa5e4b07a9bc7c00cb2a47dd7f7fb4",
+          "kernel": "neon",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d8"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "runtime-generic": {
+          "binary_name": "seine-runtime",
+          "binary_sha256": "17411d8d5ef0ad9deed7e322a7a7d40f1977d8cc5a8c4ccbcbb2e4bec3d5c9f2",
+          "kernel": "neon",
+          "compiled_source_fingerprints": [
+            "fc57519602a2bdcb"
+          ],
+          "reported_git_annotations": [
+            "359265e325d8"
+          ],
+          "matching_frozen_sources": []
+        },
+        "runtime-sha3": {
+          "binary_name": "seine-runtime",
+          "binary_sha256": "17411d8d5ef0ad9deed7e322a7a7d40f1977d8cc5a8c4ccbcbb2e4bec3d5c9f2",
+          "kernel": "neon-sha3",
+          "compiled_source_fingerprints": [
+            "fc57519602a2bdcb"
+          ],
+          "reported_git_annotations": [
+            "359265e325d8"
+          ],
+          "matching_frozen_sources": []
+        },
+        "build-sha3": {
+          "binary_name": "seine-sha3",
+          "binary_sha256": "4f85263c64e91125f254c331e9ada8393d971b59d4a2c3a8015de2bf1ef49a33",
+          "kernel": "neon",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d8"
+          ],
+          "matching_frozen_sources": []
+        },
+        "prefetch64": {
+          "binary_name": "seine-prefetch64",
+          "binary_sha256": "799ef011cf02ba2f6cdb9976e64983d3d9d45eb9f772f22628f4fb7a7e492edb",
+          "kernel": "neon",
+          "compiled_source_fingerprints": [
+            "39224e5427919a60"
+          ],
+          "reported_git_annotations": [
+            "359265e325d8"
+          ],
+          "matching_frozen_sources": []
+        }
+      }
+    },
+    {
+      "hardware": "graviton4",
+      "stage": "corrected-confirm",
+      "experiment_relative_path": "results/arm-generation-confirm/experiment.json",
+      "experiment_sha256": "97ecec1cda1cbee6cb38493b784b7d1b3dd23a2fdacbcb3c37732b77ca3cd57f",
+      "archive_sha256": "59cf35e23f186d140526b6e0e4e6b0da48c4859088cd9c73d4c080cd84300e33",
+      "completion_marker_present": true,
+      "workers": [
+        1,
+        16
+      ],
+      "passes": 4,
+      "variants": {
+        "baseline": {
+          "binary_name": "seine-generic",
+          "binary_sha256": "82bbb59089dedd5851e013c9760acaf791fa5e4b07a9bc7c00cb2a47dd7f7fb4",
+          "kernel": "neon",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d8"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "candidate": {
+          "binary_name": "seine-generation-auto",
+          "binary_sha256": "b095afbf7563fa86fbc6880c393e55a4ea0c80783c0efdcab0a5221013d0374e",
+          "kernel": "neon-sha3",
+          "compiled_source_fingerprints": [
+            "7a88eaa07c02a4e0"
+          ],
+          "reported_git_annotations": [
+            "3122893"
+          ],
+          "matching_frozen_sources": []
+        }
+      }
+    },
+    {
+      "hardware": "graviton4",
+      "stage": "final-validation-all",
+      "experiment_relative_path": "results/arm-codegen-regression/experiment.json",
+      "experiment_sha256": "085644a526e8676de45bd6722fa98bc9c0fab7a338d3c3333874460483983e36",
+      "archive_sha256": "34e36b972ce5d2da2a0ea28c511be3ac52503b38add2888ac1fc4c4fe94041b1",
+      "completion_marker_present": true,
+      "workers": [
+        1,
+        16
+      ],
+      "passes": 2,
+      "variants": {
+        "earlier": {
+          "binary_name": "seine-hardened",
+          "binary_sha256": "ce1ac5c9abf9d8e4af8d95c5b32a233012937eb52b02a04256a038177813fef1",
+          "kernel": "neon-sha3",
+          "compiled_source_fingerprints": [
+            "3a9ef806ce58c7eb"
+          ],
+          "reported_git_annotations": [
+            "f20e7bb"
+          ],
+          "matching_frozen_sources": [
+            "636e6887c405c41d732433b1eeb018cefcdc962d"
+          ]
+        },
+        "codegen-fix": {
+          "binary_name": "seine-codegen-fix",
+          "binary_sha256": "4e4b0bbdba495a44d7605a2bbc453b4f1d6d6761e1374761835a2de2fa74455e",
+          "kernel": "neon-sha3",
+          "compiled_source_fingerprints": [
+            "f24ac20c126a52cc"
+          ],
+          "reported_git_annotations": [
+            "f20e7bb"
+          ],
+          "matching_frozen_sources": [
+            "f20e7bb1772be024a12ac5cdcc92685ba89d3ddd"
+          ]
+        }
+      }
+    },
+    {
+      "hardware": "graviton4",
+      "stage": "final-validation-all",
+      "experiment_relative_path": "results/arm-generation-confirm-order-limited/experiment.json",
+      "experiment_sha256": "97ecec1cda1cbee6cb38493b784b7d1b3dd23a2fdacbcb3c37732b77ca3cd57f",
+      "archive_sha256": "34e36b972ce5d2da2a0ea28c511be3ac52503b38add2888ac1fc4c4fe94041b1",
+      "completion_marker_present": false,
+      "workers": [
+        1,
+        16
+      ],
+      "passes": 4,
+      "variants": {
+        "baseline": {
+          "binary_name": "seine-generic",
+          "binary_sha256": "82bbb59089dedd5851e013c9760acaf791fa5e4b07a9bc7c00cb2a47dd7f7fb4",
+          "kernel": "neon",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "3122893"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "candidate": {
+          "binary_name": "seine-generation-auto",
+          "binary_sha256": "b095afbf7563fa86fbc6880c393e55a4ea0c80783c0efdcab0a5221013d0374e",
+          "kernel": "neon-sha3",
+          "compiled_source_fingerprints": [
+            "7a88eaa07c02a4e0"
+          ],
+          "reported_git_annotations": [
+            "3122893"
+          ],
+          "matching_frozen_sources": []
+        }
+      }
+    },
+    {
+      "hardware": "graviton4",
+      "stage": "final-validation-all",
+      "experiment_relative_path": "results/arm-generation-confirm/experiment.json",
+      "experiment_sha256": "97ecec1cda1cbee6cb38493b784b7d1b3dd23a2fdacbcb3c37732b77ca3cd57f",
+      "archive_sha256": "34e36b972ce5d2da2a0ea28c511be3ac52503b38add2888ac1fc4c4fe94041b1",
+      "completion_marker_present": true,
+      "workers": [
+        1,
+        16
+      ],
+      "passes": 4,
+      "variants": {
+        "baseline": {
+          "binary_name": "seine-generic",
+          "binary_sha256": "82bbb59089dedd5851e013c9760acaf791fa5e4b07a9bc7c00cb2a47dd7f7fb4",
+          "kernel": "neon",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d8"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "candidate": {
+          "binary_name": "seine-generation-auto",
+          "binary_sha256": "b095afbf7563fa86fbc6880c393e55a4ea0c80783c0efdcab0a5221013d0374e",
+          "kernel": "neon-sha3",
+          "compiled_source_fingerprints": [
+            "7a88eaa07c02a4e0"
+          ],
+          "reported_git_annotations": [
+            "3122893"
+          ],
+          "matching_frozen_sources": []
+        }
+      }
+    },
+    {
+      "hardware": "graviton4",
+      "stage": "final-validation-all",
+      "experiment_relative_path": "results/arm-generation-fallback/experiment.json",
+      "experiment_sha256": "51ee6f76fd14ddda1c24529e444e3b3bc3da4b80fc9303e606876d7be2eb8dae",
+      "archive_sha256": "34e36b972ce5d2da2a0ea28c511be3ac52503b38add2888ac1fc4c4fe94041b1",
+      "completion_marker_present": true,
+      "workers": [
+        1,
+        16
+      ],
+      "passes": 2,
+      "variants": {
+        "baseline": {
+          "binary_name": "seine-generic",
+          "binary_sha256": "82bbb59089dedd5851e013c9760acaf791fa5e4b07a9bc7c00cb2a47dd7f7fb4",
+          "kernel": "neon",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "3122893"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "fallback": {
+          "binary_name": "seine-generation-auto",
+          "binary_sha256": "b095afbf7563fa86fbc6880c393e55a4ea0c80783c0efdcab0a5221013d0374e",
+          "kernel": "neon",
+          "compiled_source_fingerprints": [
+            "7a88eaa07c02a4e0"
+          ],
+          "reported_git_annotations": [
+            "3122893"
+          ],
+          "matching_frozen_sources": []
+        }
+      }
+    },
+    {
+      "hardware": "graviton4",
+      "stage": "final-validation-all",
+      "experiment_relative_path": "results/final-arm-regression/experiment.json",
+      "experiment_sha256": "a713dd050cd5df889379fab46cd9ddd61c0e20066d36a52e27328c47f8dd5575",
+      "archive_sha256": "34e36b972ce5d2da2a0ea28c511be3ac52503b38add2888ac1fc4c4fe94041b1",
+      "completion_marker_present": true,
+      "workers": [
+        1,
+        16
+      ],
+      "passes": 2,
+      "variants": {
+        "baseline": {
+          "binary_name": "seine-generic",
+          "binary_sha256": "82bbb59089dedd5851e013c9760acaf791fa5e4b07a9bc7c00cb2a47dd7f7fb4",
+          "kernel": "neon",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d8"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "earlier": {
+          "binary_name": "seine-generation-auto",
+          "binary_sha256": "b095afbf7563fa86fbc6880c393e55a4ea0c80783c0efdcab0a5221013d0374e",
+          "kernel": "neon-sha3",
+          "compiled_source_fingerprints": [
+            "7a88eaa07c02a4e0"
+          ],
+          "reported_git_annotations": [
+            "3122893"
+          ],
+          "matching_frozen_sources": []
+        },
+        "final": {
+          "binary_name": "seine-hardened",
+          "binary_sha256": "ce1ac5c9abf9d8e4af8d95c5b32a233012937eb52b02a04256a038177813fef1",
+          "kernel": "neon-sha3",
+          "compiled_source_fingerprints": [
+            "3a9ef806ce58c7eb"
+          ],
+          "reported_git_annotations": [
+            "636e6887c405c41d732433b1eeb018cefcdc962d"
+          ],
+          "matching_frozen_sources": [
+            "636e6887c405c41d732433b1eeb018cefcdc962d"
+          ]
+        }
+      }
+    },
+    {
+      "hardware": "graviton4",
+      "stage": "order-limited",
+      "experiment_relative_path": "results/arm-generation-confirm/experiment.json",
+      "experiment_sha256": "97ecec1cda1cbee6cb38493b784b7d1b3dd23a2fdacbcb3c37732b77ca3cd57f",
+      "archive_sha256": "6e9ee069259c8f2ed049bef4c28813611622067e1f083f3f049f9134ebe4c9cd",
+      "completion_marker_present": false,
+      "workers": [
+        1,
+        16
+      ],
+      "passes": 4,
+      "variants": {
+        "baseline": {
+          "binary_name": "seine-generic",
+          "binary_sha256": "82bbb59089dedd5851e013c9760acaf791fa5e4b07a9bc7c00cb2a47dd7f7fb4",
+          "kernel": "neon",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "3122893"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "candidate": {
+          "binary_name": "seine-generation-auto",
+          "binary_sha256": "b095afbf7563fa86fbc6880c393e55a4ea0c80783c0efdcab0a5221013d0374e",
+          "kernel": "neon-sha3",
+          "compiled_source_fingerprints": [
+            "7a88eaa07c02a4e0"
+          ],
+          "reported_git_annotations": [
+            "3122893"
+          ],
+          "matching_frozen_sources": []
+        }
+      }
+    },
+    {
+      "hardware": "graviton4",
+      "stage": "order-limited",
+      "experiment_relative_path": "results/arm-generation-fallback/experiment.json",
+      "experiment_sha256": "51ee6f76fd14ddda1c24529e444e3b3bc3da4b80fc9303e606876d7be2eb8dae",
+      "archive_sha256": "6e9ee069259c8f2ed049bef4c28813611622067e1f083f3f049f9134ebe4c9cd",
+      "completion_marker_present": true,
+      "workers": [
+        1,
+        16
+      ],
+      "passes": 2,
+      "variants": {
+        "baseline": {
+          "binary_name": "seine-generic",
+          "binary_sha256": "82bbb59089dedd5851e013c9760acaf791fa5e4b07a9bc7c00cb2a47dd7f7fb4",
+          "kernel": "neon",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "3122893"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "fallback": {
+          "binary_name": "seine-generation-auto",
+          "binary_sha256": "b095afbf7563fa86fbc6880c393e55a4ea0c80783c0efdcab0a5221013d0374e",
+          "kernel": "neon",
+          "compiled_source_fingerprints": [
+            "7a88eaa07c02a4e0"
+          ],
+          "reported_git_annotations": [
+            "3122893"
+          ],
+          "matching_frozen_sources": []
+        }
+      }
+    },
+    {
+      "hardware": "haswell",
+      "stage": "final-validation",
+      "experiment_relative_path": "results/portable-regression/experiment.json",
+      "experiment_sha256": "efd331f8266beef77d047884cc10b58bd072bb24eef421812a5da548bdfead43",
+      "archive_sha256": "9abdc98ce8888636c242be4a91daf1d8412947946b2d5256261714b9feb303d7",
+      "completion_marker_present": true,
+      "workers": [
+        1,
+        11
+      ],
+      "passes": 2,
+      "variants": {
+        "control-avx2": {
+          "binary_name": "seine-portable-control",
+          "binary_sha256": "879203959abf3e1ac511e180d802cc20c7200f1f042db245f7095ba9568bd0e3",
+          "kernel": "avx2",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "candidate-avx2": {
+          "binary_name": "seine-portable-candidate",
+          "binary_sha256": "24149835ff2468ba75f95c5e34c0d5f0ca4edd0a2848dc16da16534e0812d86f",
+          "kernel": "avx2",
+          "compiled_source_fingerprints": [
+            "f24ac20c126a52cc"
+          ],
+          "reported_git_annotations": [
+            "f20e7bb1772b"
+          ],
+          "matching_frozen_sources": [
+            "f20e7bb1772be024a12ac5cdcc92685ba89d3ddd"
+          ]
+        }
+      }
+    },
+    {
+      "hardware": "icelake",
+      "stage": "accepted-final-confirm",
+      "experiment_relative_path": "results/final-x86-confirm/experiment.json",
+      "experiment_sha256": "4ef41af44d22ffebc7f883be7aefa188b4a1bad109981f1e2c54e1e51ebf6519",
+      "archive_sha256": "af69380ed0a23e474e0484f999569bbdac81e13467f0616f399d16d53a83d2d4",
+      "completion_marker_present": true,
+      "workers": [
+        1,
+        12
+      ],
+      "passes": 2,
+      "variants": {
+        "control-avx2": {
+          "binary_name": "seine-portable-control",
+          "binary_sha256": "879203959abf3e1ac511e180d802cc20c7200f1f042db245f7095ba9568bd0e3",
+          "kernel": "avx2",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "candidate-avx2": {
+          "binary_name": "seine-portable-candidate",
+          "binary_sha256": "8eec17aec005fdf94dca1b8d798d65058edb4d8c55bdf099f96e015ddb404558",
+          "kernel": "avx2",
+          "compiled_source_fingerprints": [
+            "318d8809177fb2dc"
+          ],
+          "reported_git_annotations": [
+            "be242364db56"
+          ],
+          "matching_frozen_sources": [
+            "be242364db5665f26fb978652e113509a62a8d41"
+          ]
+        },
+        "control-avx512": {
+          "binary_name": "seine-portable-control",
+          "binary_sha256": "879203959abf3e1ac511e180d802cc20c7200f1f042db245f7095ba9568bd0e3",
+          "kernel": "avx512",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "candidate-avx512": {
+          "binary_name": "seine-portable-candidate",
+          "binary_sha256": "8eec17aec005fdf94dca1b8d798d65058edb4d8c55bdf099f96e015ddb404558",
+          "kernel": "avx512",
+          "compiled_source_fingerprints": [
+            "318d8809177fb2dc"
+          ],
+          "reported_git_annotations": [
+            "be242364db56"
+          ],
+          "matching_frozen_sources": [
+            "be242364db5665f26fb978652e113509a62a8d41"
+          ]
+        }
+      }
+    },
+    {
+      "hardware": "icelake",
+      "stage": "accepted-final-confirm",
+      "experiment_relative_path": "results/retry-only/experiment.json",
+      "experiment_sha256": "cf9a9af5b13892458f473dfbdbeefcfd2b870560c1894eabcde8250ba762ebc2",
+      "archive_sha256": "af69380ed0a23e474e0484f999569bbdac81e13467f0616f399d16d53a83d2d4",
+      "completion_marker_present": true,
+      "workers": [
+        12
+      ],
+      "passes": 2,
+      "variants": {
+        "control-avx2": {
+          "binary_name": "seine-portable-control",
+          "binary_sha256": "879203959abf3e1ac511e180d802cc20c7200f1f042db245f7095ba9568bd0e3",
+          "kernel": "avx2",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "candidate-avx2": {
+          "binary_name": "seine-retry-only",
+          "binary_sha256": "abdee56eac34f0e644aef9026939bc694721d859f3efc84cafd406a23a3d0cbf",
+          "kernel": "avx2",
+          "compiled_source_fingerprints": [
+            "9873fcb395d1f5ae"
+          ],
+          "reported_git_annotations": [
+            "c65493705619"
+          ],
+          "matching_frozen_sources": [
+            "c65493705619b6a8d38790ae9afa31adbe3f58af"
+          ]
+        }
+      }
+    },
+    {
+      "hardware": "icelake",
+      "stage": "accepted-final-failed",
+      "experiment_relative_path": "results/final-x86-confirm/experiment.json",
+      "experiment_sha256": "4ef41af44d22ffebc7f883be7aefa188b4a1bad109981f1e2c54e1e51ebf6519",
+      "archive_sha256": "f6ed9714fdf81197c50d79297aff5acf39ece7cf994cad3eaa377900750316a2",
+      "completion_marker_present": true,
+      "workers": [
+        1,
+        12
+      ],
+      "passes": 2,
+      "variants": {
+        "control-avx2": {
+          "binary_name": "seine-portable-control",
+          "binary_sha256": "879203959abf3e1ac511e180d802cc20c7200f1f042db245f7095ba9568bd0e3",
+          "kernel": "avx2",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "candidate-avx2": {
+          "binary_name": "seine-portable-candidate",
+          "binary_sha256": "8eec17aec005fdf94dca1b8d798d65058edb4d8c55bdf099f96e015ddb404558",
+          "kernel": "avx2",
+          "compiled_source_fingerprints": [
+            "318d8809177fb2dc"
+          ],
+          "reported_git_annotations": [
+            "be242364db56"
+          ],
+          "matching_frozen_sources": [
+            "be242364db5665f26fb978652e113509a62a8d41"
+          ]
+        },
+        "control-avx512": {
+          "binary_name": "seine-portable-control",
+          "binary_sha256": "879203959abf3e1ac511e180d802cc20c7200f1f042db245f7095ba9568bd0e3",
+          "kernel": "avx512",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "candidate-avx512": {
+          "binary_name": "seine-portable-candidate",
+          "binary_sha256": "8eec17aec005fdf94dca1b8d798d65058edb4d8c55bdf099f96e015ddb404558",
+          "kernel": "avx512",
+          "compiled_source_fingerprints": [
+            "318d8809177fb2dc"
+          ],
+          "reported_git_annotations": [
+            "be242364db56"
+          ],
+          "matching_frozen_sources": [
+            "be242364db5665f26fb978652e113509a62a8d41"
+          ]
+        }
+      }
+    },
+    {
+      "hardware": "icelake",
+      "stage": "accepted-final-failed",
+      "experiment_relative_path": "results/retry-only/experiment.json",
+      "experiment_sha256": "cf9a9af5b13892458f473dfbdbeefcfd2b870560c1894eabcde8250ba762ebc2",
+      "archive_sha256": "f6ed9714fdf81197c50d79297aff5acf39ece7cf994cad3eaa377900750316a2",
+      "completion_marker_present": true,
+      "workers": [
+        12
+      ],
+      "passes": 2,
+      "variants": {
+        "control-avx2": {
+          "binary_name": "seine-portable-control",
+          "binary_sha256": "879203959abf3e1ac511e180d802cc20c7200f1f042db245f7095ba9568bd0e3",
+          "kernel": "avx2",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "candidate-avx2": {
+          "binary_name": "seine-retry-only",
+          "binary_sha256": "abdee56eac34f0e644aef9026939bc694721d859f3efc84cafd406a23a3d0cbf",
+          "kernel": "avx2",
+          "compiled_source_fingerprints": [
+            "9873fcb395d1f5ae"
+          ],
+          "reported_git_annotations": [
+            "c65493705619"
+          ],
+          "matching_frozen_sources": [
+            "c65493705619b6a8d38790ae9afa31adbe3f58af"
+          ]
+        }
+      }
+    },
+    {
+      "hardware": "icelake",
+      "stage": "controls",
+      "experiment_relative_path": "results/control-screen/experiment.json",
+      "experiment_sha256": "bb55d9591dc7600f97ab32002c8c302f96af2ebf92049743250146ebfbd67340",
+      "archive_sha256": "f64acd646db030feddc734a07ade57225c786c41c3aa5484934002d21d9dd86b",
+      "completion_marker_present": true,
+      "workers": [
+        1,
+        12
+      ],
+      "passes": 2,
+      "variants": {
+        "release512": {
+          "binary_name": "seine-generic",
+          "binary_sha256": "e2574ed0867d8f645b6f4b39daeac7fdb047a957d048b7c7c85a91d82754d908",
+          "kernel": "avx512",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "d283877"
+          ],
+          "matching_frozen_sources": []
+        },
+        "release256": {
+          "binary_name": "seine-generic",
+          "binary_sha256": "e2574ed0867d8f645b6f4b39daeac7fdb047a957d048b7c7c85a91d82754d908",
+          "kernel": "avx512-256",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "d283877"
+          ],
+          "matching_frozen_sources": []
+        },
+        "rebuilt512": {
+          "binary_name": "seine-clean-default",
+          "binary_sha256": "9d37e3e515596ef38ca8c9b2e9cffadc4b04c7b889218a857823c3ee3c6ddfec",
+          "kernel": "avx512",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "d283877"
+          ],
+          "matching_frozen_sources": []
+        },
+        "rebuilt256": {
+          "binary_name": "seine-clean-default",
+          "binary_sha256": "9d37e3e515596ef38ca8c9b2e9cffadc4b04c7b889218a857823c3ee3c6ddfec",
+          "kernel": "avx512-256",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "d283877"
+          ],
+          "matching_frozen_sources": []
+        },
+        "cpu256": {
+          "binary_name": "seine-clean-cpu",
+          "binary_sha256": "4f0d84756e416c6a71198d2fc591028aec35f7e44ce401e268281b1f36b0d589",
+          "kernel": "avx512-256",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "d283877"
+          ],
+          "matching_frozen_sources": []
+        },
+        "ring": {
+          "binary_name": "seine-clean-streaming",
+          "binary_sha256": "b717e29b59ac2cbf9875e092796c443137922f676da923e81b51f1042cd40f96",
+          "kernel": "avx512-256",
+          "compiled_source_fingerprints": [
+            "8ca7e180722c68eb"
+          ],
+          "reported_git_annotations": [
+            "d283877"
+          ],
+          "matching_frozen_sources": []
+        }
+      }
+    },
+    {
+      "hardware": "icelake",
+      "stage": "f20-final-confirm",
+      "experiment_relative_path": "results/final-x86-confirm/experiment.json",
+      "experiment_sha256": "f9b38f871a3ef33f21e0fe062da0d26971b986902a692414537ab4a27f8c81b6",
+      "archive_sha256": "4fe5b07b6d4fb94a555bb5121bf8795235604b3a5060dd4ab99ab0923857996d",
+      "completion_marker_present": true,
+      "workers": [
+        1,
+        12
+      ],
+      "passes": 2,
+      "variants": {
+        "control-avx2": {
+          "binary_name": "seine-portable-control",
+          "binary_sha256": "879203959abf3e1ac511e180d802cc20c7200f1f042db245f7095ba9568bd0e3",
+          "kernel": "avx2",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "candidate-avx2": {
+          "binary_name": "seine-portable-candidate",
+          "binary_sha256": "24149835ff2468ba75f95c5e34c0d5f0ca4edd0a2848dc16da16534e0812d86f",
+          "kernel": "avx2",
+          "compiled_source_fingerprints": [
+            "f24ac20c126a52cc"
+          ],
+          "reported_git_annotations": [
+            "f20e7bb1772b"
+          ],
+          "matching_frozen_sources": [
+            "f20e7bb1772be024a12ac5cdcc92685ba89d3ddd"
+          ]
+        },
+        "control-avx512": {
+          "binary_name": "seine-portable-control",
+          "binary_sha256": "879203959abf3e1ac511e180d802cc20c7200f1f042db245f7095ba9568bd0e3",
+          "kernel": "avx512",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "candidate-avx512": {
+          "binary_name": "seine-portable-candidate",
+          "binary_sha256": "24149835ff2468ba75f95c5e34c0d5f0ca4edd0a2848dc16da16534e0812d86f",
+          "kernel": "avx512",
+          "compiled_source_fingerprints": [
+            "f24ac20c126a52cc"
+          ],
+          "reported_git_annotations": [
+            "f20e7bb1772b"
+          ],
+          "matching_frozen_sources": [
+            "f20e7bb1772be024a12ac5cdcc92685ba89d3ddd"
+          ]
+        }
+      }
+    },
+    {
+      "hardware": "icelake",
+      "stage": "retry-only-confirm",
+      "experiment_relative_path": "results/retry-only/experiment.json",
+      "experiment_sha256": "cf9a9af5b13892458f473dfbdbeefcfd2b870560c1894eabcde8250ba762ebc2",
+      "archive_sha256": "02148ced3967e3fdfc46bdd8fc5ba685c056c42a138e4472ea079998e3be2a61",
+      "completion_marker_present": true,
+      "workers": [
+        12
+      ],
+      "passes": 2,
+      "variants": {
+        "control-avx2": {
+          "binary_name": "seine-portable-control",
+          "binary_sha256": "879203959abf3e1ac511e180d802cc20c7200f1f042db245f7095ba9568bd0e3",
+          "kernel": "avx2",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "candidate-avx2": {
+          "binary_name": "seine-retry-only",
+          "binary_sha256": "abdee56eac34f0e644aef9026939bc694721d859f3efc84cafd406a23a3d0cbf",
+          "kernel": "avx2",
+          "compiled_source_fingerprints": [
+            "9873fcb395d1f5ae"
+          ],
+          "reported_git_annotations": [
+            "c65493705619"
+          ],
+          "matching_frozen_sources": [
+            "c65493705619b6a8d38790ae9afa31adbe3f58af"
+          ]
+        }
+      }
+    },
+    {
+      "hardware": "icelake",
+      "stage": "streaming",
+      "experiment_relative_path": "results/streaming-screen/experiment.json",
+      "experiment_sha256": "851f55f0ab55f02f87e189c54f8175a1e493d6dea2ed7c79c7cad9cffdd5ae67",
+      "archive_sha256": "19d82e6fb0d8e392835a9e85a4ba324f8ddb778640e70dc1ba1e71ec9f789492",
+      "completion_marker_present": true,
+      "workers": [
+        1,
+        4,
+        8,
+        12
+      ],
+      "passes": 2,
+      "variants": {
+        "shipping512": {
+          "binary_name": "seine-cpu-baseline",
+          "binary_sha256": "96cf87ead821cfff17f3c687f5e164d7dc749ddeacc83d70353fca16d4368e5f",
+          "kernel": "avx512",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "d283877"
+          ],
+          "matching_frozen_sources": []
+        },
+        "shipping256": {
+          "binary_name": "seine-cpu-baseline",
+          "binary_sha256": "96cf87ead821cfff17f3c687f5e164d7dc749ddeacc83d70353fca16d4368e5f",
+          "kernel": "avx512-256",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "d283877"
+          ],
+          "matching_frozen_sources": []
+        },
+        "ring": {
+          "binary_name": "seine-streaming",
+          "binary_sha256": "b717e29b59ac2cbf9875e092796c443137922f676da923e81b51f1042cd40f96",
+          "kernel": "avx512-256",
+          "compiled_source_fingerprints": [
+            "8ca7e180722c68eb"
+          ],
+          "reported_git_annotations": [
+            "d283877"
+          ],
+          "matching_frozen_sources": []
+        }
+      }
+    },
+    {
+      "hardware": "icelake",
+      "stage": "x86-regression",
+      "experiment_relative_path": "results/x86-regression/experiment.json",
+      "experiment_sha256": "2f7edbc4dd67e8050d1d6ea870e8d1f23daa52f8b18d48a731b462de7cacbe72",
+      "archive_sha256": "8b8ce6d525b8583c1ca075179900da27250728ec91d145879310db1d07b9e3f4",
+      "completion_marker_present": true,
+      "workers": [
+        1,
+        12
+      ],
+      "passes": 2,
+      "variants": {
+        "baseline": {
+          "binary_name": "seine-clean-cpu",
+          "binary_sha256": "4f0d84756e416c6a71198d2fc591028aec35f7e44ce401e268281b1f36b0d589",
+          "kernel": "avx512",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ],
+          "matching_frozen_sources": []
+        },
+        "candidate": {
+          "binary_name": "seine-neon-regression",
+          "binary_sha256": "6f7696018755e2874abe197644e5fa7aeb55e5ef2c4824f7d9ef558a09032e0c",
+          "kernel": "avx512",
+          "compiled_source_fingerprints": [
+            "647e120d0df7c7f6"
+          ],
+          "reported_git_annotations": [
+            "2ce28ae"
+          ],
+          "matching_frozen_sources": []
+        }
+      }
+    },
+    {
+      "hardware": "sapphirerapids",
+      "stage": "f20-final-confirm",
+      "experiment_relative_path": "results/final-x86-confirm/experiment.json",
+      "experiment_sha256": "f9b38f871a3ef33f21e0fe062da0d26971b986902a692414537ab4a27f8c81b6",
+      "archive_sha256": "9a875c6caddc94cd515e4d08def5f6189f59190d201741b423881e8527db679d",
+      "completion_marker_present": true,
+      "workers": [
+        1,
+        12
+      ],
+      "passes": 2,
+      "variants": {
+        "control-avx2": {
+          "binary_name": "seine-portable-control",
+          "binary_sha256": "879203959abf3e1ac511e180d802cc20c7200f1f042db245f7095ba9568bd0e3",
+          "kernel": "avx2",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "candidate-avx2": {
+          "binary_name": "seine-portable-candidate",
+          "binary_sha256": "24149835ff2468ba75f95c5e34c0d5f0ca4edd0a2848dc16da16534e0812d86f",
+          "kernel": "avx2",
+          "compiled_source_fingerprints": [
+            "f24ac20c126a52cc"
+          ],
+          "reported_git_annotations": [
+            "f20e7bb1772b"
+          ],
+          "matching_frozen_sources": [
+            "f20e7bb1772be024a12ac5cdcc92685ba89d3ddd"
+          ]
+        },
+        "control-avx512": {
+          "binary_name": "seine-portable-control",
+          "binary_sha256": "879203959abf3e1ac511e180d802cc20c7200f1f042db245f7095ba9568bd0e3",
+          "kernel": "avx512",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "candidate-avx512": {
+          "binary_name": "seine-portable-candidate",
+          "binary_sha256": "24149835ff2468ba75f95c5e34c0d5f0ca4edd0a2848dc16da16534e0812d86f",
+          "kernel": "avx512",
+          "compiled_source_fingerprints": [
+            "f24ac20c126a52cc"
+          ],
+          "reported_git_annotations": [
+            "f20e7bb1772b"
+          ],
+          "matching_frozen_sources": [
+            "f20e7bb1772be024a12ac5cdcc92685ba89d3ddd"
+          ]
+        }
+      }
+    },
+    {
+      "hardware": "sapphirerapids",
+      "stage": "isa-confirm",
+      "experiment_relative_path": "results/intel-isa-confirm/experiment.json",
+      "experiment_sha256": "a64a54c775a747539443328899034396f529af1d2d40baba91477c950f17bbec",
+      "archive_sha256": "ee9096c6adb6397bc7962227ee5e55be7b46bdf3004c711b23bbff68eec88867",
+      "completion_marker_present": true,
+      "workers": [
+        1,
+        12
+      ],
+      "passes": 4,
+      "variants": {
+        "avx2": {
+          "binary_name": "seine-generic",
+          "binary_sha256": "e2574ed0867d8f645b6f4b39daeac7fdb047a957d048b7c7c85a91d82754d908",
+          "kernel": "avx2",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d8"
+          ],
+          "matching_frozen_sources": []
+        },
+        "avx512": {
+          "binary_name": "seine-generic",
+          "binary_sha256": "e2574ed0867d8f645b6f4b39daeac7fdb047a957d048b7c7c85a91d82754d908",
+          "kernel": "avx512",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d8"
+          ],
+          "matching_frozen_sources": []
+        },
+        "avx512256": {
+          "binary_name": "seine-generic",
+          "binary_sha256": "e2574ed0867d8f645b6f4b39daeac7fdb047a957d048b7c7c85a91d82754d908",
+          "kernel": "avx512-256",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d8"
+          ],
+          "matching_frozen_sources": []
+        }
+      }
+    },
+    {
+      "hardware": "sapphirerapids",
+      "stage": "ring",
+      "experiment_relative_path": "results/intel-ring-screen/experiment.json",
+      "experiment_sha256": "4afcfc4d84fe83fd7eeaabfc836f3f50f566779c07c4a99368275edbb11ecde2",
+      "archive_sha256": "df45cb8516a0ae9cf56deeed1ce7c041b0b426cc8802904e80417e0f7a4cfd7a",
+      "completion_marker_present": true,
+      "workers": [
+        8,
+        12
+      ],
+      "passes": 2,
+      "variants": {
+        "avx2": {
+          "binary_name": "seine-ring-control",
+          "binary_sha256": "879203959abf3e1ac511e180d802cc20c7200f1f042db245f7095ba9568bd0e3",
+          "kernel": "avx2",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "avx512": {
+          "binary_name": "seine-ring-control",
+          "binary_sha256": "879203959abf3e1ac511e180d802cc20c7200f1f042db245f7095ba9568bd0e3",
+          "kernel": "avx512",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "streaming": {
+          "binary_name": "seine-ring-candidate",
+          "binary_sha256": "262f0e40b66f114c92caf6b8b15d647b8002feca9ece78a1f763ea998a84c438",
+          "kernel": "avx512-256",
+          "compiled_source_fingerprints": [
+            "8ca7e180722c68eb"
+          ],
+          "reported_git_annotations": [
+            "d283877"
+          ],
+          "matching_frozen_sources": []
+        }
+      }
+    },
+    {
+      "hardware": "skylake",
+      "stage": "joint-final-confirm",
+      "experiment_relative_path": "results/fixed-kernel/experiment.json",
+      "experiment_sha256": "6e4ae7308d2bd6f19c7908310f253d73a42bae14c4656ab221e5792c0cc08001",
+      "archive_sha256": "93cfb1e3fbff6fc4f63ebf7441fa994ba99d1d9cbb24cb0fe8628e3f74ce8dd5",
+      "completion_marker_present": true,
+      "workers": [
+        12
+      ],
+      "passes": 2,
+      "variants": {
+        "control-avx2": {
+          "binary_name": "seine-joint-control",
+          "binary_sha256": "24149835ff2468ba75f95c5e34c0d5f0ca4edd0a2848dc16da16534e0812d86f",
+          "kernel": "avx2",
+          "compiled_source_fingerprints": [
+            "f24ac20c126a52cc"
+          ],
+          "reported_git_annotations": [
+            "f20e7bb1772b"
+          ],
+          "matching_frozen_sources": [
+            "f20e7bb1772be024a12ac5cdcc92685ba89d3ddd"
+          ]
+        },
+        "candidate-avx2": {
+          "binary_name": "seine-joint-candidate",
+          "binary_sha256": "1200135d8d7b6b6cfebc56e1da8612e50fa334d4e0423f59f7cc2c776f53e1f4",
+          "kernel": "avx2",
+          "compiled_source_fingerprints": [
+            "10c45d551e212dae"
+          ],
+          "reported_git_annotations": [
+            "e6809bb78b51"
+          ],
+          "matching_frozen_sources": [
+            "e6809bb78b51c6b94c6a6b7ebcff2cf21f95faa3"
+          ]
+        },
+        "control-avx512": {
+          "binary_name": "seine-joint-control",
+          "binary_sha256": "24149835ff2468ba75f95c5e34c0d5f0ca4edd0a2848dc16da16534e0812d86f",
+          "kernel": "avx512",
+          "compiled_source_fingerprints": [
+            "f24ac20c126a52cc"
+          ],
+          "reported_git_annotations": [
+            "f20e7bb1772b"
+          ],
+          "matching_frozen_sources": [
+            "f20e7bb1772be024a12ac5cdcc92685ba89d3ddd"
+          ]
+        },
+        "candidate-avx512": {
+          "binary_name": "seine-joint-candidate",
+          "binary_sha256": "1200135d8d7b6b6cfebc56e1da8612e50fa334d4e0423f59f7cc2c776f53e1f4",
+          "kernel": "avx512",
+          "compiled_source_fingerprints": [
+            "10c45d551e212dae"
+          ],
+          "reported_git_annotations": [
+            "e6809bb78b51"
+          ],
+          "matching_frozen_sources": [
+            "e6809bb78b51c6b94c6a6b7ebcff2cf21f95faa3"
+          ]
+        }
+      }
+    },
+    {
+      "hardware": "zen1",
+      "stage": "final-validation",
+      "experiment_relative_path": "results/portable-regression/experiment.json",
+      "experiment_sha256": "fbcc4b01af318d5e75eceea7fe642089f2d11d45dda1ae9f4d0731ab2a0d5632",
+      "archive_sha256": "ba1795b2cbf221aba08242eae6426ecdf71f39e536dc4bc90f299fbd7c450309",
+      "completion_marker_present": true,
+      "workers": [
+        1,
+        16
+      ],
+      "passes": 2,
+      "variants": {
+        "control-avx2": {
+          "binary_name": "seine-portable-control",
+          "binary_sha256": "879203959abf3e1ac511e180d802cc20c7200f1f042db245f7095ba9568bd0e3",
+          "kernel": "avx2",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "candidate-avx2": {
+          "binary_name": "seine-portable-candidate",
+          "binary_sha256": "24149835ff2468ba75f95c5e34c0d5f0ca4edd0a2848dc16da16534e0812d86f",
+          "kernel": "avx2",
+          "compiled_source_fingerprints": [
+            "f24ac20c126a52cc"
+          ],
+          "reported_git_annotations": [
+            "f20e7bb1772b"
+          ],
+          "matching_frozen_sources": [
+            "f20e7bb1772be024a12ac5cdcc92685ba89d3ddd"
+          ]
+        }
+      }
+    },
+    {
+      "hardware": "zen2",
+      "stage": "final-validation",
+      "experiment_relative_path": "results/portable-regression/experiment.json",
+      "experiment_sha256": "f66be99ce490abaea1d0bc6932d9d1aae5424b8569eb16a28318dd378dd80a8c",
+      "archive_sha256": "dc12773139e9a8b4b6030e0870249ca9a74cb1196214c8ec67514f9be0c3be00",
+      "completion_marker_present": true,
+      "workers": [
+        1,
+        12
+      ],
+      "passes": 2,
+      "variants": {
+        "control-avx2": {
+          "binary_name": "seine-portable-control",
+          "binary_sha256": "879203959abf3e1ac511e180d802cc20c7200f1f042db245f7095ba9568bd0e3",
+          "kernel": "avx2",
+          "compiled_source_fingerprints": [
+            "d8248e278baf1c66"
+          ],
+          "reported_git_annotations": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ],
+          "matching_frozen_sources": [
+            "359265e325d85c9c7b6e3eed7b5b126fcec63f9c"
+          ]
+        },
+        "candidate-avx2": {
+          "binary_name": "seine-portable-candidate",
+          "binary_sha256": "24149835ff2468ba75f95c5e34c0d5f0ca4edd0a2848dc16da16534e0812d86f",
+          "kernel": "avx2",
+          "compiled_source_fingerprints": [
+            "f24ac20c126a52cc"
+          ],
+          "reported_git_annotations": [
+            "f20e7bb1772b"
+          ],
+          "matching_frozen_sources": [
+            "f20e7bb1772be024a12ac5cdcc92685ba89d3ddd"
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "source": "e6809bb78b51c6b94c6a6b7ebcff2cf21f95faa3",
+  "workspace_tests": {
+    "passed": 506,
+    "failed": 0,
+    "ignored": 5
+  },
+  "all_features_all_targets": "passed",
+  "windows_gnu_test_compile": "passed; not native execution",
+  "full_size_local_parity": "reference=[e9, fb, fa, cf, b6, 96, ae, f8, f8, 88, 20, 17, c5, 5b, 23, 4e, 4b, 31, 30, a4, b6, 23, 42, c6, 3d, f5, 61, 31, 8d, 5a, db, a8]\nscalar: PASS (full 2 GiB reference parity)\navx2: PASS (full 2 GiB reference parity)\navx512: PASS (full 2 GiB reference parity)\navx512-256: PASS (full 2 GiB reference parity)\nneon: unsupported\nneon-sha3: unsupported\n",
+  "independent_review": "quarantined-member cancellation and stale retry issues corrected; focused followup review found no further blocker",
+  "status": "native crossover, fixed-kernel regression and pressure/restart confirmation pending; no production promotion",
+  "logs_sha256": {
+    "joint-review-workspace.log": "3261b39f74baca49d0b124c3ea460c00a1e0c44eb3bc9524367f0ebd9ef7ef95",
+    "joint-review-all-features.log": "4bdf1a94f102692cb6205dc7581adb8b44efac4a9f366fa8d11663b76e5ccab3",
+    "joint-review-windows.log": "482f12ac672b3da23627f74783f57bc7dd1be3d299ce1cd40150d7289c8f04a9",
+    "joint-review-full-size-parity.log": "934f030d49cd4c8615dd57d8eb8a6ae4f2f866146bb372be95eb7bf07d483a6c"
+  }
+}

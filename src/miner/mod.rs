@@ -513,7 +513,8 @@ pub(crate) fn run_with_thread_control(
                     let backend = Arc::new(if cfg.cpu_autotune_threads {
                         CpuBackend::adaptive(
                             threads,
-                            adaptive_cpu::limits(cfg, 0).1,
+                            cfg.cpu_autotune_worker_slots
+                                .expect("automatic slots prepared"),
                             affinity,
                             tuning,
                         )
@@ -618,13 +619,17 @@ pub(crate) fn run_with_thread_control(
                         .min()
                         .unwrap_or(first.backend.enabled_lanes());
                     // Preserve the ability to reduce an explicit above-auto count.
-                    control.max_threads = cfg.cpu_auto_threads_cap.max(
-                        cpu_backends
-                            .iter()
-                            .map(|slot| slot.backend.enabled_lanes())
-                            .min()
-                            .unwrap_or(1),
-                    );
+                    control.max_threads = if cfg.cpu_autotune_threads {
+                        adaptive_cpu::manual_limit(cfg, &adaptive_backends)
+                    } else {
+                        cfg.cpu_auto_threads_cap.max(
+                            cpu_backends
+                                .iter()
+                                .map(|slot| slot.backend.enabled_lanes())
+                                .min()
+                                .unwrap_or(1),
+                        )
+                    };
                     s.thread_control = Some(control);
                 }
             }
@@ -1026,8 +1031,7 @@ fn maybe_autotune_cpu_threads(
         return Ok(());
     }
     if matches!(mode, RuntimeMode::Mining) {
-        adaptive_cpu::prepare(cfg);
-        return Ok(());
+        return adaptive_cpu::prepare(cfg);
     }
 
     let tag = runtime_mode_tag(mode);
@@ -2231,7 +2235,7 @@ fn activate_single_backend(
             .spawn(move || {
                 let _ = tx.send(backend_ref.start());
             })
-            .expect("failed to spawn backend init thread");
+            .map_err(|err| anyhow!("failed to spawn {backend_name} init thread: {err}"))?;
         loop {
             match rx.recv_timeout(Duration::from_millis(100)) {
                 Ok(result) => break result,
@@ -3674,6 +3678,7 @@ pub(crate) mod tests {
             }],
             threads: 1,
             cpu_auto_threads_cap: 1,
+            cpu_autotune_worker_slots: None,
             cpu_memory_reserve_percent: 5,
             cpu_affinity: crate::config::CpuAffinityMode::Off,
             cpu_page_mode: crate::config::CpuPageMode::Auto,

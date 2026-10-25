@@ -1,0 +1,620 @@
+{
+  "created_at": "2026-10-24T16:53:11.782548+00:00",
+  "scope": "Read-only static inspection of frozen actual miner ELF binaries; no builds, execution, timing, hardware or source edits. Only this data artifact written.",
+  "tools": {
+    "nm": "GNU nm (GNU Binutils for Ubuntu) 2.42",
+    "objdump": "GNU objdump (GNU Binutils for Ubuntu) 2.42"
+  },
+  "binaries": {
+    "control": {
+      "path": "portable-final-x86/seine-portable-control",
+      "source_commit": "359265e325d85c9c7b6e3eed7b5b126fcec63f9c",
+      "sha256": "879203959abf3e1ac511e180d802cc20c7200f1f042db245f7095ba9568bd0e3",
+      "matches_frozen_identity": true,
+      "identity_file_sha256": "feaaeb8cf3212797726e4e25c2f7ac7db6dadf2d09e9ef55ad6cc7d4fc927c1e",
+      "functions": {
+        "fill_avx512": {
+          "address": "0x4200d0",
+          "size_bytes": 1429,
+          "size_hex": "0x595",
+          "entry_mod64": 16,
+          "instruction_count": 268,
+          "prefetch_instruction_count": 65,
+          "raw_function_sha256": "de2d08be5bdd66539e43b2340125200a81d3152211a69b5773849e4688766c9d",
+          "normalized_instruction_sha256": "b6b00077b44949caa06e613810f1132e74cc197dc2be98f678babdfe68875286",
+          "rip_constant_payloads": [],
+          "stack_prologue": [
+            "push   %rbp",
+            "sub    $0x68,%rsp",
+            "mov    %rdx,0x10(%rsp)",
+            "mov    %rax,0x8(%rsp)",
+            "mov    %rax,0x48(%rsp)"
+          ]
+        },
+        "fill_scalar": {
+          "address": "0x4211b0",
+          "size_bytes": 13358,
+          "size_hex": "0x342e",
+          "entry_mod64": 48,
+          "instruction_count": 2370,
+          "prefetch_instruction_count": 64,
+          "raw_function_sha256": "c346f703d31b57efeda8a358268d1deea2abaaf022681f0cccf6da685f956d2a",
+          "normalized_instruction_sha256": "6b88c301ebc6bc855520a7cddaa286eabf00611e877a484e3bd155f31bafea99",
+          "rip_constant_payloads": [],
+          "stack_prologue": [
+            "push   %rbp",
+            "mov    %rsp,%rbp",
+            "and    $0xffffffffffffffc0,%rsp",
+            "sub    $0xd00,%rsp",
+            "mov    %rdx,0x48(%rsp)",
+            "mov    %rax,0x78(%rsp)"
+          ]
+        },
+        "fill_avx2": {
+          "address": "0x420c10",
+          "size_bytes": 1429,
+          "size_hex": "0x595",
+          "entry_mod64": 16,
+          "instruction_count": 268,
+          "prefetch_instruction_count": 65,
+          "raw_function_sha256": "6d457c04ee8b9a6ab59e060114fc890a72c5a14d83a10e9a43c92c1b4d708f0d",
+          "normalized_instruction_sha256": "36b2d83c99f253c44564e252ec06cc7a4624cc34a5328a5f2eacb3fb0ba104b4",
+          "rip_constant_payloads": [],
+          "stack_prologue": [
+            "push   %rbp",
+            "sub    $0x68,%rsp",
+            "mov    %rdx,0x10(%rsp)",
+            "mov    %rax,0x8(%rsp)",
+            "mov    %rax,0x48(%rsp)"
+          ]
+        },
+        "fill_avx512_256": {
+          "address": "0x420670",
+          "size_bytes": 1429,
+          "size_hex": "0x595",
+          "entry_mod64": 48,
+          "instruction_count": 268,
+          "prefetch_instruction_count": 65,
+          "raw_function_sha256": "151b1a3e3759dcf3567ff26e286865b36bf836952ce0517e4c9917512af7deb7",
+          "normalized_instruction_sha256": "352c2cd8ef27fe353f80f29fae37eb50812e6e4cc010c0783798648d7e73d63f",
+          "rip_constant_payloads": [],
+          "stack_prologue": [
+            "push   %rbp",
+            "sub    $0x68,%rsp",
+            "mov    %rdx,0x10(%rsp)",
+            "mov    %rax,0x8(%rsp)",
+            "mov    %rax,0x48(%rsp)"
+          ]
+        },
+        "hash_password_into_with_memory": {
+          "address": "0x41f9d0",
+          "size_bytes": 1780,
+          "size_hex": "0x6f4",
+          "entry_mod64": 16,
+          "instruction_count": 353,
+          "prefetch_instruction_count": 0,
+          "raw_function_sha256": "51ee29a7ef157826dbc521d9a031e717b0f4c159e8c81f9b3917bffeb54a1b88",
+          "normalized_instruction_sha256": "efaf9dced4f63476afddfc5a37fb966fe2b00ad3cee1d774669429f82b6753d3",
+          "rip_constant_payloads": [],
+          "stack_prologue": [
+            "push   %rbp",
+            "sub    $0x5b8,%rsp"
+          ]
+        },
+        "compress_avx512_into": {
+          "address": "0x428040",
+          "size_bytes": 1682,
+          "size_hex": "0x692",
+          "entry_mod64": 0,
+          "instruction_count": 253,
+          "prefetch_instruction_count": 0,
+          "raw_function_sha256": "9865f185a5283bc7dc569f747144689dfdc9b4ae13947214c82b2f463d32a995",
+          "normalized_instruction_sha256": "f869a3fd0f8b4b311110d633a79fcb4ee39d20c1ec442fdb74263a9fc9e38223",
+          "rip_constant_payloads": [
+            {
+              "address": "0x30f80",
+              "payload_64_bytes_hex": "0000000000000000010000000000000008000000000000000900000000000000060000000000000007000000000000000e000000000000000f00000000000000",
+              "payload_sha256": "ae5d1bcaff86869aa4b0e82b59aed24ba8cc0be94e59fad808b98cb13b3c2b1c"
+            }
+          ],
+          "stack_prologue": [
+            "push   %rbp",
+            "mov    %rsp,%rbp",
+            "and    $0xffffffffffffffc0,%rsp",
+            "sub    $0x440,%rsp",
+            "vmovdqa64 %zmm0,(%rsp)",
+            "vmovdqa64 %zmm0,0x40(%rsp)"
+          ]
+        },
+        "compress_avx512_into_mid_prefetch": {
+          "address": "0x4286e0",
+          "size_bytes": 2482,
+          "size_hex": "0x9b2",
+          "entry_mod64": 32,
+          "instruction_count": 374,
+          "prefetch_instruction_count": 18,
+          "raw_function_sha256": "09c6667eeee07adccc90bd5ed783c5b7c87c367d8123af4bbcf9097d926443b4",
+          "normalized_instruction_sha256": "f2fcf163fd01e438067f5707407eda1b15579f37c48a83fb7f101741631835e3",
+          "rip_constant_payloads": [
+            {
+              "address": "0x30fc0",
+              "payload_64_bytes_hex": "0000000000000000010000000000000008000000000000000900000000000000060000000000000007000000000000000e000000000000000f00000000000000",
+              "payload_sha256": "ae5d1bcaff86869aa4b0e82b59aed24ba8cc0be94e59fad808b98cb13b3c2b1c"
+            }
+          ],
+          "stack_prologue": [
+            "push   %rbp",
+            "mov    %rsp,%rbp",
+            "and    $0xffffffffffffffc0,%rsp",
+            "sub    $0x440,%rsp",
+            "vmovdqa64 %zmm0,(%rsp)",
+            "vmovdqa64 %zmm0,0x40(%rsp)"
+          ]
+        }
+      }
+    },
+    "candidate_636": {
+      "path": "portable-final-x86/seine-portable-candidate",
+      "source_commit": "636e6887c405c41d732433b1eeb018cefcdc962d",
+      "sha256": "dab8eb50ade3e9981243f8b2b647c139a84a10b0778f157820a2e62a06565287",
+      "matches_frozen_identity": true,
+      "identity_file_sha256": "feaaeb8cf3212797726e4e25c2f7ac7db6dadf2d09e9ef55ad6cc7d4fc927c1e",
+      "functions": {
+        "hash_password_into_with_memory": {
+          "address": "0x422220",
+          "size_bytes": 32130,
+          "size_hex": "0x7d82",
+          "entry_mod64": 32,
+          "instruction_count": 5779,
+          "prefetch_instruction_count": 323,
+          "raw_function_sha256": "9414c5ce3db164c58bdc0036ee1e696fc7114d160bdaba64a3b760c68ad61aa2",
+          "normalized_instruction_sha256": "b569b69ec13dfadbb7df4db98dbb623dc0b50149359c37a0b4c11df78ca16f60",
+          "rip_constant_payloads": [],
+          "stack_prologue": [
+            "push   %rbp",
+            "mov    %rsp,%rbp",
+            "and    $0xffffffffffffffc0,%rsp",
+            "sub    $0xdc0,%rsp",
+            "mov    %r9,0x40(%rsp)",
+            "mov    %r8,0x8f8(%rsp)"
+          ]
+        },
+        "compress_avx512_into": {
+          "address": "0x429fb0",
+          "size_bytes": 1682,
+          "size_hex": "0x692",
+          "entry_mod64": 48,
+          "instruction_count": 253,
+          "prefetch_instruction_count": 0,
+          "raw_function_sha256": "7bd5c53e3990f87a7815d03064481326eaa022f896ab5f02f79f27d4c6809262",
+          "normalized_instruction_sha256": "f869a3fd0f8b4b311110d633a79fcb4ee39d20c1ec442fdb74263a9fc9e38223",
+          "rip_constant_payloads": [
+            {
+              "address": "0x30340",
+              "payload_64_bytes_hex": "0000000000000000010000000000000008000000000000000900000000000000060000000000000007000000000000000e000000000000000f00000000000000",
+              "payload_sha256": "ae5d1bcaff86869aa4b0e82b59aed24ba8cc0be94e59fad808b98cb13b3c2b1c"
+            }
+          ],
+          "stack_prologue": [
+            "push   %rbp",
+            "mov    %rsp,%rbp",
+            "and    $0xffffffffffffffc0,%rsp",
+            "sub    $0x440,%rsp",
+            "vmovdqa64 %zmm0,(%rsp)",
+            "vmovdqa64 %zmm0,0x40(%rsp)"
+          ]
+        },
+        "compress_avx512_into_mid_prefetch": {
+          "address": "0x42a650",
+          "size_bytes": 2482,
+          "size_hex": "0x9b2",
+          "entry_mod64": 16,
+          "instruction_count": 374,
+          "prefetch_instruction_count": 18,
+          "raw_function_sha256": "4b7d704b90e53e8e61f512d9de1a4c9bec30ca162659b1c985488ac2545a2242",
+          "normalized_instruction_sha256": "f2fcf163fd01e438067f5707407eda1b15579f37c48a83fb7f101741631835e3",
+          "rip_constant_payloads": [
+            {
+              "address": "0x30380",
+              "payload_64_bytes_hex": "0000000000000000010000000000000008000000000000000900000000000000060000000000000007000000000000000e000000000000000f00000000000000",
+              "payload_sha256": "ae5d1bcaff86869aa4b0e82b59aed24ba8cc0be94e59fad808b98cb13b3c2b1c"
+            }
+          ],
+          "stack_prologue": [
+            "push   %rbp",
+            "mov    %rsp,%rbp",
+            "and    $0xffffffffffffffc0,%rsp",
+            "sub    $0x440,%rsp",
+            "vmovdqa64 %zmm0,(%rsp)",
+            "vmovdqa64 %zmm0,0x40(%rsp)"
+          ]
+        }
+      }
+    },
+    "fixed_f20": {
+      "path": "portable-codegen-x86/seine-portable-candidate",
+      "source_commit": "f20e7bb1772be024a12ac5cdcc92685ba89d3ddd",
+      "sha256": "24149835ff2468ba75f95c5e34c0d5f0ca4edd0a2848dc16da16534e0812d86f",
+      "matches_frozen_identity": true,
+      "identity_file_sha256": "d7c993ea415ae17039b8932d42edfb1138fa2cb4745e19c35a9ee5cec0b29d09",
+      "functions": {
+        "fill_avx512": {
+          "address": "0x423460",
+          "size_bytes": 1429,
+          "size_hex": "0x595",
+          "entry_mod64": 32,
+          "instruction_count": 268,
+          "prefetch_instruction_count": 65,
+          "raw_function_sha256": "1ff9367151eae5a70f5dbaacc2686e0089c12e3b4cd7a9cf8e4e851bf6b18780",
+          "normalized_instruction_sha256": "b6b00077b44949caa06e613810f1132e74cc197dc2be98f678babdfe68875286",
+          "rip_constant_payloads": [],
+          "stack_prologue": [
+            "push   %rbp",
+            "sub    $0x68,%rsp",
+            "mov    %rdx,0x10(%rsp)",
+            "mov    %rax,0x8(%rsp)",
+            "mov    %rax,0x48(%rsp)"
+          ]
+        },
+        "fill_scalar": {
+          "address": "0x424540",
+          "size_bytes": 13358,
+          "size_hex": "0x342e",
+          "entry_mod64": 0,
+          "instruction_count": 2370,
+          "prefetch_instruction_count": 64,
+          "raw_function_sha256": "f1558cad86553ac3188cc3133316e9652c28641180cd22789a65384b96c852cb",
+          "normalized_instruction_sha256": "6b88c301ebc6bc855520a7cddaa286eabf00611e877a484e3bd155f31bafea99",
+          "rip_constant_payloads": [],
+          "stack_prologue": [
+            "push   %rbp",
+            "mov    %rsp,%rbp",
+            "and    $0xffffffffffffffc0,%rsp",
+            "sub    $0xd00,%rsp",
+            "mov    %rdx,0x48(%rsp)",
+            "mov    %rax,0x78(%rsp)"
+          ]
+        },
+        "fill_avx2": {
+          "address": "0x423fa0",
+          "size_bytes": 1429,
+          "size_hex": "0x595",
+          "entry_mod64": 32,
+          "instruction_count": 268,
+          "prefetch_instruction_count": 65,
+          "raw_function_sha256": "efe949baadbe16aa62592018a87ff422a7bdeabc1df88dee03243c3c6463f52a",
+          "normalized_instruction_sha256": "36b2d83c99f253c44564e252ec06cc7a4624cc34a5328a5f2eacb3fb0ba104b4",
+          "rip_constant_payloads": [],
+          "stack_prologue": [
+            "push   %rbp",
+            "sub    $0x68,%rsp",
+            "mov    %rdx,0x10(%rsp)",
+            "mov    %rax,0x8(%rsp)",
+            "mov    %rax,0x48(%rsp)"
+          ]
+        },
+        "fill_avx512_256": {
+          "address": "0x423a00",
+          "size_bytes": 1429,
+          "size_hex": "0x595",
+          "entry_mod64": 0,
+          "instruction_count": 268,
+          "prefetch_instruction_count": 65,
+          "raw_function_sha256": "e70bc7a5296aab9338c158f3d32c317e8ee2e95feffba79ad3dd597fa2212440",
+          "normalized_instruction_sha256": "352c2cd8ef27fe353f80f29fae37eb50812e6e4cc010c0783798648d7e73d63f",
+          "rip_constant_payloads": [],
+          "stack_prologue": [
+            "push   %rbp",
+            "sub    $0x68,%rsp",
+            "mov    %rdx,0x10(%rsp)",
+            "mov    %rax,0x8(%rsp)",
+            "mov    %rax,0x48(%rsp)"
+          ]
+        },
+        "hash_password_into_with_memory": {
+          "address": "0x422d60",
+          "size_bytes": 1780,
+          "size_hex": "0x6f4",
+          "entry_mod64": 32,
+          "instruction_count": 353,
+          "prefetch_instruction_count": 0,
+          "raw_function_sha256": "96338cfb265c83cb40ced05fb22d9731538c54bb1a934658fc608d753ac02df9",
+          "normalized_instruction_sha256": "efaf9dced4f63476afddfc5a37fb966fe2b00ad3cee1d774669429f82b6753d3",
+          "rip_constant_payloads": [],
+          "stack_prologue": [
+            "push   %rbp",
+            "sub    $0x5b8,%rsp"
+          ]
+        },
+        "compress_avx512_into": {
+          "address": "0x42b3d0",
+          "size_bytes": 1682,
+          "size_hex": "0x692",
+          "entry_mod64": 16,
+          "instruction_count": 253,
+          "prefetch_instruction_count": 0,
+          "raw_function_sha256": "42e1230277915e3225f9c33bf60eea3591769b8462c7baa9ad1488d8a1057dcd",
+          "normalized_instruction_sha256": "f869a3fd0f8b4b311110d633a79fcb4ee39d20c1ec442fdb74263a9fc9e38223",
+          "rip_constant_payloads": [
+            {
+              "address": "0x30f80",
+              "payload_64_bytes_hex": "0000000000000000010000000000000008000000000000000900000000000000060000000000000007000000000000000e000000000000000f00000000000000",
+              "payload_sha256": "ae5d1bcaff86869aa4b0e82b59aed24ba8cc0be94e59fad808b98cb13b3c2b1c"
+            }
+          ],
+          "stack_prologue": [
+            "push   %rbp",
+            "mov    %rsp,%rbp",
+            "and    $0xffffffffffffffc0,%rsp",
+            "sub    $0x440,%rsp",
+            "vmovdqa64 %zmm0,(%rsp)",
+            "vmovdqa64 %zmm0,0x40(%rsp)"
+          ]
+        },
+        "compress_avx512_into_mid_prefetch": {
+          "address": "0x42ba70",
+          "size_bytes": 2482,
+          "size_hex": "0x9b2",
+          "entry_mod64": 48,
+          "instruction_count": 374,
+          "prefetch_instruction_count": 18,
+          "raw_function_sha256": "171bec289c18f14c43fd15e06b1a613be15948e6abbe860082d4ec37e86f470d",
+          "normalized_instruction_sha256": "f2fcf163fd01e438067f5707407eda1b15579f37c48a83fb7f101741631835e3",
+          "rip_constant_payloads": [
+            {
+              "address": "0x30fc0",
+              "payload_64_bytes_hex": "0000000000000000010000000000000008000000000000000900000000000000060000000000000007000000000000000e000000000000000f00000000000000",
+              "payload_sha256": "ae5d1bcaff86869aa4b0e82b59aed24ba8cc0be94e59fad808b98cb13b3c2b1c"
+            }
+          ],
+          "stack_prologue": [
+            "push   %rbp",
+            "mov    %rsp,%rbp",
+            "and    $0xffffffffffffffc0,%rsp",
+            "sub    $0x440,%rsp",
+            "vmovdqa64 %zmm0,(%rsp)",
+            "vmovdqa64 %zmm0,0x40(%rsp)"
+          ]
+        }
+      }
+    }
+  },
+  "comparisons": {
+    "candidate_636_versus_control": {
+      "fill_avx512": {
+        "present": false
+      },
+      "fill_scalar": {
+        "present": false
+      },
+      "fill_avx2": {
+        "present": false
+      },
+      "fill_avx512_256": {
+        "present": false
+      },
+      "hash_password_into_with_memory": {
+        "present": true,
+        "normalized_instructions_identical": false,
+        "instruction_count_delta": 5426,
+        "size_bytes_delta": 30350,
+        "first_normalized_differences": [
+          "--- \n",
+          "+++ \n",
+          "@@ -1,2 +1,3 @@\n",
+          " push   %rbp",
+          "+mov    %rsp,%rbp",
+          " push   %r15",
+          "@@ -6,6 +7,10 @@\n",
+          " push   %rbx",
+          "-sub    $0x5b8,%rsp",
+          "+and    $0xffffffffffffffc0,%rsp",
+          "+sub    $0xdc0,%rsp",
+          "+mov    %r9,0x40(%rsp)",
+          "+mov    %r8,0x8f8(%rsp)",
+          " mov    $0x1,%al",
+          " cmp    $0x8,%rcx",
+          "-jb     LOCAL+0x6be",
+          "+jb     LOCAL+0x7c98",
+          "+mov    %rcx,%r13",
+          " mov    %rcx,%rax",
+          "@@ -13,57 +18,61 @@\n",
+          " mov    $0x2,%al",
+          "-jne    LOCAL+0x6be",
+          "-mov    0x10(%rdi),%rbx",
+          "+jne    LOCAL+0x7c98"
+        ]
+      },
+      "compress_avx512_into": {
+        "present": true,
+        "normalized_instructions_identical": true,
+        "instruction_count_delta": 0,
+        "size_bytes_delta": 0,
+        "raw_differing_byte_count": 2,
+        "referenced_constant_payloads_identical": true
+      },
+      "compress_avx512_into_mid_prefetch": {
+        "present": true,
+        "normalized_instructions_identical": true,
+        "instruction_count_delta": 0,
+        "size_bytes_delta": 0,
+        "raw_differing_byte_count": 2,
+        "referenced_constant_payloads_identical": true
+      }
+    },
+    "fixed_f20_versus_control": {
+      "fill_avx512": {
+        "present": true,
+        "normalized_instructions_identical": true,
+        "instruction_count_delta": 0,
+        "size_bytes_delta": 0
+      },
+      "fill_scalar": {
+        "present": true,
+        "normalized_instructions_identical": true,
+        "instruction_count_delta": 0,
+        "size_bytes_delta": 0
+      },
+      "fill_avx2": {
+        "present": true,
+        "normalized_instructions_identical": true,
+        "instruction_count_delta": 0,
+        "size_bytes_delta": 0
+      },
+      "fill_avx512_256": {
+        "present": true,
+        "normalized_instructions_identical": true,
+        "instruction_count_delta": 0,
+        "size_bytes_delta": 0
+      },
+      "hash_password_into_with_memory": {
+        "present": true,
+        "normalized_instructions_identical": true,
+        "instruction_count_delta": 0,
+        "size_bytes_delta": 0
+      },
+      "compress_avx512_into": {
+        "present": true,
+        "normalized_instructions_identical": true,
+        "instruction_count_delta": 0,
+        "size_bytes_delta": 0,
+        "raw_differing_byte_count": 2,
+        "referenced_constant_payloads_identical": true
+      },
+      "compress_avx512_into_mid_prefetch": {
+        "present": true,
+        "normalized_instructions_identical": true,
+        "instruction_count_delta": 0,
+        "size_bytes_delta": 0,
+        "raw_differing_byte_count": 2,
+        "referenced_constant_payloads_identical": true
+      }
+    }
+  },
+  "full_avx512_steady_caller_loops": {
+    "control": {
+      "DD": {
+        "start": "0x420572",
+        "end_exclusive": "0x4205ed",
+        "code_bytes": 123,
+        "instruction_count_including_call_and_loop_branches": 32,
+        "stack_memory_reference_instructions": 5,
+        "prefetch_hints": 1,
+        "branch_instructions": 4,
+        "stack_reference_instructions": [
+          "mov    0x40(%rsp),%rdx",
+          "mov    0x60(%rsp),%rax",
+          "cmp    0x10(%rsp),%rdi",
+          "mov    0x58(%rsp),%rax",
+          "add    0x38(%rsp),%r12"
+        ]
+      },
+      "DI": {
+        "start": "0x4203f0",
+        "end_exclusive": "0x420507",
+        "code_bytes": 279,
+        "instruction_count_including_call_and_loop_branches": 47,
+        "stack_memory_reference_instructions": 8,
+        "prefetch_hints": 16,
+        "branch_instructions": 6,
+        "stack_reference_instructions": [
+          "mov    0x40(%rsp),%rdx",
+          "mov    0x18(%rsp),%rax",
+          "cmp    0x8(%rsp),%rdi",
+          "mov    0x20(%rsp),%rax",
+          "mov    0x18(%rsp),%rax",
+          "cmp    0x8(%rsp),%rdi",
+          "mov    0x20(%rsp),%rax",
+          "cmp    0x10(%rsp),%rdi"
+        ]
+      }
+    },
+    "candidate_636": {
+      "DD": {
+        "start": "0x426a84",
+        "end_exclusive": "0x426b0b",
+        "code_bytes": 135,
+        "instruction_count_including_call_and_loop_branches": 33,
+        "stack_memory_reference_instructions": 6,
+        "prefetch_hints": 1,
+        "branch_instructions": 4,
+        "stack_reference_instructions": [
+          "mov    0x38(%rsp),%rdx",
+          "mov    0x58(%rsp),%r14",
+          "mov    0x8(%rsp),%rax",
+          "mov    0x50(%rsp),%rax",
+          "add    0x60(%rsp),%r15",
+          "mov    0x40(%rsp),%r8"
+        ]
+      },
+      "DI": {
+        "start": "0x426910",
+        "end_exclusive": "0x426a16",
+        "code_bytes": 262,
+        "instruction_count_including_call_and_loop_branches": 47,
+        "stack_memory_reference_instructions": 9,
+        "prefetch_hints": 16,
+        "branch_instructions": 5,
+        "stack_reference_instructions": [
+          "mov    0x30(%rsp),%rax",
+          "add    0x40(%rsp),%rsi",
+          "mov    0x38(%rsp),%rdx",
+          "mov    0x18(%rsp),%rax",
+          "cmp    0x10(%rsp),%rdi",
+          "mov    0x20(%rsp),%rax",
+          "mov    0x18(%rsp),%rax",
+          "cmp    0x10(%rsp),%rdi",
+          "mov    0x20(%rsp),%rax"
+        ]
+      }
+    },
+    "fixed_f20": {
+      "DD": {
+        "start": "0x423902",
+        "end_exclusive": "0x42397d",
+        "code_bytes": 123,
+        "instruction_count_including_call_and_loop_branches": 32,
+        "stack_memory_reference_instructions": 5,
+        "prefetch_hints": 1,
+        "branch_instructions": 4,
+        "stack_reference_instructions": [
+          "mov    0x40(%rsp),%rdx",
+          "mov    0x60(%rsp),%rax",
+          "cmp    0x10(%rsp),%rdi",
+          "mov    0x58(%rsp),%rax",
+          "add    0x38(%rsp),%r12"
+        ]
+      },
+      "DI": {
+        "start": "0x423780",
+        "end_exclusive": "0x423897",
+        "code_bytes": 279,
+        "instruction_count_including_call_and_loop_branches": 47,
+        "stack_memory_reference_instructions": 8,
+        "prefetch_hints": 16,
+        "branch_instructions": 6,
+        "stack_reference_instructions": [
+          "mov    0x40(%rsp),%rdx",
+          "mov    0x18(%rsp),%rax",
+          "cmp    0x8(%rsp),%rdi",
+          "mov    0x20(%rsp),%rax",
+          "mov    0x18(%rsp),%rax",
+          "cmp    0x8(%rsp),%rdi",
+          "mov    0x20(%rsp),%rax",
+          "cmp    0x10(%rsp),%rdi"
+        ]
+      }
+    }
+  },
+  "normalization": "Remove instruction addresses and RIP-relative relocation displacements/comments; internal branch targets become function-relative offsets; external known functions become semantic names. Compression RIP constant payloads separately verified. Normalized equality does not imply identical layout/alignment or panic metadata.",
+  "findings": [
+    "f20 restores all four out-of-line fill functions with original sizes; hash function returns to0x6f4 from0x7d82.",
+    "Original636 candidate full512 caller changed register allocation: DI stack-reference instructions8\u21929; DD5\u21926 and instruction count32\u219233. f20 comparison records whether these restore exactly.",
+    "Full512 compression round bodies and64-byte referenced constants are unchanged apart from relocation; entry alignment varies.",
+    "32KB enclosing candidate function includes unexecuted alternative ISA paths; total function size is not per-hash executed footprint.",
+    "Verifier binaries were already inlined on both control and636; actual miner ELF is authoritative for this finding.",
+    "x86_64-only inline(never) isolates the wrapper boundary; it does not apply to AArch64/SHA3 target-feature code.",
+    "No static evidence proves the entire observed C5 throughput loss or recovery. Native full-size parity and controlled reversed-order timing remain required."
+  ],
+  "original_artifact_sha256": "018f07cc4c921a0a1c1003947d05800d5b1ebf2847d40237cefd7fc853ef9321"
+}

@@ -1,0 +1,145 @@
+{
+  "report_sha256": "11afcb79bfaa59fc34efa55a1ea566105fc8d4b3ea72cb1ee5bcdf864696c10a",
+  "script_sha256": "2d8da2e93cb31f8deb4791d8311ca9d361bb0bba91ca75ae766dbda911430dfb",
+  "original_artifact_sha256": "018f07cc4c921a0a1c1003947d05800d5b1ebf2847d40237cefd7fc853ef9321",
+  "original_hashes_reproduced": {
+    "control": {
+      "fill_avx512": true,
+      "fill_scalar": true,
+      "fill_avx2": true,
+      "fill_avx512_256": true,
+      "hash_password_into_with_memory": true,
+      "compress_avx512_into": true,
+      "compress_avx512_into_mid_prefetch": true
+    },
+    "candidate_636": {
+      "hash_password_into_with_memory": true,
+      "compress_avx512_into": true,
+      "compress_avx512_into_mid_prefetch": true
+    },
+    "fixed_f20": {
+      "fill_avx512": true,
+      "fill_scalar": true,
+      "fill_avx2": true,
+      "fill_avx512_256": true,
+      "hash_password_into_with_memory": true,
+      "compress_avx512_into": true,
+      "compress_avx512_into_mid_prefetch": true
+    }
+  },
+  "comparisons": {
+    "candidate_636_versus_control": {
+      "fill_avx512": {
+        "present": false
+      },
+      "fill_scalar": {
+        "present": false
+      },
+      "fill_avx2": {
+        "present": false
+      },
+      "fill_avx512_256": {
+        "present": false
+      },
+      "hash_password_into_with_memory": {
+        "present": true,
+        "instruction_shape_equal": false,
+        "reference_payload_windows_equal": false,
+        "fully_verified_local_instruction_and_reference_equality": false,
+        "unverified_reference_count": 45,
+        "size_delta": 30350,
+        "instruction_count_delta": 5426
+      },
+      "compress_avx512_into": {
+        "present": true,
+        "instruction_shape_equal": true,
+        "reference_payload_windows_equal": true,
+        "fully_verified_local_instruction_and_reference_equality": true,
+        "unverified_reference_count": 0,
+        "size_delta": 0,
+        "instruction_count_delta": 0
+      },
+      "compress_avx512_into_mid_prefetch": {
+        "present": true,
+        "instruction_shape_equal": true,
+        "reference_payload_windows_equal": true,
+        "fully_verified_local_instruction_and_reference_equality": true,
+        "unverified_reference_count": 0,
+        "size_delta": 0,
+        "instruction_count_delta": 0
+      }
+    },
+    "fixed_f20_versus_control": {
+      "fill_avx512": {
+        "present": true,
+        "instruction_shape_equal": true,
+        "reference_payload_windows_equal": false,
+        "fully_verified_local_instruction_and_reference_equality": false,
+        "unverified_reference_count": 12,
+        "size_delta": 0,
+        "instruction_count_delta": 0
+      },
+      "fill_scalar": {
+        "present": true,
+        "instruction_shape_equal": true,
+        "reference_payload_windows_equal": false,
+        "fully_verified_local_instruction_and_reference_equality": false,
+        "unverified_reference_count": 20,
+        "size_delta": 0,
+        "instruction_count_delta": 0
+      },
+      "fill_avx2": {
+        "present": true,
+        "instruction_shape_equal": true,
+        "reference_payload_windows_equal": false,
+        "fully_verified_local_instruction_and_reference_equality": false,
+        "unverified_reference_count": 12,
+        "size_delta": 0,
+        "instruction_count_delta": 0
+      },
+      "fill_avx512_256": {
+        "present": true,
+        "instruction_shape_equal": true,
+        "reference_payload_windows_equal": false,
+        "fully_verified_local_instruction_and_reference_equality": false,
+        "unverified_reference_count": 12,
+        "size_delta": 0,
+        "instruction_count_delta": 0
+      },
+      "hash_password_into_with_memory": {
+        "present": true,
+        "instruction_shape_equal": true,
+        "reference_payload_windows_equal": false,
+        "fully_verified_local_instruction_and_reference_equality": false,
+        "unverified_reference_count": 26,
+        "size_delta": 0,
+        "instruction_count_delta": 0
+      },
+      "compress_avx512_into": {
+        "present": true,
+        "instruction_shape_equal": true,
+        "reference_payload_windows_equal": true,
+        "fully_verified_local_instruction_and_reference_equality": true,
+        "unverified_reference_count": 0,
+        "size_delta": 0,
+        "instruction_count_delta": 0
+      },
+      "compress_avx512_into_mid_prefetch": {
+        "present": true,
+        "instruction_shape_equal": true,
+        "reference_payload_windows_equal": true,
+        "fully_verified_local_instruction_and_reference_equality": true,
+        "unverified_reference_count": 0,
+        "size_delta": 0,
+        "instruction_count_delta": 0
+      }
+    }
+  },
+  "limitations": [
+    "Instruction shape equality is not whole-program semantic equivalence.",
+    "All branch targets and operand structure are retained. Direct internal targets use function-relative offsets; external targets retain semantic labels.",
+    "RIP references preserve alias identity, target labels, addresses and payload windows. Only recognized 64-byte compression vector loads are certified; other references stay explicitly unverified.",
+    "External callee bodies, dynamic relocations and jump-table semantics are not recursively certified.",
+    "Code layout and alignment still differ; no throughput recovery or causality is established by disassembly."
+  ]
+}

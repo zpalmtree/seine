@@ -1,0 +1,111 @@
+{
+  "scope": "operation_count_simulation_not_measured_throughput",
+  "nonces": 3,
+  "memory_kib": 2097152,
+  "reference_metadata_bytes": 8388608,
+  "results": [
+    {
+      "policy": "periodic",
+      "parameter": 1,
+      "all_completed": true,
+      "resident_block_fraction_mean": 1.0,
+      "work_ratio_mean": 1
+    },
+    {
+      "policy": "periodic",
+      "parameter": 2,
+      "all_completed": true,
+      "resident_block_fraction_mean": 0.5000014305114746,
+      "work_ratio_mean": 2.0048901286666827
+    },
+    {
+      "policy": "periodic",
+      "parameter": 3,
+      "all_completed": false,
+      "completed_fraction_range": [
+        0.35570859909057617,
+        0.35570859909057617
+      ]
+    },
+    {
+      "policy": "periodic",
+      "parameter": 4,
+      "all_completed": false,
+      "completed_fraction_range": [
+        0.0036296844482421875,
+        0.0036296844482421875
+      ]
+    },
+    {
+      "policy": "periodic",
+      "parameter": 8,
+      "all_completed": false,
+      "completed_fraction_range": [
+        0.00011301040649414062,
+        0.00011301040649414062
+      ]
+    },
+    {
+      "policy": "periodic",
+      "parameter": 16,
+      "all_completed": false,
+      "completed_fraction_range": [
+        5.5789947509765625e-05,
+        5.5789947509765625e-05
+      ]
+    },
+    {
+      "policy": "periodic",
+      "parameter": 32,
+      "all_completed": false,
+      "completed_fraction_range": [
+        4.1484832763671875e-05,
+        4.1484832763671875e-05
+      ]
+    },
+    {
+      "policy": "cost",
+      "parameter": 2,
+      "all_completed": true,
+      "resident_block_fraction_mean": 0.6181049346923828,
+      "work_ratio_mean": 1.3818650708501221
+    },
+    {
+      "policy": "cost",
+      "parameter": 3,
+      "all_completed": true,
+      "resident_block_fraction_mean": 0.500219980875651,
+      "work_ratio_mean": 1.7497222420904561
+    },
+    {
+      "policy": "cost",
+      "parameter": 4,
+      "all_completed": true,
+      "resident_block_fraction_mean": 0.44182825088500977,
+      "work_ratio_mean": 2.111600982285483
+    },
+    {
+      "policy": "cost",
+      "parameter": 8,
+      "all_completed": true,
+      "resident_block_fraction_mean": 0.35352611541748047,
+      "work_ratio_mean": 3.5344101916092474
+    },
+    {
+      "policy": "cost",
+      "parameter": 16,
+      "all_completed": true,
+      "resident_block_fraction_mean": 0.30679527918497723,
+      "work_ratio_mean": 6.357614699314149
+    },
+    {
+      "policy": "cost",
+      "parameter": 32,
+      "all_completed": false,
+      "completed_fraction_range": [
+        0.6638798713684082,
+        0.6640186309814453
+      ]
+    }
+  ]
+}

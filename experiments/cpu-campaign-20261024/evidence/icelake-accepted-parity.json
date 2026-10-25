@@ -1,0 +1,37 @@
+{
+  "hardware": "icelake",
+  "status": "passed",
+  "logs": {
+    "control-full-size-parity.log": {
+      "text": "reference=[e9, fb, fa, cf, b6, 96, ae, f8, f8, 88, 20, 17, c5, 5b, 23, 4e, 4b, 31, 30, a4, b6, 23, 42, c6, 3d, f5, 61, 31, 8d, 5a, db, a8]\nscalar: PASS (full 2 GiB reference parity)\navx2: PASS (full 2 GiB reference parity)\navx512: PASS (full 2 GiB reference parity)\navx512-256: PASS (full 2 GiB reference parity)\nneon: unsupported\n",
+      "sha256": "feada57af2b5abb829117d4d92f234d8c41f5720874f507ac3e27b4efe5acac4"
+    },
+    "candidate-full-size-parity.log": {
+      "text": "reference=[e9, fb, fa, cf, b6, 96, ae, f8, f8, 88, 20, 17, c5, 5b, 23, 4e, 4b, 31, 30, a4, b6, 23, 42, c6, 3d, f5, 61, 31, 8d, 5a, db, a8]\nscalar: PASS (full 2 GiB reference parity)\navx2: PASS (full 2 GiB reference parity)\navx512: PASS (full 2 GiB reference parity)\navx512-256: PASS (full 2 GiB reference parity)\nneon: unsupported\n",
+      "sha256": "feada57af2b5abb829117d4d92f234d8c41f5720874f507ac3e27b4efe5acac4"
+    }
+  },
+  "identities": {
+    "source_control": "359265e325d85c9c7b6e3eed7b5b126fcec63f9c",
+    "source_candidate": "be242364db5665f26fb978652e113509a62a8d41",
+    "profile": "Rust1.93.0 generic x86_64 CPU-only release; isolated target; no RUSTFLAGS",
+    "accepted_prs": [
+      40,
+      41,
+      43,
+      45
+    ],
+    "excluded_prs": [
+      44,
+      46
+    ],
+    "sha256": {
+      "seine-portable-candidate": "8eec17aec005fdf94dca1b8d798d65058edb4d8c55bdf099f96e015ddb404558",
+      "verify-portable-control": "3ecdce8a76d4d19f007e90c07b647907de795e8037b58ea59bc454212deafda4",
+      "seine-portable-control": "879203959abf3e1ac511e180d802cc20c7200f1f042db245f7095ba9568bd0e3",
+      "verify-portable-candidate": "3ecdce8a76d4d19f007e90c07b647907de795e8037b58ea59bc454212deafda4"
+    }
+  },
+  "source_archive_sha256": "af69380ed0a23e474e0484f999569bbdac81e13467f0616f399d16d53a83d2d4",
+  "export_recovery": "Controller glob also found standalone retry parity log and failed its exact-two-files assertion. All native matrices completed and both archives verified; this export explicitly selects the two correct names. Raw controller failure and duplicate failure archive retained."
+}
