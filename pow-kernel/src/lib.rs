@@ -31,3 +31,8 @@ impl ReusablePowContext {
             .hash_password_into_with_memory(pwd, salt, out, &mut self.memory_blocks)
     }
 }
+
+#[cfg(feature = "cpu-research")]
+pub use fixed_argon::reduced_memory::{
+    ReducedMemoryContext, ReducedMemoryError, ReducedMemoryStats,
+};

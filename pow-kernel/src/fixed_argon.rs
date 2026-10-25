@@ -1,3 +1,6 @@
+#[cfg(feature = "cpu-research")]
+pub mod reduced_memory;
+
 #[cfg(target_arch = "x86_64")]
 mod avx512_256;
 

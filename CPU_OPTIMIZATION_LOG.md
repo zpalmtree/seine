@@ -2,6 +2,48 @@
 
 This log tracks CPU backend/hash-kernel tuning attempts and measured outcomes.
 
+## 2026-10-25 practical online reduced-memory prototype
+
+`pow-kernel` feature `cpu-research` now provides a working hash context and
+`mine_reduced` offline mining example, rather than an operation-count simulator.
+References are discovered online from the live previous block; only already
+computed references can be reused. Cheap blocks are discarded and recomputed;
+expensive blocks are retained in bounded 4 MiB chunks. Metadata, address tables
+and retained allocation capacities are included in reported owned-buffer bytes.
+Allocator bookkeeping, process overhead and bounded stack use are measured
+separately through process RSS in native runs. Production dispatch is unchanged.
+
+Thresholds 2 and 3 passed independent full 2 GiB RustCrypto reference parity for
+nonces 0, 17 and u64::MAX with dirty reuse. Owned buffers peaked at 1,356,865,536
+and 1,105,207,296 bytes respectively (about 63.18% and 51.45% of a 2 GiB arena).
+The initial nonce retained 1,296,305/1,049,127 blocks and performed
+2,897,842/3,669,904 compressions. There is no full arena allocation inside the
+reduced hash. Small-arena tests cover rounding/segment boundaries, all supported
+uniform kernels, thresholds 1/2/3/8/16, changed inputs and capacity failure/reuse.
+The example's worker nonce streams are disjoint and synchronize after warmup.
+
+Reproduce full-size correctness:
+
+```sh
+cargo +1.93.0 test --locked --release -p blocknet-pow-kernel --features cpu-research full_size_reduced_memory_parity -- --ignored --nocapture
+```
+
+Build the prototype and compare full (threshold 0) with reduced (2 or 3), keeping
+thread count, kernel, page policy and input sequence matched. Native campaign
+runs separately compare more reduced-memory workers within the same RAM budget.
+
+```sh
+cargo +1.93.0 build --locked --release -p blocknet-pow-kernel --features cpu-research --example mine_reduced
+target/release/examples/mine_reduced 2097152 3 2 avx512 70 1 1
+```
+
+Arguments: memory KiB, measured hashes per worker, threshold (0 = full arena),
+kernel, maximum retained-block percentage, worker count, independent last-hash
+verification (0/1). Each worker performs an unmeasured warmup hash. Verification
+runs after releasing working buffers and outside timing; use verification=0
+when measuring reduced process RSS, because the independent reference needs
+its own full arena. Native performance is not established by these parity tests.
+
 ## Conventions
 
 - Attempt numbers are historical labels and may repeat across platform-specific sections (`x86_64` vs `Apple`).

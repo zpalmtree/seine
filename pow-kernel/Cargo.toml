@@ -10,6 +10,8 @@ path = "src/lib.rs"
 
 [features]
 default = []
+# Experimental online reduced-memory hashing; absent from production builds.
+cpu-research = []
 avx512 = []
 
 [dependencies]
@@ -17,3 +19,7 @@ blake2 = "0.10"
 
 [dev-dependencies]
 argon2 = "0.5"
+
+[[example]]
+name = "mine_reduced"
+required-features = ["cpu-research"]

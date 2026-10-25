@@ -45,6 +45,8 @@ This file preserves the full engineering reference for AI agents doing optimizat
 
 ### CPU Backend Tuning
 
+- `pow-kernel` has a default-off `cpu-research` feature with `ReducedMemoryContext`, an online checkpoint/recomputation prototype. It never allocates the full arena or reads a future trace; the caller bounds retained blocks, and reconstruction depth is bounded by the threshold (1–16). It is not connected to production mining dispatch. Run `mine_reduced` for offline disjoint nonce streams and independent parity outside timing. Native throughput evidence is required before considering integration.
+
 - `avx512-256-stream` is a distinct CPU kernel with a 64 KiB recent-block ring
   and non-temporal arena stores. It preserves the full 2 GiB arena. ISA support
   requires AVX2 + AVX-512F/VL; automatic trials additionally require validated
