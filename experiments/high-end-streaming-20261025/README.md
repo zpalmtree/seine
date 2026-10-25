@@ -59,11 +59,23 @@ EPYC integration's $0.7009 compute plus incidental costs, and $1.50 for this
 35-minute Genoa lease (about $0.958 compute plus incidental costs): $39.9494 total,
 below the original $40 ceiling. This is not a new budget authorization.
 
-Native Windows timing is deferred while the desktop's existing TF2 benchmark is
-active. Respect Gaming Mode and other owners' processes. Before resuming, verify
-native topology and free RAM; use task-owned processes with bounded deadlines,
-explicit affinity, low priority and at least 10 GiB free headroom. Do not silently
-reuse old benchmark identities or assume WSL measurements represent native Windows.
+Native Windows timing was initially deferred for the desktop's TF2 benchmark.
+After it exited, native MSVC full-size parity passed and the bounded screen began.
+`windows_screen.py` uses the published executable at 8 and 16 physical cores,
+ordinary pages, reversed four-kernel screens and four alternating confirmation
+pairs against the strongest 16-worker uniform kernel. `windows_topology.ps1`
+queries native core/cache masks afresh. `windows_bench.py` checks coordinator
+admission before each run, watches Gaming Mode and TF2 process return, bounds each
+owned miner to 180 seconds and 32 GiB of arenas, checks 10 GiB initial free headroom,
+and kills only its own miner on failure. Native correctness uses separately built
+MSVC verifiers from the exact release source (`verify-windows.ps1`).
+
+`audit_reports.py` independently checks all 24 reports per host for exact release
+identity, native environment, AMD family/model, current PoW, CPU-only execution,
+fixed worker counts, kernel/page requests and measured backing. Keep completed
+hashes divided by elapsed time including the fence; the report's `avg_hps` counts
+only hashes completed inside the configured measurement window and is different.
+Do not silently reuse old benchmark identities or treat WSL as native Windows.
 
 ## Related evidence / handoff
 
