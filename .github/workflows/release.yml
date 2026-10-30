@@ -9,6 +9,43 @@ on:
   workflow_dispatch:
 
 jobs:
+<<<<<<< Updated upstream
+=======
+  # AMD kernels compiled ahead of time with hipRTC (no GPU needed), built into
+  # the binaries with the AMD backend for hosts without hipRTC.
+  amd-code-objects:
+    runs-on: ubuntu-latest
+    container: ubuntu:24.04
+    steps:
+      - name: Install build tools and the ROCm 10.1 runtime (hipRTC)
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            build-essential ca-certificates curl git gpg
+          mkdir -p -m 0755 /etc/apt/keyrings
+          curl -fsSL https://stable.repo.amd.com/rocm/gpg/packages.gpg | gpg --dearmor > /etc/apt/keyrings/amdrocm.gpg
+          printf '%s\n' 'Types: deb' 'URIs: https://stable.repo.amd.com/rocm/core/packages/ubuntu2404/' \
+            'Suites: stable' 'Components: main' 'Architectures: amd64' \
+            'Signed-By: /etc/apt/keyrings/amdrocm.gpg' > /etc/apt/sources.list.d/amdrocm-stable.sources
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends amdrocm-runtime10.1
+
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.93.0
+
+      - name: Export AMD code objects
+        run: |
+          cargo build --release --locked --no-default-features --features amd
+          LD_LIBRARY_PATH=/opt/rocm/core-10.1/lib target/release/seine --amd-export-code-objects amd-code-objects
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: amd-code-objects
+          path: amd-code-objects
+          if-no-files-found: error
+
+>>>>>>> Stashed changes
   build:
     strategy:
       fail-fast: false
