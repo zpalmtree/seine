@@ -144,8 +144,12 @@ fn cohort_stream_kernel(
         if identity.family != Some(6) {
             return None;
         }
-        // Alder Lake and Raptor Lake desktops (AVX2 only) use the AVX2 streaming path.
-        if matches!(identity.model, Some(0x97 | 0x9a | 0xb7 | 0xba | 0xbf)) {
+        // Alder Lake, Raptor Lake and Arrow Lake desktops (AVX2 only) use the AVX2
+        // streaming path.
+        if matches!(
+            identity.model,
+            Some(0x97 | 0x9a | 0xb7 | 0xba | 0xbf | 0xc6)
+        ) {
             return (AVX2_STREAM_OS && supported.contains(&CpuKernel::Avx2Stream))
                 .then_some(CpuKernel::Avx2Stream);
         }
@@ -2788,12 +2792,13 @@ mod tests {
             candidates_for(&CpuIdentity::default(), &supported),
             supported[..2]
         );
-        // Alder Lake and Raptor Lake desktops (AVX2 only) start on AVX2 streaming;
-        // other Intel client models keep their start.
+        // Alder Lake, Raptor Lake and Arrow Lake desktops (AVX2 only) start on AVX2
+        // streaming; other Intel client models keep their start.
         let avx2 = [CpuKernel::Avx2, CpuKernel::Avx2Stream];
         for (model, expected) in [
             (0x97, Some(CpuKernel::Avx2Stream)),
             (0xbf, Some(CpuKernel::Avx2Stream)),
+            (0xc6, Some(CpuKernel::Avx2Stream)),
             (0x9e, None),
             (0xa5, None),
         ] {
