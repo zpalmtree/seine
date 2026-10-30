@@ -1,6 +1,6 @@
-//! Linux NUMA and L3 placement, constrained to the process CPU/memory masks.
-//! Incomplete cache data retains NUMA-only placement; incomplete NUMA/core data
-//! retains OS order.
+//! Linux NUMA, L3 and physical-core placement, constrained to the process CPU/memory
+//! masks. Incomplete cache data retains NUMA and physical-core placement; incomplete
+//! NUMA/core data retains OS order.
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
@@ -17,10 +17,6 @@ pub(super) struct Topology {
 
 impl Topology {
     pub(super) fn ordered_cpus(&self) -> Option<Vec<usize>> {
-        // A single locality domain has no placement benefit to opt into.
-        if self.nodes.len() < 2 && !self.cache_spread {
-            return None;
-        }
         let max_cores = self.nodes.values().map(Vec::len).max()?;
         let max_siblings = self.nodes.values().flatten().map(Vec::len).max()?;
         let mut order = Vec::new();
@@ -312,10 +308,16 @@ mod tests {
     }
 
     #[test]
-    fn single_node_keeps_os_order() {
-        assert!(fixture(&[(0, &[0, 1]), (0, &[2, 3])])
-            .ordered_cpus()
-            .is_none());
+    fn single_node_with_distant_siblings_keeps_os_order() {
+        let topology = fixture(&[(0, &[0, 4]), (0, &[1, 5]), (0, &[2, 6]), (0, &[3, 7])]);
+        assert_eq!(topology.ordered_cpus().unwrap(), [0, 1, 2, 3, 4, 5, 6, 7]);
+    }
+
+    #[test]
+    fn single_node_places_physical_cores_before_smt() {
+        // Adjacent SMT siblings, then single-thread cores (Intel hybrid desktops).
+        let topology = fixture(&[(0, &[0, 1]), (0, &[2, 3]), (0, &[4]), (0, &[5])]);
+        assert_eq!(topology.ordered_cpus().unwrap(), [0, 2, 4, 5, 1, 3]);
     }
 
     fn caches(groups: &[&[usize]]) -> BTreeMap<usize, BTreeSet<usize>> {
@@ -382,10 +384,10 @@ mod tests {
     }
 
     #[test]
-    fn single_cache_keeps_os_order_and_cache_layout_is_in_identity() {
+    fn single_cache_keeps_core_order_and_cache_layout_is_in_identity() {
         let mut topology = fixture(&[(0, &[0]), (0, &[1]), (0, &[2]), (0, &[3])]);
         topology.spread_l3(&caches(&[&[0, 1, 2, 3]])).unwrap();
-        assert!(topology.ordered_cpus().is_none());
+        assert_eq!(topology.ordered_cpus().unwrap(), [0, 1, 2, 3]);
         assert_eq!(
             topology.l3_groups,
             BTreeSet::from([BTreeSet::from([0, 1, 2, 3])])
@@ -521,18 +523,18 @@ mod tests {
             BTreeSet::from([BTreeSet::from([1, 8, 9]), BTreeSet::from([3, 11])])
         );
         // Missing, contradictory, or duplicate cache descriptions keep the
-        // usable NUMA/core topology, but cannot enable single-node spreading.
+        // usable NUMA/core topology, but cannot enable single-node cache spreading.
         scratch.write("cpu/cpu11/cache/index7/shared_cpu_list", "11");
-        assert!(detected().ordered_cpus().is_none());
+        assert_eq!(detected().ordered_cpus().unwrap(), [1, 3, 8, 9, 11]);
         assert!(measured_inputs_at(&scratch.0, &cpus, &mems).is_none());
         scratch.write("cpu/cpu11/cache/index7/shared_cpu_list", "2-3,10-11");
         fs::remove_file(scratch.0.join("cpu/cpu11/cache/index7/level")).unwrap();
-        assert!(detected().ordered_cpus().is_none());
+        assert_eq!(detected().ordered_cpus().unwrap(), [1, 3, 8, 9, 11]);
         assert!(measured_inputs_at(&scratch.0, &cpus, &mems).is_none());
         scratch.write("cpu/cpu11/cache/index7/level", "3");
         scratch.write("cpu/cpu11/cache/index8/level", "3");
         scratch.write("cpu/cpu11/cache/index8/type", "Unified");
         scratch.write("cpu/cpu11/cache/index8/shared_cpu_list", "2-3,10-11");
-        assert!(detected().ordered_cpus().is_none());
+        assert_eq!(detected().ordered_cpus().unwrap(), [1, 3, 8, 9, 11]);
     }
 }

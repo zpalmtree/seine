@@ -1087,8 +1087,8 @@ fn resolve_affinity_core_ids(mode: CpuAffinityMode) -> Option<Vec<core_affinity:
         return Some(core_ids);
     }
     // Native Windows places workers on physical cores before SMT siblings. Linux
-    // spreads across NUMA nodes and L3 groups when topology is complete; a single
-    // node/cache or incomplete topology retains OS order.
+    // spreads across NUMA nodes and L3 groups when topology is complete and places
+    // physical cores before SMT siblings; incomplete topology retains OS order.
     #[cfg(target_os = "linux")]
     let core_ids = {
         let available = core_ids.iter().map(|cpu| cpu.id).collect();
