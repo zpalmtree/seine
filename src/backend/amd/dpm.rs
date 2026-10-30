@@ -46,7 +46,11 @@ pub(crate) fn raises_level_for(gcn_arch_name: &str) -> bool {
 /// Raise the device's performance level to "high" if it is not already there,
 /// remembering the previous value for [`restore_performance_levels`].
 pub(crate) fn raise_performance_level(pci_address: &str, gcn_arch_name: &str) -> PerfLevelOutcome {
-    if std::env::var_os(KEEP_ENV).is_some() || !raises_level_for(gcn_arch_name) {
+    // The level is a Linux amdgpu sysfs control.
+    if cfg!(not(target_os = "linux"))
+        || std::env::var_os(KEEP_ENV).is_some()
+        || !raises_level_for(gcn_arch_name)
+    {
         return PerfLevelOutcome::Skipped;
     }
     raise_at_path(&level_path_for_pci(pci_address))
@@ -180,7 +184,9 @@ mod tests {
     #[test]
     fn missing_file_is_unavailable() {
         assert_eq!(
-            raise_at_path(Path::new("/nonexistent/seine/power_dpm_force_performance_level")),
+            raise_at_path(Path::new(
+                "/nonexistent/seine/power_dpm_force_performance_level"
+            )),
             PerfLevelOutcome::Unavailable
         );
     }
@@ -189,13 +195,13 @@ mod tests {
     fn notices_only_when_the_user_can_act() {
         assert!(startup_notice(0, "x", "0000:01:00.0", &PerfLevelOutcome::AlreadyHigh).is_none());
         let raised = PerfLevelOutcome::Raised {
-            from: "auto".into()
+            from: "auto".into(),
         };
         assert!(startup_notice(0, "x", "0000:01:00.0", &raised)
             .unwrap()
             .contains("auto -> high"));
         let needs_root = PerfLevelOutcome::NeedsRoot {
-            from: "auto".into()
+            from: "auto".into(),
         };
         assert!(startup_notice(0, "x", "0000:01:00.0", &needs_root)
             .unwrap()
