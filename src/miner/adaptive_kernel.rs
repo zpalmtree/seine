@@ -287,9 +287,9 @@ pub(crate) fn cohort_side_cache_blocks(
 
 /// Skipped-store permille for this host (see `set_skip_store_permille` in the
 /// kernel crate), or 0. On for Zen 5 desktops at 8 or more workers on Linux and
-/// Windows, and on Linux for Zen 4 desktops at 16 or more, Zen 4c EPYC at 128 or
-/// more, Zen 3 EPYC at 24 or more, Zen 3 desktops and Zen 2 EPYC and Threadripper
-/// 3000 at 12 or more; off elsewhere.
+/// Windows, and on Linux for Zen 4c EPYC at 128 or more, Zen 3 EPYC at 24 or more,
+/// and Zen 4 and Zen 3 desktops, Zen 2 EPYC and Threadripper 3000 at 12 or more;
+/// off elsewhere.
 pub(crate) fn cohort_skip_store_permille(workers: usize) -> u16 {
     let linux = cfg!(target_os = "linux");
     if !(linux || cfg!(windows)) {
@@ -304,7 +304,7 @@ pub(crate) fn cohort_skip_store_permille(workers: usize) -> u16 {
                 && avx512
                 && identity.family == Some(0x19)
                 && identity.model == Some(0x61)
-                && workers >= 16 =>
+                && workers >= 12 =>
         {
             600
         }
