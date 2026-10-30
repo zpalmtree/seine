@@ -679,11 +679,16 @@ impl Policy {
                 .joint
                 .as_ref()
                 .is_some_and(|j| j.base.max(j.candidate) > cap && j.base <= cap);
+            let base = self.joint.as_ref().map_or(0, |j| j.base);
             let result =
                 self.cancel_joint(kernels, now, snapshots, cap, actual, allocation_limited);
             if cap_shrank && !allocation_limited {
                 self.allocation_retry_at = now.saturating_add(RETRY_SECS);
                 self.next_trial = self.next_trial.max(now.saturating_add(RETRY_SECS));
+                // Probe the count that still fits next, instead of the same candidate.
+                if cap > base {
+                    self.next_up_probe = Some(cap);
+                }
             }
             return result;
         }
@@ -2183,6 +2188,32 @@ mod tests {
         assert_eq!(decision.expect("probe cancelled").threads, 1);
         assert!(policy.joint.is_none());
         assert!(policy.allocation_retry_at >= 10 + RETRY_SECS);
+        assert!(policy.next_trial >= 10 + RETRY_SECS);
+        assert_eq!(
+            policy.next_up_probe, None,
+            "no count fits between base and cap"
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn capacity_shrinking_under_a_probe_retries_the_count_that_fits() {
+        let (path, mut kernels, mut policy, s) = recovery_fixture("shrink-fits");
+        policy.joint = Some(JointComparison {
+            base: 1,
+            candidate: 3,
+            base_kernel: s.kernel,
+            candidate_kernel: None,
+            base_backing: vec![s.backing_bytes],
+            candidate_backing: None,
+            started: 0,
+            confirmed_peak: 0.0,
+            repeat: false,
+        });
+        // The estimate allowed three workers; two still fit once the probe allocates.
+        let (_, decision) = policy.tick_joint(&mut kernels, 10, &[s], 2, false);
+        assert_eq!(decision.expect("probe cancelled").threads, 1);
+        assert_eq!(policy.next_up_probe, Some(2));
         assert!(policy.next_trial >= 10 + RETRY_SECS);
         let _ = fs::remove_file(path);
     }
