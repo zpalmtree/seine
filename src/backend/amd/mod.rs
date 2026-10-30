@@ -466,7 +466,7 @@ impl PowBackend for AmdBackend {
         let selected = self.validate_or_select_device()?;
         // Idempotent: config-time detection usually did this and printed the
         // notice; explicit --amd-devices skips that probe, so do it here too.
-        let _ = dpm::raise_performance_level(&selected.pci_address);
+        let _ = dpm::raise_performance_level(&selected.pci_address, &selected.gcn_arch_name);
         let mut engine = self.build_engine(&selected)?;
         let mut blake2b_state = engine::blake2b::Blake2bWorkerState::new(selected.clone());
 
@@ -774,7 +774,7 @@ impl BenchBackend for AmdBackend {
         let selected = self.validate_or_select_device()?;
         // Idempotent: config-time detection usually did this and printed the
         // notice; explicit --amd-devices skips that probe, so do it here too.
-        let _ = dpm::raise_performance_level(&selected.pci_address);
+        let _ = dpm::raise_performance_level(&selected.pci_address, &selected.gcn_arch_name);
         let mut engine = self.build_engine(&selected)?;
         engine.bind_thread()?;
 
@@ -819,7 +819,7 @@ impl BenchBackend for AmdBackend {
         let selected = self.validate_or_select_device()?;
         // Idempotent: config-time detection usually did this and printed the
         // notice; explicit --amd-devices skips that probe, so do it here too.
-        let _ = dpm::raise_performance_level(&selected.pci_address);
+        let _ = dpm::raise_performance_level(&selected.pci_address, &selected.gcn_arch_name);
         let mut engine = self.build_engine(&selected)?;
         engine.bind_thread()?;
 

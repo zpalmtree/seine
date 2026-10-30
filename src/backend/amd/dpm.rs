@@ -1,9 +1,9 @@
 //! amdgpu DPM performance level for the HIP backend (Linux sysfs).
 //!
-//! At startup the backend sets each selected device's
+//! At startup the backend sets each selected RDNA3 (gfx11) device's
 //! `power_dpm_force_performance_level` to "high" when the file is writable,
 //! prints the command when it is not, and restores the previous value when the
-//! miner exits.
+//! miner exits. Other GPUs keep the driver's level.
 
 use std::fs;
 use std::io;
@@ -38,10 +38,15 @@ pub(crate) fn level_path_for_pci(pci_address: &str) -> PathBuf {
         .join(LEVEL_FILE)
 }
 
+/// GPUs whose performance level Seine raises: RDNA3 (gfx11).
+pub(crate) fn raises_level_for(gcn_arch_name: &str) -> bool {
+    gcn_arch_name.trim().starts_with("gfx11")
+}
+
 /// Raise the device's performance level to "high" if it is not already there,
 /// remembering the previous value for [`restore_performance_levels`].
-pub(crate) fn raise_performance_level(pci_address: &str) -> PerfLevelOutcome {
-    if std::env::var_os(KEEP_ENV).is_some() {
+pub(crate) fn raise_performance_level(pci_address: &str, gcn_arch_name: &str) -> PerfLevelOutcome {
+    if std::env::var_os(KEEP_ENV).is_some() || !raises_level_for(gcn_arch_name) {
         return PerfLevelOutcome::Skipped;
     }
     raise_at_path(&level_path_for_pci(pci_address))
@@ -161,6 +166,15 @@ mod tests {
         restore_performance_levels();
         assert_eq!(fs::read_to_string(&path).unwrap().trim(), "manual");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn raises_level_only_on_rdna3() {
+        assert!(raises_level_for("gfx1101"));
+        assert!(raises_level_for("gfx1100"));
+        assert!(!raises_level_for("gfx1201"));
+        assert!(!raises_level_for("gfx942:sramecc+:xnack-"));
+        assert!(!raises_level_for("gfx1030"));
     }
 
     #[test]

@@ -1735,7 +1735,10 @@ pub(crate) fn detect_amd_devices(
         if !crate::backend::amd::supports_wavefront_size(device.wavefront_size) {
             continue;
         }
-        let outcome = crate::backend::amd::dpm::raise_performance_level(&device.pci_address);
+        let outcome = crate::backend::amd::dpm::raise_performance_level(
+            &device.pci_address,
+            &device.gcn_arch_name,
+        );
         notices.extend(crate::backend::amd::dpm::startup_notice(
             device.index,
             &device.name,

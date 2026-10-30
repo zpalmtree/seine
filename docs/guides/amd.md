@@ -36,11 +36,12 @@ so at startup.
 
 ## Performance level
 
-Seine sets the card's amdgpu performance level to `high` at startup when it can
-write the sysfs entry (root), prints the
+On RDNA3 cards (RX 7000, Radeon PRO W7000/V710) Seine sets the amdgpu performance
+level to `high` at startup when it can write the sysfs entry (root), prints the
 `echo high | sudo tee /sys/bus/pci/devices/<address>/power_dpm_force_performance_level`
 command when it cannot, and restores the previous level when it exits. Running as
 root or applying that command is worth a lot on cards that run only a few lanes.
+Other AMD GPUs keep the driver's own level, which is faster there.
 Set `SEINE_AMD_KEEP_PERF_LEVEL=1` to leave the driver's setting alone.
 
 ## Settings
