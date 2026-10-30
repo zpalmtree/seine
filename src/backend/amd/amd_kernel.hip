@@ -102,9 +102,10 @@ __device__ __forceinline__ unsigned int coop_shfl_u32(
 #endif
 // SEINE_AMD_PIPELINE: single-pass fill (t_cost 1, one lane per wavefront, direct
 // layout) that keeps the previous block in registers and loads each reference
-// block one step ahead. On by default for RDNA3 (gfx110x).
+// block one step ahead. On by default for RDNA3 (gfx110x) and RDNA4 (gfx120x).
 #ifndef SEINE_AMD_PIPELINE
-#if defined(__gfx1100__) || defined(__gfx1101__) || defined(__gfx1102__) || defined(__gfx1103__)
+#if defined(__gfx1100__) || defined(__gfx1101__) || defined(__gfx1102__) || defined(__gfx1103__) || \
+    defined(__gfx1200__) || defined(__gfx1201__)
 #define SEINE_AMD_PIPELINE 1
 #else
 #define SEINE_AMD_PIPELINE 0
