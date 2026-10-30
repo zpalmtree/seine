@@ -114,10 +114,21 @@ __device__ __forceinline__ unsigned int coop_shfl_u32(
 #define SEINE_AMD_PIPELINE 0
 #endif
 #endif
+// SEINE_AMD_SKIP_FROM (even, at least m_blocks / 2; 0 = off): odd blocks from this
+// index on, except the last, are not stored and are rebuilt when referenced. Lane
+// layout: blocks below the boundary at their own index, even blocks above it at half
+// density, then the last block, two rebuild slots and a sink for skipped stores.
+// Requires the pipelined single-pass fill.
+#ifndef SEINE_AMD_SKIP_FROM
+#define SEINE_AMD_SKIP_FROM 0U
+#endif
 #if SEINE_AMD_PIPELINE && SEINE_WARPS_PER_BLOCK == 1 && SEINE_AMD_DIRECT_LAYOUT
 #define SEINE_AMD_PIPELINE_ACTIVE 1
 #else
 #define SEINE_AMD_PIPELINE_ACTIVE 0
+#endif
+#if SEINE_AMD_SKIP_FROM && !SEINE_AMD_PIPELINE_ACTIVE
+#error "SEINE_AMD_SKIP_FROM requires the pipelined single-pass fill"
 #endif
 
 // Lane l of each aligned 4-lane group receives the value held by lane (l + K) & 3.
@@ -874,6 +885,49 @@ __global__ void touch_lane_memory_kernel(
     lane_ptr[tail] = tail_v;
 }
 
+__device__ __forceinline__ unsigned long long skip_last_slot(unsigned int m_blocks) {
+    return static_cast<unsigned long long>(SEINE_AMD_SKIP_FROM) +
+        static_cast<unsigned long long>((m_blocks - SEINE_AMD_SKIP_FROM) / 2U);
+}
+
+// Blocks per lane in device memory.
+__device__ __forceinline__ unsigned long long lane_stride_blocks(unsigned int m_blocks) {
+    return (SEINE_AMD_SKIP_FROM != 0U) ? skip_last_slot(m_blocks) + 4ULL
+                                       : static_cast<unsigned long long>(m_blocks);
+}
+
+__device__ __forceinline__ bool block_skipped(unsigned int index, unsigned int m_blocks) {
+    return SEINE_AMD_SKIP_FROM != 0U && index >= SEINE_AMD_SKIP_FROM && (index & 1U) != 0U &&
+        index != m_blocks - 1U;
+}
+
+// Device slot of a stored block.
+__device__ __forceinline__ unsigned long long block_slot(unsigned int index, unsigned int m_blocks) {
+    if (SEINE_AMD_SKIP_FROM == 0U || index < SEINE_AMD_SKIP_FROM) {
+        return index;
+    }
+    if (index == m_blocks - 1U) {
+        return skip_last_slot(m_blocks);
+    }
+    return static_cast<unsigned long long>(SEINE_AMD_SKIP_FROM) +
+        static_cast<unsigned long long>((index - SEINE_AMD_SKIP_FROM) >> 1);
+}
+
+// Slot of a reference block for the hot load: (i + min(i, S)) / 2 is i below the
+// boundary and S + (i - S) / 2 above it, and a skipped (odd) index lands on its stored
+// predecessor, so the address never waits on the skip test. References are never the
+// last block. Returned as a word offset.
+__device__ __forceinline__ unsigned long long ref_word_offset(unsigned int index) {
+    const unsigned int doubled = index + (index < SEINE_AMD_SKIP_FROM ? index : SEINE_AMD_SKIP_FROM);
+    return static_cast<unsigned long long>(doubled & ~1U) * 64ULL;
+}
+
+// Slot a block's store goes to: its own, or the sink when the store is skipped.
+__device__ __forceinline__ unsigned long long store_slot(unsigned int index, unsigned int m_blocks) {
+    return block_skipped(index, m_blocks) ? skip_last_slot(m_blocks) + 3ULL
+                                          : block_slot(index, m_blocks);
+}
+
 #if SEINE_AMD_PIPELINE_ACTIVE
 // Pass-0 reference index for block `cur`: the reference area is every block
 // before `cur` except its predecessor.
@@ -886,6 +940,7 @@ __device__ __forceinline__ unsigned int pass0_ref_index(
     map = (map * map) >> 32;
     return static_cast<unsigned int>(area - 1ULL - ((area * map) >> 32));
 }
+
 
 // Thread (state, lane) owns words w0, w0 + 4, w0 + 8, w0 + 12 of a block in the
 // row layout (w0 = state * 16 + lane).
@@ -965,6 +1020,44 @@ __device__ __forceinline__ void load_row_words(
         x3 = scratch_q[w0 + 12U];                                                    \
         coop_sync();                                                                 \
     }
+
+// Rebuilds skipped block `index` of a single-pass fill: B[i] = G(B[i - 1], B[ref(i)]),
+// where B[i - 1] is stored and B[ref(i)] may itself be skipped. The chain of skipped
+// blocks is walked down to a stored one (indices kept in `stack`, 256 entries), then
+// compressed back up through the two rebuild slots. Returns the rebuilt block.
+__device__ __forceinline__ const unsigned long long *rebuild_skipped_block(
+    unsigned long long *memory,
+    unsigned int m_blocks,
+    unsigned int index,
+    unsigned int *__restrict__ stack,
+    unsigned long long *__restrict__ scratch_r,
+    unsigned long long *__restrict__ scratch_q,
+    unsigned int tid
+) {
+    unsigned int depth = 0U;
+    while (block_skipped(index, m_blocks) && depth < 256U) {
+        if (tid == 0U) stack[depth] = index;
+        ++depth;
+        const unsigned long long prev_word0 = memory[block_slot(index - 1U, m_blocks) * 128ULL];
+        index = pass0_ref_index(prev_word0, index);
+    }
+    coop_sync();
+    const unsigned long long rebuild_slot = skip_last_slot(m_blocks) + 1ULL;
+    const unsigned long long *src = memory + block_slot(index, m_blocks) * 128ULL;
+    while (depth > 0U) {
+        --depth;
+        const unsigned int block = stack[depth];
+        unsigned long long *dst = memory + (rebuild_slot + (depth & 1U)) * 128ULL;
+        compress_block_coop(
+            memory + block_slot(block - 1U, m_blocks) * 128ULL, src, dst, false,
+            scratch_r, scratch_q, tid
+        );
+        __threadfence_block();
+        coop_sync();
+        src = dst;
+    }
+    return src;
+}
 
 // Fills blocks 2..m_blocks-1 of one lane for t_cost 1. Returns false when the
 // cancel flag stopped it. Each loop body issues exactly one set of reference loads
@@ -1061,6 +1154,64 @@ __device__ __forceinline__ bool fill_single_pass_pipelined(
         memory + static_cast<unsigned long long>(pass0_ref_index(word0, di_end)) * 128ULL,
         w0, y0, y1, y2, y3
     );
+#if SEINE_AMD_SKIP_FROM
+    // A reference that was not stored gets a placeholder load here and is rebuilt at
+    // the top of the next iteration (address-block LDS is free in this half), so the
+    // block keeps a single load site.
+    bool rebuild_pending = false;
+    unsigned int rebuild_index = 0U;
+    for (unsigned int cur = di_end; cur < m_blocks; ++cur) {
+        if (((cur - di_end) % CANCEL_CHECK_BLOCK_INTERVAL) == 0U) {
+            unsigned int cancel_val = 0U;
+            if (tid == 0U) cancel_val = cancel_flag[0];
+            cancel_val = coop_shfl_u32(cancel_val, 0U);
+            if (cancel_val != 0U) {
+                return false;
+            }
+        }
+        if (rebuild_pending) {
+            // B[r] = G(B[r - 1], B[ref(r)]) in registers with the block macro (its store
+            // goes to the sink); a reference that is itself skipped is rebuilt in the slots.
+            const unsigned long long sx0 = x0, sx1 = x1, sx2 = x2, sx3 = x3;
+            load_row_words(memory + block_slot(rebuild_index - 1U, m_blocks) * 128ULL, w0, x0, x1, x2, x3);
+            const unsigned int inner_ref = pass0_ref_index(coop_broadcast0(x0), rebuild_index);
+            if (block_skipped(inner_ref, m_blocks)) {
+                const unsigned long long *rebuilt = rebuild_skipped_block(
+                    memory, m_blocks, inner_ref, reinterpret_cast<unsigned int *>(my_address),
+                    my_input, my_zero, tid
+                );
+                load_row_words(rebuilt, w0, y0, y1, y2, y3);
+            } else {
+                load_row_words(memory + block_slot(inner_ref, m_blocks) * 128ULL, w0, y0, y1, y2, y3);
+            }
+            SEINE_PIPELINED_BLOCK(memory + store_slot(rebuild_index, m_blocks) * 128ULL, )
+            y0 = x0;
+            y1 = x1;
+            y2 = x2;
+            y3 = x3;
+            x0 = sx0;
+            x1 = sx1;
+            x2 = sx2;
+            x3 = sx3;
+        }
+        unsigned long long n0, n1, n2, n3;
+        SEINE_PIPELINED_BLOCK(
+            memory + store_slot(cur, m_blocks) * 128ULL,
+            {
+                const unsigned int next_ref = (cur + 1U < m_blocks)
+                    ? pass0_ref_index(word0, cur + 1U)
+                    : 0U;
+                load_row_words(memory + ref_word_offset(next_ref), w0, n0, n1, n2, n3);
+                rebuild_pending = block_skipped(next_ref, m_blocks);
+                rebuild_index = next_ref;
+            }
+        )
+        y0 = n0;
+        y1 = n1;
+        y2 = n2;
+        y3 = n3;
+    }
+#else
     for (unsigned int cur = di_end; cur < m_blocks; ++cur) {
         if (((cur - di_end) % CANCEL_CHECK_BLOCK_INTERVAL) == 0U) {
             unsigned int cancel_val = 0U;
@@ -1085,6 +1236,7 @@ __device__ __forceinline__ bool fill_single_pass_pipelined(
         y2 = n2;
         y3 = n3;
     }
+#endif
     return true;
 }
 #undef SEINE_PIPELINED_BLOCK
@@ -1117,8 +1269,7 @@ __device__ __forceinline__ void argon2id_fill_kernel_impl(
         return;
     }
 
-    const unsigned long long lane_stride_words =
-        static_cast<unsigned long long>(effective_m_blocks) * 128ULL;
+    const unsigned long long lane_stride_words = lane_stride_blocks(effective_m_blocks) * 128ULL;
     unsigned long long *memory =
         lane_base(lane_chunks, lanes_per_chunk, lane, lane_stride_words);
     const unsigned int segment_length = effective_m_blocks / 4U;
@@ -1374,7 +1525,7 @@ __device__ __forceinline__ void argon2id_fill_kernel_impl(
         }
 
         const unsigned long long *last =
-            memory + (static_cast<unsigned long long>(lane_length) - 1ULL) * 128ULL;
+            memory + block_slot(lane_length - 1U, lane_length) * 128ULL;
         unsigned long long *out = out_last_blocks + global_hash_idx * 128ULL;
         {
             const unsigned long long v0 = last[tid];

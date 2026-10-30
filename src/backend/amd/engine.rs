@@ -199,6 +199,40 @@ pub(crate) fn lane_capacity_from_budget(memory_budget_mib: u64, lane_bytes: u64)
 /// engine retries without it and relies on the reported `warpSize`.
 /// `SEINE_WARPS_PER_BLOCK` tells the kernel how many 32-thread lanes share one
 /// block, which is always exactly one wavefront.
+/// Default skip boundary (permille of the arena) per GPU architecture; 0 stores every
+/// block. RDNA3 (gfx110x).
+fn default_skip_permille(gcn_arch_name: &str) -> u64 {
+    if gcn_arch_name.trim().starts_with("gfx110") {
+        500
+    } else {
+        0
+    }
+}
+
+/// First block whose odd successors are not stored (`SEINE_AMD_SKIP_FROM`), or 0 to
+/// store every block. `SEINE_AMD_SKIP_PERMILLE` (500-999, or 0 for off) overrides the
+/// per-architecture default; single-pass only, never below the data-independent half.
+pub(crate) fn skip_from_block(gcn_arch_name: &str, m_blocks: u32, t_cost: u32) -> u32 {
+    let permille = std::env::var("SEINE_AMD_SKIP_PERMILLE")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .unwrap_or_else(|| default_skip_permille(gcn_arch_name));
+    if t_cost != 1 || !(500..1000).contains(&permille) {
+        return 0;
+    }
+    let from = (u64::from(m_blocks) * permille / 1000) as u32 & !1;
+    from.max(m_blocks / 2)
+}
+
+/// Blocks each lane occupies in device memory (see the layout in amd_kernel.hip).
+pub(crate) fn lane_stride_blocks(m_blocks: u32, skip_from: u32) -> u64 {
+    if skip_from == 0 {
+        u64::from(m_blocks)
+    } else {
+        u64::from(skip_from) + u64::from((m_blocks - skip_from) / 2) + 4
+    }
+}
+
 pub(crate) fn build_hiprtc_options(
     gcn_arch_name: &str,
     wavefront_size: u32,
@@ -215,6 +249,10 @@ pub(crate) fn build_hiprtc_options(
         wavefront_flag.to_string(),
         format!("-DSEINE_FIXED_M_BLOCKS={}U", m_blocks),
         format!("-DSEINE_FIXED_T_COST={}U", t_cost),
+        format!(
+            "-DSEINE_AMD_SKIP_FROM={}U",
+            skip_from_block(gcn_arch_name, m_blocks, t_cost)
+        ),
         format!(
             "-DSEINE_CANCEL_CHECK_BLOCK_INTERVAL={}U",
             CANCEL_CHECK_BLOCK_INTERVAL
@@ -505,7 +543,15 @@ impl HipArgon2Engine {
         let stream = Stream::new(api)?;
         let interrupt_stream = Arc::new(Stream::new(api)?);
 
-        let lane_bytes = CPU_LANE_MEMORY_BYTES.max(u64::from(m_blocks) * 1024);
+        let lane_blocks = lane_stride_blocks(
+            m_blocks,
+            skip_from_block(&device.gcn_arch_name, m_blocks, t_cost),
+        );
+        let lane_bytes = if lane_blocks == u64::from(m_blocks) {
+            CPU_LANE_MEMORY_BYTES.max(lane_blocks * 1024)
+        } else {
+            lane_blocks * 1024
+        };
         let memory_budget_mib =
             derive_memory_budget_mib(device.memory_total_mib, device.memory_free_mib);
         let max_lanes_budget = lane_capacity_from_budget(memory_budget_mib, lane_bytes);
@@ -514,7 +560,7 @@ impl HipArgon2Engine {
             .unwrap_or(max_lanes_budget)
             .min(MAX_LANES_HARD_LIMIT)
             .max(1);
-        let lane_stride_words = u64::from(m_blocks).saturating_mul(128);
+        let lane_stride_words = lane_blocks.saturating_mul(128);
         let hashes_per_launch_per_lane = hashes_per_launch_per_lane.max(1) as usize;
 
         // Lane probe with allocation backoff: descend from the budgeted lane
@@ -525,7 +571,7 @@ impl HipArgon2Engine {
             match try_allocate_hip_buffers(
                 api,
                 &stream,
-                m_blocks,
+                lane_stride_words,
                 lanes,
                 hashes_per_launch_per_lane,
             ) {
@@ -1015,11 +1061,10 @@ pub(crate) fn plan_lane_launch_iters(requested_hashes: u64, lanes_active: u64) -
 fn try_allocate_hip_buffers(
     api: &'static HipApi,
     stream: &Stream,
-    m_blocks: u32,
+    lane_words: u64,
     lanes: usize,
     hashes_per_launch_per_lane: usize,
 ) -> std::result::Result<EngineBuffers, HipError> {
-    let lane_words = u64::from(m_blocks).saturating_mul(128);
     let lanes_per_chunk = LANE_CHUNK_LANES.max(1);
     let mut lane_chunks = Vec::new();
     let mut remaining = lanes.max(1);
@@ -1324,6 +1369,29 @@ mod tests {
         assert_eq!(plan_lane_launch_iters(5, 4), 2);
         assert_eq!(plan_lane_launch_iters(8, 4), 2);
         assert_eq!(plan_lane_launch_iters(3, 0), 3);
+    }
+
+    #[test]
+    fn skip_boundary_defaults_to_rdna3_only() {
+        if std::env::var_os("SEINE_AMD_SKIP_PERMILLE").is_some() {
+            return;
+        }
+        let blocks = 2_097_152u32;
+        let from = skip_from_block("gfx1101", blocks, 1);
+        assert_eq!(from, 1_048_576);
+        assert_eq!(from % 2, 0);
+        assert_eq!(skip_from_block("gfx1201", blocks, 1), 0);
+        assert_eq!(skip_from_block("gfx1030", blocks, 1), 0);
+        assert_eq!(skip_from_block("gfx1100", blocks, 3), 0, "multi-pass stores every block");
+        assert_eq!(lane_stride_blocks(blocks, 0), u64::from(blocks));
+        assert_eq!(
+            lane_stride_blocks(blocks, from),
+            u64::from(from) + u64::from((blocks - from) / 2) + 4
+        );
+        assert!(build_hiprtc_options("gfx1100", 32, blocks, 1)
+            .contains(&format!("-DSEINE_AMD_SKIP_FROM={from}U")));
+        assert!(build_hiprtc_options("gfx1201", 32, blocks, 1)
+            .contains(&"-DSEINE_AMD_SKIP_FROM=0U".to_string()));
     }
 
     #[test]

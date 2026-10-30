@@ -27,8 +27,9 @@ graphics stay off unless you list `amd` yourself.
   also run without hipRTC, using kernels built into the release binary.
 - Your user must be able to open `/dev/kfd` and `/dev/dri/renderD*` (the `render`
   and `video` groups on most distributions).
-- One **2 GiB VRAM lane per concurrent hash**: a 16 GB card runs 7 lanes, a 24 GB
-  card 11, a 32 GB card 15. Seine sizes this automatically from free VRAM.
+- One **2 GiB VRAM lane per concurrent hash** (1.5 GiB on RDNA3): a 16 GB card runs
+  7 lanes (RDNA3: 10), a 24 GB card 11 (RDNA3: 15), a 32 GB card 15. Seine sizes this
+  automatically from free VRAM.
 
 If the runtime is missing, Seine mines on the CPU only; with `--backend amd` it says
 so at startup.
