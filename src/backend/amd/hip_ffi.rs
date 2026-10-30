@@ -1,13 +1,15 @@
-//! Thin dlopen-based FFI over the HIP runtime (`libamdhip64.so`) and the
-//! hipRTC runtime compiler (`libhiprtc.so`).
+//! Thin dynamically loaded FFI over the HIP runtime (`libamdhip64.so`,
+//! `amdhip64_*.dll` on Windows) and the hipRTC runtime compiler (`libhiprtc.so`,
+//! `hiprtc*.dll`).
 //!
-//! All declarations are hand-written so seine builds on stable Rust on any
-//! Linux host without ROCm headers or toolkit installed. The libraries are
-//! resolved lazily at backend startup; when they are absent the loader
-//! returns a clear "ROCm runtime not found" error and the runtime
-//! quarantines the backend like any other backend fault.
+//! All declarations are hand-written so seine builds on stable Rust without
+//! ROCm headers or toolkit installed. The libraries are resolved lazily at
+//! backend startup; when the runtime is absent the loader returns a clear
+//! "ROCm runtime not found" error and the runtime quarantines the backend like
+//! any other backend fault. hipRTC is optional: without it the engine uses the
+//! kernels built into the binary (see `code_objects`).
 //!
-//! Library handles are intentionally leaked (never `dlclose`d): GPU runtimes
+//! Library handles are intentionally leaked (never closed): GPU runtimes
 //! commonly register process-lifetime state and unloading them mid-process is
 //! a well-known source of crashes.
 
@@ -36,6 +38,7 @@ pub const HIP_STREAM_NON_BLOCKING: c_uint = 0x1;
 // Current runtimes on the loader search path, then the default ROCm prefix (some
 // ROCm installs do not register it with the dynamic loader), and only then a ROCm 5
 // runtime, so a stale distribution copy cannot shadow the installed one.
+#[cfg(not(windows))]
 const HIP_LIBRARY_CANDIDATES: &[&str] = &[
     "libamdhip64.so",
     "libamdhip64.so.7",
@@ -45,6 +48,7 @@ const HIP_LIBRARY_CANDIDATES: &[&str] = &[
     "/opt/rocm/lib/libamdhip64.so.6",
     "libamdhip64.so.5",
 ];
+#[cfg(not(windows))]
 const HIPRTC_LIBRARY_CANDIDATES: &[&str] = &[
     "libhiprtc.so",
     "libhiprtc.so.7",
@@ -54,9 +58,54 @@ const HIPRTC_LIBRARY_CANDIDATES: &[&str] = &[
     "/opt/rocm/lib/libhiprtc.so.6",
     "libhiprtc.so.5",
 ];
+// The AMD display driver installs the HIP runtime in System32; hipRTC ships only
+// with the HIP SDK, whose installer sets HIP_PATH.
+#[cfg(windows)]
+const HIP_LIBRARY_CANDIDATES: &[&str] = &["amdhip64_7.dll", "amdhip64_6.dll"];
+#[cfg(windows)]
+const HIPRTC_LIBRARY_CANDIDATES: &[&str] = &[
+    "hiprtc0703.dll",
+    "hiprtc0702.dll",
+    "hiprtc0701.dll",
+    "hiprtc0700.dll",
+    "hiprtc0605.dll",
+    "hiprtc0604.dll",
+    "hiprtc0603.dll",
+    "hiprtc0602.dll",
+    "hiprtc0601.dll",
+    "hiprtc0600.dll",
+];
 
+fn hip_library_candidates() -> Vec<String> {
+    HIP_LIBRARY_CANDIDATES
+        .iter()
+        .map(|name| name.to_string())
+        .collect()
+}
+
+fn hiprtc_library_candidates() -> Vec<String> {
+    let mut candidates = Vec::new();
+    #[cfg(windows)]
+    if let Some(hip_path) = std::env::var_os("HIP_PATH") {
+        let bin = std::path::Path::new(&hip_path).join("bin");
+        for name in HIPRTC_LIBRARY_CANDIDATES {
+            candidates.push(bin.join(name).to_string_lossy().into_owned());
+        }
+    }
+    candidates.extend(
+        HIPRTC_LIBRARY_CANDIDATES
+            .iter()
+            .map(|name| name.to_string()),
+    );
+    candidates
+}
+
+#[cfg(not(windows))]
 pub const ROCM_RUNTIME_NOT_FOUND: &str = "ROCm runtime not found (libamdhip64.so)";
-pub const HIPRTC_NOT_FOUND: &str = "ROCm hipRTC compiler not found (libhiprtc.so)";
+#[cfg(windows)]
+pub const ROCM_RUNTIME_NOT_FOUND: &str =
+    "AMD HIP runtime not found (amdhip64_6.dll; install a current AMD GPU driver)";
+pub const HIPRTC_NOT_FOUND: &str = "ROCm hipRTC compiler not found";
 
 /// Legacy ("R0000", pre-ROCm-6 ABI) `hipDeviceProp_t` layout.
 ///
@@ -201,30 +250,27 @@ struct Library {
     handle: *mut c_void,
 }
 
-// Safety: dlopen handles are process-global and the loader never closes them.
+// Safety: library handles are process-global and the loader never closes them.
 unsafe impl Send for Library {}
 unsafe impl Sync for Library {}
 
 impl Library {
-    fn open(candidates: &[&str]) -> std::result::Result<Self, String> {
+    fn open<S: AsRef<str>>(candidates: &[S]) -> std::result::Result<Self, String> {
         let mut failures = Vec::new();
         for name in candidates {
-            let c_name = CString::new(*name).expect("static soname contains no NUL");
-            let handle =
-                unsafe { libc::dlopen(c_name.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
-            if !handle.is_null() {
-                return Ok(Self { handle });
+            let name = name.as_ref();
+            match open_library(name) {
+                Ok(handle) => return Ok(Self { handle }),
+                Err(err) => failures.push(format!("{name}: {err}")),
             }
-            failures.push(format!("{name}: {}", last_dlerror()));
         }
         Err(failures.join("; "))
     }
 
     fn sym(&self, name: &str) -> std::result::Result<*mut c_void, String> {
-        let c_name = CString::new(name).expect("static symbol name contains no NUL");
-        let ptr = unsafe { libc::dlsym(self.handle, c_name.as_ptr()) };
+        let ptr = library_symbol(self.handle, name);
         if ptr.is_null() {
-            Err(format!("missing symbol {name}: {}", last_dlerror()))
+            Err(format!("missing symbol {name}: {}", last_library_error()))
         } else {
             Ok(ptr)
         }
@@ -235,13 +281,66 @@ impl Library {
     }
 }
 
-fn last_dlerror() -> String {
+#[cfg(not(windows))]
+fn open_library(name: &str) -> std::result::Result<*mut c_void, String> {
+    let c_name = CString::new(name).map_err(|_| "name contains NUL".to_string())?;
+    let handle = unsafe { libc::dlopen(c_name.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    if handle.is_null() {
+        Err(last_library_error())
+    } else {
+        Ok(handle)
+    }
+}
+
+#[cfg(not(windows))]
+fn library_symbol(handle: *mut c_void, name: &str) -> *mut c_void {
+    let c_name = CString::new(name).expect("static symbol name contains no NUL");
+    unsafe { libc::dlsym(handle, c_name.as_ptr()) }
+}
+
+#[cfg(not(windows))]
+fn last_library_error() -> String {
     let raw = unsafe { libc::dlerror() };
     if raw.is_null() {
         "unknown dlopen/dlsym error".to_string()
     } else {
         unsafe { CStr::from_ptr(raw) }.to_string_lossy().to_string()
     }
+}
+
+#[cfg(windows)]
+fn open_library(name: &str) -> std::result::Result<*mut c_void, String> {
+    use std::os::windows::ffi::OsStrExt;
+    let wide: Vec<u16> = std::ffi::OsStr::new(name)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let handle = unsafe { windows_sys::Win32::System::LibraryLoader::LoadLibraryW(wide.as_ptr()) };
+    if handle.is_null() {
+        Err(last_library_error())
+    } else {
+        Ok(handle as *mut c_void)
+    }
+}
+
+#[cfg(windows)]
+fn library_symbol(handle: *mut c_void, name: &str) -> *mut c_void {
+    let c_name = CString::new(name).expect("static symbol name contains no NUL");
+    match unsafe {
+        windows_sys::Win32::System::LibraryLoader::GetProcAddress(
+            handle as windows_sys::Win32::Foundation::HMODULE,
+            c_name.as_ptr() as *const u8,
+        )
+    } {
+        Some(proc) => proc as *mut c_void,
+        None => std::ptr::null_mut(),
+    }
+}
+
+#[cfg(windows)]
+fn last_library_error() -> String {
+    let code = unsafe { windows_sys::Win32::Foundation::GetLastError() };
+    format!("Windows error {code}")
 }
 
 macro_rules! load_sym {
@@ -259,7 +358,6 @@ macro_rules! load_sym {
 #[allow(dead_code)]
 pub struct HipApi {
     _hip_lib: Library,
-    _hiprtc_lib: Library,
 
     pub hip_init: HipInitFn,
     pub hip_get_device_count: HipGetDeviceCountFn,
@@ -288,15 +386,24 @@ pub struct HipApi {
     pub hip_event_synchronize: HipEventSynchronizeFn,
     pub hip_event_elapsed_time: HipEventElapsedTimeFn,
 
-    pub hiprtc_create_program: HiprtcCreateProgramFn,
-    pub hiprtc_compile_program: HiprtcCompileProgramFn,
-    pub hiprtc_get_program_log_size: HiprtcGetProgramLogSizeFn,
-    pub hiprtc_get_program_log: HiprtcGetProgramLogFn,
-    pub hiprtc_get_code_size: HiprtcGetCodeSizeFn,
-    pub hiprtc_get_code: HiprtcGetCodeFn,
-    pub hiprtc_destroy_program: HiprtcDestroyProgramFn,
-    pub hiprtc_get_error_string: HiprtcGetErrorStringFn,
-    pub hiprtc_version: HiprtcVersionFn,
+    /// hipRTC, or why it could not be loaded.
+    pub hiprtc: std::result::Result<Hiprtc, String>,
+}
+
+/// Resolved hipRTC entry points.
+#[allow(dead_code)]
+pub struct Hiprtc {
+    _lib: Library,
+
+    pub create_program: HiprtcCreateProgramFn,
+    pub compile_program: HiprtcCompileProgramFn,
+    pub get_program_log_size: HiprtcGetProgramLogSizeFn,
+    pub get_program_log: HiprtcGetProgramLogFn,
+    pub get_code_size: HiprtcGetCodeSizeFn,
+    pub get_code: HiprtcGetCodeFn,
+    pub destroy_program: HiprtcDestroyProgramFn,
+    pub get_error_string: HiprtcGetErrorStringFn,
+    pub version: HiprtcVersionFn,
 }
 
 static HIP_API: OnceLock<std::result::Result<HipApi, String>> = OnceLock::new();
@@ -315,22 +422,18 @@ impl HipApi {
     }
 
     fn load_uncached() -> std::result::Result<HipApi, String> {
-        let hip_lib = Library::open(HIP_LIBRARY_CANDIDATES)
+        let hip_lib = Library::open(&hip_library_candidates())
             .map_err(|err| format!("{ROCM_RUNTIME_NOT_FOUND}: {err}"))?;
 
         // Older ROCm builds shipped the hipRTC entry points inside
         // libamdhip64 itself; fall back to it when libhiprtc is absent.
-        let hiprtc_lib = match Library::open(HIPRTC_LIBRARY_CANDIDATES) {
-            Ok(lib) => lib,
-            Err(err) => {
-                if hip_lib.has_sym("hiprtcCreateProgram") {
-                    Library {
-                        handle: hip_lib.handle,
-                    }
-                } else {
-                    return Err(format!("{HIPRTC_NOT_FOUND}: {err}"));
-                }
-            }
+        let hiprtc = match Library::open(&hiprtc_library_candidates()) {
+            Ok(lib) => Hiprtc::resolve(lib),
+            Err(err) if hip_lib.has_sym("hiprtcCreateProgram") => Hiprtc::resolve(Library {
+                handle: hip_lib.handle,
+            })
+            .map_err(|_| format!("{HIPRTC_NOT_FOUND}: {err}")),
+            Err(err) => Err(format!("{HIPRTC_NOT_FOUND}: {err}")),
         };
 
         Ok(HipApi {
@@ -362,18 +465,8 @@ impl HipApi {
             hip_event_synchronize: load_sym!(hip_lib, "hipEventSynchronize"),
             hip_event_elapsed_time: load_sym!(hip_lib, "hipEventElapsedTime"),
 
-            hiprtc_create_program: load_sym!(hiprtc_lib, "hiprtcCreateProgram"),
-            hiprtc_compile_program: load_sym!(hiprtc_lib, "hiprtcCompileProgram"),
-            hiprtc_get_program_log_size: load_sym!(hiprtc_lib, "hiprtcGetProgramLogSize"),
-            hiprtc_get_program_log: load_sym!(hiprtc_lib, "hiprtcGetProgramLog"),
-            hiprtc_get_code_size: load_sym!(hiprtc_lib, "hiprtcGetCodeSize"),
-            hiprtc_get_code: load_sym!(hiprtc_lib, "hiprtcGetCode"),
-            hiprtc_destroy_program: load_sym!(hiprtc_lib, "hiprtcDestroyProgram"),
-            hiprtc_get_error_string: load_sym!(hiprtc_lib, "hiprtcGetErrorString"),
-            hiprtc_version: load_sym!(hiprtc_lib, "hiprtcVersion"),
-
+            hiprtc,
             _hip_lib: hip_lib,
-            _hiprtc_lib: hiprtc_lib,
         })
     }
 
@@ -389,9 +482,35 @@ impl HipApi {
         format!("hip error {code} ({name}): {desc}")
     }
 
-    pub fn hiprtc_error_string(&self, code: HiprtcResult) -> String {
+    pub fn check(&self, code: HipError, context: &str) -> Result<()> {
+        if code == HIP_SUCCESS {
+            Ok(())
+        } else {
+            Err(anyhow!("{context}: {}", self.error_string(code)))
+        }
+    }
+}
+
+impl Hiprtc {
+    fn resolve(lib: Library) -> std::result::Result<Self, String> {
+        Ok(Self {
+            create_program: load_sym!(lib, "hiprtcCreateProgram"),
+            compile_program: load_sym!(lib, "hiprtcCompileProgram"),
+            get_program_log_size: load_sym!(lib, "hiprtcGetProgramLogSize"),
+            get_program_log: load_sym!(lib, "hiprtcGetProgramLog"),
+            get_code_size: load_sym!(lib, "hiprtcGetCodeSize"),
+            get_code: load_sym!(lib, "hiprtcGetCode"),
+            destroy_program: load_sym!(lib, "hiprtcDestroyProgram"),
+            get_error_string: load_sym!(lib, "hiprtcGetErrorString"),
+            version: load_sym!(lib, "hiprtcVersion"),
+
+            _lib: lib,
+        })
+    }
+
+    pub fn error_string(&self, code: HiprtcResult) -> String {
         let desc = c_str_or(
-            unsafe { (self.hiprtc_get_error_string)(code) },
+            unsafe { (self.get_error_string)(code) },
             "unknown hiprtc error",
         );
         format!("hiprtc error {code}: {desc}")
@@ -400,22 +519,14 @@ impl HipApi {
     /// Bring-up diagnostic; also earmarked for a future autotune cache key
     /// (mirrors the NVIDIA backend's nvrtc compiler identity).
     #[allow(dead_code)]
-    pub fn hiprtc_version_string(&self) -> String {
+    pub fn version_string(&self) -> String {
         let mut major: c_int = 0;
         let mut minor: c_int = 0;
-        let code = unsafe { (self.hiprtc_version)(&mut major, &mut minor) };
+        let code = unsafe { (self.version)(&mut major, &mut minor) };
         if code == HIPRTC_SUCCESS {
             format!("hiprtc-{major}.{minor}")
         } else {
             "hiprtc-unknown".to_string()
-        }
-    }
-
-    pub fn check(&self, code: HipError, context: &str) -> Result<()> {
-        if code == HIP_SUCCESS {
-            Ok(())
-        } else {
-            Err(anyhow!("{context}: {}", self.error_string(code)))
         }
     }
 }

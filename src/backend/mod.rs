@@ -160,9 +160,9 @@ pub mod metal {
         }
     }
 }
-#[cfg(all(feature = "amd", unix))]
+#[cfg(all(feature = "amd", any(target_os = "linux", windows)))]
 pub mod amd;
-#[cfg(not(all(feature = "amd", unix)))]
+#[cfg(not(all(feature = "amd", any(target_os = "linux", windows))))]
 pub mod amd {
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::time::Duration;
@@ -199,6 +199,10 @@ pub mod amd {
 
     /// No DPM level is touched in builds without the AMD backend.
     pub fn restore_performance_levels() {}
+
+    pub fn export_code_objects(_dir: &std::path::Path) -> Result<()> {
+        bail!("AMD support is not compiled into this build")
+    }
 
     impl AmdBackend {
         pub fn new(device_index: Option<u32>, _tuning_options: AmdBackendTuningOptions) -> Self {

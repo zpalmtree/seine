@@ -1724,7 +1724,7 @@ pub(crate) fn detect_nvidia_devices() -> Result<Vec<DetectedGpu>> {
 /// Skipped devices are reported through `notices` instead of spawning instances
 /// that are guaranteed to fail wavefront validation at start.
 /// Integrated GPUs are kept only when `include_integrated` is set.
-#[cfg(all(feature = "amd", unix))]
+#[cfg(all(feature = "amd", any(target_os = "linux", windows)))]
 pub(crate) fn detect_amd_devices(
     notices: &mut Vec<String>,
     include_integrated: bool,
@@ -1751,7 +1751,7 @@ pub(crate) fn detect_amd_devices(
     Ok(usable)
 }
 
-#[cfg(not(all(feature = "amd", unix)))]
+#[cfg(not(all(feature = "amd", any(target_os = "linux", windows))))]
 pub(crate) fn detect_amd_devices(
     _notices: &mut Vec<String>,
     _include_integrated: bool,
@@ -1759,7 +1759,7 @@ pub(crate) fn detect_amd_devices(
     bail!("AMD support is not compiled into this build")
 }
 
-#[cfg(all(feature = "amd", unix))]
+#[cfg(all(feature = "amd", any(target_os = "linux", windows)))]
 fn partition_supported_amd_devices(
     devices: Vec<crate::backend::amd::AmdDeviceInfo>,
 ) -> (Vec<DetectedGpu>, Vec<String>) {

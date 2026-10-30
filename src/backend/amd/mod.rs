@@ -15,8 +15,10 @@
 //! cancel checks, scheduling experiments) is intentionally deferred until the
 //! kernel passes the CPU-differential bring-up tests on real RDNA3 hardware.
 
-mod engine;
+mod code_objects;
+pub use code_objects::export_code_objects;
 pub mod dpm;
+mod engine;
 pub use dpm::restore_performance_levels;
 mod hip_ffi;
 
