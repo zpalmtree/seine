@@ -833,28 +833,58 @@ __device__ __forceinline__ void compress_regs(
 }
 
 // Address a block's held words from one base pointer (constant offsets)
-// instead of one index per word.
+// instead of one index per word: SEINE_BLOCK_BASE_POINTER 1 everywhere, 2 in
+// the data-dependent half only.
 #ifndef SEINE_BLOCK_BASE_POINTER
 #define SEINE_BLOCK_BASE_POINTER 0
 #endif
+
+__device__ __forceinline__ void load_block_words(
+    const unsigned long long *__restrict__ block,
+    unsigned long long (&v)[4],
+    unsigned int tid,
+    bool base_pointer
+) {
+    if (base_pointer) {
+        const unsigned long long *__restrict__ p = block + held_word(tid, 0U);
+#pragma unroll
+        for (unsigned int k = 0; k < 4U; ++k) {
+            v[k] = p[k * HELD_STRIDE];
+        }
+    } else {
+#pragma unroll
+        for (unsigned int k = 0; k < 4U; ++k) {
+            v[k] = block[held_word(tid, k)];
+        }
+    }
+}
+
+__device__ __forceinline__ void store_block_words(
+    unsigned long long *__restrict__ block,
+    const unsigned long long (&v)[4],
+    unsigned int tid,
+    bool base_pointer
+) {
+    if (base_pointer) {
+        unsigned long long *__restrict__ p = block + held_word(tid, 0U);
+#pragma unroll
+        for (unsigned int k = 0; k < 4U; ++k) {
+            p[k * HELD_STRIDE] = v[k];
+        }
+    } else {
+#pragma unroll
+        for (unsigned int k = 0; k < 4U; ++k) {
+            block[held_word(tid, k)] = v[k];
+        }
+    }
+}
 
 __device__ __forceinline__ void load_block_regs(
     const unsigned long long *__restrict__ block,
     unsigned long long (&v)[4],
     unsigned int tid
 ) {
-#if SEINE_BLOCK_BASE_POINTER
-    const unsigned long long *__restrict__ p = block + held_word(tid, 0U);
-#pragma unroll
-    for (unsigned int k = 0; k < 4U; ++k) {
-        v[k] = p[k * HELD_STRIDE];
-    }
-#else
-#pragma unroll
-    for (unsigned int k = 0; k < 4U; ++k) {
-        v[k] = block[held_word(tid, k)];
-    }
-#endif
+    load_block_words(block, v, tid, SEINE_BLOCK_BASE_POINTER == 1);
 }
 
 __device__ __forceinline__ void store_block_regs(
@@ -862,18 +892,24 @@ __device__ __forceinline__ void store_block_regs(
     const unsigned long long (&v)[4],
     unsigned int tid
 ) {
-#if SEINE_BLOCK_BASE_POINTER
-    unsigned long long *__restrict__ p = block + held_word(tid, 0U);
-#pragma unroll
-    for (unsigned int k = 0; k < 4U; ++k) {
-        p[k * HELD_STRIDE] = v[k];
-    }
-#else
-#pragma unroll
-    for (unsigned int k = 0; k < 4U; ++k) {
-        block[held_word(tid, k)] = v[k];
-    }
-#endif
+    store_block_words(block, v, tid, SEINE_BLOCK_BASE_POINTER == 1);
+}
+
+// The same for the data-dependent half.
+__device__ __forceinline__ void load_block_regs_dd(
+    const unsigned long long *__restrict__ block,
+    unsigned long long (&v)[4],
+    unsigned int tid
+) {
+    load_block_words(block, v, tid, SEINE_BLOCK_BASE_POINTER != 0);
+}
+
+__device__ __forceinline__ void store_block_regs_dd(
+    unsigned long long *__restrict__ block,
+    const unsigned long long (&v)[4],
+    unsigned int tid
+) {
+    store_block_words(block, v, tid, SEINE_BLOCK_BASE_POINTER != 0);
 }
 
 __device__ __forceinline__ bool cancel_requested(
@@ -990,7 +1026,7 @@ __device__ __noinline__ bool rebuild_block(
                 prev_block[k] = index_prev[k];
             }
         } else {
-            load_block_regs(memory + block_slot(current - 1U, skip_from), prev_block, tid);
+            load_block_regs_dd(memory + block_slot(current - 1U, skip_from), prev_block, tid);
         }
         ref = pass0_ref_index(
             current,
@@ -1005,7 +1041,7 @@ __device__ __noinline__ bool rebuild_block(
         }
         current = ref;
     }
-    load_block_regs(memory + block_slot(ref, skip_from), out, tid);
+    load_block_regs_dd(memory + block_slot(ref, skip_from), out, tid);
 #pragma unroll 1
     for (unsigned int level = depth; level-- > 0U;) {
         if (level + 1U != depth) {
@@ -1015,7 +1051,7 @@ __device__ __noinline__ bool rebuild_block(
                     prev_block[k] = index_prev[k];
                 }
             } else {
-                load_block_regs(memory + block_slot(chain[level] - 1U, skip_from), prev_block, tid);
+                load_block_regs_dd(memory + block_slot(chain[level] - 1U, skip_from), prev_block, tid);
             }
         }
         unsigned long long x[4];
@@ -1200,7 +1236,7 @@ __device__ __forceinline__ bool fill_lane_pass0(
     // loaded as soon as the previous block's first word is known.
     const unsigned int dense_end = min(skip_from, lane_length - 1U);
     unsigned long long next[4];
-    load_block_regs(
+    load_block_regs_dd(
         memory + static_cast<unsigned long long>(pass0_ref_index(
                      half, __shfl_sync(ARGON2_COOP_WARP_MASK, prev[0], 0))) * 128ULL,
         next,
@@ -1223,9 +1259,9 @@ __device__ __forceinline__ bool fill_lane_pass0(
         const unsigned long long word0 = compress_begin(x, scratch_q, tid);
         const unsigned int ref = pass0_ref_index(
             index + 1U, __shfl_sync(ARGON2_COOP_WARP_MASK, word0, 0));
-        load_block_regs(memory + static_cast<unsigned long long>(ref) * 128ULL, next, tid);
+        load_block_regs_dd(memory + static_cast<unsigned long long>(ref) * 128ULL, next, tid);
         compress_finish(x, prev, scratch_q, tid);
-        store_block_regs(memory + static_cast<unsigned long long>(index) * 128ULL, prev, tid);
+        store_block_regs_dd(memory + static_cast<unsigned long long>(index) * 128ULL, prev, tid);
     }
     }
 
@@ -1267,12 +1303,12 @@ __device__ __forceinline__ bool fill_lane_pass0(
             tail_ref = pass0_ref_index(
                 index + 1U, __shfl_sync(ARGON2_COOP_WARP_MASK, word0, 0));
             next_is_prev = __any_sync(ARGON2_COOP_WARP_MASK, block_skipped(tail_ref, skip_from));
-            load_block_regs(
+            load_block_regs_dd(
                 memory + block_slot(next_is_prev ? tail_ref - 1U : tail_ref, skip_from), next, tid);
         }
         compress_finish(x, prev, scratch_q, tid);
         if (index + 1U < lane_length && !block_skipped(index, skip_from)) {
-            store_block_regs(memory + block_slot(index, skip_from), prev, tid);
+            store_block_regs_dd(memory + block_slot(index, skip_from), prev, tid);
         }
     }
     }
