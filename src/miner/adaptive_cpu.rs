@@ -211,15 +211,21 @@ fn initial_threads(
 }
 
 // Cold start for CPUs whose cohort mines on a streaming kernel. Zen 4/5
-// (AVX-512 streaming) start at every allowed logical CPU that fits in RAM; Zen 2/3
-// (AVX2 streaming) start at the physical core count. Count trials still decide
-// afterwards.
+// (AVX-512 streaming) and Intel AVX2 desktops start at every allowed logical CPU
+// that fits in RAM; Zen 2/3 (AVX2 streaming) start at the physical core count.
+// Count trials still decide afterwards.
 fn cohort_cold_start(cfg: &Config, host: &CpuAutotuneHostFingerprint, max: usize) -> Option<usize> {
     if cfg!(test) || cfg.cpu_profile == CpuPerformanceProfile::Efficiency {
         // Unit tests stay host-independent; `initial_threads` covers the policy.
         return None;
     }
     match super::adaptive_kernel::cohort_kernel()? {
+        CpuKernel::Avx2Stream
+            if crate::runtime_identity::cpu_identity().vendor.as_deref()
+                == Some("GenuineIntel") =>
+        {
+            Some(max)
+        }
         CpuKernel::Avx2Stream => host.physical_cores,
         _ => Some(max),
     }

@@ -141,7 +141,15 @@ fn cohort_stream_kernel(
     // Intel Sapphire Rapids (06h/8Fh) and Emerald Rapids (06h/CFh, same Raptor
     // Cove core) use full-width streaming with the register-resident compress.
     if identity.vendor.as_deref() == Some("GenuineIntel") {
-        if identity.family != Some(6) || !matches!(identity.model, Some(0x8f | 0xcf)) {
+        if identity.family != Some(6) {
+            return None;
+        }
+        // Alder Lake and Raptor Lake desktops (AVX2 only) use the AVX2 streaming path.
+        if matches!(identity.model, Some(0x97 | 0x9a | 0xb7 | 0xba | 0xbf)) {
+            return (AVX2_STREAM_OS && supported.contains(&CpuKernel::Avx2Stream))
+                .then_some(CpuKernel::Avx2Stream);
+        }
+        if !matches!(identity.model, Some(0x8f | 0xcf)) {
             return None;
         }
         return [CpuKernel::Avx512Stream, CpuKernel::Avx512256Stream]
@@ -2780,6 +2788,27 @@ mod tests {
             candidates_for(&CpuIdentity::default(), &supported),
             supported[..2]
         );
+        // Alder Lake and Raptor Lake desktops (AVX2 only) start on AVX2 streaming;
+        // other Intel client models keep their start.
+        let avx2 = [CpuKernel::Avx2, CpuKernel::Avx2Stream];
+        for (model, expected) in [
+            (0x97, Some(CpuKernel::Avx2Stream)),
+            (0xbf, Some(CpuKernel::Avx2Stream)),
+            (0x9e, None),
+            (0xa5, None),
+        ] {
+            let intel = CpuIdentity {
+                vendor: Some("GenuineIntel".into()),
+                family: Some(6),
+                model: Some(model),
+                ..turin.clone()
+            };
+            assert_eq!(
+                startup_kernel_for(&intel, &avx2),
+                expected,
+                "model {model:#x}"
+            );
+        }
         // Zen 4 prefers full width with the far L2 prefetch, else the 256-bit one.
         let zen4 = CpuIdentity {
             family: Some(0x19),
