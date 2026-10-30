@@ -922,14 +922,30 @@ __device__ __forceinline__ unsigned long long block_slot(unsigned int index, uns
 // quarter of a lane unstored a deeper chain practically never occurs.
 constexpr unsigned int MAX_REBUILD_DEPTH = 64U;
 
+#ifndef SEINE_LOOP_UNROLL
+#define SEINE_LOOP_UNROLL 1
+#endif
+// Blocks per iteration of the main fill loops.
+constexpr int LOOP_UNROLL = SEINE_LOOP_UNROLL;
+
 // Rebuilds unstored block `index` into `out`. Its previous block is always
-// stored; a reference to another unstored block is rebuilt first. Returns
-// false if the chain is deeper than MAX_REBUILD_DEPTH.
+// stored (and already in `index_prev` when `have_prev`); a reference to another
+// unstored block is rebuilt first. Returns false if the chain is deeper than
+// MAX_REBUILD_DEPTH.
+#ifndef SEINE_INLINE_REBUILD
+#define SEINE_INLINE_REBUILD 0
+#endif
+#if SEINE_INLINE_REBUILD
+__device__ __forceinline__ bool rebuild_block(
+#else
 __device__ __noinline__ bool rebuild_block(
+#endif
     const unsigned long long *__restrict__ memory,
     unsigned int index,
     unsigned int skip_from,
     unsigned long long *__restrict__ scratch_q,
+    const unsigned long long (&index_prev)[4],
+    bool have_prev,
     unsigned long long (&out)[4],
     unsigned int tid
 ) {
@@ -941,12 +957,20 @@ __device__ __noinline__ bool rebuild_block(
 #pragma unroll 1
     while (true) {
         chain[depth++] = current;
-        load_block_regs(memory + block_slot(current - 1U, skip_from), prev_block, tid);
+        if (current == index && have_prev) {
+#pragma unroll
+            for (unsigned int k = 0; k < 4U; ++k) {
+                prev_block[k] = index_prev[k];
+            }
+        } else {
+            load_block_regs(memory + block_slot(current - 1U, skip_from), prev_block, tid);
+        }
         ref = pass0_ref_index(
             current,
             __shfl_sync(ARGON2_COOP_WARP_MASK, prev_block[0], 0)
         );
-        if (!block_skipped(ref, skip_from)) {
+        // Voted, so the whole warp leaves the loop together.
+        if (__all_sync(ARGON2_COOP_WARP_MASK, !block_skipped(ref, skip_from))) {
             break;
         }
         if (depth == MAX_REBUILD_DEPTH) {
@@ -958,7 +982,14 @@ __device__ __noinline__ bool rebuild_block(
 #pragma unroll 1
     for (unsigned int level = depth; level-- > 0U;) {
         if (level + 1U != depth) {
-            load_block_regs(memory + block_slot(chain[level] - 1U, skip_from), prev_block, tid);
+            if (level == 0U && have_prev) {
+#pragma unroll
+                for (unsigned int k = 0; k < 4U; ++k) {
+                    prev_block[k] = index_prev[k];
+                }
+            } else {
+                load_block_regs(memory + block_slot(chain[level] - 1U, skip_from), prev_block, tid);
+            }
         }
         unsigned long long x[4];
 #pragma unroll
@@ -969,6 +1000,12 @@ __device__ __noinline__ bool rebuild_block(
     }
     return true;
 }
+
+// Diagnostics: with SEINE_PHASE_TIMING the fill kernel prints block 0's cycles
+// per block for each half of its last hash.
+#ifdef SEINE_PHASE_TIMING
+__device__ long long seine_phase_cycles[2];
+#endif
 
 // One lane's pass-0 fill (t_cost = 1) with the previous block kept in
 // registers. Data-independent references come from `ref_table` and are loaded
@@ -995,6 +1032,9 @@ __device__ __forceinline__ bool fill_lane_pass0(
     store_block_regs(memory + 128ULL, prev, tid);
 
     const unsigned int half = lane_length / 2U;
+#ifdef SEINE_PHASE_TIMING
+    const long long phase_t0 = clock64();
+#endif
 #if SEINE_ASYNC_REFS
     (void)D;
 #if SEINE_RING_FENCE
@@ -1023,7 +1063,7 @@ __device__ __forceinline__ bool fill_lane_pass0(
         return false;
     }
     const unsigned int chunk_end = min(chunk + CANCEL_CHECK_BLOCK_INTERVAL, half);
-#pragma unroll 1
+#pragma unroll (LOOP_UNROLL)
     for (unsigned int index = chunk; index < chunk_end; ++index) {
         // Copy the reference of block index + REF_RING - 1 if it is already
         // written; otherwise that block loads it when it runs.
@@ -1090,7 +1130,7 @@ __device__ __forceinline__ bool fill_lane_pass0(
         return false;
     }
     const unsigned int chunk_end = min(chunk + CANCEL_CHECK_BLOCK_INTERVAL, half);
-#pragma unroll 1
+#pragma unroll (LOOP_UNROLL)
     for (unsigned int base = chunk; base < chunk_end; base += D) {
 #pragma unroll
         for (unsigned int u = 0; u < D; ++u) {
@@ -1125,6 +1165,9 @@ __device__ __forceinline__ bool fill_lane_pass0(
     }
 #endif
 
+#ifdef SEINE_PHASE_TIMING
+    const long long phase_t1 = clock64();
+#endif
     // Data-dependent blocks before `skip_from` (and before the last block):
     // every block they can reference is stored. Each block's reference is
     // loaded as soon as the previous block's first word is known.
@@ -1141,27 +1184,29 @@ __device__ __forceinline__ bool fill_lane_pass0(
         return false;
     }
     const unsigned int chunk_end = min(chunk + CANCEL_CHECK_BLOCK_INTERVAL, dense_end);
-#pragma unroll 1
+#pragma unroll (LOOP_UNROLL)
     for (unsigned int index = chunk; index < chunk_end; ++index) {
         unsigned long long x[4];
 #pragma unroll
         for (unsigned int k = 0; k < 4U; ++k) {
             x[k] = prev[k] ^ next[k];
         }
+        // The next block's reference is older than `dense_end`, so it is stored
+        // (also for the first block after this loop).
         const unsigned long long word0 = compress_begin(x, scratch_q, tid);
-        if (index + 1U < dense_end) {
-            const unsigned int ref = pass0_ref_index(
-                index + 1U, __shfl_sync(ARGON2_COOP_WARP_MASK, word0, 0));
-            load_block_regs(memory + static_cast<unsigned long long>(ref) * 128ULL, next, tid);
-        }
+        const unsigned int ref = pass0_ref_index(
+            index + 1U, __shfl_sync(ARGON2_COOP_WARP_MASK, word0, 0));
+        load_block_regs(memory + static_cast<unsigned long long>(ref) * 128ULL, next, tid);
         compress_finish(x, prev, scratch_q, tid);
         store_block_regs(memory + static_cast<unsigned long long>(index) * 128ULL, prev, tid);
     }
     }
 
     // The rest may reference unstored blocks; odd blocks here are not stored.
-    // A stored reference of the next block is loaded early, as above.
-    bool next_loaded = false;
+    // `next` holds the next block's reference, or for an unstored reference
+    // its (stored) previous block, from which the reference is rebuilt.
+    bool next_is_prev = false;
+    unsigned int tail_ref = 0U;
     for (unsigned int chunk = dense_end; chunk < lane_length; chunk += CANCEL_CHECK_BLOCK_INTERVAL) {
     if (cancel_requested(cancel_flag, tid)) {
         return false;
@@ -1170,20 +1215,19 @@ __device__ __forceinline__ bool fill_lane_pass0(
 #pragma unroll 1
     for (unsigned int index = chunk; index < chunk_end; ++index) {
         unsigned long long x[4];
-        if (next_loaded) {
+        if (next_is_prev) {
+            unsigned long long ref_prev[4];
+#pragma unroll
+            for (unsigned int k = 0; k < 4U; ++k) {
+                ref_prev[k] = next[k];
+            }
+            if (!rebuild_block(memory, tail_ref, skip_from, scratch_q, ref_prev, true, x, tid)) {
+                return false;
+            }
+        } else {
 #pragma unroll
             for (unsigned int k = 0; k < 4U; ++k) {
                 x[k] = next[k];
-            }
-        } else {
-            const unsigned int ref = pass0_ref_index(
-                index, __shfl_sync(ARGON2_COOP_WARP_MASK, prev[0], 0));
-            if (__any_sync(ARGON2_COOP_WARP_MASK, block_skipped(ref, skip_from))) {
-                if (!rebuild_block(memory, ref, skip_from, scratch_q, x, tid)) {
-                    return false;
-                }
-            } else {
-                load_block_regs(memory + block_slot(ref, skip_from), x, tid);
             }
         }
 #pragma unroll
@@ -1191,14 +1235,13 @@ __device__ __forceinline__ bool fill_lane_pass0(
             x[k] ^= prev[k];
         }
         const unsigned long long word0 = compress_begin(x, scratch_q, tid);
-        next_loaded = false;
+        next_is_prev = false;
         if (index + 1U < lane_length) {
-            const unsigned int ref = pass0_ref_index(
+            tail_ref = pass0_ref_index(
                 index + 1U, __shfl_sync(ARGON2_COOP_WARP_MASK, word0, 0));
-            if (__all_sync(ARGON2_COOP_WARP_MASK, !block_skipped(ref, skip_from))) {
-                load_block_regs(memory + block_slot(ref, skip_from), next, tid);
-                next_loaded = true;
-            }
+            next_is_prev = __any_sync(ARGON2_COOP_WARP_MASK, block_skipped(tail_ref, skip_from));
+            load_block_regs(
+                memory + block_slot(next_is_prev ? tail_ref - 1U : tail_ref, skip_from), next, tid);
         }
         compress_finish(x, prev, scratch_q, tid);
         if (index + 1U < lane_length && !block_skipped(index, skip_from)) {
@@ -1206,6 +1249,13 @@ __device__ __forceinline__ bool fill_lane_pass0(
         }
     }
     }
+#ifdef SEINE_PHASE_TIMING
+    const long long phase_t2 = clock64();
+    if (blockIdx.x == 0U) {
+        seine_phase_cycles[0] = phase_t1 - phase_t0;
+        seine_phase_cycles[1] = phase_t2 - phase_t1;
+    }
+#endif
     return true;
 }
 
@@ -1251,7 +1301,8 @@ __device__ __forceinline__ void argon2id_fill_kernel_impl(
     unsigned int stored_blocks,
     unsigned int skip_from
 ) {
-    const unsigned int warp_id = threadIdx.x / ARGON2_COOP_THREADS;
+    // With one warp per block the lane is the block index.
+    const unsigned int warp_id = WARPS_PER_BLOCK == 1U ? 0U : threadIdx.x / ARGON2_COOP_THREADS;
     const unsigned int lane = blockIdx.x * WARPS_PER_BLOCK + warp_id;
     const unsigned int tid = threadIdx.x % ARGON2_COOP_THREADS;
     const unsigned int effective_m_blocks =
@@ -1336,6 +1387,13 @@ __device__ __forceinline__ void argon2id_fill_kernel_impl(
             }
             coop_sync();
         }
+#ifdef SEINE_PHASE_TIMING
+        if (blockIdx.x == 0U && tid == 0U) {
+            printf("seine-phase first=%.1f second=%.1f cycles/block\n",
+                   (double)seine_phase_cycles[0] / (double)(effective_m_blocks / 2U - 2U),
+                   (double)seine_phase_cycles[1] / (double)(effective_m_blocks / 2U));
+        }
+#endif
         return;
     }
 #endif

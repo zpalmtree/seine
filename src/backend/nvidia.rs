@@ -262,11 +262,13 @@ mod library_tests {
 mod blake2b;
 
 const CUDA_KERNEL_SRC: &str = include_str!("nvidia_kernel.cu");
-/// `CUDA_KERNEL_SRC` built as PTX for the network's Argon2 parameters, loaded
-/// through the driver when NVRTC is not installed. Regenerate both with
-/// `scripts/gen_argon2_ptx.py`.
-const ARGON2_PTX_COMPUTE60: &str = include_str!("nvidia/argon2_compute60.ptx");
-const ARGON2_PTX_COMPUTE80: &str = include_str!("nvidia/argon2_compute80.ptx");
+/// `CUDA_KERNEL_SRC` built as PTX for the network's Argon2 parameters, one per
+/// group of `arch_fill_defines`, loaded through the driver when NVRTC is not
+/// installed. Regenerate them with `scripts/gen_argon2_ptx.py`.
+const ARGON2_PTX_CC6: &str = include_str!("nvidia/argon2_cc6.ptx");
+const ARGON2_PTX_CC7: &str = include_str!("nvidia/argon2_cc7.ptx");
+const ARGON2_PTX_CC8: &str = include_str!("nvidia/argon2_cc8.ptx");
+const ARGON2_PTX_CC10: &str = include_str!("nvidia/argon2_cc10.ptx");
 const PREBUILT_ARGON2_M_BLOCKS: u32 = 1 << 21;
 
 /// The prebuilt Argon2 PTX for a device of compute capability `cc_major`, when
@@ -276,22 +278,38 @@ fn prebuilt_argon2_ptx(cc_major: u32, m_blocks: u32, t_cost: u32) -> Option<&'st
         return None;
     }
     match cc_major {
-        6 | 7 => Some(ARGON2_PTX_COMPUTE60),
-        major if major >= 8 => Some(ARGON2_PTX_COMPUTE80),
+        6 => Some(ARGON2_PTX_CC6),
+        7 => Some(ARGON2_PTX_CC7),
+        8 | 9 => Some(ARGON2_PTX_CC8),
+        major if major >= 10 => Some(ARGON2_PTX_CC10),
         _ => None,
     }
 }
 
-/// Fill-loop variant per architecture, as NVRTC defines: GTX 10, GTX 16 and
-/// RTX 20 series (6.x, 7.x) load data-independent references two blocks
-/// ahead into registers; RTX 30 and 40 series (8.x) load them one block ahead
-/// into registers; RTX 50 series and other Blackwell parts (10.x and newer)
-/// hold blocks by rows and use the kernel's async reference ring.
+/// Fill-loop variant per architecture, as NVRTC defines: GTX 10 series (6.x)
+/// loads data-independent references two blocks ahead into registers; GTX 16
+/// and RTX 20 series (7.x) do the same with blocks held by rows, two blocks per
+/// loop iteration; RTX 30 and 40 series (8.x) load them one block ahead, hold
+/// blocks by rows and run two blocks per iteration; RTX 50 series and other
+/// Blackwell parts (10.x and newer) hold blocks by rows, use the kernel's async
+/// reference ring and run two blocks per iteration. All but Blackwell inline
+/// the rebuild of unstored blocks. Keep `scripts/gen_argon2_ptx.py` in step.
 fn arch_fill_defines(cc_major: u32) -> &'static [&'static str] {
     match cc_major {
-        6 | 7 => &["SEINE_REF_PREFETCH_DEPTH=2U"],
-        8 | 9 => &["SEINE_REF_RING=1U"],
-        major if major >= 10 => &["SEINE_ROW_LAYOUT=1"],
+        6 => &["SEINE_REF_PREFETCH_DEPTH=2U", "SEINE_INLINE_REBUILD=1"],
+        7 => &[
+            "SEINE_REF_PREFETCH_DEPTH=2U",
+            "SEINE_ROW_LAYOUT=1",
+            "SEINE_LOOP_UNROLL=2",
+            "SEINE_INLINE_REBUILD=1",
+        ],
+        8 | 9 => &[
+            "SEINE_REF_RING=1U",
+            "SEINE_ROW_LAYOUT=1",
+            "SEINE_LOOP_UNROLL=2",
+            "SEINE_INLINE_REBUILD=1",
+        ],
+        major if major >= 10 => &["SEINE_ROW_LAYOUT=1", "SEINE_LOOP_UNROLL=2"],
         _ => &[],
     }
 }
@@ -5434,7 +5452,12 @@ mod tests {
     fn prebuilt_argon2_ptx_matches_the_kernel_source_and_network() {
         use sha2::{Digest, Sha256};
         let digest = format!("{:x}", Sha256::digest(CUDA_KERNEL_SRC.as_bytes()));
-        for (ptx, cc_major) in [(ARGON2_PTX_COMPUTE60, 6), (ARGON2_PTX_COMPUTE80, 8)] {
+        for (ptx, cc_major) in [
+            (ARGON2_PTX_CC6, 6),
+            (ARGON2_PTX_CC7, 7),
+            (ARGON2_PTX_CC8, 8),
+            (ARGON2_PTX_CC10, 10),
+        ] {
             assert!(
                 ptx.contains(&format!("// kernel-sha256: {digest}\n")),
                 "argon2 PTX is stale: run scripts/gen_argon2_ptx.py"
@@ -5452,7 +5475,10 @@ mod tests {
                 "-DSEINE_WARPS_PER_BLOCK={DEFAULT_WARPS_PER_BLOCK}U"
             )));
             for define in arch_fill_defines(cc_major) {
-                assert!(options.contains(&format!("-D{define}")), "{define} for {cc_major}.x");
+                assert!(
+                    options.contains(&format!("-D{define}")),
+                    "{define} for {cc_major}.x"
+                );
             }
         }
         let params = pow_params().expect("pow params");
@@ -5462,11 +5488,15 @@ mod tests {
 
     #[test]
     fn fill_defines_follow_architecture() {
-        assert_eq!(arch_fill_defines(6), arch_fill_defines(7));
+        assert!(arch_fill_defines(6).contains(&"SEINE_REF_PREFETCH_DEPTH=2U"));
+        assert!(!arch_fill_defines(6).contains(&"SEINE_LOOP_UNROLL=2"));
         assert!(arch_fill_defines(7).contains(&"SEINE_REF_PREFETCH_DEPTH=2U"));
+        assert!(arch_fill_defines(7).contains(&"SEINE_ROW_LAYOUT=1"));
         assert!(arch_fill_defines(8).contains(&"SEINE_REF_RING=1U"));
-        assert!(!arch_fill_defines(8).contains(&"SEINE_ROW_LAYOUT=1"));
+        assert!(arch_fill_defines(8).contains(&"SEINE_INLINE_REBUILD=1"));
+        assert_eq!(arch_fill_defines(8), arch_fill_defines(9));
         assert!(arch_fill_defines(12).contains(&"SEINE_ROW_LAYOUT=1"));
+        assert!(!arch_fill_defines(12).contains(&"SEINE_INLINE_REBUILD=1"));
         assert!(!arch_fill_defines(12).contains(&"SEINE_REF_RING=1U"));
         assert!(arch_fill_defines(5).is_empty());
     }
@@ -5475,22 +5505,19 @@ mod tests {
     fn prebuilt_argon2_ptx_covers_pascal_and_newer() {
         let m = PREBUILT_ARGON2_M_BLOCKS;
         assert!(prebuilt_argon2_ptx(5, m, 1).is_none());
-        assert!(std::ptr::eq(
-            prebuilt_argon2_ptx(6, m, 1).unwrap(),
-            ARGON2_PTX_COMPUTE60
-        ));
-        assert!(std::ptr::eq(
-            prebuilt_argon2_ptx(7, m, 1).unwrap(),
-            ARGON2_PTX_COMPUTE60
-        ));
-        assert!(std::ptr::eq(
-            prebuilt_argon2_ptx(8, m, 1).unwrap(),
-            ARGON2_PTX_COMPUTE80
-        ));
-        assert!(std::ptr::eq(
-            prebuilt_argon2_ptx(12, m, 1).unwrap(),
-            ARGON2_PTX_COMPUTE80
-        ));
+        for (cc_major, ptx) in [
+            (6, ARGON2_PTX_CC6),
+            (7, ARGON2_PTX_CC7),
+            (8, ARGON2_PTX_CC8),
+            (9, ARGON2_PTX_CC8),
+            (10, ARGON2_PTX_CC10),
+            (12, ARGON2_PTX_CC10),
+        ] {
+            assert!(std::ptr::eq(
+                prebuilt_argon2_ptx(cc_major, m, 1).unwrap(),
+                ptx
+            ));
+        }
         assert!(prebuilt_argon2_ptx(8, m / 2, 1).is_none());
         assert!(prebuilt_argon2_ptx(8, m, 2).is_none());
     }
