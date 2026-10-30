@@ -36,10 +36,10 @@ COMMON = [
 # arch_fill_defines() and select_cancel_check_block_interval() in nvidia.rs.
 TARGETS = {
     "argon2_cc6.ptx": ["--gpu-architecture=compute_60", "-DSEINE_CANCEL_CHECK_BLOCK_INTERVAL=64U",
-                       "-DSEINE_REF_PREFETCH_DEPTH=2U", "-DSEINE_INLINE_REBUILD=1"],
+                       "-DSEINE_REF_PREFETCH_DEPTH=2U", "-DSEINE_INLINE_REBUILD=1", "-DSEINE_BLOCK_BASE_POINTER=1"],
     "argon2_cc7.ptx": ["--gpu-architecture=compute_75", "-DSEINE_CANCEL_CHECK_BLOCK_INTERVAL=64U",
                        "-DSEINE_REF_PREFETCH_DEPTH=2U", "-DSEINE_ROW_LAYOUT=1", "-DSEINE_LOOP_UNROLL=2",
-                       "-DSEINE_INLINE_REBUILD=1"],
+                       "-DSEINE_INLINE_REBUILD=1", "-DSEINE_BLOCK_BASE_POINTER=1"],
     "argon2_cc8.ptx": ["--gpu-architecture=compute_80", "-DSEINE_CANCEL_CHECK_BLOCK_INTERVAL=128U",
                        "-DSEINE_REF_RING=1U", "-DSEINE_ROW_LAYOUT=1", "-DSEINE_LOOP_UNROLL=2",
                        "-DSEINE_INLINE_REBUILD=1"],

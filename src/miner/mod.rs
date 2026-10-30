@@ -2492,9 +2492,9 @@ fn activate_single_backend(
             )
         }
         "nvidia" => format!("{backend_name}: initializing CUDA engine...",),
-        "amd" => format!(
-            "{backend_name}: initializing HIP engine (kernel compile may take ~1 min)...",
-        ),
+        "amd" => {
+            format!("{backend_name}: initializing HIP engine (kernel compile may take ~1 min)...",)
+        }
         _ => format!("{backend_name}: initializing..."),
     };
     info("BACKEND", &backend_start_detail);

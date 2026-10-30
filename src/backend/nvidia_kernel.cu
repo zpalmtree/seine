@@ -676,6 +676,8 @@ __global__ void build_ref_table_kernel(
 __device__ __forceinline__ unsigned int held_word(unsigned int tid, unsigned int k) {
     return (tid >> 2) * 16U + (tid & 3U) + 4U * k;
 }
+// Distance in words between a thread's consecutive held words.
+constexpr unsigned int HELD_STRIDE = 4U;
 
 // Argon2 compression of a block held in registers (see held_word), through the
 // column round. Returns output word 0 (valid in thread 0); compress_finish
@@ -739,6 +741,8 @@ __device__ __forceinline__ unsigned long long compress_begin(
 __device__ __forceinline__ unsigned int held_word(unsigned int tid, unsigned int k) {
     return tid + 32U * k;
 }
+// Distance in words between a thread's consecutive held words.
+constexpr unsigned int HELD_STRIDE = 32U;
 
 // Argon2 compression of a block held in registers (see held_word), through the
 // column round. Returns output word 0 (valid in thread 0); compress_finish
@@ -828,15 +832,29 @@ __device__ __forceinline__ void compress_regs(
     compress_finish(x, z, scratch_q, tid);
 }
 
+// Address a block's held words from one base pointer (constant offsets)
+// instead of one index per word.
+#ifndef SEINE_BLOCK_BASE_POINTER
+#define SEINE_BLOCK_BASE_POINTER 0
+#endif
+
 __device__ __forceinline__ void load_block_regs(
     const unsigned long long *__restrict__ block,
     unsigned long long (&v)[4],
     unsigned int tid
 ) {
-    v[0] = block[held_word(tid, 0U)];
-    v[1] = block[held_word(tid, 1U)];
-    v[2] = block[held_word(tid, 2U)];
-    v[3] = block[held_word(tid, 3U)];
+#if SEINE_BLOCK_BASE_POINTER
+    const unsigned long long *__restrict__ p = block + held_word(tid, 0U);
+#pragma unroll
+    for (unsigned int k = 0; k < 4U; ++k) {
+        v[k] = p[k * HELD_STRIDE];
+    }
+#else
+#pragma unroll
+    for (unsigned int k = 0; k < 4U; ++k) {
+        v[k] = block[held_word(tid, k)];
+    }
+#endif
 }
 
 __device__ __forceinline__ void store_block_regs(
@@ -844,10 +862,18 @@ __device__ __forceinline__ void store_block_regs(
     const unsigned long long (&v)[4],
     unsigned int tid
 ) {
-    block[held_word(tid, 0U)] = v[0];
-    block[held_word(tid, 1U)] = v[1];
-    block[held_word(tid, 2U)] = v[2];
-    block[held_word(tid, 3U)] = v[3];
+#if SEINE_BLOCK_BASE_POINTER
+    unsigned long long *__restrict__ p = block + held_word(tid, 0U);
+#pragma unroll
+    for (unsigned int k = 0; k < 4U; ++k) {
+        p[k * HELD_STRIDE] = v[k];
+    }
+#else
+#pragma unroll
+    for (unsigned int k = 0; k < 4U; ++k) {
+        block[held_word(tid, k)] = v[k];
+    }
+#endif
 }
 
 __device__ __forceinline__ bool cancel_requested(
@@ -886,13 +912,14 @@ __device__ __forceinline__ void copy_block_async(
     unsigned int tid
 ) {
     const unsigned int bytes = copy ? 8U : 0U;
+    const unsigned int dst =
+        static_cast<unsigned int>(__cvta_generic_to_shared(slot + held_word(tid, 0U)));
+    const unsigned long long *src = block + held_word(tid, 0U);
 #pragma unroll
     for (unsigned int k = 0; k < 4U; ++k) {
-        const unsigned int dst =
-            static_cast<unsigned int>(__cvta_generic_to_shared(slot + held_word(tid, k)));
         asm volatile(
             "cp.async.ca.shared.global [%0], [%1], 8, %2;\n"
-            :: "r"(dst), "l"(block + held_word(tid, k)), "r"(bytes)
+            :: "r"(dst + k * HELD_STRIDE * 8U), "l"(src + k * HELD_STRIDE), "r"(bytes)
             : "memory"
         );
     }
