@@ -262,13 +262,74 @@ mod library_tests {
 mod blake2b;
 
 const CUDA_KERNEL_SRC: &str = include_str!("nvidia_kernel.cu");
+/// `CUDA_KERNEL_SRC` built as PTX for the network's Argon2 parameters, loaded
+/// through the driver when NVRTC is not installed. Regenerate both with
+/// `scripts/gen_argon2_ptx.py`.
+const ARGON2_PTX_COMPUTE60: &str = include_str!("nvidia/argon2_compute60.ptx");
+const ARGON2_PTX_COMPUTE80: &str = include_str!("nvidia/argon2_compute80.ptx");
+const PREBUILT_ARGON2_M_BLOCKS: u32 = 1 << 21;
+
+/// The prebuilt Argon2 PTX for a device of compute capability `cc_major`, when
+/// the PoW parameters are the ones it was built for.
+fn prebuilt_argon2_ptx(cc_major: u32, m_blocks: u32, t_cost: u32) -> Option<&'static str> {
+    if m_blocks != PREBUILT_ARGON2_M_BLOCKS || t_cost != 1 {
+        return None;
+    }
+    match cc_major {
+        6 | 7 => Some(ARGON2_PTX_COMPUTE60),
+        major if major >= 8 => Some(ARGON2_PTX_COMPUTE80),
+        _ => None,
+    }
+}
+
+/// Fill-loop variant per architecture, as NVRTC defines: GTX 10, GTX 16 and
+/// RTX 20 series (6.x, 7.x) load data-independent references two blocks
+/// ahead into registers; RTX 30 and 40 series (8.x) load them one block ahead
+/// into registers; RTX 50 series and other Blackwell parts (10.x and newer)
+/// hold blocks by rows and use the kernel's async reference ring.
+fn arch_fill_defines(cc_major: u32) -> &'static [&'static str] {
+    match cc_major {
+        6 | 7 => &["SEINE_REF_PREFETCH_DEPTH=2U"],
+        8 | 9 => &["SEINE_REF_RING=1U"],
+        major if major >= 10 => &["SEINE_ROW_LAYOUT=1"],
+        _ => &[],
+    }
+}
+
+/// `arch_fill_defines` plus SEINE_NVIDIA_DEFINES ("NAME=1,OTHER=0"), whose
+/// entries replace an architecture default of the same name.
+fn fill_define_options(cc_major: u32) -> Vec<String> {
+    let extra = std::env::var("SEINE_NVIDIA_DEFINES").unwrap_or_default();
+    let extra = extra
+        .split(',')
+        .map(str::trim)
+        .filter(|define| !define.is_empty())
+        .collect::<Vec<_>>();
+    let name = |define: &str| define.split('=').next().unwrap_or(define).to_string();
+    arch_fill_defines(cc_major)
+        .iter()
+        .copied()
+        .filter(|define| !extra.iter().any(|e| name(e) == name(define)))
+        .chain(extra.iter().copied())
+        .map(|define| format!("-D{define}"))
+        .collect()
+}
+
+/// Whether this process builds the Argon2 kernel with NVRTC; otherwise it
+/// loads the prebuilt PTX.
+fn argon2_uses_nvrtc() -> bool {
+    #[cfg(test)]
+    if tests::force_prebuilt_argon2() {
+        return false;
+    }
+    nvrtc_available()
+}
 const MAX_LANES_HARD_LIMIT: usize = 1024;
 const ASSIGN_CHANNEL_CAPACITY: usize = 256;
 const CONTROL_CHANNEL_CAPACITY: usize = 32;
 const EVENT_SEND_WAIT: Duration = Duration::from_millis(5);
 const KERNEL_THREADS: u32 = 32;
 const SEED_KERNEL_THREADS: u32 = 64;
-const EVAL_KERNEL_THREADS: u32 = 64;
 const DEFAULT_WARPS_PER_BLOCK: u32 = 1;
 const DEFAULT_NVIDIA_MAX_RREGCOUNT: u32 = 240;
 const NVIDIA_AUTOTUNE_SCHEMA_VERSION: u32 = 10;
@@ -282,6 +343,10 @@ const NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_RTX_5090: &[u32] = &[240, 224, 208];
 // Retained for reference; the staged autotune no longer iterates this axis.
 const _NVIDIA_AUTOTUNE_LOOP_UNROLL_CANDIDATES: &[bool] = &[false];
 const DEFAULT_NVIDIA_AUTOTUNE_SAMPLES: u32 = 2;
+// Largest share of a lane's blocks left unstored to fit one more lane.
+const NVIDIA_MAX_SKIPPED_LANE_FRACTION: f64 = 0.12;
+// Lane strides stay a multiple of 2 MiB.
+const NVIDIA_LANE_STRIDE_ALIGN_BLOCKS: u32 = 2048;
 const NVIDIA_MEMORY_RESERVE_MIB_FLOOR: u64 = 64;
 const NVIDIA_MEMORY_RESERVE_RATIO_DENOM: u64 = 64;
 const NVIDIA_AUTOTUNE_MEMORY_BUCKET_MIB: u64 = 512;
@@ -292,7 +357,7 @@ const BLACKWELL_DEFAULT_HASHES_PER_LAUNCH_PER_LANE: u32 = 1;
 const BLACKWELL_AUTOTUNE_SCORE_TIE_FRAC: f64 = 0.02;
 const BLACKWELL_AUTOTUNE_PREFERRED_RREGCOUNT: u32 = 208;
 const DEFAULT_CANCEL_CHECK_BLOCK_INTERVAL: u32 = 64;
-const AMPERE_PLUS_CANCEL_CHECK_BLOCK_INTERVAL: u32 = 160;
+const AMPERE_PLUS_CANCEL_CHECK_BLOCK_INTERVAL: u32 = 128;
 const ADAPTIVE_DEPTH_PRESSURE_CONTROL_BONUS: u32 = 2;
 const ADAPTIVE_DEPTH_PRESSURE_REPLACE_BONUS: u32 = 1;
 const ADAPTIVE_DEPTH_PRESSURE_DECAY_PER_BATCH: u32 = 1;
@@ -590,26 +655,28 @@ struct NonblockingControlState {
 
 struct FillBatchResult {
     hashes_done: usize,
-    solved_nonce: Option<u64>,
-    solved_hash: Option<[u8; 32]>,
+    /// Every hash in the batch that meets the target, in nonce order.
+    solutions: Vec<(u64, [u8; 32])>,
 }
 
 struct CudaArgon2Engine {
     stream: Arc<CudaStream>,
     interrupt_stream: Arc<CudaStream>,
     kernel_nonfused: CudaFunction,
-    kernel_fused_target: CudaFunction,
+    kernel_fused_target: Option<CudaFunction>,
     seed_kernel: CudaFunction,
-    evaluate_kernel: CudaFunction,
     m_blocks: u32,
     m_cost_kib: u32,
     t_cost: u32,
+    stored_blocks: u32,
+    skip_from: u32,
     max_lanes: usize,
     hashes_per_launch_per_lane: usize,
     warps_per_block: u32,
     lane_memory: CudaSlice<u64>,
     seed_blocks: CudaSlice<u64>,
     last_blocks: CudaSlice<u64>,
+    ref_table: CudaSlice<u32>,
     nonce_input: CudaSlice<u64>,
     header_base_input: CudaSlice<u8>,
     target_input: CudaSlice<u8>,
@@ -618,6 +685,7 @@ struct CudaArgon2Engine {
     found_index: CudaSlice<u32>,
     host_completed_iters: [u32; 1],
     host_found_index: [u32; 1],
+    host_last_blocks: Vec<u64>,
     fused_target_check: bool,
     cached_header_base: Vec<u8>,
     cached_target: Option<[u8; POW_OUTPUT_LEN]>,
@@ -645,7 +713,13 @@ impl CudaArgon2Engine {
         fused_target_check: bool,
         cubin_cache_dir: &Path,
     ) -> Result<Self> {
-        require_cuda_libraries()?;
+        let use_nvrtc = argon2_uses_nvrtc();
+        if use_nvrtc {
+            require_cuda_libraries()?;
+        } else {
+            require_cuda_driver()?;
+        }
+        use_blocking_sync(device_index);
         let ctx = CudaContext::new(device_index as usize).map_err(|err| {
             anyhow!("failed to open CUDA context on device {device_index}: {err:?}")
         })?;
@@ -678,6 +752,8 @@ impl CudaArgon2Engine {
             format!("-DSEINE_WARPS_PER_BLOCK={}U", DEFAULT_WARPS_PER_BLOCK),
             format!("--maxrregcount={}", tuning.max_rregcount.max(1)),
         ];
+        let mut nvrtc_common_options = nvrtc_common_options;
+        nvrtc_common_options.extend(fill_define_options(cc_major_u32));
         let nvrtc_cubin_options = {
             let mut options = nvrtc_common_options.clone();
             options.push(format!("--gpu-architecture=sm_{}{}", cc_major, cc_minor));
@@ -700,7 +776,13 @@ impl CudaArgon2Engine {
             &nvrtc_version,
         );
         let cache_path = cubin_cache_file_path(cubin_cache_dir, &cache_key);
-        let module = if let Some(cached) = load_cached_cubin(&cache_path) {
+        let module = if !use_nvrtc {
+            let ptx = prebuilt_argon2_ptx(cc_major_u32, m_blocks, t_cost).ok_or_else(|| {
+                anyhow!("no prebuilt Argon2 kernel for compute capability {cc_major}.{cc_minor}")
+            })?;
+            ctx.load_module(Ptx::from_src(ptx))
+                .map_err(|err| anyhow!("failed to load prebuilt CUDA module: {err:?}"))?
+        } else if let Some(cached) = load_cached_cubin(&cache_path) {
             match ctx.load_module(Ptx::from_binary(cached)) {
                 Ok(module) => module,
                 Err(err) => {
@@ -748,36 +830,67 @@ impl CudaArgon2Engine {
         let kernel_nonfused = module
             .load_function("argon2id_fill_kernel")
             .map_err(|err| anyhow!("failed to load CUDA kernel function: {err:?}"))?;
-        let kernel_fused_target = module
-            .load_function("argon2id_fill_kernel_fused_target")
-            .map_err(|err| anyhow!("failed to load CUDA fused kernel function: {err:?}"))?;
+        // The prebuilt PTX leaves out the optional fused-target entry point.
+        let kernel_fused_target = if use_nvrtc {
+            Some(
+                module
+                    .load_function("argon2id_fill_kernel_fused_target")
+                    .map_err(|err| anyhow!("failed to load CUDA fused kernel function: {err:?}"))?,
+            )
+        } else {
+            None
+        };
         let seed_kernel = module
             .load_function("build_seed_blocks_kernel")
             .map_err(|err| anyhow!("failed to load CUDA seed kernel function: {err:?}"))?;
-        let evaluate_kernel = module
-            .load_function("evaluate_hashes_kernel")
-            .map_err(|err| anyhow!("failed to load CUDA hash-eval kernel function: {err:?}"))?;
         let touch_kernel = module
             .load_function("touch_lane_memory_kernel")
             .map_err(|err| anyhow!("failed to load CUDA probe kernel function: {err:?}"))?;
+        let ref_table_kernel = module
+            .load_function("build_ref_table_kernel")
+            .map_err(|err| anyhow!("failed to load CUDA reference-table kernel: {err:?}"))?;
+        let ref_table = build_cuda_ref_table(&stream, &ref_table_kernel, m_blocks, t_cost)
+            .map_err(|err| anyhow!("failed to build CUDA reference table: {err:?}"))?;
 
         let lane_bytes = CPU_LANE_MEMORY_BYTES.max(u64::from(m_blocks) * 1024);
-        let memory_budget_mib = derive_memory_budget_mib(memory_total_mib, memory_free_mib);
+        // Free memory as this context sees it, after its own allocations.
+        let context_free_mib = ctx
+            .mem_get_info()
+            .ok()
+            .map(|(free, _)| (free as u64) / (1024 * 1024));
+        let free_mib = match (memory_free_mib, context_free_mib) {
+            (Some(reported), Some(context)) => Some(reported.min(context)),
+            (reported, context) => context.or(reported),
+        };
+        let memory_budget_mib = derive_memory_budget_mib(memory_total_mib, free_mib);
         let memory_budget_bytes = memory_budget_mib.saturating_mul(1024 * 1024);
         let usable_bytes = memory_budget_bytes;
         let by_memory = usize::try_from((usable_bytes / lane_bytes).max(1)).unwrap_or(1);
         let max_lanes_budget = by_memory.max(1).min(MAX_LANES_HARD_LIMIT);
-        let max_lanes = max_lanes_override
-            .map(|lanes| lanes.max(1))
-            .unwrap_or(max_lanes_budget)
-            .min(MAX_LANES_HARD_LIMIT)
-            .max(1);
-        let lane_stride_words = u64::from(m_blocks).saturating_mul(128);
+        let skip_supported = t_cost == 1 && !fill_v1_requested();
+        #[allow(unused_mut)]
+        let mut lane_plans = plan_lane_storage(
+            m_blocks,
+            usable_bytes,
+            max_lanes_budget,
+            max_lanes_override,
+            skip_supported,
+        );
+        #[cfg(test)]
+        if let Some(blocks) = tests::forced_stored_blocks() {
+            lane_plans = vec![(max_lanes_override.unwrap_or(1), blocks)];
+        }
         let hashes_per_launch_per_lane = hashes_per_launch_per_lane.max(1) as usize;
 
         let mut selected = None;
-        for lanes in (1..=max_lanes).rev() {
-            match try_allocate_cuda_buffers(&stream, m_blocks, lanes, hashes_per_launch_per_lane) {
+        for (lanes, stored_blocks) in lane_plans {
+            let lane_stride_words = u64::from(stored_blocks).saturating_mul(128);
+            match try_allocate_cuda_buffers(
+                &stream,
+                stored_blocks,
+                lanes,
+                hashes_per_launch_per_lane,
+            ) {
                 Ok((
                     mut lane_memory,
                     seed_blocks,
@@ -799,6 +912,7 @@ impl CudaArgon2Engine {
                         Ok(()) => {
                             selected = Some((
                                 lanes,
+                                stored_blocks,
                                 (
                                     lane_memory,
                                     seed_blocks,
@@ -836,6 +950,7 @@ impl CudaArgon2Engine {
 
         let (
             max_lanes,
+            stored_blocks,
             (
                 lane_memory,
                 seed_blocks,
@@ -856,16 +971,18 @@ impl CudaArgon2Engine {
             kernel_nonfused,
             kernel_fused_target,
             seed_kernel,
-            evaluate_kernel,
             m_blocks,
             m_cost_kib,
             t_cost,
+            stored_blocks,
+            skip_from: m_blocks - 2 * (m_blocks - stored_blocks),
             max_lanes,
             hashes_per_launch_per_lane,
             warps_per_block: DEFAULT_WARPS_PER_BLOCK,
             lane_memory,
             seed_blocks,
             last_blocks,
+            ref_table,
             nonce_input,
             header_base_input,
             target_input,
@@ -874,6 +991,7 @@ impl CudaArgon2Engine {
             found_index,
             host_completed_iters: [0u32; 1],
             host_found_index: [u32::MAX; 1],
+            host_last_blocks: Vec::new(),
             fused_target_check,
             cached_header_base: Vec::new(),
             cached_target: None,
@@ -923,8 +1041,7 @@ impl CudaArgon2Engine {
         if nonces.is_empty() {
             return Ok(FillBatchResult {
                 hashes_done: 0,
-                solved_nonce: None,
-                solved_hash: None,
+                solutions: Vec::new(),
             });
         }
 
@@ -987,7 +1104,8 @@ impl CudaArgon2Engine {
                 .memcpy_htod(&[0u32], &mut cancel_view)
                 .map_err(cuda_driver_err)?;
         }
-        let use_fused_target_check = target.is_some() && self.fused_target_check;
+        let use_fused_target_check =
+            target.is_some() && self.fused_target_check && self.kernel_fused_target.is_some();
         if let Some(target_hash) = target {
             if target_upload_needed(self.cached_target.as_ref(), target_hash) {
                 {
@@ -1063,7 +1181,11 @@ impl CudaArgon2Engine {
                 .map_err(|_| anyhow!("nvidia cancel flag lock poisoned"))?;
             unsafe {
                 if use_fused_target_check {
-                    let mut launch = self.stream.launch_builder(&self.kernel_fused_target);
+                    let fused = self
+                        .kernel_fused_target
+                        .as_ref()
+                        .ok_or_else(|| anyhow!("fused-target CUDA kernel is not loaded"))?;
+                    let mut launch = self.stream.launch_builder(fused);
                     launch
                         .arg(&self.seed_blocks)
                         .arg(&lanes_u32)
@@ -1076,7 +1198,10 @@ impl CudaArgon2Engine {
                         .arg(&*cancel_flag)
                         .arg(&mut self.completed_iters)
                         .arg(&self.target_input)
-                        .arg(&mut self.found_index);
+                        .arg(&mut self.found_index)
+                        .arg(&self.ref_table)
+                        .arg(&self.stored_blocks)
+                        .arg(&self.skip_from);
                     launch.launch(cfg).map_err(cuda_driver_err)?;
                 } else {
                     let mut launch = self.stream.launch_builder(&self.kernel_nonfused);
@@ -1090,7 +1215,10 @@ impl CudaArgon2Engine {
                         .arg(&mut self.lane_memory)
                         .arg(&mut self.last_blocks)
                         .arg(&*cancel_flag)
-                        .arg(&mut self.completed_iters);
+                        .arg(&mut self.completed_iters)
+                        .arg(&self.ref_table)
+                        .arg(&self.stored_blocks)
+                        .arg(&self.skip_from);
                     launch.launch(cfg).map_err(cuda_driver_err)?;
                 }
             }
@@ -1110,14 +1238,12 @@ impl CudaArgon2Engine {
         if hashes_done == 0 {
             return Ok(FillBatchResult {
                 hashes_done: 0,
-                solved_nonce: None,
-                solved_hash: None,
+                solutions: Vec::new(),
             });
         }
 
-        let mut solved_nonce = None;
-        let mut solved_hash = None;
-        if target.is_some() {
+        let mut solutions = Vec::new();
+        if let Some(target_hash) = target {
             if use_fused_target_check {
                 {
                     let found_view = self
@@ -1128,75 +1254,44 @@ impl CudaArgon2Engine {
                         .memcpy_dtoh(&found_view, &mut self.host_found_index)
                         .map_err(cuda_driver_err)?;
                 }
+                if self.host_found_index[0] != u32::MAX && self.host_found_index[0] > 0 {
+                    let idx = (self.host_found_index[0] - 1) as usize;
+                    if idx < hashes_done {
+                        solutions.push((nonces[idx], self.read_last_block_hash(idx)?));
+                    }
+                }
             } else {
-                let evaluated_hashes_u32 = u32::try_from(hashes_done)
-                    .map_err(|_| anyhow!("active hash count overflow"))?;
-                self.host_found_index[0] = u32::MAX;
+                // Finish every hash on the CPU so a batch reports all of its
+                // shares, not only the first.
+                let words = hashes_done.saturating_mul(128);
+                if self.host_last_blocks.len() < words {
+                    self.host_last_blocks.resize(words, 0);
+                }
                 {
-                    let mut found_view = self
-                        .found_index
-                        .try_slice_mut(0..1)
-                        .ok_or_else(|| anyhow!("failed to slice CUDA found-index buffer"))?;
+                    let blocks_view = self
+                        .last_blocks
+                        .try_slice(0..words)
+                        .ok_or_else(|| anyhow!("failed to slice CUDA last-block buffer"))?;
                     self.stream
-                        .memcpy_htod(&self.host_found_index, &mut found_view)
+                        .memcpy_dtoh(&blocks_view, &mut self.host_last_blocks[..words])
                         .map_err(cuda_driver_err)?;
                 }
-                {
-                    let grid = evaluated_hashes_u32
-                        .saturating_add(EVAL_KERNEL_THREADS.saturating_sub(1))
-                        .saturating_div(EVAL_KERNEL_THREADS)
-                        .max(1);
-                    let cfg = LaunchConfig {
-                        grid_dim: (grid, 1, 1),
-                        block_dim: (EVAL_KERNEL_THREADS, 1, 1),
-                        shared_mem_bytes: 0,
-                    };
-                    unsafe {
-                        let mut launch = self.stream.launch_builder(&self.evaluate_kernel);
-                        launch
-                            .arg(&self.last_blocks)
-                            .arg(&evaluated_hashes_u32)
-                            .arg(&self.target_input)
-                            .arg(&mut self.found_index);
-                        launch.launch(cfg).map_err(cuda_driver_err)?;
-                    }
-                }
-                {
-                    let found_view = self
-                        .found_index
-                        .try_slice(0..1)
-                        .ok_or_else(|| anyhow!("failed to slice CUDA found-index buffer"))?;
-                    self.stream
-                        .memcpy_dtoh(&found_view, &mut self.host_found_index)
-                        .map_err(cuda_driver_err)?;
-                }
-            }
-            if self.host_found_index[0] != u32::MAX && self.host_found_index[0] > 0 {
-                let idx = (self.host_found_index[0] - 1) as usize;
-                if idx < hashes_done {
-                    solved_nonce = Some(nonces[idx]);
-                    solved_hash = Some(self.read_last_block_hash(idx)?);
-                }
-            }
-        }
-
-        if solved_nonce.is_some() {
-            if let Some(network_target) = network_target {
                 for (idx, nonce) in nonces.iter().take(hashes_done).enumerate() {
-                    let hash = self.read_last_block_hash(idx)?;
-                    if hash_meets_target(&hash, network_target) {
-                        solved_nonce = Some(*nonce);
-                        solved_hash = Some(hash);
-                        break;
+                    let block: &[u64; 128] = self.host_last_blocks[idx * 128..(idx + 1) * 128]
+                        .try_into()
+                        .expect("128-word block");
+                    let hash = pow_hash_from_last_block_words(block);
+                    if hash_meets_target(&hash, target_hash) {
+                        solutions.push((*nonce, hash));
                     }
                 }
             }
         }
+        let _ = network_target;
 
         Ok(FillBatchResult {
             hashes_done,
-            solved_nonce,
-            solved_hash,
+            solutions,
         })
     }
 
@@ -1236,6 +1331,8 @@ pub struct NvidiaBackend {
     max_lanes: AtomicUsize,
     pinned_lanes: AtomicUsize,
     max_hashes_per_launch_per_lane: AtomicU32,
+    /// Whether this GPU can mine Argon2 (NVRTC or a prebuilt kernel for it).
+    argon2_supported: AtomicBool,
 }
 
 impl NvidiaBackend {
@@ -1275,6 +1372,7 @@ impl NvidiaBackend {
             worker: Mutex::new(None),
             max_lanes: AtomicUsize::new(1),
             pinned_lanes: AtomicUsize::new(0),
+            argon2_supported: AtomicBool::new(nvrtc_available()),
             max_hashes_per_launch_per_lane: AtomicU32::new(
                 tuning_options.hashes_per_launch_per_lane.max(1),
             ),
@@ -1460,7 +1558,7 @@ impl NvidiaBackend {
     /// Whether resolving tuning would run the Argon2 autotune: no explicit
     /// register cap, no tuning resolved earlier and no cached result.
     fn needs_autotune(&self, selected: &NvidiaDeviceInfo) -> bool {
-        if self.tuning_options.max_rregcount_override.is_some() {
+        if self.tuning_options.max_rregcount_override.is_some() || !fill_v1_requested() {
             return false;
         }
         if matches!(self.kernel_tuning.read().as_deref(), Ok(Some(_))) {
@@ -1535,6 +1633,23 @@ impl NvidiaBackend {
                 *slot = Some(forced);
             }
             return forced;
+        }
+
+        // The default fill loop starts with the built-in tuning; the autotune
+        // runs only for the original loop.
+        if !fill_v1_requested() {
+            let tuning = self.apply_runtime_tuning_overrides(
+                NvidiaKernelTuning {
+                    hashes_per_launch_per_lane: cached_hashes_per_launch_per_lane_cap,
+                    max_lanes_hint: self.resolve_max_lanes_override(),
+                    ..NvidiaKernelTuning::default()
+                },
+                cached_hashes_per_launch_per_lane_cap,
+            );
+            if let Ok(mut slot) = self.kernel_tuning.write() {
+                *slot = Some(tuning);
+            }
+            return tuning;
         }
 
         let key = build_nvidia_autotune_key(selected, requested_hashes_per_launch_per_lane);
@@ -1733,14 +1848,23 @@ impl PowBackend for NvidiaBackend {
 
         require_cuda_driver()?;
         let selected = self.validate_or_select_device()?;
-        // Without NVRTC only the prebuilt BLAKE2b kernel runs: the backend
-        // stays idle on Argon2 work (`supports_pow`) and mines BLAKE2b.
-        if !nvrtc_available() {
+        // Without NVRTC, Argon2 runs from the prebuilt PTX where one fits this
+        // GPU and the network's parameters; otherwise the backend stays idle on
+        // Argon2 work (`supports_pow`) and mines BLAKE2b.
+        let argon2_supported = argon2_uses_nvrtc()
+            || pow_params().ok().is_some_and(|params| {
+                let (cc_major, _) = query_cuda_compute_capability(selected.index).unwrap_or((0, 0));
+                prebuilt_argon2_ptx(cc_major, params.block_count() as u32, params.t_cost())
+                    .is_some()
+            });
+        self.argon2_supported
+            .store(argon2_supported, Ordering::Release);
+        if !argon2_supported {
             note_nvrtc_unavailable(selected.index);
         }
         // A GPU joining a BLAKE2b network skips the Argon2 autotune and engine;
         // the worker builds the engine if Argon2 work arrives.
-        let blake2b_only = !nvrtc_available()
+        let blake2b_only = !argon2_supported
             || self.network_pow_at_start(&selected)
                 == Some(crate::backend::PowAlgorithm::Blake2b512);
         let tuning = self.resolve_kernel_tuning(&selected, blake2b_only);
@@ -2083,9 +2207,10 @@ impl PowBackend for NvidiaBackend {
     }
 
     fn supports_pow(&self, pow: crate::backend::PowAlgorithm) -> bool {
-        // Argon2 kernels are compiled at startup with NVRTC; BLAKE2b has a
-        // prebuilt kernel.
-        pow == crate::backend::PowAlgorithm::Blake2b512 || nvrtc_available()
+        // BLAKE2b always has a prebuilt kernel; Argon2 needs NVRTC or a
+        // prebuilt kernel for this GPU (decided at start).
+        pow == crate::backend::PowAlgorithm::Blake2b512
+            || self.argon2_supported.load(Ordering::Acquire)
     }
 
     fn capabilities(&self) -> BackendCapabilities {
@@ -2774,19 +2899,21 @@ fn worker_loop(
             .inflight_assignment_hashes
             .store(current.hashes_done, Ordering::Release);
 
-        if let Some(nonce) = done.solved_nonce {
-            send_backend_event(
-                &shared,
-                BackendEvent::Solution(MiningSolution {
-                    epoch: current.work.template.epoch,
-                    nonce,
-                    hash: done.solved_hash,
-                    share_binding_id: target_snapshot.share_binding_id,
-                    backend_id: instance_id.load(Ordering::Acquire),
-                    backend: BACKEND_NAME,
-                    found_at: std::time::Instant::now(),
-                }),
-            );
+        if !done.solutions.is_empty() {
+            for &(nonce, hash) in &done.solutions {
+                send_backend_event(
+                    &shared,
+                    BackendEvent::Solution(MiningSolution {
+                        epoch: current.work.template.epoch,
+                        nonce,
+                        hash: Some(hash),
+                        share_binding_id: target_snapshot.share_binding_id,
+                        backend_id: instance_id.load(Ordering::Acquire),
+                        backend: BACKEND_NAME,
+                        found_at: std::time::Instant::now(),
+                    }),
+                );
+            }
             if !current.work.template.pause_on_solution {
                 continue;
             }
@@ -3464,6 +3591,105 @@ fn derive_lane_capacity_tier(memory_budget_mib: u64, m_cost_kib: u32) -> u32 {
         .min(MAX_LANES_HARD_LIMIT)
         .max(1);
     lane_capacity_tier_from_lanes(lanes)
+}
+
+/// Whether SEINE_NVIDIA_DEFINES selects the original fill loop, which stores
+/// every block.
+fn fill_v1_requested() -> bool {
+    std::env::var("SEINE_NVIDIA_DEFINES")
+        .map(|defines| {
+            defines
+                .split(',')
+                .map(str::trim)
+                .any(|define| define == "SEINE_FILL_V1" || define == "SEINE_FILL_V1=1")
+        })
+        .unwrap_or(false)
+}
+
+/// Lane counts to try, best first, each with the blocks stored per lane. One
+/// lane more than fits at full size is tried first when leaving late odd blocks
+/// unstored (at most NVIDIA_MAX_SKIPPED_LANE_FRACTION of them) makes room;
+/// smaller counts store every block.
+fn plan_lane_storage(
+    m_blocks: u32,
+    usable_bytes: u64,
+    full_lanes: usize,
+    max_lanes_override: Option<usize>,
+    skip_supported: bool,
+) -> Vec<(usize, u32)> {
+    let packed_blocks = |lanes: usize| -> Option<u32> {
+        let per_lane_blocks = usable_bytes / (lanes.max(1) as u64) / 1024;
+        let aligned = per_lane_blocks / u64::from(NVIDIA_LANE_STRIDE_ALIGN_BLOCKS)
+            * u64::from(NVIDIA_LANE_STRIDE_ALIGN_BLOCKS);
+        let aligned = u32::try_from(aligned.min(u64::from(m_blocks))).ok()?;
+        let min_blocks =
+            (f64::from(m_blocks) * (1.0 - NVIDIA_MAX_SKIPPED_LANE_FRACTION)).ceil() as u32;
+        (aligned >= min_blocks).then_some(aligned)
+    };
+    let full_lanes = full_lanes.clamp(1, MAX_LANES_HARD_LIMIT);
+    let (packed_lanes, top_lanes) = match max_lanes_override {
+        Some(requested) => {
+            let requested = requested.clamp(1, MAX_LANES_HARD_LIMIT);
+            (requested, requested)
+        }
+        None => ((full_lanes + 1).min(MAX_LANES_HARD_LIMIT), full_lanes),
+    };
+    let mut plans = Vec::new();
+    if skip_supported && packed_lanes > full_lanes {
+        if let Some(blocks) = packed_blocks(packed_lanes) {
+            // Smaller packings for the same lane count, in case the allocation
+            // does not fit.
+            let min_blocks =
+                (f64::from(m_blocks) * (1.0 - NVIDIA_MAX_SKIPPED_LANE_FRACTION)).ceil() as u32;
+            let step = 16 * NVIDIA_LANE_STRIDE_ALIGN_BLOCKS;
+            plans.extend(
+                (0..5)
+                    .map(|retry| blocks.saturating_sub(retry * step))
+                    .take_while(|&stored| stored >= min_blocks)
+                    .map(|stored| (packed_lanes, stored)),
+            );
+        }
+    }
+    plans.extend((1..=top_lanes).rev().map(|lanes| (lanes, m_blocks)));
+    plans
+}
+
+/// Makes threads that wait on this device's primary context sleep instead of
+/// spinning, so a waiting GPU worker leaves its CPU core to other work. Best
+/// effort: on failure the driver keeps its default scheduling.
+fn use_blocking_sync(device_index: u32) {
+    use cudarc::driver::{result as driver_result, sys};
+    let _ = driver_result::init();
+    if let Ok(device) = driver_result::device::get(device_index as std::ffi::c_int) {
+        let flags = sys::CUctx_flags::CU_CTX_SCHED_BLOCKING_SYNC as std::ffi::c_uint;
+        let _ = unsafe { sys::cuDevicePrimaryCtxSetFlags_v2(device, flags) };
+    }
+}
+
+/// Reference indices of the data-independent half of pass 0 (indexed by block,
+/// entries 0 and 1 unused). They do not depend on the password, so one table
+/// serves every lane and hash.
+fn build_cuda_ref_table(
+    stream: &Arc<CudaStream>,
+    kernel: &CudaFunction,
+    m_blocks: u32,
+    t_cost: u32,
+) -> std::result::Result<CudaSlice<u32>, DriverError> {
+    let entries = (m_blocks / 2).max(1) as usize;
+    let mut table = stream.alloc_zeros::<u32>(entries)?;
+    let address_blocks = (m_blocks / 4 / 128).saturating_mul(2).max(1);
+    let cfg = LaunchConfig {
+        grid_dim: (address_blocks, 1, 1),
+        block_dim: (KERNEL_THREADS, 1, 1),
+        shared_mem_bytes: 0,
+    };
+    unsafe {
+        let mut launch = stream.launch_builder(kernel);
+        launch.arg(&mut table).arg(&m_blocks).arg(&t_cost);
+        launch.launch(cfg)?;
+    }
+    stream.synchronize()?;
+    Ok(table)
 }
 
 fn try_allocate_cuda_buffers(
@@ -4888,6 +5114,49 @@ mod tests {
     }
 
     #[test]
+    fn plan_lane_storage_adds_a_packed_lane_when_close() {
+        let m_blocks = 1u32 << 21;
+        // 12 GiB card: 11,607 MiB usable fits 5 full lanes; 6 lanes need 5.6% unstored.
+        let usable = 11_607u64 * 1024 * 1024;
+        let plans = plan_lane_storage(m_blocks, usable, 5, None, true);
+        assert_eq!(plans[0].0, 6);
+        assert!(plans[0].1 < m_blocks);
+        assert_eq!(plans[0].1 % NVIDIA_LANE_STRIDE_ALIGN_BLOCKS, 0);
+        assert!(u64::from(plans[0].1) * 1024 * 6 <= usable);
+        let packed = plans.iter().take_while(|plan| plan.0 == 6).count();
+        assert_eq!(packed, 5);
+        assert!(plans[..packed].windows(2).all(|pair| pair[1].1 < pair[0].1));
+        assert_eq!(plans[packed], (5, m_blocks));
+        assert_eq!(plans.last(), Some(&(1, m_blocks)));
+        // Without support every plan stores whole lanes.
+        assert_eq!(
+            plan_lane_storage(m_blocks, usable, 5, None, false)[0],
+            (5, m_blocks)
+        );
+    }
+
+    #[test]
+    fn plan_lane_storage_skips_packing_when_too_far() {
+        let m_blocks = 1u32 << 21;
+        // 10,500 MiB usable: 6 lanes would leave 15% unstored.
+        let usable = 10_500u64 * 1024 * 1024;
+        let plans = plan_lane_storage(m_blocks, usable, 5, None, true);
+        assert_eq!(plans[0], (5, m_blocks));
+    }
+
+    #[test]
+    fn plan_lane_storage_honours_explicit_lane_count() {
+        let m_blocks = 1u32 << 21;
+        let usable = 11_607u64 * 1024 * 1024;
+        let plans = plan_lane_storage(m_blocks, usable, 5, Some(3), true);
+        assert_eq!(plans[0], (3, m_blocks));
+        let plans = plan_lane_storage(m_blocks, usable, 5, Some(6), true);
+        assert_eq!(plans[0].0, 6);
+        assert!(plans[0].1 < m_blocks);
+        assert!(plans.contains(&(6, m_blocks)));
+    }
+
+    #[test]
     fn derive_memory_budget_uses_free_vram_with_headroom() {
         let budget = derive_memory_budget_mib(10_240, Some(9_800));
         assert_eq!(budget, 9_640);
@@ -5146,6 +5415,267 @@ mod tests {
         );
     }
 
+    thread_local! {
+        static FORCED_STORED_BLOCKS: std::cell::Cell<Option<u32>> =
+            const { std::cell::Cell::new(None) };
+        static FORCE_PREBUILT_ARGON2: std::cell::Cell<bool> =
+            const { std::cell::Cell::new(false) };
+    }
+
+    pub(super) fn forced_stored_blocks() -> Option<u32> {
+        FORCED_STORED_BLOCKS.with(|cell| cell.get())
+    }
+
+    pub(super) fn force_prebuilt_argon2() -> bool {
+        FORCE_PREBUILT_ARGON2.with(|cell| cell.get())
+    }
+
+    #[test]
+    fn prebuilt_argon2_ptx_matches_the_kernel_source_and_network() {
+        use sha2::{Digest, Sha256};
+        let digest = format!("{:x}", Sha256::digest(CUDA_KERNEL_SRC.as_bytes()));
+        for (ptx, cc_major) in [(ARGON2_PTX_COMPUTE60, 6), (ARGON2_PTX_COMPUTE80, 8)] {
+            assert!(
+                ptx.contains(&format!("// kernel-sha256: {digest}\n")),
+                "argon2 PTX is stale: run scripts/gen_argon2_ptx.py"
+            );
+            let options = ptx.lines().nth(2).expect("options line");
+            assert!(options.contains(&format!(
+                "-DSEINE_FIXED_M_BLOCKS={PREBUILT_ARGON2_M_BLOCKS}U"
+            )));
+            assert!(options.contains("-DSEINE_FIXED_T_COST=1U"));
+            assert!(options.contains(&format!(
+                "-DSEINE_CANCEL_CHECK_BLOCK_INTERVAL={}U",
+                select_cancel_check_block_interval(cc_major)
+            )));
+            assert!(options.contains(&format!(
+                "-DSEINE_WARPS_PER_BLOCK={DEFAULT_WARPS_PER_BLOCK}U"
+            )));
+            for define in arch_fill_defines(cc_major) {
+                assert!(options.contains(&format!("-D{define}")), "{define} for {cc_major}.x");
+            }
+        }
+        let params = pow_params().expect("pow params");
+        assert_eq!(params.block_count() as u32, PREBUILT_ARGON2_M_BLOCKS);
+        assert_eq!(params.t_cost(), 1);
+    }
+
+    #[test]
+    fn fill_defines_follow_architecture() {
+        assert_eq!(arch_fill_defines(6), arch_fill_defines(7));
+        assert!(arch_fill_defines(7).contains(&"SEINE_REF_PREFETCH_DEPTH=2U"));
+        assert!(arch_fill_defines(8).contains(&"SEINE_REF_RING=1U"));
+        assert!(!arch_fill_defines(8).contains(&"SEINE_ROW_LAYOUT=1"));
+        assert!(arch_fill_defines(12).contains(&"SEINE_ROW_LAYOUT=1"));
+        assert!(!arch_fill_defines(12).contains(&"SEINE_REF_RING=1U"));
+        assert!(arch_fill_defines(5).is_empty());
+    }
+
+    #[test]
+    fn prebuilt_argon2_ptx_covers_pascal_and_newer() {
+        let m = PREBUILT_ARGON2_M_BLOCKS;
+        assert!(prebuilt_argon2_ptx(5, m, 1).is_none());
+        assert!(std::ptr::eq(
+            prebuilt_argon2_ptx(6, m, 1).unwrap(),
+            ARGON2_PTX_COMPUTE60
+        ));
+        assert!(std::ptr::eq(
+            prebuilt_argon2_ptx(7, m, 1).unwrap(),
+            ARGON2_PTX_COMPUTE60
+        ));
+        assert!(std::ptr::eq(
+            prebuilt_argon2_ptx(8, m, 1).unwrap(),
+            ARGON2_PTX_COMPUTE80
+        ));
+        assert!(std::ptr::eq(
+            prebuilt_argon2_ptx(12, m, 1).unwrap(),
+            ARGON2_PTX_COMPUTE80
+        ));
+        assert!(prebuilt_argon2_ptx(8, m / 2, 1).is_none());
+        assert!(prebuilt_argon2_ptx(8, m, 2).is_none());
+    }
+
+    /// Repeats one full batch and requires identical results each time, which
+    /// catches ordering races that a few reference hashes would rarely hit.
+    /// SEINE_TEST_LANES (default 8), SEINE_TEST_ROUNDS (default 20) and
+    /// SEINE_TEST_STORED_BLOCKS (unset: every block stored) size the run.
+    #[test]
+    #[ignore = "requires NVIDIA GPU + CUDA runtime; run manually for GPU validity checks"]
+    fn gpu_repeated_batches_are_identical() {
+        let env = |name: &str| std::env::var(name).ok().and_then(|v| v.parse::<u32>().ok());
+        let lanes = env("SEINE_TEST_LANES").unwrap_or(8) as usize;
+        let rounds = env("SEINE_TEST_ROUNDS").unwrap_or(20);
+        let devices = query_nvidia_devices().expect("failed to query NVIDIA devices");
+        let selected = devices.first().expect("no NVIDIA GPU detected").clone();
+        FORCED_STORED_BLOCKS.with(|cell| cell.set(env("SEINE_TEST_STORED_BLOCKS")));
+        let tuning = NvidiaKernelTuning {
+            max_rregcount: DEFAULT_NVIDIA_MAX_RREGCOUNT,
+            block_loop_unroll: false,
+            hashes_per_launch_per_lane: 2,
+            max_lanes_hint: Some(lanes),
+        };
+        let cache_dir = unique_temp_dir("gpu-repeat");
+        let engine = CudaArgon2Engine::new(
+            selected.index,
+            selected.memory_total_mib,
+            selected.memory_free_mib,
+            tuning,
+            tuning.max_lanes_hint,
+            tuning.hashes_per_launch_per_lane,
+            false,
+            &cache_dir,
+        );
+        FORCED_STORED_BLOCKS.with(|cell| cell.set(None));
+        let mut engine = engine.expect("failed to initialize CUDA engine");
+        let mut header_base = [0u8; POW_HEADER_BASE_LEN];
+        for (idx, byte) in header_base.iter_mut().enumerate() {
+            *byte = ((idx * 41 + 17) & 0xff) as u8;
+        }
+        let batch = (0..(engine.max_lanes * 2) as u64).collect::<Vec<_>>();
+        let everything = [0xff; POW_OUTPUT_LEN];
+        let reference = engine
+            .run_fill_batch(&header_base, &batch, Some(&everything))
+            .expect("CUDA batch should succeed")
+            .solutions;
+        assert_eq!(reference.len(), batch.len());
+        let mut mismatches = 0usize;
+        for round in 0..rounds {
+            let again = engine
+                .run_fill_batch(&header_base, &batch, Some(&everything))
+                .expect("CUDA batch should succeed")
+                .solutions;
+            let differing = reference.iter().zip(&again).filter(|(a, b)| a != b).count()
+                + reference.len().abs_diff(again.len());
+            if differing > 0 {
+                eprintln!(
+                    "round {round}: {differing} of {} hashes differ",
+                    batch.len()
+                );
+            }
+            mismatches += differing;
+        }
+        eprintln!(
+            "lanes={} stored={} hashes={} mismatches={mismatches}",
+            engine.max_lanes,
+            engine.stored_blocks,
+            batch.len() * (rounds as usize + 1)
+        );
+        drop(engine);
+        let _ = fs::remove_dir_all(cache_dir);
+        assert_eq!(mismatches, 0);
+    }
+
+    #[test]
+    #[ignore = "requires NVIDIA GPU + CUDA runtime; run manually for GPU validity checks"]
+    fn gpu_prebuilt_argon2_ptx_matches_cpu_reference() {
+        let devices = query_nvidia_devices().expect("failed to query NVIDIA devices");
+        let selected = devices.first().expect("no NVIDIA GPU detected").clone();
+        let params = pow_params().expect("pow params should be available");
+        let mut cpu_ctx = ReusablePowContext::new(params.m_cost());
+        let mut header_base = [0u8; POW_HEADER_BASE_LEN];
+        for (idx, byte) in header_base.iter_mut().enumerate() {
+            *byte = ((idx * 29 + 3) & 0xff) as u8;
+        }
+        FORCE_PREBUILT_ARGON2.with(|cell| cell.set(true));
+        let tuning = NvidiaKernelTuning {
+            max_rregcount: DEFAULT_NVIDIA_MAX_RREGCOUNT,
+            block_loop_unroll: false,
+            hashes_per_launch_per_lane: 2,
+            max_lanes_hint: Some(2),
+        };
+        let cache_dir = unique_temp_dir("gpu-prebuilt");
+        let engine = CudaArgon2Engine::new(
+            selected.index,
+            selected.memory_total_mib,
+            selected.memory_free_mib,
+            tuning,
+            tuning.max_lanes_hint,
+            tuning.hashes_per_launch_per_lane,
+            false,
+            &cache_dir,
+        );
+        FORCE_PREBUILT_ARGON2.with(|cell| cell.set(false));
+        let mut engine = engine.expect("failed to initialize prebuilt CUDA engine");
+        assert!(engine.kernel_fused_target.is_none());
+        let batch = [11u64, 12, 13, 14];
+        let done = engine
+            .run_fill_batch(&header_base, &batch, Some(&[0xff; POW_OUTPUT_LEN]))
+            .expect("CUDA batch should succeed");
+        assert_eq!(done.solutions.len(), batch.len());
+        for (nonce, hash) in done.solutions {
+            let mut expected = [0u8; POW_OUTPUT_LEN];
+            cpu_ctx
+                .hash_password_into(&nonce.to_le_bytes(), &header_base, &mut expected)
+                .expect("CPU reference hashing should succeed");
+            assert_eq!(hash, expected, "nonce {nonce}");
+        }
+        drop(engine);
+        let _ = fs::remove_dir_all(cache_dir);
+    }
+
+    #[test]
+    #[ignore = "requires NVIDIA GPU + CUDA runtime; run manually for GPU validity checks"]
+    fn gpu_hashes_match_cpu_reference_with_unstored_late_blocks() {
+        let devices = query_nvidia_devices().expect("failed to query NVIDIA devices");
+        let selected = devices.first().expect("no NVIDIA GPU detected").clone();
+        let params = pow_params().expect("pow params should be available");
+        let m_blocks = params.block_count() as u32;
+        let mut cpu_ctx = ReusablePowContext::new(params.m_cost());
+        let mut header_base = [0u8; POW_HEADER_BASE_LEN];
+        for (idx, byte) in header_base.iter_mut().enumerate() {
+            *byte = ((idx * 53 + 5) & 0xff) as u8;
+        }
+        // 12% unstored (the planner's limit) and 25% (every odd block of the
+        // data-dependent half), which exercises chained rebuilds.
+        for stored in [
+            m_blocks - (m_blocks / 100 * 12) / 2048 * 2048,
+            m_blocks - m_blocks / 4,
+        ] {
+            FORCED_STORED_BLOCKS.with(|cell| cell.set(Some(stored)));
+            let tuning = NvidiaKernelTuning {
+                max_rregcount: DEFAULT_NVIDIA_MAX_RREGCOUNT,
+                block_loop_unroll: false,
+                hashes_per_launch_per_lane: 1,
+                max_lanes_hint: Some(1),
+            };
+            let cache_dir = unique_temp_dir("gpu-skip");
+            let mut engine = CudaArgon2Engine::new(
+                selected.index,
+                selected.memory_total_mib,
+                selected.memory_free_mib,
+                tuning,
+                tuning.max_lanes_hint,
+                1,
+                false,
+                &cache_dir,
+            )
+            .expect("failed to initialize CUDA engine");
+            FORCED_STORED_BLOCKS.with(|cell| cell.set(None));
+            assert_eq!(engine.stored_blocks, stored);
+            for nonce in [3u64, 99, 4_242, 77_777, 1_234_567] {
+                let mut expected = [0u8; POW_OUTPUT_LEN];
+                cpu_ctx
+                    .hash_password_into(&nonce.to_le_bytes(), &header_base, &mut expected)
+                    .expect("CPU reference hashing should succeed");
+                let hit = engine
+                    .run_fill_batch(&header_base, &[nonce], Some(&expected))
+                    .expect("CUDA batch should succeed");
+                assert_eq!(
+                    hit.solutions,
+                    vec![(nonce, expected)],
+                    "stored={stored} nonce={nonce}"
+                );
+                let tighter = decrement_target_be(expected).expect("nonzero hash");
+                let miss = engine
+                    .run_fill_batch(&header_base, &[nonce], Some(&tighter))
+                    .expect("CUDA batch should succeed");
+                assert!(miss.solutions.is_empty(), "stored={stored} nonce={nonce}");
+            }
+            drop(engine);
+            let _ = fs::remove_dir_all(cache_dir);
+        }
+    }
+
     #[test]
     #[ignore = "requires NVIDIA GPU + CUDA runtime; run manually for GPU validity checks"]
     fn gpu_solution_target_bracket_matches_cpu_reference() {
@@ -5203,8 +5733,8 @@ mod tests {
                 nonce
             );
             assert_eq!(
-                hits_equal.solved_nonce,
-                Some(nonce),
+                hits_equal.solutions,
+                vec![(nonce, expected_hash)],
                 "GPU did not report expected solution for nonce {} at equal target",
                 nonce
             );
@@ -5217,12 +5747,43 @@ mod tests {
                 "expected one completed hash for nonce {}",
                 nonce
             );
-            assert_eq!(
-                misses_tighter.solved_nonce,
-                None,
+            assert!(
+                misses_tighter.solutions.is_empty(),
                 "GPU reported solution for nonce {} at tighter target; GPU hash differs from CPU reference",
                 nonce
             );
+        }
+
+        // A batch reports every hash that meets the target.
+        drop(engine);
+        let tuning = NvidiaKernelTuning {
+            hashes_per_launch_per_lane: 2,
+            max_lanes_hint: Some(2),
+            ..tuning
+        };
+        let mut engine = CudaArgon2Engine::new(
+            selected.index,
+            selected.memory_total_mib,
+            selected.memory_free_mib,
+            tuning,
+            tuning.max_lanes_hint,
+            tuning.hashes_per_launch_per_lane,
+            false,
+            &cache_dir,
+        )
+        .expect("failed to initialize two-lane CUDA engine");
+        let batch = [5u64, 6, 7, 8];
+        let everything = engine
+            .run_fill_batch(&header_base, &batch, Some(&[0xff; POW_OUTPUT_LEN]))
+            .expect("CUDA batch execution should succeed");
+        let reported = everything.solutions.iter().map(|s| s.0).collect::<Vec<_>>();
+        assert_eq!(reported, batch.to_vec());
+        for (nonce, hash) in everything.solutions {
+            let mut expected = [0u8; POW_OUTPUT_LEN];
+            cpu_ctx
+                .hash_password_into(&nonce.to_le_bytes(), &header_base, &mut expected)
+                .expect("CPU reference hashing should succeed");
+            assert_eq!(hash, expected, "nonce {nonce}");
         }
 
         let _ = fs::remove_dir_all(cache_dir);

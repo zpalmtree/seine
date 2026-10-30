@@ -525,7 +525,7 @@ fn run_with_thread_control_inner(
                         info(
                             "BACKEND",
                             format!(
-                                "{backend_name}: initializing CUDA engine (loads cached kernel if available; first run may take around 5 minutes)...",
+                                "{backend_name}: initializing CUDA engine...",
                             ),
                         );
                         let start_t = Instant::now();
@@ -611,8 +611,8 @@ fn run_with_thread_control_inner(
                                 );
                                 warn(
                                     "BACKEND",
-                                    "NVIDIA mining requires: (1) NVIDIA GPU drivers and \
-                                     (2) CUDA Toolkit — https://developer.nvidia.com/cuda-downloads",
+                                    "NVIDIA mining requires an up-to-date NVIDIA GPU driver \
+                                     — https://www.nvidia.com/drivers",
                                 );
                                 backend.stop();
                             }
@@ -2491,9 +2491,7 @@ fn activate_single_backend(
                 "{backend_name}: initializing {lanes} workers (~{ram_gib:.1} GiB RAM, precomputing refs)...",
             )
         }
-        "nvidia" => format!(
-            "{backend_name}: initializing CUDA engine (loads cached kernel if available; first run may take ~2 min)...",
-        ),
+        "nvidia" => format!("{backend_name}: initializing CUDA engine...",),
         "amd" => format!(
             "{backend_name}: initializing HIP engine (hipRTC kernel compile; may take ~1 min)...",
         ),
@@ -2569,8 +2567,8 @@ fn activate_single_backend(
             if backend_name == "nvidia" {
                 warn(
                     "BACKEND",
-                    "NVIDIA mining requires: (1) NVIDIA GPU drivers and \
-                     (2) CUDA Toolkit — https://developer.nvidia.com/cuda-downloads",
+                    "NVIDIA mining requires an up-to-date NVIDIA GPU driver \
+                     — https://www.nvidia.com/drivers",
                 );
             }
             if backend_name == "amd" {

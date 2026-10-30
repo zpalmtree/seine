@@ -20,14 +20,14 @@ continues. If a backend fails mid-run, Seine keeps warning
 
 ## Requirements
 
-Seine compiles its kernels at startup with NVRTC, so you need an up-to-date NVIDIA
-display driver plus the NVRTC runtime libraries.
+You need an up-to-date NVIDIA display driver. Seine builds its kernels with NVRTC
+when it is installed and otherwise uses kernels built into Seine.
 
 - **Windows:** the release archive bundles the CUDA 12.8.61 NVRTC DLLs beside
   `seine.exe`. No CUDA Toolkit installation or `PATH` change is needed.
-- **Linux:** install the CUDA driver and NVRTC libraries from your distribution or
-  NVIDIA. Without NVRTC the GPU still mines BLAKE2b blocks (from block 103,680)
-  with a kernel built into Seine, but cannot mine Argon2 blocks before then.
+- **Linux:** the driver is enough. If NVRTC is installed (from your distribution or
+  NVIDIA's CUDA packages) Seine uses it; otherwise it loads its built-in kernels for
+  GeForce GTX 10 series and newer.
 - **Source builds on Windows:** the build uses cudarc's CUDA 12.x loader, so a
   machine with only CUDA 13.x DLL names (for example `nvrtc64_130_0.dll`) is not
   discovered. Install the CUDA 12.8 NVRTC redistributable or add its `bin`
@@ -35,11 +35,8 @@ display driver plus the NVRTC runtime libraries.
 
 ## Tuning
 
-The first launch autotunes kernel parameters per GPU and caches the result, so later
-launches start in seconds. On the desktop RTX 5090 the first-run tune takes about
-half as long as before thanks to a measured shortlist. With several GPUs the
-autotune cache is written under a file lock, so devices never overwrite each
-other's results.
+There is nothing to tune: each GPU starts mining within seconds with as many
+lanes as its free memory holds, and all GPUs start at the same time.
 
 Native Windows is about 9% faster than WSL2 on the same RTX 5090 because it avoids
 WSL's job-boundary latency.

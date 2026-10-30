@@ -40,7 +40,7 @@ mode, and affinity for their CPU and GPUs.
 | Live CPU worker count tuning, joint count/kernel comparisons (each candidate count finishes its kernel sweep), memory/PSI shedding | `src/miner/adaptive_cpu.rs` (`tick_joint`), `src/miner/adaptive_kernel.rs` |
 | CPU topology / affinity (NUMA, L3, SMT, macOS P-cores) | `src/backend/cpu/topology.rs`, `src/config.rs` (`pcore_count`, `macos_hybrid_pcore_parallelism_cap`) |
 | Page mode (HugeTLB / Windows large pages / THP) | `src/config.rs`, `src/backend/cpu.rs` |
-| NVIDIA per-arch/per-device tuning (regcap candidates, launch depth, cancel interval) | `src/backend/nvidia.rs` (`*_RTX_5090`, `BLACKWELL_*`, `select_cancel_check_block_interval`) |
+| NVIDIA per-arch fill loop variants (NVRTC defines), launch depth, cancel interval, prebuilt PTX per arch | `src/backend/nvidia.rs` (`arch_fill_defines`, `prebuilt_argon2_ptx`, `BLACKWELL_*`, `select_cancel_check_block_interval`); regenerate PTX with `scripts/gen_argon2_ptx.py` |
 | AMD arch gating (wave32 only) and hipRTC flags | `src/config.rs` (`partition_wave32_amd_devices`), `src/backend/amd/engine.rs` (`build_hiprtc_options`) |
 | Apple GPU | `src/backend/metal.rs` |
 
