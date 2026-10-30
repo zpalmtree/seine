@@ -200,9 +200,10 @@ pub(crate) fn lane_capacity_from_budget(memory_budget_mib: u64, lane_bytes: u64)
 /// `SEINE_WARPS_PER_BLOCK` tells the kernel how many 32-thread lanes share one
 /// block, which is always exactly one wavefront.
 /// Default skip boundary (permille of the arena) per GPU architecture; 0 stores every
-/// block. RDNA3 (gfx110x).
+/// block. RDNA2 (gfx103x) and RDNA3 (gfx110x).
 fn default_skip_permille(gcn_arch_name: &str) -> u64 {
-    if gcn_arch_name.trim().starts_with("gfx110") {
+    let arch = gcn_arch_name.trim();
+    if arch.starts_with("gfx103") || arch.starts_with("gfx110") {
         500
     } else {
         0
@@ -1372,7 +1373,7 @@ mod tests {
     }
 
     #[test]
-    fn skip_boundary_defaults_to_rdna3_only() {
+    fn skip_boundary_defaults_to_rdna2_and_rdna3() {
         if std::env::var_os("SEINE_AMD_SKIP_PERMILLE").is_some() {
             return;
         }
@@ -1381,7 +1382,7 @@ mod tests {
         assert_eq!(from, 1_048_576);
         assert_eq!(from % 2, 0);
         assert_eq!(skip_from_block("gfx1201", blocks, 1), 0);
-        assert_eq!(skip_from_block("gfx1030", blocks, 1), 0);
+        assert_eq!(skip_from_block("gfx1030", blocks, 1), from);
         assert_eq!(skip_from_block("gfx1100", blocks, 3), 0, "multi-pass stores every block");
         assert_eq!(lane_stride_blocks(blocks, 0), u64::from(blocks));
         assert_eq!(
