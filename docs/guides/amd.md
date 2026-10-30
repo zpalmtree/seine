@@ -19,12 +19,13 @@ graphics stay off unless you list `amd` yourself.
 ## Requirements
 
 - **Linux x86_64** release archive (`seine-linux-x86_64.tar.gz`) or a source build
-  with `--features amd`. Windows is not supported yet.
+  with `--features amd`. Windows is not supported yet: the backend loads
+  `libamdhip64.so` and `libhiprtc.so` at startup and compiles its kernel with
+  hipRTC, which the Windows driver does not ship.
 - The **amdgpu kernel driver** (in-tree in current distributions, or AMD's
   `amdgpu-dkms`) and the **ROCm HIP runtime**: `hip-runtime-amd` from AMD's
-  repository, or the full ROCm install. ROCm 6.x and 10.x both work. Seine compiles
-  its kernel at startup for the exact GPU with hipRTC; RDNA2, RDNA3 and RDNA4 cards
-  also run without hipRTC, using kernels built into the release binary.
+  repository, or the full ROCm install. ROCm 6.x and 10.x both work; the kernel is
+  compiled at startup for the exact GPU, so no architecture list is needed.
 - Your user must be able to open `/dev/kfd` and `/dev/dri/renderD*` (the `render`
   and `video` groups on most distributions).
 - One **2 GiB VRAM lane per concurrent hash**: a 16 GB card runs 7 lanes, a 24 GB

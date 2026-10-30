@@ -9,7 +9,7 @@
 use std::ffi::{c_char, c_int, c_uint, c_void, CString};
 use std::sync::{Arc, Mutex};
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use blocknet_pow_spec::{pow_params, CPU_LANE_MEMORY_BYTES, POW_OUTPUT_LEN};
 
 use super::hip_ffi::{
@@ -21,7 +21,7 @@ use crate::types::hash_meets_target;
 
 pub(crate) mod blake2b;
 
-pub(crate) const HIP_KERNEL_SRC: &str = include_str!("amd_kernel.hip");
+const HIP_KERNEL_SRC: &str = include_str!("amd_kernel.hip");
 const HIP_KERNEL_PROGRAM_NAME: &str = "seine_argon2id_fill.hip";
 
 pub(crate) const MAX_LANES_HARD_LIMIT: usize = 1024;
@@ -494,7 +494,8 @@ impl HipArgon2Engine {
             m_blocks,
             t_cost,
         );
-        let code = argon2_kernel_code(api, &device.gcn_arch_name, &options)?;
+        let code = compile_hip_module_with_wavefront_fallback(api, &options)
+            .context("failed to compile HIP module with hipRTC")?;
         let module = Module::load(api, &code)?;
         let kernel_nonfused = module.function("argon2id_fill_kernel")?;
         let kernel_fused_target = module.function("argon2id_fill_kernel_fused_target")?;
@@ -1145,39 +1146,6 @@ fn compile_hip_module_with_wavefront_fallback(
     }
 }
 
-/// The Argon2 code object: compiled with hipRTC, or the built-in one for this
-/// architecture when hipRTC is missing or fails (or `SEINE_AMD_BUILTIN_KERNELS=1`).
-fn argon2_kernel_code(
-    api: &'static HipApi,
-    gcn_arch_name: &str,
-    options: &[String],
-) -> Result<Vec<u8>> {
-    let key = super::code_objects::options_key(HIP_KERNEL_SRC, options);
-    let builtin = super::code_objects::find("argon2", gcn_arch_name, key);
-    let prefer_builtin = std::env::var_os("SEINE_AMD_BUILTIN_KERNELS").is_some_and(|v| v == "1");
-    if let (Some(code), true) = (builtin, prefer_builtin || api.hiprtc.is_err()) {
-        return Ok(code.to_vec());
-    }
-    match compile_hip_module_with_wavefront_fallback(api, options) {
-        Ok(code) => Ok(code),
-        Err(err) => match builtin {
-            Some(code) => Ok(code.to_vec()),
-            None => Err(err.context(format!(
-                "failed to compile HIP module with hipRTC (no built-in kernel for {})",
-                gcn_arch_name.trim()
-            ))),
-        },
-    }
-}
-
-/// hipRTC compile without the wavefront-flag retry, for `--amd-export-code-objects`.
-pub(crate) fn compile_hip_source_for_export(
-    api: &'static HipApi,
-    options: &[String],
-) -> Result<Vec<u8>> {
-    compile_hip_module(api, options)
-}
-
 fn compile_hip_module(api: &'static HipApi, options: &[String]) -> Result<Vec<u8>> {
     compile_hip_source(api, HIP_KERNEL_SRC, HIP_KERNEL_PROGRAM_NAME, options)
 }
@@ -1188,7 +1156,6 @@ fn compile_hip_source(
     program_name: &str,
     options: &[String],
 ) -> Result<Vec<u8>> {
-    let rtc = api.hiprtc.as_ref().map_err(|err| anyhow!("{err}"))?;
     let source = CString::new(source)
         .map_err(|_| anyhow!("HIP kernel source contains interior NUL byte"))?;
     let name = CString::new(program_name)
@@ -1196,7 +1163,7 @@ fn compile_hip_source(
 
     let mut program: super::hip_ffi::HiprtcProgram = std::ptr::null_mut();
     let create_code = unsafe {
-        (rtc.create_program)(
+        (api.hiprtc_create_program)(
             &mut program,
             source.as_ptr(),
             name.as_ptr(),
@@ -1208,7 +1175,7 @@ fn compile_hip_source(
     if create_code != HIPRTC_SUCCESS {
         bail!(
             "hiprtcCreateProgram failed: {}",
-            rtc.error_string(create_code)
+            api.hiprtc_error_string(create_code)
         );
     }
 
@@ -1220,57 +1187,62 @@ fn compile_hip_source(
     let option_ptrs: Vec<*const c_char> =
         option_cstrings.iter().map(|cstr| cstr.as_ptr()).collect();
 
-    let compile_code =
-        unsafe { (rtc.compile_program)(program, option_ptrs.len() as c_int, option_ptrs.as_ptr()) };
+    let compile_code = unsafe {
+        (api.hiprtc_compile_program)(program, option_ptrs.len() as c_int, option_ptrs.as_ptr())
+    };
     if compile_code != HIPRTC_SUCCESS {
-        let log = read_hiprtc_log(rtc, program).unwrap_or_default();
-        let _ = unsafe { (rtc.destroy_program)(&mut program) };
+        let log = read_hiprtc_log(api, program).unwrap_or_default();
+        let _ = unsafe { (api.hiprtc_destroy_program)(&mut program) };
         if log.is_empty() {
             bail!(
                 "hiprtcCompileProgram failed (options: {options:?}): {}",
-                rtc.error_string(compile_code)
+                api.hiprtc_error_string(compile_code)
             );
         }
         bail!(
             "hiprtcCompileProgram failed (options: {options:?}): {}; log: {log}",
-            rtc.error_string(compile_code)
+            api.hiprtc_error_string(compile_code)
         );
     }
 
     let mut code_size: usize = 0;
-    let size_code = unsafe { (rtc.get_code_size)(program, &mut code_size) };
+    let size_code = unsafe { (api.hiprtc_get_code_size)(program, &mut code_size) };
     if size_code != HIPRTC_SUCCESS || code_size == 0 {
-        let _ = unsafe { (rtc.destroy_program)(&mut program) };
-        bail!("hiprtcGetCodeSize failed: {}", rtc.error_string(size_code));
+        let _ = unsafe { (api.hiprtc_destroy_program)(&mut program) };
+        bail!(
+            "hiprtcGetCodeSize failed: {}",
+            api.hiprtc_error_string(size_code)
+        );
     }
     let mut code = vec![0u8; code_size];
-    let get_code = unsafe { (rtc.get_code)(program, code.as_mut_ptr() as *mut c_char) };
+    let get_code = unsafe { (api.hiprtc_get_code)(program, code.as_mut_ptr() as *mut c_char) };
     if get_code != HIPRTC_SUCCESS {
-        let _ = unsafe { (rtc.destroy_program)(&mut program) };
-        bail!("hiprtcGetCode failed: {}", rtc.error_string(get_code));
+        let _ = unsafe { (api.hiprtc_destroy_program)(&mut program) };
+        bail!(
+            "hiprtcGetCode failed: {}",
+            api.hiprtc_error_string(get_code)
+        );
     }
-    let destroy_code = unsafe { (rtc.destroy_program)(&mut program) };
+    let destroy_code = unsafe { (api.hiprtc_destroy_program)(&mut program) };
     if destroy_code != HIPRTC_SUCCESS {
         bail!(
             "hiprtcDestroyProgram failed: {}",
-            rtc.error_string(destroy_code)
+            api.hiprtc_error_string(destroy_code)
         );
     }
     Ok(code)
 }
 
-fn read_hiprtc_log(
-    rtc: &super::hip_ffi::Hiprtc,
-    program: super::hip_ffi::HiprtcProgram,
-) -> Option<String> {
+fn read_hiprtc_log(api: &'static HipApi, program: super::hip_ffi::HiprtcProgram) -> Option<String> {
     let mut log_size: usize = 0;
-    if unsafe { (rtc.get_program_log_size)(program, &mut log_size) } != HIPRTC_SUCCESS
+    if unsafe { (api.hiprtc_get_program_log_size)(program, &mut log_size) } != HIPRTC_SUCCESS
         || log_size <= 1
     {
         return None;
     }
     let mut log = vec![0u8; log_size];
-    if unsafe { (rtc.get_program_log)(program, log.as_mut_ptr() as *mut c_char) } != HIPRTC_SUCCESS
+    if unsafe { (api.hiprtc_get_program_log)(program, log.as_mut_ptr() as *mut c_char) }
+        != HIPRTC_SUCCESS
     {
         return None;
     }

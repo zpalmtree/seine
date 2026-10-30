@@ -46,8 +46,6 @@ fn main() {
         println!("cargo:rustc-env=SEINE_GIT_COMMIT={commit}");
     }
 
-    write_amd_code_objects();
-
     emit_env("SEINE_BUILD_TARGET", env::var("TARGET").ok());
     emit_env("SEINE_BUILD_HOST", env::var("HOST").ok());
     emit_env("SEINE_BUILD_PROFILE", env::var("PROFILE").ok());
@@ -266,36 +264,4 @@ mod tests {
             hash_source_contents(OFFSET_BASIS, b"first\nsecond\n")
         );
     }
-}
-
-/// Table of AMD code objects exported by `seine --amd-export-code-objects <dir>`;
-/// SEINE_AMD_CODE_OBJECTS names that directory. Empty when unset.
-fn write_amd_code_objects() {
-    println!("cargo:rerun-if-env-changed=SEINE_AMD_CODE_OBJECTS");
-    let out = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR is set by cargo"));
-    let mut table =
-        String::from("pub(crate) static CODE_OBJECTS: &[(&str, &str, u64, &[u8])] = &[\n");
-    if let Some(dir) = env::var_os("SEINE_AMD_CODE_OBJECTS").filter(|dir| !dir.is_empty()) {
-        let dir = PathBuf::from(dir);
-        let manifest = dir.join("manifest.tsv");
-        println!("cargo:rerun-if-changed={}", manifest.display());
-        let text = fs::read_to_string(&manifest)
-            .unwrap_or_else(|err| panic!("read {}: {err}", manifest.display()));
-        for line in text.lines().filter(|line| !line.trim().is_empty()) {
-            let fields: Vec<&str> = line.split('\t').collect();
-            assert_eq!(fields.len(), 4, "malformed manifest line: {line}");
-            let file = dir.join(fields[3]);
-            assert!(file.is_file(), "missing code object {}", file.display());
-            println!("cargo:rerun-if-changed={}", file.display());
-            table.push_str(&format!(
-                "    ({:?}, {:?}, 0x{}, include_bytes!({:?})),\n",
-                fields[0],
-                fields[1],
-                fields[2],
-                file.display().to_string()
-            ));
-        }
-    }
-    table.push_str("];\n");
-    fs::write(out.join("amd_code_objects.rs"), table).expect("write amd_code_objects.rs");
 }

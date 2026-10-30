@@ -9,35 +9,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  # AMD kernels compiled ahead of time with hipRTC (no GPU needed), built into
-  # the binaries with the AMD backend for hosts without hipRTC.
-  amd-code-objects:
-    runs-on: ubuntu-latest
-    container: rocm/dev-ubuntu-24.04:7.2.4
-    steps:
-      - name: Install build tools
-        run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            build-essential ca-certificates curl git
-
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@1.93.0
-
-      - name: Export AMD code objects
-        run: |
-          cargo build --release --locked --no-default-features --features amd
-          target/release/seine --amd-export-code-objects amd-code-objects
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: amd-code-objects
-          path: amd-code-objects
-          if-no-files-found: error
-
   build:
-    needs: amd-code-objects
     strategy:
       fail-fast: false
       matrix:
@@ -92,20 +64,8 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      - uses: actions/download-artifact@v4
-        if: contains(matrix.features, 'amd')
-        with:
-          name: amd-code-objects
-          path: amd-code-objects
-
       - name: Build
-        shell: bash
-        run: |
-          if [ -f amd-code-objects/manifest.tsv ]; then
-            # Native path on Windows (pwd -W), for build.rs.
-            export SEINE_AMD_CODE_OBJECTS="$(pwd -W 2>/dev/null || pwd)/amd-code-objects"
-          fi
-          cargo build --release --locked --target ${{ matrix.target }} ${{ matrix.features || '' }}
+        run: cargo build --release --locked --target ${{ matrix.target }} ${{ matrix.features || '' }}
 
       - name: Verify native Linux ARM CPU kernels
         if: matrix.target == 'aarch64-unknown-linux-gnu'

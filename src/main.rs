@@ -40,17 +40,6 @@ fn run() -> Result<()> {
     if std::env::args().skip(1).any(|arg| arg == "--self-update") {
         return self_update::run_cli();
     }
-    // Release builds: compile the AMD kernels with hipRTC for embedding.
-    let args: Vec<String> = std::env::args().collect();
-    if let Some(pos) = args
-        .iter()
-        .position(|arg| arg == "--amd-export-code-objects")
-    {
-        let dir = args
-            .get(pos + 1)
-            .ok_or_else(|| anyhow::anyhow!("--amd-export-code-objects needs a directory"))?;
-        return backend::amd::export_code_objects(std::path::Path::new(dir));
-    }
     self_update::cleanup_leftovers();
     let cfg = Config::parse()?;
     let shutdown = Arc::new(AtomicBool::new(false));

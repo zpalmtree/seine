@@ -361,8 +361,9 @@ const NVIDIA_AUTOTUNE_REGCAP_CANDIDATES_RTX_5090: &[u32] = &[240, 224, 208];
 // Retained for reference; the staged autotune no longer iterates this axis.
 const _NVIDIA_AUTOTUNE_LOOP_UNROLL_CANDIDATES: &[bool] = &[false];
 const DEFAULT_NVIDIA_AUTOTUNE_SAMPLES: u32 = 2;
-// Largest share of a lane's blocks left unstored to fit one more lane.
-const NVIDIA_MAX_SKIPPED_LANE_FRACTION: f64 = 0.12;
+// Largest share of a lane's blocks left unstored to fit one more lane: the
+// kernel keeps unstored blocks in the second half of the lane.
+const NVIDIA_MAX_SKIPPED_LANE_FRACTION: f64 = 0.25;
 // Lane strides stay a multiple of 2 MiB.
 const NVIDIA_LANE_STRIDE_ALIGN_BLOCKS: u32 = 2048;
 const NVIDIA_MEMORY_RESERVE_MIB_FLOOR: u64 = 64;
@@ -5156,10 +5157,15 @@ mod tests {
     #[test]
     fn plan_lane_storage_skips_packing_when_too_far() {
         let m_blocks = 1u32 << 21;
-        // 10,500 MiB usable: 6 lanes would leave 15% unstored.
-        let usable = 10_500u64 * 1024 * 1024;
+        // 4,500 MiB usable: 3 lanes would leave 27% unstored.
+        let usable = 4_500u64 * 1024 * 1024;
+        let plans = plan_lane_storage(m_blocks, usable, 2, None, true);
+        assert_eq!(plans[0], (2, m_blocks));
+        // 11 GB card, 10,600 MiB usable: 6 lanes leave about 14%.
+        let usable = 10_600u64 * 1024 * 1024;
         let plans = plan_lane_storage(m_blocks, usable, 5, None, true);
-        assert_eq!(plans[0], (5, m_blocks));
+        assert_eq!(plans[0].0, 6);
+        assert!(plans[0].1 < m_blocks * 7 / 8);
     }
 
     #[test]
