@@ -1162,8 +1162,22 @@ struct PressureBackoff {
     consecutive: u8,
 }
 
+/// Seconds of sustained memory stalls (one tick per second) before shedding a worker.
+/// Faulting in new arenas and reclaiming page cache stalls for a few seconds even
+/// when the new count fits.
+const PRESSURE_TICKS: u8 = 10;
+
 impl PressureBackoff {
-    fn cap(&mut self, pressure: bool, available: usize, current: usize, max: usize) -> usize {
+    /// `available` is the RAM-based arena capacity and `slots` the worker limit.
+    /// Headroom counts RAM only: a worker-slot limit is not memory pressure.
+    fn cap(
+        &mut self,
+        pressure: bool,
+        available: usize,
+        slots: usize,
+        current: usize,
+        max: usize,
+    ) -> usize {
         // First-touch/reclaim can briefly stall while ample clean cache remains
         // available. Require both sustained stalls and tight arena headroom.
         self.consecutive = if pressure && available <= current {
@@ -1171,10 +1185,11 @@ impl PressureBackoff {
         } else {
             0
         };
-        if self.consecutive >= 3 {
-            available.min(max).min(current.saturating_sub(1))
+        let cap = available.min(slots).min(max);
+        if self.consecutive >= PRESSURE_TICKS {
+            cap.min(current.saturating_sub(1))
         } else {
-            available.min(max)
+            cap
         }
     }
 }
@@ -1348,7 +1363,7 @@ impl Controller {
                                 snapshots.iter().map(|s| s.allocation_failures).sum();
                             let ((_, available), resources) = crate::config::cpu_autotune_capacity_snapshot(&cfg, owned);
                             let cap =
-                                pressure_backoff.cap(pressure.elevated(), available.min(slots), actual, max);
+                                pressure_backoff.cap(pressure.elevated(), available, slots, actual, max);
                             let now = started.elapsed().as_secs();
                             if let Some(monitor) = &mut kernels.monitor { monitor.observe(now, &all_snapshots, resources); }
                             let (action, decision) = policy.tick_joint(
@@ -1801,22 +1816,30 @@ mod tests {
     fn pressure_backoff_requires_sustained_stalls_and_tight_headroom() {
         let mut p = PressureBackoff::default();
         // A user ceiling of two must not conceal room for ten arenas.
-        for _ in 0..10 {
-            assert_eq!(p.cap(true, 10, 2, 2), 2);
+        for _ in 0..20 {
+            assert_eq!(p.cap(true, 10, 16, 2, 2), 2);
         }
-        for _ in 0..10 {
-            assert_eq!(p.cap(true, 3, 2, 8), 3);
+        for _ in 0..20 {
+            assert_eq!(p.cap(true, 3, 16, 2, 8), 3);
         }
-        assert_eq!(p.cap(true, 2, 2, 8), 2);
-        assert_eq!(p.cap(true, 2, 2, 8), 2);
-        assert_eq!(p.cap(false, 2, 2, 8), 2);
-        assert_eq!(p.cap(true, 2, 2, 8), 2);
-        assert_eq!(p.cap(true, 2, 2, 8), 2);
-        assert_eq!(p.cap(true, 2, 2, 8), 1);
-        assert_eq!(p.cap(false, 10, 1, 8), 8);
+        // A worker-slot limit is not RAM headroom: room for 13 arenas at 11 slots.
+        for _ in 0..20 {
+            assert_eq!(p.cap(true, 13, 11, 11, 16), 11);
+        }
+        // First-touch stalls shorter than PRESSURE_TICKS keep the count.
+        for _ in 1..PRESSURE_TICKS {
+            assert_eq!(p.cap(true, 14, 23, 14, 23), 14);
+        }
+        assert_eq!(p.cap(false, 14, 23, 14, 23), 14);
+        for _ in 1..PRESSURE_TICKS {
+            assert_eq!(p.cap(true, 14, 23, 14, 23), 14);
+        }
+        // Sustained stalls with no RAM headroom shed one worker.
+        assert_eq!(p.cap(true, 14, 23, 14, 23), 13);
+        assert_eq!(p.cap(false, 10, 16, 1, 8), 8);
         // The byte budget can shed workers immediately, including all workers.
-        assert_eq!(p.cap(false, 1, 8, 16), 1);
-        assert_eq!(p.cap(false, 0, 1, 16), 0);
+        assert_eq!(p.cap(false, 1, 16, 8, 16), 1);
+        assert_eq!(p.cap(false, 0, 16, 1, 16), 0);
     }
 
     #[test]
