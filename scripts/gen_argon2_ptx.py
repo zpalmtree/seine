@@ -3,11 +3,14 @@
 for the network's Argon2 parameters with each architecture group's defines,
 which Seine loads through the driver when NVRTC is not installed.
 
-Usage: scripts/gen_argon2_ptx.py <path to libnvrtc.so.12 from CUDA 12.0>
+Usage: scripts/gen_argon2_ptx.py <libnvrtc.so.12 from CUDA 12.0> <libnvrtc.so.12 from CUDA 12.8>
 
-Use NVRTC 12.0 (for example the nvidia-cuda-nvrtc-cu12==12.0.76 wheel): the PTX
-ISA it emits loads on every CUDA 12 and 13 driver. The header lines record the
-kernel source hash and options that a unit test compares against nvidia.rs.
+NVRTC 12.0 (the nvidia-cuda-nvrtc-cu12==12.0.76 wheel) builds the files for
+GTX 10 through RTX 40: the PTX ISA it emits loads on every CUDA 12 and 13 driver.
+NVRTC 12.8 (nvidia-cuda-nvrtc-cu12==12.8.93) builds the Blackwell file for
+compute_100, which needs a CUDA 12.8 driver, the minimum for those GPUs. The
+header lines record the kernel source hash and options that a unit test
+compares against nvidia.rs.
 """
 import ctypes
 import hashlib
@@ -40,7 +43,7 @@ TARGETS = {
     "argon2_cc8.ptx": ["--gpu-architecture=compute_80", "-DSEINE_CANCEL_CHECK_BLOCK_INTERVAL=128U",
                        "-DSEINE_REF_RING=1U", "-DSEINE_ROW_LAYOUT=1", "-DSEINE_LOOP_UNROLL=2",
                        "-DSEINE_INLINE_REBUILD=1"],
-    "argon2_cc10.ptx": ["--gpu-architecture=compute_80", "-DSEINE_CANCEL_CHECK_BLOCK_INTERVAL=128U",
+    "argon2_cc10.ptx": ["--gpu-architecture=compute_100", "-DSEINE_CANCEL_CHECK_BLOCK_INTERVAL=128U",
                         "-DSEINE_ROW_LAYOUT=1", "-DSEINE_LOOP_UNROLL=2"],
 }
 
@@ -71,16 +74,26 @@ def compile_ptx(lib, source, options):
     return ptx.value.decode()
 
 
-def main():
-    if len(sys.argv) != 2:
-        sys.exit(__doc__)
-    lib = ctypes.CDLL(sys.argv[1])
+# Files built with the newer NVRTC (second argument).
+NEWER_NVRTC = {"argon2_cc10.ptx"}
+
+
+def load_nvrtc(path):
+    lib = ctypes.CDLL(path)
     lib.nvrtcGetErrorString.restype = ctypes.c_char_p
     major, minor = ctypes.c_int(), ctypes.c_int()
     check(lib, lib.nvrtcVersion(ctypes.byref(major), ctypes.byref(minor)))
+    return lib, major, minor
+
+
+def main():
+    if len(sys.argv) != 3:
+        sys.exit(__doc__)
+    libs = [load_nvrtc(sys.argv[1]), load_nvrtc(sys.argv[2])]
     source = KERNEL.read_bytes()
     digest = hashlib.sha256(source).hexdigest()
     for name, extra in TARGETS.items():
+        lib, major, minor = libs[1] if name in NEWER_NVRTC else libs[0]
         options = COMMON + extra
         ptx = compile_ptx(lib, source, options)
         header = (

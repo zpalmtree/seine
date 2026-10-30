@@ -264,7 +264,8 @@ mod blake2b;
 const CUDA_KERNEL_SRC: &str = include_str!("nvidia_kernel.cu");
 /// `CUDA_KERNEL_SRC` built as PTX for the network's Argon2 parameters, one per
 /// group of `arch_fill_defines`, loaded through the driver when NVRTC is not
-/// installed. Regenerate them with `scripts/gen_argon2_ptx.py`.
+/// installed. The Blackwell file targets compute_100 and needs a CUDA 12.8
+/// driver, as those GPUs do. Regenerate them with `scripts/gen_argon2_ptx.py`.
 const ARGON2_PTX_CC6: &str = include_str!("nvidia/argon2_cc6.ptx");
 const ARGON2_PTX_CC7: &str = include_str!("nvidia/argon2_cc7.ptx");
 const ARGON2_PTX_CC8: &str = include_str!("nvidia/argon2_cc8.ptx");
