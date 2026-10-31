@@ -418,12 +418,31 @@ __global__ void build_seed_blocks_kernel(
     }
 }
 
+// BlaMka as two wide multiply-adds: Turing to Ada GPUs by default.
+#ifndef SEINE_BLAMKA_MAD
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 700 && __CUDA_ARCH__ < 1000
+#define SEINE_BLAMKA_MAD 1
+#else
+#define SEINE_BLAMKA_MAD 0
+#endif
+#endif
+
 __device__ __forceinline__ unsigned long long blamka(
     unsigned long long x,
     unsigned long long y
 ) {
+#if SEINE_BLAMKA_MAD
+    // x + y + 2 * lo(x) * lo(y) as two wide multiply-adds of the low halves.
+    const unsigned int xl = static_cast<unsigned int>(x);
+    const unsigned int yl = static_cast<unsigned int>(y);
+    unsigned long long t;
+    asm("mad.wide.u32 %0, %1, %2, %3;" : "=l"(t) : "r"(xl), "r"(yl), "l"(x + y));
+    asm("mad.wide.u32 %0, %1, %2, %0;" : "+l"(t) : "r"(xl), "r"(yl));
+    return t;
+#else
     const unsigned long long low = 0xFFFFFFFFULL;
     return x + y + 2ULL * (x & low) * (y & low);
+#endif
 }
 
 __device__ __forceinline__ void permute_step(
