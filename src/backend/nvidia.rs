@@ -994,6 +994,7 @@ impl CudaArgon2Engine {
             max_lanes_budget,
             max_lanes_override,
             skip_supported,
+            second_packed_lane_allowed(),
         );
         #[cfg(test)]
         if let Some(blocks) = tests::forced_stored_blocks() {
@@ -3782,17 +3783,25 @@ fn fill_v1_requested() -> bool {
         .unwrap_or(false)
 }
 
+/// Whether a second packed lane may be planned: native Linux only. Under WDDM
+/// (Windows and WSL2) an allocation near the limit can be placed partly in
+/// system memory instead of failing, so those keep one packed lane.
+fn second_packed_lane_allowed() -> bool {
+    cfg!(target_os = "linux") && crate::runtime_identity::runtime_environment() == "native"
+}
+
 /// Lane counts to try, best first, each with the blocks stored per lane. When
 /// leaving late odd blocks unstored makes room, two lanes more than fit at full
-/// size are tried first (at most NVIDIA_SECOND_PACKED_LANE_MAX_SKIPPED of each
-/// lane unstored), then one more (at most NVIDIA_MAX_SKIPPED_LANE_FRACTION);
-/// smaller counts store every block.
+/// size are tried first if `second_packed_lane` (at most
+/// NVIDIA_SECOND_PACKED_LANE_MAX_SKIPPED of each lane unstored), then one more
+/// (at most NVIDIA_MAX_SKIPPED_LANE_FRACTION); smaller counts store every block.
 fn plan_lane_storage(
     m_blocks: u32,
     usable_bytes: u64,
     full_lanes: usize,
     max_lanes_override: Option<usize>,
     skip_supported: bool,
+    second_packed_lane: bool,
 ) -> Vec<(usize, u32)> {
     let min_blocks_for = |max_skipped: f64| (f64::from(m_blocks) * (1.0 - max_skipped)).ceil() as u32;
     let packed_blocks = |lanes: usize, min_blocks: u32| -> Option<u32> {
@@ -3808,13 +3817,14 @@ fn plan_lane_storage(
             let requested = requested.clamp(1, MAX_LANES_HARD_LIMIT);
             (vec![(requested, NVIDIA_MAX_SKIPPED_LANE_FRACTION)], requested)
         }
-        None => (
-            vec![
-                (full_lanes + 2, NVIDIA_SECOND_PACKED_LANE_MAX_SKIPPED),
-                (full_lanes + 1, NVIDIA_MAX_SKIPPED_LANE_FRACTION),
-            ],
-            full_lanes,
-        ),
+        None => {
+            let mut packed = Vec::new();
+            if second_packed_lane {
+                packed.push((full_lanes + 2, NVIDIA_SECOND_PACKED_LANE_MAX_SKIPPED));
+            }
+            packed.push((full_lanes + 1, NVIDIA_MAX_SKIPPED_LANE_FRACTION));
+            (packed, full_lanes)
+        }
     };
     let mut plans = Vec::new();
     for (lanes, max_skipped) in packed {
@@ -5336,7 +5346,7 @@ mod tests {
         // 12 GiB card: 11,607 MiB usable fits 5 full lanes; 7 lanes need 19%
         // unstored and come first, then 6 lanes at 5.6%.
         let usable = 11_607u64 * 1024 * 1024;
-        let plans = plan_lane_storage(m_blocks, usable, 5, None, true);
+        let plans = plan_lane_storage(m_blocks, usable, 5, None, true, true);
         assert_eq!(plans[0].0, 7);
         assert!(u64::from(plans[0].1) * 1024 * 7 <= usable);
         let second = plans.iter().take_while(|plan| plan.0 == 7).count();
@@ -5356,7 +5366,7 @@ mod tests {
         assert_eq!(plans.last(), Some(&(1, m_blocks)));
         // Without support every plan stores whole lanes.
         assert_eq!(
-            plan_lane_storage(m_blocks, usable, 5, None, false)[0],
+            plan_lane_storage(m_blocks, usable, 5, None, false, true)[0],
             (5, m_blocks)
         );
     }
@@ -5366,16 +5376,18 @@ mod tests {
         let m_blocks = 1u32 << 21;
         // 4,500 MiB usable: 3 lanes would leave 27% unstored.
         let usable = 4_500u64 * 1024 * 1024;
-        let plans = plan_lane_storage(m_blocks, usable, 2, None, true);
+        let plans = plan_lane_storage(m_blocks, usable, 2, None, true, true);
         assert_eq!(plans[0], (2, m_blocks));
         // 11 GB card, 10,600 MiB usable: 6 lanes leave about 14%; 7 would leave 26%.
         let usable = 10_600u64 * 1024 * 1024;
-        let plans = plan_lane_storage(m_blocks, usable, 5, None, true);
+        let plans = plan_lane_storage(m_blocks, usable, 5, None, true, true);
         assert_eq!(plans[0].0, 6);
         assert!(plans[0].1 < m_blocks * 7 / 8);
         // 24 GB card, 24,180 MiB usable: 11 full lanes, 13 leave about 9%.
         let usable = 24_180u64 * 1024 * 1024;
-        assert_eq!(plan_lane_storage(m_blocks, usable, 11, None, true)[0].0, 13);
+        assert_eq!(plan_lane_storage(m_blocks, usable, 11, None, true, true)[0].0, 13);
+        // Without the second packed lane (Windows, WSL2) the first plan is one more.
+        assert_eq!(plan_lane_storage(m_blocks, usable, 11, None, true, false)[0].0, 12);
     }
 
     #[test]
@@ -5411,9 +5423,9 @@ mod tests {
     fn plan_lane_storage_honours_explicit_lane_count() {
         let m_blocks = 1u32 << 21;
         let usable = 11_607u64 * 1024 * 1024;
-        let plans = plan_lane_storage(m_blocks, usable, 5, Some(3), true);
+        let plans = plan_lane_storage(m_blocks, usable, 5, Some(3), true, true);
         assert_eq!(plans[0], (3, m_blocks));
-        let plans = plan_lane_storage(m_blocks, usable, 5, Some(6), true);
+        let plans = plan_lane_storage(m_blocks, usable, 5, Some(6), true, true);
         assert_eq!(plans[0].0, 6);
         assert!(plans[0].1 < m_blocks);
         assert!(plans.contains(&(6, m_blocks)));
