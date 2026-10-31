@@ -952,8 +952,9 @@ __device__ __forceinline__ bool abandon_requested(
     return __any_sync(ARGON2_COOP_WARP_MASK, (cancel_flag[0] & CANCEL_ABANDON) != 0U);
 }
 
-// Ampere and newer copy data-independent reference blocks into a shared-memory
-// ring several blocks ahead; older GPUs load one block ahead into registers.
+// Data-independent reference blocks are loaded REF_PREFETCH_DEPTH blocks ahead
+// into registers, or on Ampere and newer with SEINE_REF_RING > 1 copied into a
+// shared-memory ring of that many blocks.
 #ifndef SEINE_REF_RING
 #define SEINE_REF_RING 4U
 #endif

@@ -332,8 +332,8 @@ fn prebuilt_argon2_cubin(
 /// and RTX 20 series (7.x) do the same with blocks held by rows, two blocks per
 /// loop iteration; RTX 30 and 40 series (8.x) load them one block ahead, hold
 /// blocks by rows and run four blocks per iteration; RTX 50 series and other
-/// Blackwell parts (10.x and newer) hold blocks by rows, use the kernel's async
-/// reference ring and run two blocks per iteration. All but Blackwell inline
+/// Blackwell parts (10.x and newer) load them sixteen blocks ahead, hold blocks
+/// by rows and run one block per iteration. All but Blackwell inline
 /// the rebuild of unstored blocks; GTX 10 to RTX 20 address each block from one
 /// base pointer, RTX 30 and 40 in the data-dependent half. Keep `scripts/gen_argon2_ptx.py` in step.
 fn arch_fill_defines(cc_major: u32) -> &'static [&'static str] {
@@ -357,7 +357,11 @@ fn arch_fill_defines(cc_major: u32) -> &'static [&'static str] {
             "SEINE_INLINE_REBUILD=1",
             "SEINE_BLOCK_BASE_POINTER=2",
         ],
-        major if major >= 10 => &["SEINE_ROW_LAYOUT=1", "SEINE_LOOP_UNROLL=2"],
+        major if major >= 10 => &[
+            "SEINE_REF_RING=1U",
+            "SEINE_REF_PREFETCH_DEPTH=16U",
+            "SEINE_ROW_LAYOUT=1",
+        ],
         _ => &[],
     }
 }
@@ -5759,7 +5763,8 @@ mod tests {
         assert_eq!(arch_fill_defines(8), arch_fill_defines(9));
         assert!(arch_fill_defines(12).contains(&"SEINE_ROW_LAYOUT=1"));
         assert!(!arch_fill_defines(12).contains(&"SEINE_INLINE_REBUILD=1"));
-        assert!(!arch_fill_defines(12).contains(&"SEINE_REF_RING=1U"));
+        assert!(arch_fill_defines(12).contains(&"SEINE_REF_RING=1U"));
+        assert!(arch_fill_defines(12).contains(&"SEINE_REF_PREFETCH_DEPTH=16U"));
         assert!(arch_fill_defines(5).is_empty());
     }
 

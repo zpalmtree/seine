@@ -49,7 +49,7 @@ TARGETS = {
                        "-DSEINE_REF_RING=1U", "-DSEINE_ROW_LAYOUT=1", "-DSEINE_LOOP_UNROLL=4",
                        "-DSEINE_INLINE_REBUILD=1", "-DSEINE_BLOCK_BASE_POINTER=2"],
     "argon2_cc10.ptx": ["--gpu-architecture=compute_100", "-DSEINE_CANCEL_CHECK_BLOCK_INTERVAL=128U",
-                        "-DSEINE_ROW_LAYOUT=1", "-DSEINE_LOOP_UNROLL=2"],
+                        "-DSEINE_REF_RING=1U", "-DSEINE_REF_PREFETCH_DEPTH=16U", "-DSEINE_ROW_LAYOUT=1"],
 }
 
 
