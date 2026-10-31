@@ -153,6 +153,13 @@ fn cohort_stream_kernel(
             return (AVX2_STREAM_OS && supported.contains(&CpuKernel::Avx2Stream))
                 .then_some(CpuKernel::Avx2Stream);
         }
+        // Ice Lake (06h/6Ah, 6Ch) and Granite Rapids (06h/ADh, AEh) Xeons use
+        // 256-bit streaming.
+        if matches!(identity.model, Some(0x6a | 0x6c | 0xad | 0xae)) {
+            return supported
+                .contains(&CpuKernel::Avx512256Stream)
+                .then_some(CpuKernel::Avx512256Stream);
+        }
         if !matches!(identity.model, Some(0x8f | 0xcf)) {
             return None;
         }
@@ -2874,7 +2881,7 @@ mod tests {
         );
         // Sapphire and Emerald Rapids start on streaming (full width when
         // available); other Intel models do not.
-        for (model, stream) in [(0x8f, true), (0xcf, true), (0xad, false)] {
+        for (model, stream) in [(0x8f, true), (0xcf, true), (0x9e, false)] {
             let xeon = CpuIdentity {
                 vendor: Some("GenuineIntel".into()),
                 family: Some(6),
@@ -2891,6 +2898,23 @@ mod tests {
                 startup_kernel_for(&xeon, &with_full),
                 stream.then_some(CpuKernel::Avx512Stream)
             );
+        }
+        // Ice Lake and Granite Rapids Xeons start on 256-bit streaming, also when
+        // full-width streaming is available.
+        for model in [0x6a, 0x6c, 0xad, 0xae] {
+            let xeon = CpuIdentity {
+                vendor: Some("GenuineIntel".into()),
+                family: Some(6),
+                model: Some(model),
+                ..CpuIdentity::default()
+            };
+            let with_full = [supported.as_slice(), &[CpuKernel::Avx512Stream]].concat();
+            assert_eq!(
+                startup_kernel_for(&xeon, &with_full),
+                Some(CpuKernel::Avx512256Stream),
+                "model {model:#x}"
+            );
+            assert_eq!(startup_kernel_for(&xeon, &[CpuKernel::Avx512]), None);
         }
         // Skylake-SP and Cascade Lake start on AVX2 from 12 workers and keep the
         // initial path below; Broadwell-EP has no startup kernel.
