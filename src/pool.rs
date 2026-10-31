@@ -19,6 +19,9 @@ use tokio::sync::mpsc;
 mod socks;
 mod submit_retry;
 
+#[cfg(test)]
+mod tls_tests;
+
 pub use socks::SocksProxy;
 
 use submit_retry::{
