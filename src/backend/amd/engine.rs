@@ -211,18 +211,116 @@ fn default_skip_permille(gcn_arch_name: &str) -> u64 {
 }
 
 /// First block whose odd successors are not stored (`SEINE_AMD_SKIP_FROM`), or 0 to
-/// store every block. `SEINE_AMD_SKIP_PERMILLE` (500-999, or 0 for off) overrides the
-/// per-architecture default; single-pass only, never below the data-independent half.
+/// store every block, at the architecture's default boundary. `SEINE_AMD_SKIP_PERMILLE`
+/// (500-999, or 0 for off) overrides it; single-pass only, never below the
+/// data-independent half.
 pub(crate) fn skip_from_block(gcn_arch_name: &str, m_blocks: u32, t_cost: u32) -> u32 {
-    let permille = std::env::var("SEINE_AMD_SKIP_PERMILLE")
+    let permille = skip_permille_override().unwrap_or_else(|| default_skip_permille(gcn_arch_name));
+    skip_from_permille(m_blocks, t_cost, permille)
+}
+
+fn skip_permille_override() -> Option<u64> {
+    std::env::var("SEINE_AMD_SKIP_PERMILLE")
         .ok()
         .and_then(|raw| raw.trim().parse::<u64>().ok())
-        .unwrap_or_else(|| default_skip_permille(gcn_arch_name));
+}
+
+fn skip_from_permille(m_blocks: u32, t_cost: u32, permille: u64) -> u32 {
     if t_cost != 1 || !(500..1000).contains(&permille) {
         return 0;
     }
     let from = (u64::from(m_blocks) * permille / 1000) as u32 & !1;
     from.max(m_blocks / 2)
+}
+
+/// Expected rebuild compressions per block, rebuild chains included, for uniform skip
+/// boundaries (permille, fraction).
+const SKIP_REBUILD_RATE: [(u64, f64); 10] = [
+    (500, 0.1739),
+    (550, 0.1435),
+    (600, 0.1164),
+    (650, 0.0921),
+    (700, 0.0707),
+    (750, 0.0520),
+    (800, 0.0360),
+    (850, 0.0227),
+    (900, 0.0119),
+    (950, 0.0040),
+];
+
+/// Cost of one rebuild compression, in block times, used to weigh lanes against
+/// rebuilds when choosing the skip boundary.
+const SKIP_REBUILD_COST_BLOCKS: f64 = 1.5;
+
+fn skip_rebuild_rate(permille: u64) -> f64 {
+    let (first, last) = (SKIP_REBUILD_RATE[0], SKIP_REBUILD_RATE[SKIP_REBUILD_RATE.len() - 1]);
+    if permille <= first.0 {
+        return first.1;
+    }
+    if permille >= last.0 {
+        return last.1 * (1000 - permille.min(1000)) as f64 / (1000 - last.0) as f64;
+    }
+    for pair in SKIP_REBUILD_RATE.windows(2) {
+        let ((p0, r0), (p1, r1)) = (pair[0], pair[1]);
+        if permille <= p1 {
+            return r0 + (r1 - r0) * (permille - p0) as f64 / (p1 - p0) as f64;
+        }
+    }
+    last.1
+}
+
+/// Bytes of device memory each lane occupies for a skip boundary.
+pub(crate) fn lane_bytes_for(m_blocks: u32, skip_from: u32) -> u64 {
+    let lane_blocks = lane_stride_blocks(m_blocks, skip_from);
+    if lane_blocks == u64::from(m_blocks) {
+        CPU_LANE_MEMORY_BYTES.max(lane_blocks * 1024)
+    } else {
+        lane_blocks * 1024
+    }
+}
+
+/// Skip boundary for one device: the boundary (store every block, or 500-990
+/// permille) that gives the most hashes for the lane count its VRAM budget and lane
+/// cap allow. With `builtin_only`, only boundaries the built-in code objects cover
+/// (store every block, or the architecture default). `SEINE_AMD_SKIP_PERMILLE`
+/// overrides the choice, and architectures without a default never skip.
+pub(crate) fn plan_skip_from(
+    gcn_arch_name: &str,
+    m_blocks: u32,
+    t_cost: u32,
+    memory_budget_mib: u64,
+    max_lanes_override: Option<usize>,
+    builtin_only: bool,
+) -> u32 {
+    if let Some(permille) = skip_permille_override() {
+        return skip_from_permille(m_blocks, t_cost, permille);
+    }
+    let default_permille = default_skip_permille(gcn_arch_name);
+    if t_cost != 1 || default_permille == 0 {
+        return 0;
+    }
+    let candidates: Vec<u64> = if builtin_only {
+        vec![0, default_permille]
+    } else {
+        std::iter::once(0).chain((500..1000).step_by(10)).collect()
+    };
+    let lane_cap = max_lanes_override
+        .map(|lanes| lanes.max(1))
+        .unwrap_or(MAX_LANES_HARD_LIMIT)
+        .min(MAX_LANES_HARD_LIMIT);
+    let mut best = (0u32, 0.0f64);
+    for permille in candidates {
+        let skip_from = skip_from_permille(m_blocks, t_cost, permille);
+        let lanes = lane_capacity_from_budget(memory_budget_mib, lane_bytes_for(m_blocks, skip_from))
+            .min(lane_cap);
+        let rebuilds = if skip_from == 0 { 0.0 } else { skip_rebuild_rate(permille) };
+        let score = lanes as f64 / (1.0 + SKIP_REBUILD_COST_BLOCKS * rebuilds);
+        // Later candidates rebuild less, so they win ties.
+        if score >= best.1 {
+            best = (skip_from, score);
+        }
+    }
+    best.0
 }
 
 /// Blocks each lane occupies in device memory (see the layout in amd_kernel.hip).
@@ -239,6 +337,7 @@ pub(crate) fn build_hiprtc_options(
     wavefront_size: u32,
     m_blocks: u32,
     t_cost: u32,
+    skip_from: u32,
 ) -> Vec<String> {
     let wavefront_flag = if wavefront_size == 64 {
         "-mwavefrontsize64"
@@ -250,10 +349,7 @@ pub(crate) fn build_hiprtc_options(
         wavefront_flag.to_string(),
         format!("-DSEINE_FIXED_M_BLOCKS={}U", m_blocks),
         format!("-DSEINE_FIXED_T_COST={}U", t_cost),
-        format!(
-            "-DSEINE_AMD_SKIP_FROM={}U",
-            skip_from_block(gcn_arch_name, m_blocks, t_cost)
-        ),
+        format!("-DSEINE_AMD_SKIP_FROM={}U", skip_from),
         format!(
             "-DSEINE_CANCEL_CHECK_BLOCK_INTERVAL={}U",
             CANCEL_CHECK_BLOCK_INTERVAL
@@ -527,13 +623,42 @@ impl HipArgon2Engine {
         let m_cost_kib = params.m_cost();
         let t_cost = params.t_cost();
 
-        let options = build_hiprtc_options(
-            &device.gcn_arch_name,
-            device.wavefront_size,
-            m_blocks,
-            t_cost,
-        );
-        let code = argon2_kernel_code(api, &device.gcn_arch_name, &options)?;
+        let memory_budget_mib =
+            derive_memory_budget_mib(device.memory_total_mib, device.memory_free_mib);
+        let builtin_kernels = api.hiprtc.is_err()
+            || std::env::var_os("SEINE_AMD_BUILTIN_KERNELS").is_some_and(|v| v == "1");
+        let plan_skip = |builtin_only: bool| {
+            plan_skip_from(
+                &device.gcn_arch_name,
+                m_blocks,
+                t_cost,
+                memory_budget_mib,
+                max_lanes_override,
+                builtin_only,
+            )
+        };
+        let options_for = |skip_from: u32| {
+            build_hiprtc_options(
+                &device.gcn_arch_name,
+                device.wavefront_size,
+                m_blocks,
+                t_cost,
+                skip_from,
+            )
+        };
+        let mut skip_from = plan_skip(builtin_kernels);
+        let code = match argon2_kernel_code(api, &device.gcn_arch_name, &options_for(skip_from)) {
+            Ok(code) => code,
+            Err(err) => {
+                // hipRTC failed: fall back to a boundary the built-in kernels cover.
+                let builtin_skip_from = plan_skip(true);
+                if builtin_skip_from == skip_from {
+                    return Err(err);
+                }
+                skip_from = builtin_skip_from;
+                argon2_kernel_code(api, &device.gcn_arch_name, &options_for(skip_from))?
+            }
+        };
         let module = Module::load(api, &code)?;
         let kernel_nonfused = module.function("argon2id_fill_kernel")?;
         let kernel_fused_target = module.function("argon2id_fill_kernel_fused_target")?;
@@ -544,17 +669,8 @@ impl HipArgon2Engine {
         let stream = Stream::new(api)?;
         let interrupt_stream = Arc::new(Stream::new(api)?);
 
-        let lane_blocks = lane_stride_blocks(
-            m_blocks,
-            skip_from_block(&device.gcn_arch_name, m_blocks, t_cost),
-        );
-        let lane_bytes = if lane_blocks == u64::from(m_blocks) {
-            CPU_LANE_MEMORY_BYTES.max(lane_blocks * 1024)
-        } else {
-            lane_blocks * 1024
-        };
-        let memory_budget_mib =
-            derive_memory_budget_mib(device.memory_total_mib, device.memory_free_mib);
+        let lane_blocks = lane_stride_blocks(m_blocks, skip_from);
+        let lane_bytes = lane_bytes_for(m_blocks, skip_from);
         let max_lanes_budget = lane_capacity_from_budget(memory_budget_mib, lane_bytes);
         let max_lanes = max_lanes_override
             .map(|lanes| lanes.max(1))
@@ -1390,15 +1506,44 @@ mod tests {
             lane_stride_blocks(blocks, from),
             u64::from(from) + u64::from((blocks - from) / 2) + 4
         );
-        assert!(build_hiprtc_options("gfx1100", 32, blocks, 1)
+        assert!(build_hiprtc_options("gfx1100", 32, blocks, 1, from)
             .contains(&format!("-DSEINE_AMD_SKIP_FROM={from}U")));
-        assert!(build_hiprtc_options("gfx1151", 32, blocks, 1)
+        assert!(build_hiprtc_options("gfx1151", 32, blocks, 1, 0)
             .contains(&"-DSEINE_AMD_SKIP_FROM=0U".to_string()));
     }
 
     #[test]
+    fn skip_plan_trades_lanes_against_rebuilds() {
+        if std::env::var_os("SEINE_AMD_SKIP_PERMILLE").is_some() {
+            return;
+        }
+        let blocks = 2_097_152u32;
+        let lanes = |budget: u64, skip_from: u32| {
+            lane_capacity_from_budget(budget, lane_bytes_for(blocks, skip_from))
+        };
+        // A lane cap below what VRAM holds: skipping buys no lanes, so store every block.
+        assert_eq!(plan_skip_from("gfx1101", blocks, 1, 24_000, Some(4), false), 0);
+        assert_eq!(plan_skip_from("gfx1101", blocks, 1, 24_000, Some(4), true), 0);
+        // An 8 GiB card: the most lanes VRAM allows, at the highest boundary that keeps them.
+        let skip_from = plan_skip_from("gfx1030", blocks, 1, 7_764, None, false);
+        assert!(skip_from >= blocks / 2);
+        assert_eq!(lanes(7_764, skip_from), 5);
+        assert!(lanes(7_764, skip_from + 2 * (blocks / 100)) < 5);
+        // Built-in kernels only cover storing every block and the default boundary.
+        assert_eq!(
+            plan_skip_from("gfx1030", blocks, 1, 7_764, None, true),
+            skip_from_block("gfx1030", blocks, 1)
+        );
+        // No skipping where the architecture has no default, or for multi-pass fills.
+        assert_eq!(plan_skip_from("gfx1151", blocks, 1, 7_764, None, false), 0);
+        assert_eq!(plan_skip_from("gfx1100", blocks, 3, 7_764, None, false), 0);
+        assert!(skip_rebuild_rate(500) > skip_rebuild_rate(510));
+        assert!(skip_rebuild_rate(990) < skip_rebuild_rate(950));
+    }
+
+    #[test]
     fn hiprtc_options_pin_arch_wavefront_and_pow_parameters() {
-        let options = build_hiprtc_options("gfx1100:sramecc-:xnack-", 32, 2_097_152, 1);
+        let options = build_hiprtc_options("gfx1100:sramecc-:xnack-", 32, 2_097_152, 1, 0);
         assert!(options.contains(&"--offload-arch=gfx1100:sramecc-:xnack-".to_string()));
         assert!(options.contains(&"-mno-wavefrontsize64".to_string()));
         assert!(options.contains(&"-DSEINE_FIXED_M_BLOCKS=2097152U".to_string()));
@@ -1406,7 +1551,7 @@ mod tests {
         assert!(options.contains(&"-DSEINE_WARPS_PER_BLOCK=1U".to_string()));
         assert!(options.contains(&"-DSEINE_WAVE_SYNC=1".to_string()));
 
-        let options = build_hiprtc_options("gfx942:sramecc+:xnack-", 64, 2_097_152, 1);
+        let options = build_hiprtc_options("gfx942:sramecc+:xnack-", 64, 2_097_152, 1, 0);
         assert!(options.contains(&"--offload-arch=gfx942:sramecc+:xnack-".to_string()));
         assert!(options.contains(&"-mwavefrontsize64".to_string()));
         assert!(!options.contains(&"-mno-wavefrontsize64".to_string()));
@@ -1523,6 +1668,7 @@ mod tests {
             device.wavefront_size,
             params.block_count() as u32,
             params.t_cost(),
+            skip_from_block(&device.gcn_arch_name, params.block_count() as u32, params.t_cost()),
         );
         let code = compile_hip_module_with_wavefront_fallback(api, &options)
             .expect("HIP kernel should compile with hipRTC");

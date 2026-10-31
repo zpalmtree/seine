@@ -8,7 +8,9 @@ use std::path::Path;
 
 use anyhow::{anyhow, bail, Context, Result};
 
-use super::engine::{build_hiprtc_options, compile_hip_source_for_export, HIP_KERNEL_SRC};
+use super::engine::{
+    build_hiprtc_options, compile_hip_source_for_export, skip_from_block, HIP_KERNEL_SRC,
+};
 use super::hip_ffi::HipApi;
 
 // (kernel, architecture, key, code object)
@@ -68,19 +70,31 @@ pub fn export_code_objects(dir: &Path) -> Result<()> {
         .map_err(|err| anyhow!("invalid Argon2 parameters: {err}"))?;
     std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
     let mut manifest = String::new();
+    let (m_blocks, t_cost) = (params.block_count() as u32, params.t_cost());
     for target in EXPORT_TARGETS {
-        let options =
-            build_hiprtc_options(target, 32, params.block_count() as u32, params.t_cost());
-        let key = options_key(HIP_KERNEL_SRC, &options);
-        let mut compile_options = options.clone();
-        compile_options.push(EXPORT_CODE_OBJECT_VERSION.to_string());
-        let code = compile_hip_source_for_export(api, &compile_options)
-            .with_context(|| format!("compile the Argon2 kernel for {target}"))?;
-        let file = format!("argon2-{target}.co");
-        std::fs::write(dir.join(&file), &code)
-            .with_context(|| format!("write {}", dir.join(&file).display()))?;
-        manifest.push_str(&format!("argon2\t{target}\t{key:016x}\t{file}\n"));
-        println!("{target}: {} bytes", code.len());
+        // The default skip boundary, plus storing every block where the default skips.
+        let default_skip_from = skip_from_block(target, m_blocks, t_cost);
+        let mut boundaries = vec![default_skip_from];
+        if default_skip_from != 0 {
+            boundaries.push(0);
+        }
+        for skip_from in boundaries {
+            let options = build_hiprtc_options(target, 32, m_blocks, t_cost, skip_from);
+            let key = options_key(HIP_KERNEL_SRC, &options);
+            let mut compile_options = options.clone();
+            compile_options.push(EXPORT_CODE_OBJECT_VERSION.to_string());
+            let code = compile_hip_source_for_export(api, &compile_options)
+                .with_context(|| format!("compile the Argon2 kernel for {target}"))?;
+            let file = if skip_from == default_skip_from {
+                format!("argon2-{target}.co")
+            } else {
+                format!("argon2-{target}-store-all.co")
+            };
+            std::fs::write(dir.join(&file), &code)
+                .with_context(|| format!("write {}", dir.join(&file).display()))?;
+            manifest.push_str(&format!("argon2\t{target}\t{key:016x}\t{file}\n"));
+            println!("{file}: {} bytes", code.len());
+        }
     }
     std::fs::write(dir.join("manifest.tsv"), manifest)?;
     Ok(())
