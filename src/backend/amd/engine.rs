@@ -200,10 +200,10 @@ pub(crate) fn lane_capacity_from_budget(memory_budget_mib: u64, lane_bytes: u64)
 /// `SEINE_WARPS_PER_BLOCK` tells the kernel how many 32-thread lanes share one
 /// block, which is always exactly one wavefront.
 /// Default skip boundary (permille of the arena) per GPU architecture; 0 stores every
-/// block. RDNA2 (gfx103x) and RDNA3 (gfx110x).
+/// block. RDNA2 (gfx103x), RDNA3 (gfx110x) and RDNA4 (gfx120x).
 fn default_skip_permille(gcn_arch_name: &str) -> u64 {
     let arch = gcn_arch_name.trim();
-    if arch.starts_with("gfx103") || arch.starts_with("gfx110") {
+    if arch.starts_with("gfx103") || arch.starts_with("gfx110") || arch.starts_with("gfx120") {
         500
     } else {
         0
@@ -1373,7 +1373,7 @@ mod tests {
     }
 
     #[test]
-    fn skip_boundary_defaults_to_rdna2_and_rdna3() {
+    fn skip_boundary_defaults_to_rdna2_to_rdna4() {
         if std::env::var_os("SEINE_AMD_SKIP_PERMILLE").is_some() {
             return;
         }
@@ -1381,7 +1381,8 @@ mod tests {
         let from = skip_from_block("gfx1101", blocks, 1);
         assert_eq!(from, 1_048_576);
         assert_eq!(from % 2, 0);
-        assert_eq!(skip_from_block("gfx1201", blocks, 1), 0);
+        assert_eq!(skip_from_block("gfx1201", blocks, 1), from);
+        assert_eq!(skip_from_block("gfx1151", blocks, 1), 0);
         assert_eq!(skip_from_block("gfx1030", blocks, 1), from);
         assert_eq!(skip_from_block("gfx1100", blocks, 3), 0, "multi-pass stores every block");
         assert_eq!(lane_stride_blocks(blocks, 0), u64::from(blocks));
@@ -1391,7 +1392,7 @@ mod tests {
         );
         assert!(build_hiprtc_options("gfx1100", 32, blocks, 1)
             .contains(&format!("-DSEINE_AMD_SKIP_FROM={from}U")));
-        assert!(build_hiprtc_options("gfx1201", 32, blocks, 1)
+        assert!(build_hiprtc_options("gfx1151", 32, blocks, 1)
             .contains(&"-DSEINE_AMD_SKIP_FROM=0U".to_string()));
     }
 

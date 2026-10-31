@@ -1172,8 +1172,13 @@ __device__ __forceinline__ bool fill_single_pass_pipelined(
         if (rebuild_pending) {
             // B[r] = G(B[r - 1], B[ref(r)]) in registers with the block macro (its store
             // goes to the sink); a reference that is itself skipped is rebuilt in the slots.
+            // The placeholder load already brought B[r - 1] (ref_word_offset of an odd
+            // index is its stored predecessor), so it becomes the rebuild's previous block.
             const unsigned long long sx0 = x0, sx1 = x1, sx2 = x2, sx3 = x3;
-            load_row_words(memory + block_slot(rebuild_index - 1U, m_blocks) * 128ULL, w0, x0, x1, x2, x3);
+            x0 = y0;
+            x1 = y1;
+            x2 = y2;
+            x3 = y3;
             const unsigned int inner_ref = pass0_ref_index(coop_broadcast0(x0), rebuild_index);
             if (block_skipped(inner_ref, m_blocks)) {
                 const unsigned long long *rebuilt = rebuild_skipped_block(
