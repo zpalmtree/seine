@@ -219,7 +219,35 @@ fn startup_kernel_for(
     identity: &crate::runtime_identity::CpuIdentity,
     candidates: &[CpuKernel],
 ) -> Option<CpuKernel> {
-    cohort_stream_kernel(identity, candidates)
+    cohort_stream_kernel(identity, candidates).or_else(|| {
+        // Skylake-SP and Cascade Lake Xeons (06h/55h) start on AVX2 from
+        // INTEL_SERVER_AVX2_MIN_WORKERS workers; AVX-512 stays a challenger.
+        (is_intel_model(identity, &[0x55]) && candidates.contains(&CpuKernel::Avx2))
+            .then_some(CpuKernel::Avx2)
+    })
+}
+
+const INTEL_SERVER_AVX2_MIN_WORKERS: usize = 12;
+
+/// Workers from which the startup kernel replaces the initial path.
+fn startup_min_workers(kernel: CpuKernel) -> usize {
+    if kernel == CpuKernel::Avx2 {
+        INTEL_SERVER_AVX2_MIN_WORKERS
+    } else {
+        STARTUP_STREAM_MIN_WORKERS
+    }
+}
+
+fn is_intel_model(identity: &crate::runtime_identity::CpuIdentity, models: &[u32]) -> bool {
+    identity.vendor.as_deref() == Some("GenuineIntel")
+        && identity.family == Some(6)
+        && identity.model.is_some_and(|m| models.contains(&m))
+}
+
+/// Broadwell-EP (06h/4Fh), Skylake-SP and Cascade Lake (06h/55h) Xeons start at
+/// every allowed logical CPU that fits in RAM.
+pub(super) fn intel_server_full_count_start() -> bool {
+    is_intel_model(&crate::runtime_identity::cpu_identity(), &[0x4f, 0x55])
 }
 
 /// The cohort kernel regardless of worker count, for the worker-count search:
@@ -382,9 +410,8 @@ fn static_kernel_for_identity(
     supported: &[CpuKernel],
     workers: usize,
 ) -> Option<CpuKernel> {
-    (workers >= STARTUP_STREAM_MIN_WORKERS)
-        .then(|| startup_kernel_for(identity, &candidates_for(identity, supported)))
-        .flatten()
+    startup_kernel_for(identity, &candidates_for(identity, supported))
+        .filter(|&kernel| workers >= startup_min_workers(kernel))
 }
 
 // Host eligibility must not depend on the initial worker count: a cached count
@@ -1368,7 +1395,7 @@ impl Tuner {
                             context
                                 .workers
                                 .iter()
-                                .all(|&w| w >= STARTUP_STREAM_MIN_WORKERS)
+                                .all(|&w| w >= startup_min_workers(*k))
                         }
                         && !snapshots.iter().all(|s| s.kernel == *k)
                 }) {
@@ -2847,7 +2874,7 @@ mod tests {
         );
         // Sapphire and Emerald Rapids start on streaming (full width when
         // available); other Intel models do not.
-        for (model, stream) in [(0x8f, true), (0xcf, true), (0xad, false), (0x55, false)] {
+        for (model, stream) in [(0x8f, true), (0xcf, true), (0xad, false)] {
             let xeon = CpuIdentity {
                 vendor: Some("GenuineIntel".into()),
                 family: Some(6),
@@ -2865,6 +2892,35 @@ mod tests {
                 stream.then_some(CpuKernel::Avx512Stream)
             );
         }
+        // Skylake-SP and Cascade Lake start on AVX2 from 12 workers and keep the
+        // initial path below; Broadwell-EP has no startup kernel.
+        let skx = CpuIdentity {
+            vendor: Some("GenuineIntel".into()),
+            family: Some(6),
+            model: Some(0x55),
+            ..CpuIdentity::default()
+        };
+        assert_eq!(candidates_for(&skx, &supported), supported);
+        assert_eq!(startup_kernel_for(&skx, &supported), Some(CpuKernel::Avx2));
+        assert_eq!(static_kernel_for_identity(&skx, &supported, 11), None);
+        assert_eq!(
+            static_kernel_for_identity(&skx, &supported, 12),
+            Some(CpuKernel::Avx2)
+        );
+        assert_eq!(startup_kernel_for(&skx, &[CpuKernel::Avx512]), None);
+        let bdw = CpuIdentity {
+            model: Some(0x4f),
+            ..skx.clone()
+        };
+        assert_eq!(startup_kernel_for(&bdw, &supported[1..]), None);
+        assert!(is_intel_model(&bdw, &[0x4f, 0x55]));
+        assert!(!is_intel_model(
+            &CpuIdentity {
+                model: Some(0x6a),
+                ..skx.clone()
+            },
+            &[0x4f, 0x55]
+        ));
         assert_eq!(
             candidates_for(&turin, &[CpuKernel::Avx2]),
             [CpuKernel::Avx2]
