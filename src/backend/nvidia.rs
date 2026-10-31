@@ -16,7 +16,8 @@ use crossbeam_channel::{
 };
 use cudarc::{
     driver::{
-        CudaContext, CudaFunction, CudaSlice, CudaStream, DriverError, LaunchConfig, PushKernelArg,
+        CudaContext, CudaFunction, CudaSlice, CudaStream, DevicePtrMut, DriverError, LaunchConfig,
+        PushKernelArg,
     },
     nvrtc::{result as nvrtc_result, sys as nvrtc_sys, Ptx},
 };
@@ -411,6 +412,13 @@ const DEFAULT_NVIDIA_AUTOTUNE_SAMPLES: u32 = 2;
 // Largest share of a lane's blocks left unstored to fit one more lane: the
 // kernel keeps unstored blocks in the second half of the lane.
 const NVIDIA_MAX_SKIPPED_LANE_FRACTION: f64 = 0.25;
+
+// Longest per-lane hash for which a job change lets the hashes in flight finish
+// (submitted under the replaced job, within REPLACED_JOB_SUBMIT_WINDOW).
+const NVIDIA_SOFT_CANCEL_MAX_LANE_HASH: Duration = Duration::from_secs(4);
+
+// How often a waiting worker checks whether its launch has finished.
+const CUDA_LAUNCH_POLL_INTERVAL: Duration = Duration::from_millis(1);
 // Lane strides stay a multiple of 2 MiB.
 const NVIDIA_LANE_STRIDE_ALIGN_BLOCKS: u32 = 2048;
 const NVIDIA_MEMORY_RESERVE_MIB_FLOOR: u64 = 64;
@@ -576,6 +584,13 @@ struct NvidiaShared {
     completed_assignment_micros: AtomicU64,
     active_hashes_per_launch_per_lane: AtomicU32,
     cancel_requested: AtomicBool,
+    /// The work in flight is stale (`PowBackend::abandon_in_flight_work`): the
+    /// next interrupt abandons hashes part-way instead of finishing them.
+    abandon_requested: AtomicBool,
+    /// A cancel that lets the hashes in flight finish is pending in the worker.
+    soft_cancel_pending: AtomicBool,
+    /// Recent time for one lane to finish one hash, in microseconds (0 = unknown).
+    lane_hash_micros: AtomicU64,
     error_emitted: AtomicBool,
     /// The worker's last batch was BLAKE2b (reported in telemetry).
     blake2b_active: AtomicBool,
@@ -627,9 +642,22 @@ impl NvidiaShared {
             completed_assignment_micros: AtomicU64::new(0),
             active_hashes_per_launch_per_lane: AtomicU32::new(DEFAULT_HASHES_PER_LAUNCH_PER_LANE),
             cancel_requested: AtomicBool::new(false),
+            abandon_requested: AtomicBool::new(false),
+            soft_cancel_pending: AtomicBool::new(false),
+            lane_hash_micros: AtomicU64::new(0),
             error_emitted: AtomicBool::new(false),
             blake2b_active: AtomicBool::new(false),
         }
+    }
+
+    /// Whether an interrupt now may let each lane finish its hash in flight:
+    /// the work is not stale and a lane's hash is known to finish well inside
+    /// the pool's window for shares on a replaced job.
+    fn soft_cancel_allowed(&self) -> bool {
+        let lane_hash_micros = self.lane_hash_micros.load(Ordering::Acquire);
+        !self.abandon_requested.load(Ordering::Acquire)
+            && lane_hash_micros > 0
+            && lane_hash_micros <= NVIDIA_SOFT_CANCEL_MAX_LANE_HASH.as_micros() as u64
     }
 }
 
@@ -639,17 +667,31 @@ struct CudaInterruptController {
     cancel_flag: Arc<Mutex<CudaSlice<u32>>>,
 }
 
+// Device cancel flag values (see CANCEL_STOP / CANCEL_ABANDON in the kernel).
+const CUDA_CANCEL_STOP: u32 = 1;
+const CUDA_CANCEL_ABANDON: u32 = 3;
+
 impl CudaInterruptController {
-    fn signal_cancel(&self) -> Result<()> {
+    /// Stops each lane at its next hash boundary, or with `abandon` also
+    /// abandons the hash in flight.
+    fn signal_cancel(&self, abandon: bool) -> Result<()> {
         let mut flag = self
             .cancel_flag
             .lock()
             .map_err(|_| anyhow!("nvidia cancel flag lock poisoned"))?;
-        let mut view = flag
-            .try_slice_mut(0..1)
-            .ok_or_else(|| anyhow!("failed to slice CUDA cancel flag"))?;
-        self.stream
-            .memcpy_htod(&[1u32], &mut view)
+        let value = if abandon {
+            CUDA_CANCEL_ABANDON
+        } else {
+            CUDA_CANCEL_STOP
+        };
+        // A device-side memset on this stream runs alongside the launch; a copy
+        // from host memory would wait for the launch to finish.
+        self.stream.context().bind_to_thread().map_err(cuda_driver_err)?;
+        let (ptr, _sync) = flag.device_ptr_mut(&self.stream);
+        // SAFETY: `ptr` addresses the live one-element flag allocation, which
+        // the held lock keeps alive for the call.
+        unsafe { cudarc::driver::sys::cuMemsetD32Async(ptr, value, 1, self.stream.cu_stream()) }
+            .result()
             .map_err(cuda_driver_err)?;
         Ok(())
     }
@@ -749,7 +791,7 @@ struct CudaArgon2Engine {
     cancel_flag: Arc<Mutex<CudaSlice<u32>>>,
     completed_iters: CudaSlice<u32>,
     found_index: CudaSlice<u32>,
-    host_completed_iters: [u32; 1],
+    host_completed_iters: Vec<u32>,
     host_found_index: [u32; 1],
     host_last_blocks: Vec<u64>,
     fused_target_check: bool,
@@ -1063,7 +1105,7 @@ impl CudaArgon2Engine {
             cancel_flag: Arc::new(Mutex::new(cancel_flag)),
             completed_iters,
             found_index,
-            host_completed_iters: [0u32; 1],
+            host_completed_iters: vec![0u32; max_lanes.max(1)],
             host_found_index: [u32::MAX; 1],
             host_last_blocks: Vec::new(),
             fused_target_check,
@@ -1157,13 +1199,13 @@ impl CudaArgon2Engine {
                 .map_err(cuda_driver_err)?;
         }
         {
-            self.host_completed_iters[0] = 0;
+            self.host_completed_iters[..lanes_active].fill(0);
             let mut completed_view = self
                 .completed_iters
-                .try_slice_mut(0..1)
+                .try_slice_mut(0..lanes_active)
                 .ok_or_else(|| anyhow!("failed to slice CUDA completed-iter buffer"))?;
             self.stream
-                .memcpy_htod(&self.host_completed_iters, &mut completed_view)
+                .memcpy_htod(&self.host_completed_iters[..lanes_active], &mut completed_view)
                 .map_err(cuda_driver_err)?;
         }
         {
@@ -1297,18 +1339,27 @@ impl CudaArgon2Engine {
                 }
             }
         }
+        // Wait for the launch by polling rather than in a blocking driver call,
+        // so an interrupt from another thread reaches the running kernel.
+        let launch_done = self.stream.record_event(None).map_err(cuda_driver_err)?;
+        while !launch_done.is_complete() {
+            thread::sleep(CUDA_LAUNCH_POLL_INTERVAL);
+        }
         {
             let completed_view = self
                 .completed_iters
-                .try_slice(0..1)
+                .try_slice(0..lanes_active)
                 .ok_or_else(|| anyhow!("failed to slice CUDA completed-iter buffer"))?;
             self.stream
-                .memcpy_dtoh(&completed_view, &mut self.host_completed_iters)
+                .memcpy_dtoh(&completed_view, &mut self.host_completed_iters[..lanes_active])
                 .map_err(cuda_driver_err)?;
         }
 
-        let completed_iters = self.host_completed_iters[0].min(lane_launch_iters_u32) as usize;
-        let hashes_done = requested_hashes.min(completed_iters.saturating_mul(lanes_active));
+        let hashes_done = completed_hash_prefix(
+            &self.host_completed_iters[..lanes_active],
+            lanes_active,
+            requested_hashes,
+        );
         if hashes_done == 0 {
             return Ok(FillBatchResult {
                 hashes_done: 0,
@@ -1990,6 +2041,8 @@ impl PowBackend for NvidiaBackend {
             .active_hashes_per_launch_per_lane
             .store(discovered_hashes_per_launch.max(1), Ordering::Release);
         self.shared.cancel_requested.store(false, Ordering::Release);
+        self.shared.abandon_requested.store(false, Ordering::Release);
+        self.shared.soft_cancel_pending.store(false, Ordering::Release);
         if let Ok(mut slot) = self.shared.inflight_assignment_started_at.lock() {
             *slot = None;
         }
@@ -2062,6 +2115,15 @@ impl PowBackend for NvidiaBackend {
     }
 
     fn stop(&self) {
+        self.shared.abandon_requested.store(true, Ordering::Release);
+        if let Some(controller) = self
+            .interrupt_controller
+            .read()
+            .ok()
+            .and_then(|slot| slot.as_ref().cloned())
+        {
+            let _ = controller.signal_cancel(true);
+        }
         let worker = match self.worker.lock() {
             Ok(mut slot) => slot.take(),
             Err(_) => None,
@@ -2089,6 +2151,8 @@ impl PowBackend for NvidiaBackend {
             Ordering::Release,
         );
         self.shared.cancel_requested.store(false, Ordering::Release);
+        self.shared.abandon_requested.store(false, Ordering::Release);
+        self.shared.soft_cancel_pending.store(false, Ordering::Release);
         if let Ok(mut slot) = self.shared.inflight_assignment_started_at.lock() {
             *slot = None;
         }
@@ -2194,7 +2258,14 @@ impl PowBackend for NvidiaBackend {
     }
 
     fn cancel_work_nonblocking(&self) -> Result<BackendCallStatus> {
-        self.control_nonblocking(PendingControlKind::Cancel)
+        let status = self.control_nonblocking(PendingControlKind::Cancel)?;
+        // Like the CPU backend, a cancel that lets the hashes in flight finish
+        // completes at once: the worker retires the assignment when the launch
+        // returns, before it takes the next one.
+        if self.shared.soft_cancel_pending.load(Ordering::Acquire) {
+            return Ok(BackendCallStatus::Complete);
+        }
+        Ok(status)
     }
 
     fn fence_nonblocking(&self) -> Result<BackendCallStatus> {
@@ -2205,15 +2276,34 @@ impl PowBackend for NvidiaBackend {
         self.send_control_blocking(PendingControlKind::Cancel)
     }
 
+    fn abandon_in_flight_work(&self) {
+        self.shared.abandon_requested.store(true, Ordering::Release);
+        // A cancel already letting hashes finish now abandons them too.
+        if self.shared.soft_cancel_pending.load(Ordering::Acquire) {
+            if let Some(controller) = self
+                .interrupt_controller
+                .read()
+                .ok()
+                .and_then(|slot| slot.as_ref().cloned())
+            {
+                let _ = controller.signal_cancel(true);
+            }
+        }
+    }
+
     fn request_timeout_interrupt(&self) -> Result<()> {
         self.shared.cancel_requested.store(true, Ordering::Release);
+        let soft = self.shared.soft_cancel_allowed();
+        if soft {
+            self.shared.soft_cancel_pending.store(true, Ordering::Release);
+        }
         if let Some(controller) = self
             .interrupt_controller
             .read()
             .ok()
             .and_then(|slot| slot.as_ref().cloned())
         {
-            let _ = controller.signal_cancel();
+            let _ = controller.signal_cancel(!soft);
         }
         let tx = match self.worker_control_tx() {
             Ok(tx) => tx,
@@ -2955,6 +3045,12 @@ fn worker_loop(
         if done.hashes_done > 0 {
             let batch_hashes = done.hashes_done as f64;
             let per_hash_micros = (launch_elapsed.as_secs_f64() * 1_000_000.0) / batch_hashes;
+            let lane_hash_micros = per_hash_micros * argon2_lanes.min(done.hashes_done) as f64;
+            if lane_hash_micros.is_finite() && lane_hash_micros > 0.0 {
+                shared
+                    .lane_hash_micros
+                    .store(lane_hash_micros as u64, Ordering::Release);
+            }
             if per_hash_micros.is_finite() && per_hash_micros > 0.0 {
                 current.hash_micros_ema = Some(match current.hash_micros_ema {
                     Some(previous) => {
@@ -3022,6 +3118,7 @@ fn handle_worker_command(
     match cmd {
         WorkerCommand::Assign(work) => {
             shared.cancel_requested.store(false, Ordering::Release);
+            shared.abandon_requested.store(false, Ordering::Release);
             if active.is_some() || !queued.is_empty() {
                 *adaptive_pressure =
                     adaptive_pressure.saturating_add(ADAPTIVE_DEPTH_PRESSURE_REPLACE_BONUS);
@@ -3031,6 +3128,7 @@ fn handle_worker_command(
         }
         WorkerCommand::AssignBatch(work) => {
             shared.cancel_requested.store(false, Ordering::Release);
+            shared.abandon_requested.store(false, Ordering::Release);
             if active.is_some() || !queued.is_empty() {
                 *adaptive_pressure =
                     adaptive_pressure.saturating_add(ADAPTIVE_DEPTH_PRESSURE_REPLACE_BONUS);
@@ -3040,6 +3138,7 @@ fn handle_worker_command(
         }
         WorkerCommand::Cancel(ack) => {
             shared.cancel_requested.store(false, Ordering::Release);
+            shared.soft_cancel_pending.store(false, Ordering::Release);
             if active.is_some() || !queued.is_empty() {
                 *adaptive_pressure =
                     adaptive_pressure.saturating_add(ADAPTIVE_DEPTH_PRESSURE_CONTROL_BONUS);
@@ -3766,6 +3865,21 @@ fn build_cuda_ref_table(
     Ok(table)
 }
 
+/// Hashes of a launch done in nonce order: hash `iter * lanes + lane` is done
+/// when that lane completed more than `iter` iterations. A cancel can stop
+/// lanes at different iterations, so only the unbroken prefix counts.
+fn completed_hash_prefix(lane_iters: &[u32], lanes_active: usize, requested: usize) -> usize {
+    let lanes_active = lanes_active.max(1);
+    (0..requested)
+        .find(|&index| {
+            let iter = (index / lanes_active) as u32;
+            lane_iters
+                .get(index % lanes_active)
+                .is_none_or(|&done| iter >= done)
+        })
+        .unwrap_or(requested)
+}
+
 fn try_allocate_cuda_buffers(
     stream: &Arc<CudaStream>,
     m_blocks: u32,
@@ -3799,8 +3913,26 @@ fn try_allocate_cuda_buffers(
     let header_base_input =
         unsafe { stream.alloc::<u8>(blocknet_pow_spec::MAX_POW_HEADER_BASE_LEN) }?;
     let target_input = unsafe { stream.alloc::<u8>(POW_OUTPUT_LEN) }?;
-    let cancel_flag = unsafe { stream.alloc::<u32>(1) }?;
-    let completed_iters = unsafe { stream.alloc::<u32>(1) }?;
+    // The interrupt stream writes the cancel flag while a launch on `stream`
+    // reads it. With event tracking that write would wait for the launch to
+    // end, so the flag is allocated untracked; it is never freed while a write
+    // is queued (the engine outlives its interrupt controller's last use).
+    let cancel_flag = {
+        let ctx = stream.context();
+        let tracking = ctx.is_event_tracking();
+        // SAFETY: only this slice is created untracked; tracking is restored
+        // before any other allocation, and the stream is synchronized so the
+        // allocation completes before another stream can use it.
+        unsafe { ctx.disable_event_tracking() };
+        let flag = unsafe { stream.alloc::<u32>(1) };
+        if tracking {
+            unsafe { ctx.enable_event_tracking() };
+        }
+        let flag = flag?;
+        stream.synchronize()?;
+        flag
+    };
+    let completed_iters = unsafe { stream.alloc::<u32>(lanes.max(1)) }?;
     let found_index = unsafe { stream.alloc::<u32>(1) }?;
     Ok((
         lane_memory,
@@ -5224,6 +5356,35 @@ mod tests {
     }
 
     #[test]
+    fn completed_hash_prefix_counts_only_unbroken_nonce_order() {
+        // 3 lanes, 2 iterations each: all 6 hashes done.
+        assert_eq!(completed_hash_prefix(&[2, 2, 2], 3, 6), 6);
+        // Lane 1 stopped after one iteration: hashes 0..4 done, hash 4 is not.
+        assert_eq!(completed_hash_prefix(&[2, 1, 2], 3, 6), 4);
+        // A lane that never finished a hash stops the count at its first one.
+        assert_eq!(completed_hash_prefix(&[1, 0, 1], 3, 6), 1);
+        // A partial last iteration: lanes without a nonce there stay at 1.
+        assert_eq!(completed_hash_prefix(&[2, 1, 1], 3, 4), 4);
+        assert_eq!(completed_hash_prefix(&[0, 0], 2, 4), 0);
+    }
+
+    #[test]
+    fn soft_cancel_needs_a_short_known_lane_hash_and_live_work() {
+        let shared = NvidiaShared::new();
+        assert!(!shared.soft_cancel_allowed(), "unknown hash time");
+        shared.lane_hash_micros.store(900_000, Ordering::Release);
+        assert!(shared.soft_cancel_allowed());
+        shared.abandon_requested.store(true, Ordering::Release);
+        assert!(!shared.soft_cancel_allowed(), "stale work is abandoned");
+        shared.abandon_requested.store(false, Ordering::Release);
+        shared.lane_hash_micros.store(
+            NVIDIA_SOFT_CANCEL_MAX_LANE_HASH.as_micros() as u64 + 1,
+            Ordering::Release,
+        );
+        assert!(!shared.soft_cancel_allowed(), "lane hash too slow");
+    }
+
+    #[test]
     fn plan_lane_storage_honours_explicit_lane_count() {
         let m_blocks = 1u32 << 21;
         let usable = 11_607u64 * 1024 * 1024;
@@ -5313,6 +5474,9 @@ mod tests {
             completed_assignment_micros: AtomicU64::new(0),
             active_hashes_per_launch_per_lane: AtomicU32::new(0),
             cancel_requested: AtomicBool::new(false),
+            abandon_requested: AtomicBool::new(false),
+            soft_cancel_pending: AtomicBool::new(false),
+            lane_hash_micros: AtomicU64::new(0),
             error_emitted: AtomicBool::new(false),
             blake2b_active: AtomicBool::new(false),
         };
@@ -5695,6 +5859,70 @@ mod tests {
         drop(engine);
         let _ = fs::remove_dir_all(cache_dir);
         assert_eq!(mismatches, 0);
+    }
+
+    /// A stop signalled during the first hash of a two-hash launch finishes that
+    /// hash on every lane with the uninterrupted result; an abandon finishes none.
+    #[test]
+    #[ignore = "requires NVIDIA GPU + CUDA runtime; run manually for GPU validity checks"]
+    fn gpu_cancel_finishes_or_abandons_the_hash_in_flight() {
+        let devices = query_nvidia_devices().expect("failed to query NVIDIA devices");
+        let selected = devices.first().expect("no NVIDIA GPU detected").clone();
+        let tuning = NvidiaKernelTuning {
+            max_rregcount: DEFAULT_NVIDIA_MAX_RREGCOUNT,
+            block_loop_unroll: false,
+            hashes_per_launch_per_lane: 2,
+            max_lanes_hint: Some(4),
+        };
+        let cache_dir = unique_temp_dir("gpu-cancel");
+        let mut engine = CudaArgon2Engine::new(
+            selected.index,
+            selected.memory_total_mib,
+            selected.memory_free_mib,
+            tuning,
+            tuning.max_lanes_hint,
+            tuning.hashes_per_launch_per_lane,
+            false,
+            &cache_dir,
+        )
+        .expect("failed to initialize CUDA engine");
+        let lanes = engine.max_lanes;
+        let mut header_base = [0u8; POW_HEADER_BASE_LEN];
+        for (idx, byte) in header_base.iter_mut().enumerate() {
+            *byte = ((idx * 29 + 3) & 0xff) as u8;
+        }
+        let batch = (0..(lanes * 2) as u64).collect::<Vec<_>>();
+        let everything = [0xff; POW_OUTPUT_LEN];
+        let reference = engine
+            .run_fill_batch(&header_base, &batch, Some(&everything))
+            .expect("CUDA batch should succeed");
+        assert_eq!(reference.hashes_done, batch.len());
+
+        for abandon in [false, true] {
+            let controller = engine.interrupt_controller();
+            let signaller = thread::spawn(move || {
+                thread::sleep(Duration::from_millis(300));
+                controller.signal_cancel(abandon)
+            });
+            let started = Instant::now();
+            let done = engine
+                .run_fill_batch(&header_base, &batch, Some(&everything))
+                .expect("CUDA batch should succeed");
+            let elapsed = started.elapsed();
+            signaller
+                .join()
+                .expect("signal thread")
+                .expect("signal cancel");
+            if abandon {
+                assert_eq!(done.hashes_done, 0, "an abandon keeps no hash");
+                assert!(elapsed < Duration::from_millis(600), "abandon took {elapsed:?}");
+            } else {
+                assert_eq!(done.hashes_done, lanes, "a stop finishes each lane's hash");
+                assert_eq!(done.solutions[..], reference.solutions[..lanes]);
+            }
+        }
+        drop(engine);
+        let _ = fs::remove_dir_all(cache_dir);
     }
 
     #[test]

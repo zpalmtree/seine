@@ -931,12 +931,25 @@ __device__ __forceinline__ void store_block_regs_dd(
     store_block_words(block, v, tid, SEINE_BLOCK_BASE_POINTER != 0);
 }
 
+// Cancel flag bits: CANCEL_STOP stops each lane at its next hash boundary;
+// CANCEL_ABANDON also abandons the hash in flight.
+constexpr unsigned int CANCEL_STOP = 1U;
+constexpr unsigned int CANCEL_ABANDON = 2U;
+
 __device__ __forceinline__ bool cancel_requested(
     const volatile unsigned int *__restrict__ cancel_flag,
     unsigned int tid
 ) {
     (void)tid;
     return __any_sync(ARGON2_COOP_WARP_MASK, cancel_flag[0] != 0U);
+}
+
+__device__ __forceinline__ bool abandon_requested(
+    const volatile unsigned int *__restrict__ cancel_flag,
+    unsigned int tid
+) {
+    (void)tid;
+    return __any_sync(ARGON2_COOP_WARP_MASK, (cancel_flag[0] & CANCEL_ABANDON) != 0U);
 }
 
 // Ampere and newer copy data-independent reference blocks into a shared-memory
@@ -1152,7 +1165,7 @@ __device__ __forceinline__ bool fill_lane_pass0(
     }
     unsigned int next_ref = ref_table[2U + REF_RING - 1U];
     for (unsigned int chunk = 2U; chunk < half; chunk += CANCEL_CHECK_BLOCK_INTERVAL) {
-    if (cancel_requested(cancel_flag, tid)) {
+    if (abandon_requested(cancel_flag, tid)) {
         return false;
     }
     const unsigned int chunk_end = min(chunk + CANCEL_CHECK_BLOCK_INTERVAL, half);
@@ -1219,7 +1232,7 @@ __device__ __forceinline__ bool fill_lane_pass0(
 
     static_assert(CANCEL_CHECK_BLOCK_INTERVAL % D == 0U, "chunks must hold whole prefetch rounds");
     for (unsigned int chunk = 2U; chunk < half; chunk += CANCEL_CHECK_BLOCK_INTERVAL) {
-    if (cancel_requested(cancel_flag, tid)) {
+    if (abandon_requested(cancel_flag, tid)) {
         return false;
     }
     const unsigned int chunk_end = min(chunk + CANCEL_CHECK_BLOCK_INTERVAL, half);
@@ -1273,7 +1286,7 @@ __device__ __forceinline__ bool fill_lane_pass0(
         tid
     );
     for (unsigned int chunk = half; chunk < dense_end; chunk += CANCEL_CHECK_BLOCK_INTERVAL) {
-    if (cancel_requested(cancel_flag, tid)) {
+    if (abandon_requested(cancel_flag, tid)) {
         return false;
     }
     const unsigned int chunk_end = min(chunk + CANCEL_CHECK_BLOCK_INTERVAL, dense_end);
@@ -1309,7 +1322,7 @@ __device__ __forceinline__ bool fill_lane_pass0(
     }
 #endif
     for (unsigned int chunk = dense_end; chunk < lane_length; chunk += CANCEL_CHECK_BLOCK_INTERVAL) {
-    if (cancel_requested(cancel_flag, tid)) {
+    if (abandon_requested(cancel_flag, tid)) {
         return false;
     }
     const unsigned int chunk_end = min(chunk + CANCEL_CHECK_BLOCK_INTERVAL, lane_length);
@@ -1497,7 +1510,7 @@ __device__ __forceinline__ void argon2id_fill_kernel_impl(
             }
             coop_sync();
             if (tid == 0U) {
-                atomicMax(completed_iters, iter + 1U);
+                completed_iters[lane] = iter + 1U;
             }
             coop_sync();
         }
@@ -1596,7 +1609,7 @@ __device__ __forceinline__ void argon2id_fill_kernel_impl(
                         unsigned int cancel_val = 0U;
                         if (tid == 0U) cancel_val = cancel_flag[0];
                         cancel_val = __shfl_sync(ARGON2_COOP_WARP_MASK, cancel_val, 0);
-                        if (cancel_val != 0U) {
+                        if ((cancel_val & CANCEL_ABANDON) != 0U) {
                             abort_requested = true;
                             break;
                         }
@@ -1751,7 +1764,7 @@ __device__ __forceinline__ void argon2id_fill_kernel_impl(
         }
         coop_sync();
         if (tid == 0U) {
-            atomicMax(completed_iters, iter + 1U);
+            completed_iters[lane] = iter + 1U;
         }
         coop_sync();
     }
