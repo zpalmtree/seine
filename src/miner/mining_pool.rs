@@ -93,6 +93,7 @@ fn should_apply_submit_ack_difficulty_immediately(_mode: PoolConnectionMode) -> 
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct PoolConnectionConfig {
+    payout_memo: Option<String>,
     mode: PoolConnectionMode,
     pool_url: String,
     proxy: Option<crate::pool::SocksProxy>,
@@ -709,6 +710,7 @@ fn build_pool_connection_configs(
         .ok_or_else(|| anyhow!("pool mode requires a configured pool worker"))?;
 
     let user = PoolConnectionConfig {
+        payout_memo: cfg.payout_memo.clone(),
         mode: PoolConnectionMode::User,
         pool_url: user_pool_url,
         proxy: cfg.pool_proxy.clone(),
@@ -716,6 +718,7 @@ fn build_pool_connection_configs(
         worker: user_worker,
     };
     let dev = PoolConnectionConfig {
+        payout_memo: None,
         mode: PoolConnectionMode::Dev,
         pool_url: dev_pool_urls(&user.pool_url),
         proxy: cfg.pool_proxy.clone(),
@@ -736,11 +739,12 @@ fn connect_pool_session(
         render_tui_now(tui);
     }
 
-    let pool_client = PoolClient::connect_via(
+    let pool_client = PoolClient::connect_via_with_memo(
         &connection.pool_url,
         connection.proxy.as_ref(),
         connection.address.clone(),
         connection.worker.clone(),
+        connection.payout_memo.clone(),
         shutdown,
     )?;
     if connection.mode.is_user() {
@@ -761,7 +765,11 @@ fn connect_pool_session(
             ),
         );
     }
-    let telemetry = PoolUiTelemetryClient::new(&connection.pool_url, &connection.address);
+    let account = crate::payout_destination::account_id(
+        &connection.address,
+        connection.payout_memo.as_deref(),
+    );
+    let telemetry = PoolUiTelemetryClient::new(&connection.pool_url, &account);
     if telemetry.is_none() && connection.mode.is_user() {
         warn(
             "STATS",
@@ -1613,6 +1621,9 @@ fn handle_active_pool_event(
         }
         PoolEvent::LoginAccepted(ack) => {
             if mode.is_user() {
+                if let Some(minimum) = ack.min_payout_atomic {
+                    info("PAYOUT", format!("Memo accepted. Minimum payout: {} BNT; larger payouts reduce small exchange deposits.", minimum as f64 / 100_000_000.0));
+                }
                 let required = if ack.required_capabilities.is_empty() {
                     "none".to_string()
                 } else {
@@ -1904,6 +1915,9 @@ fn handle_inactive_pool_event(
         }
         PoolEvent::LoginAccepted(ack) => {
             if mode.is_user() {
+                if let Some(minimum) = ack.min_payout_atomic {
+                    info("PAYOUT", format!("Memo accepted. Minimum payout: {} BNT; larger payouts reduce small exchange deposits.", minimum as f64 / 100_000_000.0));
+                }
                 let required = if ack.required_capabilities.is_empty() {
                     "none".to_string()
                 } else {

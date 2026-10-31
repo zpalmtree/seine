@@ -401,6 +401,13 @@ struct Cli {
     #[arg(long = "address", short = 'u', visible_alias = "user")]
     mining_address: Option<String>,
 
+    /// Exact exchange deposit memo (pool mining only).
+    #[arg(long)]
+    payout_memo: Option<String>,
+    /// Ignore the saved payout memo when switching to an ordinary wallet.
+    #[arg(long, conflicts_with = "payout_memo")]
+    no_payout_memo: bool,
+
     /// Path to api.cookie file.
     /// When omitted, Seine auto-detects the managed cookie from Blocknet wrapper config or --daemon-dir.
     #[arg(long)]
@@ -837,6 +844,7 @@ pub struct Config {
     pub wallet_password: Option<String>,
     pub wallet_password_file: Option<PathBuf>,
     pub mining_address: Option<String>,
+    pub payout_memo: Option<String>,
     pub backend_specs: Vec<BackendSpec>,
     pub threads: usize,
     /// The explicit `--threads` value, reported in telemetry so fleet data can tell
@@ -962,7 +970,9 @@ impl Config {
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
 
+        validate_saved_memo_override(&cli, user_cfg.as_ref())?;
         apply_user_config_defaults(&mut cli, user_cfg.as_ref());
+        validate_payout_memo_config(&cli)?;
         let mut user_config_created = false;
         let should_prompt_for_pool_bootstrap = !cli.bench && !cli.service;
         if !user_config_exists {
@@ -990,6 +1000,16 @@ impl Config {
             {
                 cli.pool_worker = Some(generate_default_pool_worker());
             }
+        }
+        if !cli.bench
+            && cli.payout_memo.is_none()
+            && cli
+                .mining_address
+                .as_deref()
+                .and_then(crate::payout_destination::known_exchange)
+                .is_some()
+        {
+            bail!("this shared exchange address requires a memo; use --payout-memo with the memo from your deposit page");
         }
         if dev_fee_pool_worker.is_none() {
             let generated = generate_default_dev_fee_pool_worker();
@@ -1433,6 +1453,7 @@ impl Config {
             daemon_expected_cookie_path,
             wallet_password: cli.wallet_password,
             wallet_password_file: cli.wallet_password_file,
+            payout_memo: cli.payout_memo.clone(),
             mining_address: cli.mining_address.map(|address| address.trim().to_string()),
             backend_specs,
             threads: resolved_threads,
@@ -2545,8 +2566,43 @@ fn split_address_worker(value: &str) -> Option<(&str, &str)> {
     (!address.is_empty() && !worker.is_empty()).then_some((address.trim(), worker))
 }
 
+fn validate_saved_memo_override(cli: &Cli, saved: Option<&UserConfig>) -> Result<()> {
+    if let Some(saved) = saved {
+        if saved.payout_memo.is_some()
+            && cli.payout_memo.is_none()
+            && !cli.no_payout_memo
+            && cli.mining_address.as_deref().is_some_and(|address| {
+                Some(address.trim()) != saved.address.as_deref().map(str::trim)
+            })
+        {
+            bail!(
+                "changing an address with a saved memo requires --payout-memo or --no-payout-memo"
+            );
+        }
+    }
+    Ok(())
+}
+
+fn validate_payout_memo_config(cli: &Cli) -> Result<()> {
+    if let Some(memo) = &cli.payout_memo {
+        crate::payout_destination::validate_memo(memo)?;
+        if cli.mode == Some(MiningMode::Daemon) || cli.proxy_listen.is_some() {
+            bail!("payout memos require a direct pool connection; solo mode and farm proxy hosting are not supported");
+        }
+        if let Some(address) = &cli.mining_address {
+            crate::address::validate_mining_address(address)
+                .map_err(anyhow::Error::msg)
+                .context("use the full exchange deposit address with --payout-memo")?;
+        }
+    }
+    Ok(())
+}
+
 fn apply_user_config_defaults(cli: &mut Cli, user_cfg: Option<&UserConfig>) {
     if let Some(user_cfg) = user_cfg {
+        if cli.payout_memo.is_none() && !cli.no_payout_memo {
+            cli.payout_memo = user_cfg.payout_memo.clone();
+        }
         if cli.mode.is_none() {
             cli.mode = user_cfg.mode;
         }
@@ -2598,6 +2654,34 @@ fn resolve_first_run_pool_inputs(cli: &mut Cli, user_config_path: &Path) -> Resu
         cli.mining_address = Some(address);
     }
 
+    if cli.payout_memo.is_none()
+        && cli
+            .mining_address
+            .as_deref()
+            .and_then(crate::payout_destination::known_exchange)
+            .is_some()
+    {
+        if !interactive {
+            bail!("this shared exchange address requires --payout-memo");
+        }
+        eprintln!("This exchange uses a shared address. A deposit memo is required.");
+        loop {
+            eprint!("Enter your deposit memo: ");
+            io::stderr().flush()?;
+            let mut memo = String::new();
+            if io::stdin().read_line(&mut memo)? == 0 {
+                bail!("a deposit memo is required");
+            }
+            let memo = memo.trim_end_matches(['\r', '\n']).to_string();
+            match crate::payout_destination::validate_memo(&memo) {
+                Ok(()) => {
+                    cli.payout_memo = Some(memo);
+                    break;
+                }
+                Err(error) => eprintln!("{error}"),
+            }
+        }
+    }
     if cli
         .pool_url
         .as_ref()
@@ -2675,10 +2759,12 @@ fn persist_bootstrap_user_config(
     user_config_path: &Path,
     dev_fee_pool_worker: &str,
 ) -> Result<()> {
+    validate_payout_memo_config(cli)?;
     let mode = cli.mode.unwrap_or(MiningMode::Pool);
     let cfg = UserConfig {
         schema_version: USER_CONFIG_SCHEMA_VERSION,
         mode: Some(mode),
+        payout_memo: cli.payout_memo.clone(),
         address: cli
             .mining_address
             .as_ref()
@@ -3717,6 +3803,30 @@ mod tests {
         assert!(validate_cli_mining_address(&cli, "--address").is_err());
     }
 
+    #[test]
+    fn payout_memo_config_preserves_exact_bytes_and_requires_explicit_address_override() {
+        let mut cli = sample_cli();
+        cli.mode = Some(MiningMode::Pool);
+        cli.mining_address = Some(crate::dev_fee::DEV_ADDRESS.into());
+        cli.payout_memo = Some("ID000123".into());
+        let dir = unique_temp_dir();
+        let path = dir.join("config.json");
+        persist_bootstrap_user_config(&cli, &path, "dev").unwrap();
+        let saved = read_user_config(&path).unwrap().unwrap();
+        assert_eq!(saved.payout_memo.as_deref(), Some("ID000123"));
+        cli.payout_memo = None;
+        cli.mining_address = Some("another-address".into());
+        assert!(validate_saved_memo_override(&cli, Some(&saved)).is_err());
+        cli.no_payout_memo = true;
+        assert!(validate_saved_memo_override(&cli, Some(&saved)).is_ok());
+        apply_user_config_defaults(&mut cli, Some(&saved));
+        assert!(cli.payout_memo.is_none());
+        cli.payout_memo = Some("001".into());
+        cli.mode = Some(MiningMode::Daemon);
+        assert!(validate_payout_memo_config(&cli).is_err());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
     fn sample_cli() -> Cli {
         Cli {
             telemetry: None,
@@ -3734,6 +3844,8 @@ mod tests {
             wallet_password: None,
             wallet_password_file: None,
             mining_address: None,
+            payout_memo: None,
+            no_payout_memo: false,
             cookie: None,
             daemon_dir: None,
             data_dir: PathBuf::from("./seine-data"),

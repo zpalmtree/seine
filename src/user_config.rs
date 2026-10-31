@@ -14,6 +14,8 @@ pub struct UserConfig {
     pub schema_version: u32,
     pub mode: Option<MiningMode>,
     pub address: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payout_memo: Option<String>,
     pub pool_url: Option<String>,
     pub pool_worker: Option<String>,
     pub dev_fee_pool_worker: Option<String>,

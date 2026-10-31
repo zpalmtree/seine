@@ -9,6 +9,7 @@ mod diagnostics;
 mod hardware_telemetry;
 mod memory_modules;
 mod miner;
+mod payout_destination;
 mod pool;
 mod proxy;
 mod runtime_identity;

@@ -87,6 +87,7 @@ pub const POOL_NOTIFICATION_FAILOVER: &str = "pool_failover";
 const CLIENT_CAPABILITIES: &[&str] = &[
     STRATUM_CAPABILITY_LOGIN_NEGOTIATION,
     STRATUM_CAPABILITY_VALIDATION_STATUS,
+    crate::payout_destination::CAP_PAYOUT_MEMO,
     STRATUM_CAPABILITY_SUBMIT_CLAIMED_HASH,
     STRATUM_CAPABILITY_DIFFICULTY_HINT,
     STRATUM_CAPABILITY_SAME_TEMPLATE_REBIND_V1,
@@ -98,6 +99,7 @@ const CLIENT_CAPABILITIES: &[&str] = &[
 const CLIENT_CAPABILITIES_WITH_BLAKE2B: &[&str] = &[
     STRATUM_CAPABILITY_LOGIN_NEGOTIATION,
     STRATUM_CAPABILITY_VALIDATION_STATUS,
+    crate::payout_destination::CAP_PAYOUT_MEMO,
     STRATUM_CAPABILITY_SUBMIT_CLAIMED_HASH,
     STRATUM_CAPABILITY_DIFFICULTY_HINT,
     STRATUM_CAPABILITY_SAME_TEMPLATE_REBIND_V1,
@@ -183,6 +185,8 @@ pub struct PoolSubmitRetry {
 
 #[derive(Debug, Clone)]
 pub struct PoolLoginAck {
+    pub payout_account: Option<String>,
+    pub min_payout_atomic: Option<u64>,
     pub protocol_version: u32,
     pub capabilities: Vec<String>,
     pub required_capabilities: Vec<String>,
@@ -266,6 +270,20 @@ impl PoolClient {
         worker: String,
         process_shutdown: Arc<AtomicBool>,
     ) -> Result<Self> {
+        Self::connect_via_with_memo(pool_url, proxy, address, worker, None, process_shutdown)
+    }
+
+    pub fn connect_via_with_memo(
+        pool_url: &str,
+        proxy: Option<&SocksProxy>,
+        address: String,
+        worker: String,
+        payout_memo: Option<String>,
+        process_shutdown: Arc<AtomicBool>,
+    ) -> Result<Self> {
+        if let Some(memo) = &payout_memo {
+            crate::payout_destination::validate_memo(memo)?;
+        }
         let mut endpoints = parse_pool_endpoints(pool_url)?;
         for endpoint in &mut endpoints {
             endpoint.proxy = proxy.cloned();
@@ -284,6 +302,7 @@ impl PoolClient {
             .spawn(move || {
                 run_pool_client_thread(
                     endpoints,
+                    payout_memo,
                     address,
                     worker,
                     submit_rx,
@@ -414,6 +433,8 @@ struct StratumRequest<'a, T: Serialize> {
 
 #[derive(Debug, Serialize)]
 struct LoginParams<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    payout_memo: Option<&'a str>,
     address: &'a str,
     worker: &'a str,
     protocol_version: u32,
@@ -457,6 +478,10 @@ struct StratumMessage {
 
 #[derive(Debug, Deserialize, Default)]
 struct LoginResult {
+    #[serde(default)]
+    payout_account: Option<String>,
+    #[serde(default)]
+    min_payout_atomic: Option<u64>,
     #[serde(default)]
     protocol_version: Option<u32>,
     #[serde(default)]
@@ -541,6 +566,7 @@ fn take_ready_nonce_refill(
 
 fn run_pool_client_thread(
     endpoints: Vec<PoolEndpoint>,
+    payout_memo: Option<String>,
     address: String,
     worker: String,
     submit_rx: Receiver<PoolSubmit>,
@@ -566,6 +592,7 @@ fn run_pool_client_thread(
 
     runtime.block_on(run_pool_client_loop(
         endpoints,
+        payout_memo,
         address,
         worker,
         submit_rx,
@@ -579,6 +606,7 @@ fn run_pool_client_thread(
 
 async fn run_pool_client_loop(
     endpoints: Vec<PoolEndpoint>,
+    payout_memo: Option<String>,
     address: String,
     worker: String,
     submit_rx: Receiver<PoolSubmit>,
@@ -606,7 +634,12 @@ async fn run_pool_client_loop(
                 } else {
                     None
                 };
-                let login_payload = match login_payload(&address, &worker, login_hint) {
+                let login_payload = match login_payload_with_memo(
+                    &address,
+                    &worker,
+                    login_hint,
+                    payout_memo.as_deref(),
+                ) {
                     Ok(payload) => payload,
                     Err(_) => {
                         reject_queued_submits(
@@ -1003,12 +1036,13 @@ async fn run_pool_client_loop(
                                         decoded_at,
                                     );
                                 }
+                                if payout_memo.is_some() && !login_confirmed && matches!(&event, PoolEvent::Job(_)) { continue; }
                                 if let PoolEvent::Job(job) = &event {
                                     let abandoned = retry_queue.observe_job(job, decoded_at);
                                     reject_abandoned_submits(&event_tx, abandoned);
                                 }
                                 if let PoolEvent::LoginAccepted(ack) = &event {
-                                    match evaluate_login_ack(ack) {
+                                    match evaluate_login_ack_for_destination(ack, &address, payout_memo.as_deref()) {
                                         Ok(include_claimed_hash) => {
                                             submit_claimed_hash_enabled = include_claimed_hash;
                                             submit_timing_enabled = ack
@@ -1543,11 +1577,22 @@ pub(crate) async fn read_line_limited_async<R: tokio::io::AsyncRead + Unpin>(
         .map_err(|_| anyhow!("pool message is not valid UTF-8"))
 }
 
+#[cfg(test)]
 fn login_payload(address: &str, worker: &str, difficulty_hint: Option<u64>) -> Result<String> {
+    login_payload_with_memo(address, worker, difficulty_hint, None)
+}
+
+fn login_payload_with_memo(
+    address: &str,
+    worker: &str,
+    difficulty_hint: Option<u64>,
+    payout_memo: Option<&str>,
+) -> Result<String> {
     let request = StratumRequest {
         id: LOGIN_REQUEST_ID,
         method: "login",
         params: LoginParams {
+            payout_memo,
             address,
             worker,
             protocol_version: STRATUM_PROTOCOL_VERSION,
@@ -1915,6 +1960,8 @@ fn parse_login_result(result: Option<Value>) -> PoolLoginAck {
         .unwrap_or(1);
 
     PoolLoginAck {
+        payout_account: parsed.payout_account,
+        min_payout_atomic: parsed.min_payout_atomic,
         protocol_version,
         capabilities: normalize_capability_list(parsed.capabilities),
         required_capabilities: normalize_capability_list(parsed.required_capabilities),
@@ -1953,6 +2000,22 @@ fn should_send_claimed_hash(ack: &PoolLoginAck) -> bool {
             .required_capabilities
             .iter()
             .any(|capability| capability == STRATUM_CAPABILITY_SUBMIT_CLAIMED_HASH)
+}
+
+fn evaluate_login_ack_for_destination(
+    ack: &PoolLoginAck,
+    address: &str,
+    memo: Option<&str>,
+) -> std::result::Result<bool, String> {
+    if memo.is_some()
+        && (!ack.supports(crate::payout_destination::CAP_PAYOUT_MEMO)
+            || ack.payout_account.as_deref()
+                != Some(crate::payout_destination::account_id(address, memo).as_str())
+            || ack.min_payout_atomic.is_none_or(|minimum| minimum == 0))
+    {
+        return Err("pool did not acknowledge the payout memo; no shares will be submitted".into());
+    }
+    evaluate_login_ack(ack)
 }
 
 fn evaluate_login_ack(ack: &PoolLoginAck) -> std::result::Result<bool, String> {
@@ -2520,6 +2583,8 @@ mod tests {
     #[test]
     fn claimed_hash_toggle_respects_negotiation() {
         let legacy = PoolLoginAck {
+            payout_account: None,
+            min_payout_atomic: None,
             protocol_version: 1,
             capabilities: Vec::new(),
             required_capabilities: Vec::new(),
@@ -2527,6 +2592,8 @@ mod tests {
         assert!(should_send_claimed_hash(&legacy));
 
         let negotiated_without_claimed_hash = PoolLoginAck {
+            payout_account: None,
+            min_payout_atomic: None,
             protocol_version: 2,
             capabilities: vec![STRATUM_CAPABILITY_VALIDATION_STATUS.to_string()],
             required_capabilities: Vec::new(),
@@ -2534,6 +2601,8 @@ mod tests {
         assert!(!should_send_claimed_hash(&negotiated_without_claimed_hash));
 
         let negotiated_with_claimed_hash = PoolLoginAck {
+            payout_account: None,
+            min_payout_atomic: None,
             protocol_version: 2,
             capabilities: vec![STRATUM_CAPABILITY_SUBMIT_CLAIMED_HASH.to_string()],
             required_capabilities: Vec::new(),
@@ -2541,6 +2610,8 @@ mod tests {
         assert!(should_send_claimed_hash(&negotiated_with_claimed_hash));
 
         let required_claimed_hash = PoolLoginAck {
+            payout_account: None,
+            min_payout_atomic: None,
             protocol_version: 2,
             capabilities: Vec::new(),
             required_capabilities: vec![STRATUM_CAPABILITY_SUBMIT_CLAIMED_HASH.to_string()],
@@ -2689,6 +2760,8 @@ mod tests {
     #[test]
     fn evaluate_login_ack_rejects_unsupported_required_capability() {
         let ack = PoolLoginAck {
+            payout_account: None,
+            min_payout_atomic: None,
             protocol_version: 2,
             capabilities: vec![STRATUM_CAPABILITY_SUBMIT_CLAIMED_HASH.to_string()],
             required_capabilities: vec!["future_capability".to_string()],
@@ -4014,5 +4087,25 @@ mod tests {
         );
         assert_eq!(ack.retries, 1);
         assert_eq!(submits.len(), 1);
+    }
+    #[test]
+    fn payout_memo_requires_exact_acknowledgement_and_preserves_wire_bytes() {
+        use crate::payout_destination::{account_id, CAP_PAYOUT_MEMO};
+        let wire: Value = serde_json::from_str(
+            &login_payload_with_memo("address", "rig", None, Some("ID001")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(wire["params"]["payout_memo"], "ID001");
+        let plain: Value =
+            serde_json::from_str(&login_payload("address", "rig", None).unwrap()).unwrap();
+        assert!(plain["params"].get("payout_memo").is_none());
+        let mut ack = parse_login_result(Some(
+            serde_json::json!({"protocol_version": 2, "capabilities": [CAP_PAYOUT_MEMO], "payout_account": account_id("address", Some("ID001")), "min_payout_atomic": 100000000}),
+        ));
+        assert!(evaluate_login_ack_for_destination(&ack, "address", Some("ID001")).is_ok());
+        assert!(evaluate_login_ack_for_destination(&ack, "address", Some("ID002")).is_err());
+        ack.payout_account = None;
+        assert!(evaluate_login_ack_for_destination(&ack, "address", Some("ID001")).is_err());
+        assert!(evaluate_login_ack_for_destination(&ack, "address", None).is_ok());
     }
 }

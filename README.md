@@ -18,6 +18,28 @@
   <img src="docs/assets/screenshots/dashboard.png" alt="seine mining on bntpool from an Apple M4 Max at 30 H/s, 5 of 5 shares accepted" width="900">
 </p>
 
+## Exchange deposits
+
+For an exchange that requires a memo, use both its full deposit address and your
+own deposit memo with a pool that supports memo payouts:
+
+```sh
+./seine --address 'EXCHANGE_ADDRESS' --payout-memo 'YOUR_DEPOSIT_MEMO'
+```
+
+Seine checks pool support before mining and reports the pool's memo payout
+minimum. Known shared addresses require a memo; first-run setup prompts for one
+when needed. Unknown or rotated addresses can use `--payout-memo` too. Personal
+wallets and ordinary Blocknet IDs need no new flag. Memo mining requires the full
+address and is not supported in daemon mode or through Seine farm proxies.
+
+First-run setup saves the memo with the address, preserving case and leading zeros. When
+changing a saved exchange address, explicitly provide the new memo, or use
+`--no-payout-memo` to switch to a personal wallet. A changed address or memo has a
+separate pool balance. Command-line overrides apply to the current run; edit
+`seine-data/seine.config.json` to change saved settings. On the pool Stats page,
+enter both the address and memo.
+
 ## Why seine
 
 - **Fast on whatever you own.** Hand-tuned Argon2id kernels for AVX2, AVX-512,

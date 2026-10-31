@@ -14,6 +14,8 @@ For the raw CLI output, run:
 |---|---|---|
 | `--mode` | `pool` or `daemon`, default `pool` | Selects mining mode. |
 | `--pool-url` (`-o`, `--url`) | `host:port`, `stratum+tcp://host:port` or `stratum+ssl://host:port` | Stratum pool endpoint used in pool mode. `stratum+ssl://` (also `stratum+tls://`) connects over TLS. Repeat the flag or separate URLs with commas to add backup pools in failover order. See [pool connections](guides/configuration.md#pool-connections). |
+| `--payout-memo` | UTF-8 text, unset by default | Exchange deposit memo, preserved exactly. Requires a full deposit address and a pool that acknowledges memo support. Not supported in daemon mode or farm-proxy hosting. |
+| `--no-payout-memo` | flag | Ignores a saved payout memo for this run when switching back to a personal address. |
 | `--pool-worker` (`--worker`) | string | Worker name sent during pool login. |
 | `--pool-proxy` (`--socks5`) | `socks5://[user:pass@]host:port` | Sends pool connections, including backup pools and dev-fee rounds, through a SOCKS5 proxy. The proxy resolves pool hostnames. Other HTTPS requests, such as pool stats and update checks, still connect directly. |
 | `--proxy-listen` | `host:port` | Runs Seine as a farm proxy instead of mining. Rigs connect to this address and share one session with `--pool-url`; every share pays `--address`. See [farm proxy](guides/farm-proxy.md). |

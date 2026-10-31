@@ -3989,6 +3989,7 @@ pub(crate) mod tests {
             wallet_password: None,
             wallet_password_file: None,
             mining_address: None,
+            payout_memo: None,
             backend_specs: vec![BackendSpec {
                 kind: BackendKind::Cpu,
                 device_index: None,
