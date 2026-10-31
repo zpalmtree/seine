@@ -120,10 +120,11 @@ __device__ __forceinline__ unsigned int coop_shfl_u32(
 // density, then the last block, two rebuild slots and a sink for skipped stores.
 // Requires the pipelined single-pass fill.
 // SEINE_AMD_DI_EARLY: the data-independent half computes each reference index one
-// block before its load. On by default for RDNA2 (gfx103x).
+// block before its load. On by default for RDNA2 (gfx103x) and RDNA3 (gfx110x).
 #ifndef SEINE_AMD_DI_EARLY
 #if defined(__gfx1030__) || defined(__gfx1031__) || defined(__gfx1032__) || defined(__gfx1033__) || \
-    defined(__gfx1034__) || defined(__gfx1035__) || defined(__gfx1036__)
+    defined(__gfx1034__) || defined(__gfx1035__) || defined(__gfx1036__) || \
+    defined(__gfx1100__) || defined(__gfx1101__) || defined(__gfx1102__) || defined(__gfx1103__)
 #define SEINE_AMD_DI_EARLY 1
 #else
 #define SEINE_AMD_DI_EARLY 0
