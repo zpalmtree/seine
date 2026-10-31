@@ -287,6 +287,45 @@ fn prebuilt_argon2_ptx(cc_major: u32, m_blocks: u32, t_cost: u32) -> Option<&'st
     }
 }
 
+/// `CUDA_KERNEL_SRC` built like the PTX for exact architectures, loaded without
+/// compiling when the device matches. `nvidia/argon2_cubins.txt` lists their
+/// options; `scripts/gen_argon2_ptx.py` regenerates them with the PTX.
+const ARGON2_CUBIN_SM61: &[u8] = include_bytes!("nvidia/argon2_sm61.cubin");
+const ARGON2_CUBIN_SM75: &[u8] = include_bytes!("nvidia/argon2_sm75.cubin");
+const ARGON2_CUBIN_SM86: &[u8] = include_bytes!("nvidia/argon2_sm86.cubin");
+const ARGON2_CUBIN_SM89: &[u8] = include_bytes!("nvidia/argon2_sm89.cubin");
+const ARGON2_CUBIN_SM120: &[u8] = include_bytes!("nvidia/argon2_sm120.cubin");
+#[cfg(test)]
+const ARGON2_CUBIN_MANIFEST: &str = include_str!("nvidia/argon2_cubins.txt");
+
+/// The prebuilt Argon2 cubin for a device of compute capability
+/// `cc_major`.`cc_minor`, unless SEINE_NVIDIA_DEFINES changes the kernel.
+fn prebuilt_argon2_cubin(
+    cc_major: u32,
+    cc_minor: u32,
+    m_blocks: u32,
+    t_cost: u32,
+) -> Option<&'static [u8]> {
+    #[cfg(test)]
+    if tests::force_prebuilt_argon2() {
+        return None;
+    }
+    let defines_set = std::env::var("SEINE_NVIDIA_DEFINES")
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+    if m_blocks != PREBUILT_ARGON2_M_BLOCKS || t_cost != 1 || defines_set {
+        return None;
+    }
+    match (cc_major, cc_minor) {
+        (6, 1) => Some(ARGON2_CUBIN_SM61),
+        (7, 5) => Some(ARGON2_CUBIN_SM75),
+        (8, 6) => Some(ARGON2_CUBIN_SM86),
+        (8, 9) => Some(ARGON2_CUBIN_SM89),
+        (12, 0) => Some(ARGON2_CUBIN_SM120),
+        _ => None,
+    }
+}
+
 /// Fill-loop variant per architecture, as NVRTC defines: GTX 10 series (6.x)
 /// loads data-independent references two blocks ahead into registers; GTX 16
 /// and RTX 20 series (7.x) do the same with blocks held by rows, two blocks per
@@ -757,6 +796,7 @@ impl CudaArgon2Engine {
             .compute_capability()
             .map_err(|err| anyhow!("failed to query compute capability: {err:?}"))?;
         let cc_major_u32 = u32::try_from(cc_major.max(0)).unwrap_or(0);
+        let cc_minor_u32 = u32::try_from(cc_minor.max(0)).unwrap_or(0);
 
         let params = pow_params()
             .map_err(|err| anyhow!("invalid Argon2 parameters for CUDA backend: {err}"))?;
@@ -803,7 +843,14 @@ impl CudaArgon2Engine {
             &nvrtc_version,
         );
         let cache_path = cubin_cache_file_path(cubin_cache_dir, &cache_key);
-        let module = if !use_nvrtc {
+        // A matching prebuilt cubin needs no compile; otherwise build with
+        // NVRTC or load the prebuilt PTX.
+        let prebuilt_module = prebuilt_argon2_cubin(cc_major_u32, cc_minor_u32, m_blocks, t_cost)
+            .and_then(|cubin| ctx.load_module(Ptx::from_binary(cubin.to_vec())).ok());
+        let compiled = use_nvrtc && prebuilt_module.is_none();
+        let module = if let Some(module) = prebuilt_module {
+            module
+        } else if !use_nvrtc {
             let ptx = prebuilt_argon2_ptx(cc_major_u32, m_blocks, t_cost).ok_or_else(|| {
                 anyhow!("no prebuilt Argon2 kernel for compute capability {cc_major}.{cc_minor}")
             })?;
@@ -857,8 +904,8 @@ impl CudaArgon2Engine {
         let kernel_nonfused = module
             .load_function("argon2id_fill_kernel")
             .map_err(|err| anyhow!("failed to load CUDA kernel function: {err:?}"))?;
-        // The prebuilt PTX leaves out the optional fused-target entry point.
-        let kernel_fused_target = if use_nvrtc {
+        // The prebuilt kernels leave out the optional fused-target entry point.
+        let kernel_fused_target = if compiled {
             Some(
                 module
                     .load_function("argon2id_fill_kernel_fused_target")
@@ -5515,6 +5562,48 @@ mod tests {
         assert!(!arch_fill_defines(12).contains(&"SEINE_INLINE_REBUILD=1"));
         assert!(!arch_fill_defines(12).contains(&"SEINE_REF_RING=1U"));
         assert!(arch_fill_defines(5).is_empty());
+    }
+
+    #[test]
+    fn prebuilt_argon2_cubins_match_the_kernel_source_and_defines() {
+        use sha2::{Digest, Sha256};
+        let digest = format!("{:x}", Sha256::digest(CUDA_KERNEL_SRC.as_bytes()));
+        assert!(
+            ARGON2_CUBIN_MANIFEST.contains(&format!("kernel-sha256: {digest}\n")),
+            "argon2 cubins are stale: run scripts/gen_argon2_ptx.py"
+        );
+        for (name, cc_major, arch, cubin) in [
+            ("argon2_sm61.cubin", 6, "sm_61", ARGON2_CUBIN_SM61),
+            ("argon2_sm75.cubin", 7, "sm_75", ARGON2_CUBIN_SM75),
+            ("argon2_sm86.cubin", 8, "sm_86", ARGON2_CUBIN_SM86),
+            ("argon2_sm89.cubin", 8, "sm_89", ARGON2_CUBIN_SM89),
+            ("argon2_sm120.cubin", 12, "sm_120", ARGON2_CUBIN_SM120),
+        ] {
+            assert!(cubin.starts_with(b"\x7fELF"), "{name} is not an ELF cubin");
+            let line = ARGON2_CUBIN_MANIFEST
+                .lines()
+                .find(|line| line.starts_with(&format!("{name}:")))
+                .unwrap_or_else(|| panic!("{name} missing from argon2_cubins.txt"));
+            assert!(line.contains(&format!("--gpu-architecture={arch}")));
+            assert!(line.contains(&format!("--maxrregcount={DEFAULT_NVIDIA_MAX_RREGCOUNT}")));
+            assert!(line.contains(&format!(
+                "-DSEINE_CANCEL_CHECK_BLOCK_INTERVAL={}U",
+                select_cancel_check_block_interval(cc_major)
+            )));
+            for define in arch_fill_defines(cc_major) {
+                assert!(line.contains(&format!("-D{define}")), "{define} for {name}");
+            }
+        }
+    }
+
+    #[test]
+    fn prebuilt_argon2_cubins_cover_the_common_gpus() {
+        let m = PREBUILT_ARGON2_M_BLOCKS;
+        for (major, minor) in [(6, 1), (7, 5), (8, 6), (8, 9), (12, 0)] {
+            assert!(prebuilt_argon2_cubin(major, minor, m, 1).is_some());
+        }
+        assert!(prebuilt_argon2_cubin(8, 0, m, 1).is_none());
+        assert!(prebuilt_argon2_cubin(8, 6, m / 2, 1).is_none());
     }
 
     #[test]
