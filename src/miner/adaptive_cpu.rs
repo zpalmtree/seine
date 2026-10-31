@@ -210,10 +210,10 @@ fn initial_threads(
     }
 }
 
-// Cold start for CPUs whose cohort mines on a streaming kernel. Zen 4/5 and
-// Intel Xeons with an AVX-512 streaming default, Intel AVX2 desktops and
-// Broadwell-EP, Skylake-SP and Cascade Lake Xeons start at every allowed logical CPU that fits in RAM; Zen 2/3
-// (AVX2 streaming) start at the physical core count.
+// Cold start for CPUs whose cohort mines on a streaming kernel. Zen 4/5, Intel
+// Xeons with an AVX-512 streaming default and Intel AVX2 desktops start at every
+// allowed logical CPU that fits in RAM, as do Broadwell-EP Xeons; Zen 2/3 (AVX2
+// streaming) start at the physical core count.
 // Count trials still decide afterwards.
 fn cohort_cold_start(cfg: &Config, host: &CpuAutotuneHostFingerprint, max: usize) -> Option<usize> {
     if cfg!(test) || cfg.cpu_profile == CpuPerformanceProfile::Efficiency {
