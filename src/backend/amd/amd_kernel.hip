@@ -560,12 +560,48 @@ __global__ void build_seed_blocks_kernel(
     }
 }
 
+// SEINE_AMD_BLAMKA_MAD: BlaMka as one 64-bit multiply-add plus a 32-bit fix-up.
+// On by default for RDNA2 (gfx103x).
+#ifndef SEINE_AMD_BLAMKA_MAD
+#if defined(__gfx1030__) || defined(__gfx1031__) || defined(__gfx1032__) || defined(__gfx1033__) || \
+    defined(__gfx1034__) || defined(__gfx1035__) || defined(__gfx1036__)
+#define SEINE_AMD_BLAMKA_MAD 1
+#else
+#define SEINE_AMD_BLAMKA_MAD 0
+#endif
+#endif
+#if SEINE_AMD_BLAMKA_MAD
+// a * b + c with a and b 32-bit; kept as a single instruction.
+__device__ __forceinline__ unsigned long long mad_u64_u32(
+    unsigned int a, unsigned int b, unsigned long long c
+) {
+    unsigned long long r;
+    asm("v_mad_u64_u32 %0, null, %1, %2, %3" : "=v"(r) : "v"(a), "v"(b), "v"(c));
+    return r;
+}
+#endif
+
+// x is the operand produced two steps earlier, y the one produced by the previous step.
 __device__ __forceinline__ unsigned long long blamka(
     unsigned long long x,
     unsigned long long y
 ) {
+#if SEINE_AMD_BLAMKA_MAD
+    // 2*x_lo = (2*x_lo mod 2^32) + (x_lo >> 31) * 2^32, so x + y + 2*x_lo*y_lo equals
+    // (x + (2*x_lo mod 2^32) * y_lo) + (y_lo | ((((x_lo >> 31) ? y_lo : 0) + y_hi) << 32)).
+    const unsigned int xl = static_cast<unsigned int>(x);
+    const unsigned int yl = static_cast<unsigned int>(y);
+    const unsigned int yh = static_cast<unsigned int>(y >> 32);
+    const unsigned int xmask = static_cast<unsigned int>(static_cast<int>(xl) >> 31);
+    const unsigned long long p = mad_u64_u32(xl << 1, yl, x);
+    unsigned long long q = static_cast<unsigned long long>(yl) |
+                           (static_cast<unsigned long long>((yl & xmask) + yh) << 32);
+    asm("" : "+v"(q));
+    return p + q;
+#else
     const unsigned long long low = 0xFFFFFFFFULL;
     return x + y + 2ULL * (x & low) * (y & low);
+#endif
 }
 
 __device__ __forceinline__ void permute_step(
