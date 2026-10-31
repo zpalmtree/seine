@@ -119,6 +119,16 @@ __device__ __forceinline__ unsigned int coop_shfl_u32(
 // layout: blocks below the boundary at their own index, even blocks above it at half
 // density, then the last block, two rebuild slots and a sink for skipped stores.
 // Requires the pipelined single-pass fill.
+// SEINE_AMD_DI_EARLY: the data-independent half computes each reference index one
+// block before its load. On by default for RDNA2 (gfx103x).
+#ifndef SEINE_AMD_DI_EARLY
+#if defined(__gfx1030__) || defined(__gfx1031__) || defined(__gfx1032__) || defined(__gfx1033__) || \
+    defined(__gfx1034__) || defined(__gfx1035__) || defined(__gfx1036__)
+#define SEINE_AMD_DI_EARLY 1
+#else
+#define SEINE_AMD_DI_EARLY 0
+#endif
+#endif
 #ifndef SEINE_AMD_SKIP_FROM
 #define SEINE_AMD_SKIP_FROM 0U
 #endif
@@ -1154,6 +1164,56 @@ __device__ __forceinline__ bool fill_single_pass_pipelined(
             my_address[first_block], slice * segment_length + first_block
         );
         load_row_words(memory + static_cast<unsigned long long>(cur_ref) * 128ULL, w0, y0, y1, y2, y3);
+#if SEINE_AMD_DI_EARLY
+        // Reference indices run one block ahead of the loads: ref(cur + 1) is ready
+        // when block cur starts, and ref(cur + 2) is computed during block cur.
+        unsigned int next_ref = pass0_ref_index(
+            my_address[first_block + 1U], slice * segment_length + first_block + 1U
+        );
+        for (unsigned int block = first_block; block < segment_length; ++block) {
+            const unsigned int cur = slice * segment_length + block;
+            if (((block - first_block) % CANCEL_CHECK_BLOCK_INTERVAL) == 0U) {
+                unsigned int cancel_val = 0U;
+                if (tid == 0U) cancel_val = cancel_flag[0];
+                cancel_val = coop_shfl_u32(cancel_val, 0U);
+                if (cancel_val != 0U) {
+                    return false;
+                }
+            }
+            // The last block reloads a valid reference instead of a next one.
+            const unsigned int load_ref = (block + 1U) < segment_length ? next_ref : cur_ref;
+            unsigned long long n0, n1, n2, n3;
+            load_row_words(memory + static_cast<unsigned long long>(load_ref) * 128ULL, w0, n0, n1, n2, n3);
+            // Block + 2 opens a fresh address block: generate it after this block, then
+            // read its first word.
+            const bool has_after = (block + 2U) < segment_length;
+            const bool regen = has_after && ((block + 2U) & 127U) == 0U;
+            // The address word is read before the rounds and its index computed after
+            // word 0, so neither sits on the path between blocks.
+            const unsigned long long after_word = my_address[(block + 2U) & 127U];
+            unsigned int after_ref = load_ref;
+            SEINE_PIPELINED_BLOCK(
+                memory + static_cast<unsigned long long>(cur) * 128ULL,
+                {
+                    if (has_after && !regen) {
+                        after_ref = pass0_ref_index(after_word, cur + 2U);
+                    }
+                    asm("" : "+v"(after_ref));
+                }
+            )
+            if (regen) {
+                update_address_block_coop(my_address, my_input, my_zero, scratch_r, scratch_q, tid);
+                coop_sync();
+                after_ref = pass0_ref_index(my_address[0], cur + 2U);
+            }
+            y0 = n0;
+            y1 = n1;
+            y2 = n2;
+            y3 = n3;
+            cur_ref = load_ref;
+            next_ref = after_ref;
+        }
+#else
         for (unsigned int block = first_block; block < segment_length; ++block) {
             const unsigned int cur = slice * segment_length + block;
             if (((block - first_block) % CANCEL_CHECK_BLOCK_INTERVAL) == 0U) {
@@ -1183,6 +1243,7 @@ __device__ __forceinline__ bool fill_single_pass_pipelined(
             y3 = n3;
             cur_ref = next_ref;
         }
+#endif
     }
 
     // Data-dependent half: the next reference index is word 0 of the block just
