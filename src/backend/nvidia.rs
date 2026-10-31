@@ -412,6 +412,9 @@ const DEFAULT_NVIDIA_AUTOTUNE_SAMPLES: u32 = 2;
 // Largest share of a lane's blocks left unstored to fit one more lane: the
 // kernel keeps unstored blocks in the second half of the lane.
 const NVIDIA_MAX_SKIPPED_LANE_FRACTION: f64 = 0.25;
+// Largest share of a lane's blocks left unstored to fit a second lane beyond
+// the full count.
+const NVIDIA_SECOND_PACKED_LANE_MAX_SKIPPED: f64 = 0.20;
 
 // Longest per-lane hash for which a job change lets the hashes in flight finish
 // (submitted under the replaced job, within REPLACED_JOB_SUBMIT_WINDOW).
@@ -3779,9 +3782,10 @@ fn fill_v1_requested() -> bool {
         .unwrap_or(false)
 }
 
-/// Lane counts to try, best first, each with the blocks stored per lane. One
-/// lane more than fits at full size is tried first when leaving late odd blocks
-/// unstored (at most NVIDIA_MAX_SKIPPED_LANE_FRACTION of them) makes room;
+/// Lane counts to try, best first, each with the blocks stored per lane. When
+/// leaving late odd blocks unstored makes room, two lanes more than fit at full
+/// size are tried first (at most NVIDIA_SECOND_PACKED_LANE_MAX_SKIPPED of each
+/// lane unstored), then one more (at most NVIDIA_MAX_SKIPPED_LANE_FRACTION);
 /// smaller counts store every block.
 fn plan_lane_storage(
     m_blocks: u32,
@@ -3790,36 +3794,43 @@ fn plan_lane_storage(
     max_lanes_override: Option<usize>,
     skip_supported: bool,
 ) -> Vec<(usize, u32)> {
-    let packed_blocks = |lanes: usize| -> Option<u32> {
+    let min_blocks_for = |max_skipped: f64| (f64::from(m_blocks) * (1.0 - max_skipped)).ceil() as u32;
+    let packed_blocks = |lanes: usize, min_blocks: u32| -> Option<u32> {
         let per_lane_blocks = usable_bytes / (lanes.max(1) as u64) / 1024;
         let aligned = per_lane_blocks / u64::from(NVIDIA_LANE_STRIDE_ALIGN_BLOCKS)
             * u64::from(NVIDIA_LANE_STRIDE_ALIGN_BLOCKS);
         let aligned = u32::try_from(aligned.min(u64::from(m_blocks))).ok()?;
-        let min_blocks =
-            (f64::from(m_blocks) * (1.0 - NVIDIA_MAX_SKIPPED_LANE_FRACTION)).ceil() as u32;
         (aligned >= min_blocks).then_some(aligned)
     };
     let full_lanes = full_lanes.clamp(1, MAX_LANES_HARD_LIMIT);
-    let (packed_lanes, top_lanes) = match max_lanes_override {
+    let (packed, top_lanes) = match max_lanes_override {
         Some(requested) => {
             let requested = requested.clamp(1, MAX_LANES_HARD_LIMIT);
-            (requested, requested)
+            (vec![(requested, NVIDIA_MAX_SKIPPED_LANE_FRACTION)], requested)
         }
-        None => ((full_lanes + 1).min(MAX_LANES_HARD_LIMIT), full_lanes),
+        None => (
+            vec![
+                (full_lanes + 2, NVIDIA_SECOND_PACKED_LANE_MAX_SKIPPED),
+                (full_lanes + 1, NVIDIA_MAX_SKIPPED_LANE_FRACTION),
+            ],
+            full_lanes,
+        ),
     };
     let mut plans = Vec::new();
-    if skip_supported && packed_lanes > full_lanes {
-        if let Some(blocks) = packed_blocks(packed_lanes) {
+    for (lanes, max_skipped) in packed {
+        if !skip_supported || lanes <= full_lanes || lanes > MAX_LANES_HARD_LIMIT {
+            continue;
+        }
+        let min_blocks = min_blocks_for(max_skipped);
+        if let Some(blocks) = packed_blocks(lanes, min_blocks) {
             // Smaller packings for the same lane count, in case the allocation
             // does not fit.
-            let min_blocks =
-                (f64::from(m_blocks) * (1.0 - NVIDIA_MAX_SKIPPED_LANE_FRACTION)).ceil() as u32;
             let step = 16 * NVIDIA_LANE_STRIDE_ALIGN_BLOCKS;
             plans.extend(
                 (0..5)
                     .map(|retry| blocks.saturating_sub(retry * step))
                     .take_while(|&stored| stored >= min_blocks)
-                    .map(|stored| (packed_lanes, stored)),
+                    .map(|stored| (lanes, stored)),
             );
         }
     }
@@ -5322,17 +5333,26 @@ mod tests {
     #[test]
     fn plan_lane_storage_adds_a_packed_lane_when_close() {
         let m_blocks = 1u32 << 21;
-        // 12 GiB card: 11,607 MiB usable fits 5 full lanes; 6 lanes need 5.6% unstored.
+        // 12 GiB card: 11,607 MiB usable fits 5 full lanes; 7 lanes need 19%
+        // unstored and come first, then 6 lanes at 5.6%.
         let usable = 11_607u64 * 1024 * 1024;
         let plans = plan_lane_storage(m_blocks, usable, 5, None, true);
-        assert_eq!(plans[0].0, 6);
-        assert!(plans[0].1 < m_blocks);
-        assert_eq!(plans[0].1 % NVIDIA_LANE_STRIDE_ALIGN_BLOCKS, 0);
-        assert!(u64::from(plans[0].1) * 1024 * 6 <= usable);
-        let packed = plans.iter().take_while(|plan| plan.0 == 6).count();
+        assert_eq!(plans[0].0, 7);
+        assert!(u64::from(plans[0].1) * 1024 * 7 <= usable);
+        let second = plans.iter().take_while(|plan| plan.0 == 7).count();
+        assert!(second >= 1);
+        assert!(plans[..second]
+            .iter()
+            .all(|plan| plan.1 >= (f64::from(m_blocks) * 0.80) as u32));
+        let rest = &plans[second..];
+        assert_eq!(rest[0].0, 6);
+        assert!(rest[0].1 < m_blocks);
+        assert_eq!(rest[0].1 % NVIDIA_LANE_STRIDE_ALIGN_BLOCKS, 0);
+        assert!(u64::from(rest[0].1) * 1024 * 6 <= usable);
+        let packed = rest.iter().take_while(|plan| plan.0 == 6).count();
         assert_eq!(packed, 5);
-        assert!(plans[..packed].windows(2).all(|pair| pair[1].1 < pair[0].1));
-        assert_eq!(plans[packed], (5, m_blocks));
+        assert!(rest[..packed].windows(2).all(|pair| pair[1].1 < pair[0].1));
+        assert_eq!(rest[packed], (5, m_blocks));
         assert_eq!(plans.last(), Some(&(1, m_blocks)));
         // Without support every plan stores whole lanes.
         assert_eq!(
@@ -5348,11 +5368,14 @@ mod tests {
         let usable = 4_500u64 * 1024 * 1024;
         let plans = plan_lane_storage(m_blocks, usable, 2, None, true);
         assert_eq!(plans[0], (2, m_blocks));
-        // 11 GB card, 10,600 MiB usable: 6 lanes leave about 14%.
+        // 11 GB card, 10,600 MiB usable: 6 lanes leave about 14%; 7 would leave 26%.
         let usable = 10_600u64 * 1024 * 1024;
         let plans = plan_lane_storage(m_blocks, usable, 5, None, true);
         assert_eq!(plans[0].0, 6);
         assert!(plans[0].1 < m_blocks * 7 / 8);
+        // 24 GB card, 24,180 MiB usable: 11 full lanes, 13 leave about 9%.
+        let usable = 24_180u64 * 1024 * 1024;
+        assert_eq!(plan_lane_storage(m_blocks, usable, 11, None, true)[0].0, 13);
     }
 
     #[test]
