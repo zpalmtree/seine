@@ -55,3 +55,19 @@ cargo test --no-default-features --bin seine longhorn_live_memo_handshake -- --i
 ```
 
 A successful handshake does not test an actual exchange deposit or payout.
+
+## Release artifact check (Linux)
+
+Run against an extracted candidate before publishing:
+
+```sh
+python3 scripts/check_memo_rollout.py --binary /path/to/extracted/seine
+```
+
+The bounded check uses temporary saved configurations, a terminal for the memo
+prompt, and loopback Stratum fixtures. It covers ordinary-wallet compatibility,
+saved exchange prompting and persistence, unattended missing-memo failure,
+optional payout minima, and memo preservation through failover and reconnect.
+Updates and hardware telemetry are disabled; the fixtures send no mining jobs.
+It prints the binary SHA-256 and passed checks. Repeat against the actual release
+artifact; a development candidate does not validate later builds or other OSes.
