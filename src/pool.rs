@@ -29,6 +29,7 @@ use submit_retry::{
 };
 
 const LOGIN_REQUEST_ID: u64 = 1;
+const INITIAL_WORK_TIMEOUT: Duration = Duration::from_secs(30);
 const RECONNECT_DELAY: Duration = Duration::from_secs(2);
 /// Longest reconnect delay a pool's `connection_limit` notice can ask for.
 const MAX_CONNECTION_LIMIT_DELAY: Duration = Duration::from_secs(120);
@@ -661,6 +662,7 @@ fn run_pool_client_thread(
         reconnect_requested,
         refill_requested,
         shutdown,
+        INITIAL_WORK_TIMEOUT,
     ));
 }
 
@@ -675,6 +677,7 @@ async fn run_pool_client_loop(
     reconnect_requested: Arc<AtomicBool>,
     refill_requested: Arc<Mutex<Option<String>>>,
     shutdown: Arc<AtomicBool>,
+    initial_work_timeout: Duration,
 ) {
     let mut next_request_id = LOGIN_REQUEST_ID + 1;
     let mut allow_login_difficulty_hint = false;
@@ -760,6 +763,44 @@ async fn run_pool_client_loop(
                     if should_shutdown(process_shutdown.as_ref(), shutdown.as_ref()) {
                         connection.abort();
                         return;
+                    }
+                    // A TCP connection or login acknowledgement alone does not
+                    // provide work. Do not leave a silent session parked forever.
+                    if current_job_id.is_none() && session_started.elapsed() >= initial_work_timeout
+                    {
+                        crate::diagnostics::record_failure(
+                            seine_telemetry::DiagnosticCode::Warning,
+                            seine_telemetry::DiagnosticKind::Timeout,
+                            None,
+                            seine_telemetry::FailureDetail::new(
+                                seine_telemetry::FailureReason::ConnectionTimedOut,
+                                seine_telemetry::DiagnosticOperation::PoolLogin,
+                            ),
+                        );
+                        reject_pending_submits(
+                            &event_tx,
+                            &mut pending_submits,
+                            &mut retry_queue,
+                            SUBMIT_REJECT_REASON_DISCONNECTED,
+                        );
+                        reject_queued_submits(
+                            &event_tx,
+                            &submit_rx,
+                            SUBMIT_REJECT_REASON_DISCONNECTED,
+                        );
+                        let _ = event_tx.try_send(PoolEvent::Disconnected(format!(
+                            "pool {} did not provide initial work within {} seconds",
+                            endpoint.display(),
+                            initial_work_timeout.as_secs()
+                        )));
+                        login_confirmed = false;
+                        connection.abort();
+                        sleep_with_shutdown(
+                            process_shutdown.as_ref(),
+                            shutdown.as_ref(),
+                            backoff.failed(),
+                        );
+                        break;
                     }
                     // A refill keeps the current range valid, so it need not
                     // wait for in-flight submits the way a resync does.
@@ -2374,6 +2415,135 @@ mod tests {
     use std::sync::Arc;
     use std::thread;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn initial_work_timeout_recovers_from_silent_and_ack_only_pools() {
+        let _test_lock = crate::diagnostics::TEST_LOCK.lock().unwrap();
+        let diagnostics = crate::diagnostics::install(crate::diagnostics::test_context());
+        let primary = TcpListener::bind("127.0.0.1:0").unwrap();
+        let backup = TcpListener::bind("127.0.0.1:0").unwrap();
+        primary.set_nonblocking(true).unwrap();
+        backup.set_nonblocking(true).unwrap();
+        let endpoints = [&primary, &backup].map(|listener| {
+            parse_pool_endpoint(&format!("stratum+tcp://{}", listener.local_addr().unwrap()))
+                .unwrap()
+        });
+        let (submit_tx, submit_rx) = bounded(CHANNEL_CAPACITY);
+        let (event_tx, event_rx) = bounded(CHANNEL_CAPACITY);
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let client_shutdown = Arc::clone(&shutdown);
+        let client = thread::spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(run_pool_client_loop(
+                    endpoints.into(),
+                    None,
+                    "test-address".into(),
+                    "test-worker".into(),
+                    submit_rx,
+                    event_tx,
+                    Arc::new(AtomicBool::new(false)),
+                    Arc::new(AtomicBool::new(false)),
+                    Arc::new(Mutex::new(None)),
+                    client_shutdown,
+                    Duration::from_millis(300),
+                ));
+        });
+        struct StopClient(Arc<AtomicBool>, Option<thread::JoinHandle<()>>);
+        impl Drop for StopClient {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Relaxed);
+                let _ = self.1.take().unwrap().join();
+            }
+        }
+        let _client = StopClient(shutdown, Some(client));
+        let accept = |listener: &TcpListener| {
+            let deadline = Instant::now() + Duration::from_secs(8);
+            loop {
+                match listener.accept() {
+                    Ok((socket, _)) => {
+                        socket
+                            .set_read_timeout(Some(Duration::from_secs(2)))
+                            .unwrap();
+                        let mut reader = BufReader::new(socket);
+                        let mut login = String::new();
+                        reader.read_line(&mut login).unwrap();
+                        assert_eq!(
+                            serde_json::from_str::<Value>(&login).unwrap()["method"],
+                            "login"
+                        );
+                        return reader;
+                    }
+                    Err(e) if e.kind() == ErrorKind::WouldBlock && Instant::now() < deadline => {
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    other => panic!("expected pool connection: {other:?}"),
+                }
+            }
+        };
+        for acknowledge in [false, true] {
+            let mut socket = accept(&primary);
+            if acknowledge {
+                socket
+                    .get_mut()
+                    .write_all(b"{\"id\":1,\"status\":\"ok\"}\n")
+                    .unwrap();
+            }
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                let event = event_rx
+                    .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                    .expect("silent pool must time out");
+                if let PoolEvent::Disconnected(message) = event {
+                    assert!(
+                        message.contains("did not provide initial work"),
+                        "{message}"
+                    );
+                    break;
+                }
+            }
+        }
+        let mut socket = accept(&backup);
+        socket
+            .get_mut()
+            .write_all(b"{\"id\":1,\"status\":\"ok\"}\n")
+            .unwrap();
+        let job = serde_json::json!({"method":"job", "params": {
+            "job_id":"working", "header_base":"ab".repeat(156), "target":"ff".repeat(32),
+            "height":1, "nonce_start":0, "nonce_end":100
+        }});
+        writeln!(socket.get_mut(), "{job}").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let event = event_rx
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .unwrap();
+            if matches!(event, PoolEvent::Job(_)) {
+                break;
+            }
+        }
+        // Once work exists, a quiet session is valid even past the startup deadline.
+        thread::sleep(Duration::from_millis(650));
+        assert!(!event_rx
+            .try_iter()
+            .any(|e| matches!(e, PoolEvent::Disconnected(_))));
+        let snapshot = diagnostics.0.snapshot(false);
+        let timeouts: Vec<_> = snapshot
+            .events
+            .iter()
+            .filter(|e| {
+                e.detail.as_ref().is_some_and(|d| {
+                    d.reason == seine_telemetry::FailureReason::ConnectionTimedOut
+                        && d.operation == seine_telemetry::DiagnosticOperation::PoolLogin
+                })
+            })
+            .collect();
+        assert_eq!(timeouts.len(), 1);
+        assert_eq!(timeouts[0].count, 2);
+        drop(submit_tx);
+    }
 
     #[test]
     fn refused_connection_retains_typed_cause_without_endpoint() {

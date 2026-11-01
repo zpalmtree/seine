@@ -2829,7 +2829,7 @@ fn persist_user_config_with_dev_fee_pool_worker(
 
 fn prompt_required_value(prompt: &str, default: Option<&str>) -> Result<String> {
     loop {
-        eprint!("{prompt}");
+        write!(io::stderr(), "{prompt}")?;
         io::stderr().flush()?;
         let mut line = String::new();
         io::stdin()

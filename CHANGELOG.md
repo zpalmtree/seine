@@ -14,6 +14,7 @@ supported hardware only.
 - **AMD Radeon mining on Linux and Windows:** supported discrete GPUs mine alongside the CPU automatically, with faster hashing on Radeon PRO V620, Radeon PRO V710 and Radeon AI PRO R9700; see [AMD setup](docs/guides/amd.md).
 - **More ways to run your rigs:** Linux packages support glibc 2.31 and newer, with HiveOS and mmpOS packages, encrypted pool connections, automatic backup pools and a [farm proxy](docs/guides/farm-proxy.md).
 - **Smoother mining and upgrades:** GPUs switch jobs in milliseconds, CPU cancellation stays responsive on heavily loaded hosts, compatible pools accept exchange deposit memos with `--payout-memo`, and signed updates install automatically and restart Seine with the same settings.
+- Mining keeps running when a log pipe closes and reconnects when a pool never sends initial work.
 
 Upgrade notes:
 - **Automatic updates are now on by default.** Use `--no-auto-update` to receive update notices without automatic installation.

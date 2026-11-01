@@ -2,6 +2,7 @@ mod address;
 mod backend;
 mod config;
 mod console_exit;
+mod console_output;
 mod control_api;
 mod daemon_api;
 mod dev_fee;
@@ -27,6 +28,7 @@ use std::sync::Arc;
 use anyhow::Result;
 
 use config::Config;
+use console_output::eprintln;
 
 fn main() {
     if let Err(err) = run() {

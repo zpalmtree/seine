@@ -1351,7 +1351,7 @@ async fn run_async(cfg: Config, shutdown: Arc<AtomicBool>) -> Result<()> {
         None => {
             let token = generate_api_token()?;
             write_api_cookie(&cfg.api_cookie_path, &token)?;
-            eprintln!(
+            crate::console_output::eprintln!(
                 "control API token written to {}",
                 cfg.api_cookie_path.display()
             );

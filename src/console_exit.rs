@@ -17,7 +17,7 @@ pub(crate) fn pause_after_error() {
             io::stderr().is_terminal(),
             attached,
         ) {
-            eprint!("\nPress Enter to close this window...");
+            let _ = write!(io::stderr(), "\nPress Enter to close this window...");
             let _ = io::stderr().flush();
             let _ = io::stdin().read_line(&mut String::new());
         }

@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Instant;
 
 use super::tui::{LogEntry, LogLevel, TuiState};
+use crate::console_output::{eprintln, println};
 
 const FRAME_INNER_WIDTH: usize = 92;
 const KEY_WIDTH: usize = 18;
@@ -573,6 +574,70 @@ fn lock<T>(mutex: &'static Mutex<T>) -> MutexGuard<'static, T> {
 #[cfg(test)]
 mod tests {
     use super::{suppress_dev_fee_related_in_tui, suppress_in_tui};
+
+    #[test]
+    fn logging_survives_closed_output_pipes() {
+        use std::io::{BufRead, BufReader, Read, Write};
+        use std::process::{Command, Stdio};
+
+        const CHILD: &str = "SEINE_TEST_CLOSED_OUTPUT";
+        if std::env::var_os(CHILD).is_some() {
+            // The parent closes both readers before allowing logging to start.
+            std::io::stdout().write_all(b"output-ready\n").unwrap();
+            std::io::stdout().flush().unwrap();
+            let mut ready = [0];
+            std::io::stdin().read_exact(&mut ready).unwrap();
+            super::startup_banner(&[("test", "closed output".into())]);
+            super::info("TEST", "mining continues");
+            super::success("TEST", "share accepted");
+            super::warn("TEST", "warning survives");
+            super::error("TEST", "error survives");
+            super::mined("TEST", "block found");
+            // Bypass the test harness, which itself prints to stdout.
+            std::process::exit(0);
+        }
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "miner::ui::tests::logging_survives_closed_output_pipes",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut output = BufReader::new(child.stdout.take().unwrap());
+        let mut line = String::new();
+        loop {
+            assert_ne!(
+                output.read_line(&mut line).unwrap(),
+                0,
+                "child exited before logging"
+            );
+            if line.trim() == "output-ready" {
+                break;
+            }
+            line.clear();
+        }
+        drop(output);
+        drop(child.stderr.take());
+        child.stdin.take().unwrap().write_all(&[1]).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                assert!(status.success(), "logging terminated the process: {status}");
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("logging child did not exit");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
 
     #[test]
     fn suppresses_telemetry_lines_in_tui() {

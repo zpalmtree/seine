@@ -95,10 +95,12 @@ pub(crate) fn run_cli() -> Result<()> {
     cleanup_leftovers();
     match run()? {
         Outcome::UpToDate { current, latest } => {
-            println!("seine {current} is the newest release ({latest}); nothing to do");
+            crate::console_output::println!(
+                "seine {current} is the newest release ({latest}); nothing to do"
+            );
         }
         Outcome::Updated { from, to, path } => {
-            println!(
+            crate::console_output::println!(
                 "updated seine {from} -> {to} at {}; start seine again to use it",
                 path.display()
             );
