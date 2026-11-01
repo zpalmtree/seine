@@ -1875,7 +1875,10 @@ fn parse_backend_phase(message: &str) -> Option<(String, &'static str)> {
     if let Some((label, _)) = message.split_once(": online") {
         return Some((label.trim().to_string(), "ready"));
     }
-    if let Some((label, _)) = message.split_once(": initializing CUDA engine") {
+    if let Some((label, _)) = message
+        .split_once(": initializing CUDA engine")
+        .or_else(|| message.split_once(": initializing HIP engine"))
+    {
         return Some((label.trim().to_string(), "initializing"));
     }
     if message.contains("awaiting activation") {

@@ -25,7 +25,7 @@ use super::auth::{refresh_api_token_from_cookie, TokenRefreshOutcome};
 use super::block_latency;
 use super::mining::MiningRuntimeBackends;
 use super::mining_tui::{
-    init_tui_display, render_tui_now, set_tui_dev_fee_active, set_tui_pending_nvidia,
+    init_tui_display, render_tui_now, set_tui_dev_fee_active, set_tui_pending_gpus,
     set_tui_pool_balance_overview, set_tui_pool_payout_minimum, set_tui_state_label,
     set_tui_wallet_overview, update_tui, RoundUiView, TuiDisplay,
 };
@@ -830,7 +830,7 @@ pub(super) fn run_pool_mining_loop(
     local_daemon_client: Option<ApiClient>,
     tui_state: Option<TuiState>,
     history: Arc<super::session::SessionHistory>,
-    deferred_backends: Option<(Receiver<super::BackendSlot>, u64)>,
+    deferred_backends: Option<(Receiver<super::BackendSlot>, Vec<&'static str>)>,
 ) -> Result<()> {
     let MiningRuntimeBackends {
         backends,
@@ -838,8 +838,8 @@ pub(super) fn run_pool_mining_loop(
         backend_executor,
     } = runtime_backends;
     let (deferred_rx, mut deferred_remaining) = match deferred_backends {
-        Some((rx, count)) => (Some(rx), count),
-        None => (None, 0),
+        Some((rx, pending)) => (Some(rx), pending),
+        None => (None, Vec::new()),
     };
 
     let (user_connection, dev_connection) = build_pool_connection_configs(cfg)?;
@@ -895,7 +895,7 @@ pub(super) fn run_pool_mining_loop(
     };
 
     let mut active_job: Option<ActivePoolJob> = None;
-    let mut pending_nvidia_logged = false;
+    let mut pending_gpus_logged = false;
     let mut pool_network_hashrate = "unknown".to_string();
     let mut next_pool_telemetry_refresh = Instant::now();
     let mut pool_telemetry_warning_logged = false;
@@ -1195,7 +1195,7 @@ pub(super) fn run_pool_mining_loop(
             loop {
                 match deferred.try_recv() {
                     Ok(slot) => {
-                        deferred_remaining = deferred_remaining.saturating_sub(1);
+                        super::remove_pending_gpu(&mut deferred_remaining, slot.backend.name());
                         let slot_name = pending_backend_slot_label(backends, &slot);
                         info(
                             "BACKEND",
@@ -1215,22 +1215,24 @@ pub(super) fn run_pool_mining_loop(
                     }
                     Err(crossbeam_channel::TryRecvError::Empty) => break,
                     Err(crossbeam_channel::TryRecvError::Disconnected) => {
-                        deferred_remaining = 0;
+                        deferred_remaining.clear();
                         break;
                     }
                 }
             }
-            if deferred_remaining > 0 && !pending_nvidia_logged {
-                info(
-                    "BACKEND",
-                    format!("nvidia initialization in progress: {deferred_remaining} pending"),
-                );
-                pending_nvidia_logged = true;
+            if !deferred_remaining.is_empty() && !pending_gpus_logged {
+                for (kind, count) in super::mining::pending_gpu_counts(&deferred_remaining) {
+                    info(
+                        "BACKEND",
+                        format!("{kind} initialization in progress: {count} pending"),
+                    );
+                }
+                pending_gpus_logged = true;
             }
-            if deferred_remaining == 0 {
-                pending_nvidia_logged = false;
+            if deferred_remaining.is_empty() {
+                pending_gpus_logged = false;
             }
-            set_tui_pending_nvidia(&mut tui, deferred_remaining);
+            set_tui_pending_gpus(&mut tui, &deferred_remaining);
             if deferred_backend_activated {
                 maybe_hot_rebalance_active_pool_job(
                     cfg,

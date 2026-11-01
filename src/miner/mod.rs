@@ -35,7 +35,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::IsTerminal;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Result};
@@ -423,6 +423,125 @@ fn backend_start_failure_detail(error: &anyhow::Error) -> seine_telemetry::Failu
     detail
 }
 
+/// GPU backends start in background threads and join the run when ready.
+fn starts_in_background(kind: BackendKind) -> bool {
+    matches!(kind, BackendKind::Nvidia | BackendKind::Amd)
+}
+
+/// Removes one pending GPU of `name` (a backend name such as "nvidia").
+pub(super) fn remove_pending_gpu(pending: &mut Vec<&'static str>, name: &str) {
+    if let Some(index) = pending.iter().position(|kind| *kind == name) {
+        pending.remove(index);
+    }
+}
+
+/// AMD cards start one at a time, as they did when startup was synchronous.
+static AMD_START_LOCK: Mutex<()> = Mutex::new(());
+
+/// Starts one GPU backend off the main thread and hands it to the run through
+/// `deferred_tx`, or reports why it is unavailable.
+fn start_deferred_backend(
+    backend: Arc<dyn PowBackend>,
+    backend_id: BackendInstanceId,
+    display_id: u64,
+    spec: BackendSpec,
+    cfg: &Config,
+    shutdown: &AtomicBool,
+    deferred_tx: &Sender<BackendSlot>,
+) {
+    let backend_name = backend.name();
+    let _serial = (spec.kind == BackendKind::Amd)
+        .then(|| AMD_START_LOCK.lock().unwrap_or_else(|e| e.into_inner()));
+    let detail = match spec.kind {
+        BackendKind::Nvidia => "initializing CUDA engine...",
+        BackendKind::Amd => "initializing HIP engine...",
+        BackendKind::Cpu | BackendKind::Metal => "initializing...",
+    };
+    info("BACKEND", format!("{backend_name}: {detail}"));
+    let start_t = Instant::now();
+    match start_backend_interruptibly(&backend, backend_id, shutdown) {
+        Ok(()) => {
+            info(
+                "BACKEND",
+                format!(
+                    "{backend_name}#{display_id}: initialized in {:.1}s (awaiting activation)",
+                    start_t.elapsed().as_secs_f64(),
+                ),
+            );
+            let capabilities =
+                match backend_capabilities_for_start(backend.as_ref(), backend_name, backend_id) {
+                    Ok(capabilities) => capabilities,
+                    Err(err) => {
+                        warn(
+                            "BACKEND",
+                            format!(
+                                "{backend_name}#{display_id} capability contract violation: {err:#}"
+                            ),
+                        );
+                        backend.stop();
+                        return;
+                    }
+                };
+            if capabilities.max_inflight_assignments > 1 && !backend.supports_assignment_batching()
+            {
+                warn(
+                    "BACKEND",
+                    format!(
+                        "{backend_name}#{display_id} reports inflight={} but does not support batched assignment dispatch; clamping runtime inflight to 1",
+                        capabilities.max_inflight_assignments
+                    ),
+                );
+            }
+            let lanes = backend.lanes() as u64;
+            if lanes == 0 {
+                warn(
+                    "BACKEND",
+                    format!("skipping {backend_name}#{display_id}: reported zero lanes"),
+                );
+                backend.stop();
+                return;
+            }
+            let runtime_policy = backend_runtime_policy(cfg, &spec, capabilities);
+            let slot = BackendSlot {
+                id: backend_id,
+                backend,
+                lanes,
+                runtime_policy,
+                capabilities,
+            };
+            // The run may have ended (or failed to start) meanwhile.
+            if let Err(unsent) = deferred_tx.send(slot) {
+                unsent.into_inner().backend.stop();
+            }
+        }
+        Err(err) => {
+            if err.is::<StartupCancelled>() {
+                return;
+            }
+            record_backend_start_failure(&err, spec.kind);
+            warn(
+                "BACKEND",
+                format!("{backend_name}#{display_id} unavailable: {err:#}"),
+            );
+            warn("BACKEND", backend_requirements_hint(spec.kind));
+            backend.stop();
+        }
+    }
+}
+
+fn backend_requirements_hint(kind: BackendKind) -> &'static str {
+    match kind {
+        BackendKind::Amd => {
+            "AMD mining requires: (1) amdgpu drivers and (2) the ROCm 6.x runtime \
+             (libamdhip64/libhiprtc) — https://rocm.docs.amd.com"
+        }
+        _ => {
+            "NVIDIA mining requires an up-to-date NVIDIA GPU driver \
+              — https://www.nvidia.com/drivers"
+        }
+    }
+}
+
 fn record_backend_start_failure(error: &anyhow::Error, kind: BackendKind) {
     crate::diagnostics::record_failure(
         seine_telemetry::DiagnosticCode::Warning,
@@ -470,50 +589,35 @@ fn run_with_thread_control_inner(
     }
 
     crate::diagnostics::set_phase(seine_telemetry::RunPhase::InitializingBackends);
-    // Phase 1: Build NVIDIA backends and start compilation in background threads.
-    // NvidiaBackend::new() only depends on NVIDIA-specific config, not CPU autotune.
+    // Phase 1: Build GPU backends (NVIDIA, AMD) and start them in background
+    // threads so CPU/Metal mining does not wait for kernel builds, memory
+    // probes or a slow driver. Each GPU joins the run once it is ready.
     let per_backend_event_capacity = cfg
         .backend_event_capacity
         .clamp(8, BACKEND_EVENT_SOURCE_CAPACITY_MAX);
-    // ID assignment: non-NVIDIA backends get IDs 1..M (assigned in activate_backends),
-    // NVIDIA backends get IDs M+1..M+N so there are no collisions.
-    let non_nvidia_index = cfg
+    // ID assignment: CPU/Metal backends get IDs 1..M (assigned in
+    // activate_backends), GPU backends get IDs M+1..M+N so there are no
+    // collisions.
+    let immediate_count = cfg
         .backend_specs
         .iter()
-        .filter(|s| s.kind != BackendKind::Nvidia)
+        .filter(|s| !starts_in_background(s.kind))
         .count() as BackendInstanceId;
-    let mut nvidia_index: BackendInstanceId = 0;
+    let mut deferred_kinds: Vec<&'static str> = Vec::new();
     let (deferred_tx, deferred_rx) = bounded::<BackendSlot>(cfg.backend_specs.len());
-    // With another backend to start on, the network loop runs while NVIDIA
+    // With another backend to start on, the network loop runs while GPU
     // backends initialize, so they can learn the network's PoW first.
-    crate::backend::set_network_pow_expected(non_nvidia_index > 0);
-    let mut nvidia_event_sources: Vec<Receiver<BackendEvent>> = Vec::new();
+    crate::backend::set_network_pow_expected(immediate_count > 0);
+    let mut deferred_event_sources: Vec<Receiver<BackendEvent>> = Vec::new();
     {
-        let has_nvidia = cfg
-            .backend_specs
-            .iter()
-            .any(|spec| spec.kind == BackendKind::Nvidia);
-
-        if has_nvidia {
-            let nvidia_total = cfg
-                .backend_specs
-                .iter()
-                .filter(|s| s.kind == BackendKind::Nvidia)
-                .count();
-            info(
-                "BACKEND",
-                format!(
-                    "nvidia: launching {nvidia_total} background initialization task(s) (CPU autotune will run in parallel)"
-                ),
-            );
-            for spec in cfg.backend_specs.iter().copied() {
-                if spec.kind != BackendKind::Nvidia {
-                    continue;
-                }
-                nvidia_index += 1;
-                let nvidia_display_id = nvidia_index;
-                let backend_id = non_nvidia_index + nvidia_index; // NVIDIA IDs start after non-NVIDIA
-                let backend = Arc::new(NvidiaBackend::new(
+        let mut display_ids: BTreeMap<&'static str, u64> = BTreeMap::new();
+        for spec in cfg.backend_specs.iter().copied() {
+            if !starts_in_background(spec.kind) {
+                continue;
+            }
+            let backend_id = immediate_count + deferred_kinds.len() as BackendInstanceId + 1;
+            let backend = match spec.kind {
+                BackendKind::Nvidia => Arc::new(NvidiaBackend::new(
                     spec.device_index,
                     cfg.nvidia_autotune_config_path.clone(),
                     cfg.nvidia_autotune_secs,
@@ -530,127 +634,62 @@ fn run_with_thread_control_inner(
                         adaptive_launch_depth: cfg.nvidia_adaptive_launch_depth,
                         enforce_template_stop: cfg.nvidia_enforce_template_stop,
                     },
-                )) as Arc<dyn PowBackend>;
+                )) as Arc<dyn PowBackend>,
+                BackendKind::Amd => Arc::new(AmdBackend::new(
+                    spec.device_index,
+                    AmdBackendTuningOptions {
+                        max_lanes_override: cfg.amd_max_lanes,
+                        ..AmdBackendTuningOptions::default()
+                    },
+                )) as Arc<dyn PowBackend>,
+                BackendKind::Cpu | BackendKind::Metal => unreachable!(),
+            };
+            let backend_name = backend.name();
+            deferred_kinds.push(backend_name);
+            let display_id = {
+                let next = display_ids.entry(backend_name).or_insert(0);
+                *next += 1;
+                *next
+            };
 
-                // Wire up the event channel now so it's included in the fan-in.
-                let (backend_event_tx, backend_event_rx) =
-                    bounded::<BackendEvent>(per_backend_event_capacity);
-                nvidia_event_sources.push(backend_event_rx);
+            // Wire up the event channel now so it's included in the fan-in.
+            let (backend_event_tx, backend_event_rx) =
+                bounded::<BackendEvent>(per_backend_event_capacity);
+            deferred_event_sources.push(backend_event_rx);
+            backend.set_instance_id(backend_id);
+            backend.set_event_sink(backend_event_tx);
 
-                let cfg_clone = cfg.clone();
-                let shutdown_clone = Arc::clone(&shutdown);
-                let deferred_tx = deferred_tx.clone();
-                std::thread::Builder::new()
-                    .name(format!("nvidia-{backend_id}-init"))
-                    .spawn(move || {
-                        // set_instance_id / set_event_sink / start / validate
-                        backend.set_instance_id(backend_id);
-                        backend.set_event_sink(backend_event_tx);
-                        let backend_name = backend.name();
-                        info(
-                            "BACKEND",
-                            format!(
-                                "{backend_name}: initializing CUDA engine...",
-                            ),
-                        );
-                        let start_t = Instant::now();
-
-                        let start_result = start_backend_interruptibly(
-                            &backend,
-                            backend_id,
-                            shutdown_clone.as_ref(),
-                        );
-
-                        match start_result {
-                            Ok(()) => {
-                                info(
-                                    "BACKEND",
-                                    format!(
-                                        "{backend_name}#{nvidia_display_id}: initialized in {:.1}s (awaiting activation)",
-                                        start_t.elapsed().as_secs_f64(),
-                                    ),
-                                );
-                                let capabilities = match backend_capabilities_for_start(
-                                    backend.as_ref(),
-                                    backend_name,
-                                    backend_id,
-                                ) {
-                                    Ok(c) => c,
-                                    Err(err) => {
-                                        warn(
-                                            "BACKEND",
-                                            format!(
-                                                "{backend_name}#{nvidia_display_id} capability contract violation: {err:#}"
-                                            ),
-                                        );
-                                        backend.stop();
-                                        return;
-                                    }
-                                };
-                                if capabilities.max_inflight_assignments > 1
-                                    && !backend.supports_assignment_batching()
-                                {
-                                    warn(
-                                        "BACKEND",
-                                        format!(
-                                            "{}#{} reports inflight={} but does not support batched assignment dispatch; clamping runtime inflight to 1",
-                                            backend_name,
-                                            nvidia_display_id,
-                                            capabilities.max_inflight_assignments
-                                        ),
-                                    );
-                                }
-                                let lanes = backend.lanes() as u64;
-                                if lanes == 0 {
-                                    warn(
-                                        "BACKEND",
-                                        format!(
-                                            "skipping {}#{}: reported zero lanes",
-                                            backend_name, nvidia_display_id
-                                        ),
-                                    );
-                                    backend.stop();
-                                    return;
-                                }
-                                let runtime_policy =
-                                    backend_runtime_policy(&cfg_clone, &spec, capabilities);
-                                let slot = BackendSlot {
-                                    id: backend_id,
-                                    backend,
-                                    lanes,
-                                    runtime_policy,
-                                    capabilities,
-                                };
-                                let _ = deferred_tx.send(slot);
-                            }
-                            Err(err) => {
-                                if err.is::<StartupCancelled>() {
-                                    return;
-                                }
-                                record_backend_start_failure(&err, spec.kind);
-                                warn(
-                                    "BACKEND",
-                                    format!(
-                                        "{backend_name}#{nvidia_display_id} unavailable: {err:#}"
-                                    ),
-                                );
-                                warn(
-                                    "BACKEND",
-                                    "NVIDIA mining requires an up-to-date NVIDIA GPU driver \
-                                     — https://www.nvidia.com/drivers",
-                                );
-                                backend.stop();
-                            }
-                        }
-                    })
-                    .expect("failed to spawn NVIDIA init thread");
-            }
+            let cfg_clone = cfg.clone();
+            let shutdown_clone = Arc::clone(&shutdown);
+            let deferred_tx = deferred_tx.clone();
+            std::thread::Builder::new()
+                .name(format!("{backend_name}-{backend_id}-init"))
+                .spawn(move || {
+                    start_deferred_backend(
+                        backend,
+                        backend_id,
+                        display_id,
+                        spec,
+                        &cfg_clone,
+                        shutdown_clone.as_ref(),
+                        &deferred_tx,
+                    );
+                })
+                .expect("failed to spawn GPU init thread");
+        }
+        for (kind, count) in &display_ids {
+            info(
+                "BACKEND",
+                format!(
+                    "{kind}: launching {count} background initialization task(s) (CPU mining starts meanwhile)"
+                ),
+            );
         }
     }
     // Drop sender so receiver knows when all threads are done.
     drop(deferred_tx);
 
-    // Phase 2: CPU autotune (runs in parallel with NVIDIA compilation).
+    // Phase 2: CPU autotune (runs in parallel with GPU initialization).
     crate::diagnostics::set_phase(seine_telemetry::RunPhase::Tuning);
     let runtime_cfg = prepare_runtime_config(cfg, shutdown.as_ref(), RuntimeMode::Mining)?;
     if shutdown.load(Ordering::SeqCst) {
@@ -678,15 +717,15 @@ fn run_with_thread_control_inner(
         bail!("missing API token in daemon mining mode");
     }
 
-    // Phase 3: Build and activate non-NVIDIA backends synchronously.
-    // CPU/Metal start is fast. Non-NVIDIA get IDs 1..M, NVIDIA get IDs M+1..M+N.
+    // Phase 3: Build and activate CPU/Metal backends synchronously.
+    // They start fast and get IDs 1..M; GPU backends have IDs M+1..M+N.
     let mut cpu_memory_backends = Vec::new();
     let mut adaptive_backends = Vec::new();
-    let non_nvidia_instances: Vec<(BackendSpec, Arc<dyn PowBackend>)> = cfg
+    let immediate_instances: Vec<(BackendSpec, Arc<dyn PowBackend>)> = cfg
         .backend_specs
         .iter()
         .copied()
-        .filter(|spec| spec.kind != BackendKind::Nvidia)
+        .filter(|spec| !starts_in_background(spec.kind))
         .map(|backend_spec| {
             let backend = match backend_spec.kind {
                 BackendKind::Cpu => {
@@ -731,13 +770,6 @@ fn run_with_thread_control_inner(
                     }
                     backend as Arc<dyn PowBackend>
                 }
-                BackendKind::Amd => Arc::new(AmdBackend::new(
-                    backend_spec.device_index,
-                    AmdBackendTuningOptions {
-                        max_lanes_override: cfg.amd_max_lanes,
-                        ..AmdBackendTuningOptions::default()
-                    },
-                )) as Arc<dyn PowBackend>,
                 BackendKind::Metal => {
                     let backend = MetalBackend::new(
                         cfg.metal_max_lanes,
@@ -749,28 +781,27 @@ fn run_with_thread_control_inner(
                         backend
                     }) as Arc<dyn PowBackend>
                 }
-                BackendKind::Nvidia => unreachable!(),
+                BackendKind::Nvidia | BackendKind::Amd => unreachable!(),
             };
             (backend_spec, backend)
         })
         .collect();
 
-    // Phase 4: Collect any NVIDIA backends that finished during autotune+CPU init.
+    // Phase 4: Collect any GPU backends that finished during autotune+CPU init.
     // Also drain them into the initial backends vec if they're ready.
-    let mut early_nvidia_backends = Vec::new();
+    let mut early_gpu_backends = Vec::new();
     while let Ok(slot) = deferred_rx.try_recv() {
-        early_nvidia_backends.push(slot);
+        early_gpu_backends.push(slot);
     }
 
-    let has_non_nvidia = !non_nvidia_instances.is_empty();
-    let has_nvidia_ready = !early_nvidia_backends.is_empty();
-    let might_have_deferred = nvidia_index > early_nvidia_backends.len() as u64;
+    let has_immediate = !immediate_instances.is_empty();
+    let has_gpu_ready = !early_gpu_backends.is_empty();
 
-    // If we have no non-NVIDIA backends and no NVIDIA ready yet, we need to wait
-    // for at least one NVIDIA to finish (or we'd start with zero backends).
-    if !has_non_nvidia && !has_nvidia_ready {
+    // If we have no CPU/Metal backends and no GPU ready yet, we need to wait
+    // for at least one GPU to finish (or we'd start with zero backends).
+    if !has_immediate && !has_gpu_ready {
         check_startup_shutdown(shutdown.as_ref())?;
-        if nvidia_index == 0 {
+        if deferred_kinds.is_empty() {
             crate::diagnostics::record_failure(
                 seine_telemetry::DiagnosticCode::Error,
                 seine_telemetry::DiagnosticKind::General,
@@ -784,35 +815,32 @@ fn run_with_thread_control_inner(
         }
         info(
             "MINER",
-            "no CPU/Metal backends; waiting for NVIDIA compilation to complete...",
+            "no CPU/Metal backends; waiting for a GPU to finish initializing...",
         );
-        early_nvidia_backends.push(wait_for_startup(
+        early_gpu_backends.push(wait_for_startup(
             &deferred_rx,
             shutdown.as_ref(),
-            "all NVIDIA backends failed to start",
+            "all GPU backends failed to start",
         )?);
         // Also grab any others that finished
         while let Ok(slot) = deferred_rx.try_recv() {
-            early_nvidia_backends.push(slot);
+            early_gpu_backends.push(slot);
         }
     }
 
     let (mut backends, backend_events) = activate_backends_with_start_id(
-        non_nvidia_instances,
+        immediate_instances,
         cfg.backend_event_capacity,
         cfg,
         shutdown.as_ref(),
-        nvidia_event_sources,
-        1, // non-NVIDIA backends get IDs starting from 1
+        deferred_event_sources,
+        1, // CPU/Metal backends get IDs starting from 1
     )?;
 
-    // Merge early NVIDIA backends into the activated set.
-    let pending_nvidia_count = if might_have_deferred {
-        nvidia_index - early_nvidia_backends.len() as u64
-    } else {
-        0
-    };
-    for slot in early_nvidia_backends {
+    // Merge early GPU backends into the activated set; the rest are pending.
+    let mut pending_gpus = deferred_kinds;
+    for slot in early_gpu_backends {
+        remove_pending_gpu(&mut pending_gpus, slot.backend.name());
         backends.push(slot);
     }
 
@@ -861,10 +889,10 @@ fn run_with_thread_control_inner(
                 }
             }
         }
-        if pending_nvidia_count > 0 {
+        if !pending_gpus.is_empty() {
             if let Ok(mut s) = state.lock() {
-                s.pending_nvidia = pending_nvidia_count;
-                s.pending_nvidia_since = Some(Instant::now());
+                s.pending_gpus = pending_gpus.clone();
+                s.pending_gpus_since = Some(Instant::now());
             }
         }
         Some(state)
@@ -1088,10 +1116,10 @@ fn run_with_thread_control_inner(
         }
     }
 
-    let deferred_backends = if might_have_deferred {
-        Some((deferred_rx, pending_nvidia_count))
-    } else {
+    let deferred_backends = if pending_gpus.is_empty() {
         None
+    } else {
+        Some((deferred_rx, pending_gpus))
     };
 
     let tip_listener = if cfg.mode == MiningMode::Daemon && cfg.sse_enabled {
@@ -3897,6 +3925,22 @@ pub(crate) mod tests {
             runtime_policy: BackendRuntimePolicy::default(),
             capabilities,
         }
+    }
+
+    #[test]
+    fn gpu_backends_start_in_background_and_pending_gpus_track_by_kind() {
+        assert!(starts_in_background(BackendKind::Nvidia));
+        assert!(starts_in_background(BackendKind::Amd));
+        assert!(!starts_in_background(BackendKind::Cpu));
+        assert!(!starts_in_background(BackendKind::Metal));
+        let mut pending = vec!["amd", "nvidia", "amd"];
+        assert_eq!(
+            mining::pending_gpu_counts(&pending),
+            vec![("amd", 2), ("nvidia", 1)]
+        );
+        remove_pending_gpu(&mut pending, "amd");
+        remove_pending_gpu(&mut pending, "metal");
+        assert_eq!(pending, vec!["nvidia", "amd"]);
     }
 
     #[test]

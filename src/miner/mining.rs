@@ -18,7 +18,7 @@ use crate::types::{
 use super::hash_poll::build_backend_poll_state;
 use super::mining_tui::{
     init_tui_display, render_tui_now, set_tui_blocktemplate_retrying, set_tui_dev_fee_active,
-    set_tui_pending_nvidia, set_tui_state_label, set_tui_wallet_overview, update_tui, RoundUiView,
+    set_tui_pending_gpus, set_tui_state_label, set_tui_wallet_overview, update_tui, RoundUiView,
     TuiDisplay,
 };
 use super::round_control::{redistribute_for_topology_change, TopologyRedistributionOptions};
@@ -65,7 +65,7 @@ const SUBMIT_BACKLOG_CAPACITY: usize = 512;
 const SUBMIT_BACKLOG_HARD_CAPACITY: usize = 4096;
 const SUBMIT_BACKLOG_FLUSH_WAIT: Duration = Duration::from_millis(10);
 const SUBMIT_BACKLOG_BACKPRESSURE_LOG_INTERVAL: Duration = Duration::from_secs(5);
-const NVIDIA_INIT_EXPECTED_STARTUP: Duration = Duration::from_secs(5 * 60);
+const GPU_INIT_EXPECTED_STARTUP: Duration = Duration::from_secs(5 * 60);
 const DEFERRED_BACKEND_ACTIVATION_ROUND_CAP: Duration = Duration::from_secs(5);
 const WALLET_TUI_REFRESH_INTERVAL: Duration = Duration::from_secs(10);
 const INVALID_ADDRESS_HALT_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
@@ -1282,7 +1282,7 @@ pub(super) fn run_mining_loop(
     tui_state: Option<TuiState>,
     history: Arc<super::session::SessionHistory>,
     tip_signal: Option<&TipSignal>,
-    deferred_backends: Option<(Receiver<super::BackendSlot>, u64)>,
+    deferred_backends: Option<(Receiver<super::BackendSlot>, Vec<&'static str>)>,
 ) -> Result<()> {
     let MiningRuntimeBackends {
         backends,
@@ -1290,8 +1290,8 @@ pub(super) fn run_mining_loop(
         backend_executor,
     } = runtime_backends;
     let (deferred_rx, mut deferred_remaining) = match deferred_backends {
-        Some((rx, count)) => (Some(rx), count),
-        None => (None, 0),
+        Some((rx, pending)) => (Some(rx), pending),
+        None => (None, Vec::new()),
     };
     let stats = &history.stats;
     let mut nonce_scheduler = NonceScheduler::new(cfg.start_nonce, cfg.nonce_iters_per_lane);
@@ -1318,13 +1318,13 @@ pub(super) fn run_mining_loop(
     let mut submitted_solution_keys = HashSet::<(u64, u64)>::new();
     let mut submitted_solution_order = VecDeque::<(u64, u64)>::new();
     let mut inflight_solution_keys = HashSet::<(u64, u64)>::new();
-    let mut pending_nvidia_started_at = if deferred_remaining > 0 {
-        Some(Instant::now())
-    } else {
+    let mut pending_gpus_started_at = if deferred_remaining.is_empty() {
         None
+    } else {
+        Some(Instant::now())
     };
-    let mut nvidia_pending_logged = false;
-    let mut nvidia_pending_long_wait_logged = false;
+    let mut gpu_pending_logged = false;
+    let mut gpu_pending_long_wait_logged = false;
 
     let mut template = match control_plane.fetch_initial_template(&mut tui) {
         Some(t) => t,
@@ -1352,12 +1352,12 @@ pub(super) fn run_mining_loop(
             bail!("all mining backends are unavailable");
         }
 
-        // Hot-add deferred backends (e.g. NVIDIA that compiled in the background).
+        // Hot-add deferred backends (GPUs that initialized in the background).
         if let Some(ref deferred) = deferred_rx {
             loop {
                 match deferred.try_recv() {
                     Ok(slot) => {
-                        deferred_remaining = deferred_remaining.saturating_sub(1);
+                        super::remove_pending_gpu(&mut deferred_remaining, slot.backend.name());
                         let slot_name = pending_backend_slot_label(backends, &slot);
                         let slot_lanes = slot.lanes;
                         if !cfg.allow_best_effort_deadlines
@@ -1396,17 +1396,17 @@ pub(super) fn run_mining_loop(
                     Err(crossbeam_channel::TryRecvError::Empty) => break,
                     Err(crossbeam_channel::TryRecvError::Disconnected) => {
                         // All sender threads finished (succeeded or failed).
-                        deferred_remaining = 0;
+                        deferred_remaining.clear();
                         break;
                     }
                 }
             }
-            set_tui_pending_nvidia(&mut tui, deferred_remaining);
-            maybe_log_pending_nvidia_progress(
-                deferred_remaining,
-                &mut pending_nvidia_started_at,
-                &mut nvidia_pending_logged,
-                &mut nvidia_pending_long_wait_logged,
+            set_tui_pending_gpus(&mut tui, &deferred_remaining);
+            maybe_log_pending_gpu_progress(
+                &deferred_remaining,
+                &mut pending_gpus_started_at,
+                &mut gpu_pending_logged,
+                &mut gpu_pending_long_wait_logged,
             );
         }
         // Keep the recurring degraded-run warning current: quarantines from the
@@ -1461,7 +1461,8 @@ pub(super) fn run_mining_loop(
         let work_id = next_work_id(&mut work_id_cursor);
         let reservation = nonce_scheduler.reserve_for(total_lanes(backends), pow);
         let round_start = Instant::now();
-        let stop_at = round_start + round_duration_for_deferred_backend(cfg, deferred_remaining);
+        let stop_at =
+            round_start + round_duration_for_deferred_backend(cfg, deferred_remaining.len() as u64);
 
         stats.bump_templates();
 
@@ -1652,13 +1653,13 @@ pub(super) fn run_mining_loop(
     Ok(())
 }
 
-fn maybe_log_pending_nvidia_progress(
-    pending_count: u64,
+fn maybe_log_pending_gpu_progress(
+    pending: &[&'static str],
     pending_started_at: &mut Option<Instant>,
     pending_logged: &mut bool,
     long_wait_logged: &mut bool,
 ) {
-    if pending_count == 0 {
+    if pending.is_empty() {
         *pending_started_at = None;
         *pending_logged = false;
         *long_wait_logged = false;
@@ -1668,28 +1669,44 @@ fn maybe_log_pending_nvidia_progress(
     let now = Instant::now();
     let started_at = pending_started_at.get_or_insert(now);
     if !*pending_logged {
-        info(
-            "BACKEND",
-            format!(
-                "nvidia initialization in progress: {pending_count} pending (first run or cache miss can take around {} minutes)",
-                NVIDIA_INIT_EXPECTED_STARTUP.as_secs() / 60
-            ),
-        );
+        for (kind, count) in pending_gpu_counts(pending) {
+            info(
+                "BACKEND",
+                format!(
+                    "{kind} initialization in progress: {count} pending (first run or cache miss can take around {} minutes)",
+                    GPU_INIT_EXPECTED_STARTUP.as_secs() / 60
+                ),
+            );
+        }
         *pending_logged = true;
         return;
     }
 
     let elapsed = now.saturating_duration_since(*started_at);
-    if !*long_wait_logged && elapsed >= NVIDIA_INIT_EXPECTED_STARTUP {
+    if !*long_wait_logged && elapsed >= GPU_INIT_EXPECTED_STARTUP {
         let elapsed_label = format_duration_compact(elapsed);
-        info(
-            "BACKEND",
-            format!(
-                "nvidia initialization still in progress: {pending_count} pending ({elapsed_label} elapsed)"
-            ),
-        );
+        for (kind, count) in pending_gpu_counts(pending) {
+            info(
+                "BACKEND",
+                format!(
+                    "{kind} initialization still in progress: {count} pending ({elapsed_label} elapsed)"
+                ),
+            );
+        }
         *long_wait_logged = true;
     }
+}
+
+/// Pending GPUs counted per backend name, in first-seen order.
+pub(super) fn pending_gpu_counts(pending: &[&'static str]) -> Vec<(&'static str, usize)> {
+    let mut counts: Vec<(&'static str, usize)> = Vec::new();
+    for kind in pending {
+        match counts.iter_mut().find(|(seen, _)| seen == kind) {
+            Some((_, count)) => *count += 1,
+            None => counts.push((kind, 1)),
+        }
+    }
+    counts
 }
 
 fn format_atomic_units_bnt(amount_atomic: u64) -> String {

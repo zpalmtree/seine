@@ -115,8 +115,9 @@ pub struct TuiStateInner {
     pub wallet_pending: String,
     pub wallet_unlocked: String,
     pub device_hashrates: Vec<DeviceHashrate>,
-    pub pending_nvidia: u64,
-    pub pending_nvidia_since: Option<Instant>,
+    /// Backend names ("nvidia", "amd") of GPUs still initializing.
+    pub pending_gpus: Vec<&'static str>,
+    pub pending_gpus_since: Option<Instant>,
     pub dev_fee_active: bool,
 
     // Config (set once at startup)
@@ -171,8 +172,8 @@ impl TuiStateInner {
             wallet_pending: "---".to_string(),
             wallet_unlocked: "---".to_string(),
             device_hashrates: Vec::new(),
-            pending_nvidia: 0,
-            pending_nvidia_since: None,
+            pending_gpus: Vec::new(),
+            pending_gpus_since: None,
             dev_fee_active: false,
 
             mode: String::new(),
@@ -413,7 +414,7 @@ fn draw_dashboard(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner)
 
     let stats_height: u16 = if wide { 5 } else { 14 };
     let active_device_count = state.device_hashrates.len() as u16;
-    let pending_count = state.pending_nvidia as u16;
+    let pending_count = state.pending_gpus.len() as u16;
     let active_rows = if wide {
         (active_device_count + 1) / 2 // 2 per row in wide mode
     } else {
@@ -890,22 +891,33 @@ fn draw_devices(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner, w
             .collect()
     };
 
-    // Show pending NVIDIA backends that are still initializing.
-    if state.pending_nvidia > 0 {
-        let online_nvidia = state
-            .device_hashrates
-            .iter()
-            .filter(|d| d.name.starts_with("nvidia#"))
-            .count() as u64;
+    // Show GPU backends that are still initializing.
+    if !state.pending_gpus.is_empty() {
         let pending_elapsed = state
-            .pending_nvidia_since
+            .pending_gpus_since
             .map(|started| started.elapsed())
             .unwrap_or_default();
-        let pending_status = pending_nvidia_status_label(pending_elapsed);
         let pending_elapsed_label = format_duration_compact(pending_elapsed);
-        let pending_message = format!("{pending_status} ({pending_elapsed_label})");
-        for i in 0..state.pending_nvidia {
-            let name = format!("nvidia#{}", online_nvidia + i + 1);
+        let mut shown_per_kind: Vec<(&str, u64)> = Vec::new();
+        for kind in &state.pending_gpus {
+            let shown = match shown_per_kind.iter_mut().find(|(seen, _)| seen == kind) {
+                Some((_, shown)) => {
+                    *shown += 1;
+                    *shown
+                }
+                None => {
+                    shown_per_kind.push((kind, 1));
+                    1
+                }
+            };
+            let online = state
+                .device_hashrates
+                .iter()
+                .filter(|d| d.name.starts_with(&format!("{kind}#")))
+                .count() as u64;
+            let pending_status = pending_gpu_status_label(kind, pending_elapsed);
+            let pending_message = format!("{pending_status} ({pending_elapsed_label})");
+            let name = format!("{kind}#{}", online + shown);
             lines.push(Line::from(vec![
                 Span::styled("  ", Style::default()),
                 Span::styled("▸ ", Style::default().fg(Color::Rgb(70, 100, 130))),
@@ -1287,11 +1299,19 @@ fn wrap_str(s: &str, max: usize) -> Vec<String> {
     lines
 }
 
-fn pending_nvidia_status_label(elapsed: Duration) -> &'static str {
+fn pending_gpu_status_label(kind: &str, elapsed: Duration) -> &'static str {
     if elapsed < Duration::from_secs(20) {
-        "starting CUDA runtime"
+        if kind == "amd" {
+            "starting HIP runtime"
+        } else {
+            "starting CUDA runtime"
+        }
     } else if elapsed < Duration::from_secs(90) {
-        "preparing NVIDIA backend"
+        if kind == "amd" {
+            "preparing AMD backend"
+        } else {
+            "preparing NVIDIA backend"
+        }
     } else {
         "still initializing (first run may take a few minutes)"
     }
@@ -1392,7 +1412,8 @@ mod tests {
         state.round_hashrate = "1.234 H/s".into();
         state.wallet_visible = true;
         state.mode = "pool".into();
-        state.pending_nvidia = 16;
+        state.pending_gpus = vec!["nvidia"; 12];
+        state.pending_gpus.extend(["amd"; 4]);
         for (width, height) in [
             (40, 8),
             (60, 12),

@@ -302,15 +302,17 @@ pub(super) fn set_tui_blocktemplate_retrying(tui: &mut Option<TuiDisplay>, retry
     }
 }
 
-pub(super) fn set_tui_pending_nvidia(tui: &mut Option<TuiDisplay>, count: u64) {
+pub(super) fn set_tui_pending_gpus(tui: &mut Option<TuiDisplay>, pending: &[&'static str]) {
     if let Some(display) = tui.as_mut() {
         if let Ok(mut s) = display.state.lock() {
-            if count > 0 && s.pending_nvidia_since.is_none() {
-                s.pending_nvidia_since = Some(Instant::now());
-            } else if count == 0 {
-                s.pending_nvidia_since = None;
+            if !pending.is_empty() && s.pending_gpus_since.is_none() {
+                s.pending_gpus_since = Some(Instant::now());
+            } else if pending.is_empty() {
+                s.pending_gpus_since = None;
             }
-            s.pending_nvidia = count;
+            if s.pending_gpus != pending {
+                s.pending_gpus = pending.to_vec();
+            }
         }
     }
 }
