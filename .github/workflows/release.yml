@@ -32,6 +32,10 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@1.93.0
 
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: amd-code-objects
+
       - name: Export AMD code objects
         run: |
           cargo build --release --locked --no-default-features --features amd
@@ -90,7 +94,7 @@ jobs:
         run: |
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            build-essential ca-certificates curl git
+            build-essential ca-certificates curl git python3
 
       - uses: actions/checkout@v4
 
