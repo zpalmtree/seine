@@ -694,7 +694,10 @@ impl CudaInterruptController {
         };
         // A device-side memset on this stream runs alongside the launch; a copy
         // from host memory would wait for the launch to finish.
-        self.stream.context().bind_to_thread().map_err(cuda_driver_err)?;
+        self.stream
+            .context()
+            .bind_to_thread()
+            .map_err(cuda_driver_err)?;
         let (ptr, _sync) = flag.device_ptr_mut(&self.stream);
         // SAFETY: `ptr` addresses the live one-element flag allocation, which
         // the held lock keeps alive for the call.
@@ -1214,7 +1217,10 @@ impl CudaArgon2Engine {
                 .try_slice_mut(0..lanes_active)
                 .ok_or_else(|| anyhow!("failed to slice CUDA completed-iter buffer"))?;
             self.stream
-                .memcpy_htod(&self.host_completed_iters[..lanes_active], &mut completed_view)
+                .memcpy_htod(
+                    &self.host_completed_iters[..lanes_active],
+                    &mut completed_view,
+                )
                 .map_err(cuda_driver_err)?;
         }
         {
@@ -1360,7 +1366,10 @@ impl CudaArgon2Engine {
                 .try_slice(0..lanes_active)
                 .ok_or_else(|| anyhow!("failed to slice CUDA completed-iter buffer"))?;
             self.stream
-                .memcpy_dtoh(&completed_view, &mut self.host_completed_iters[..lanes_active])
+                .memcpy_dtoh(
+                    &completed_view,
+                    &mut self.host_completed_iters[..lanes_active],
+                )
                 .map_err(cuda_driver_err)?;
         }
 
@@ -2050,8 +2059,12 @@ impl PowBackend for NvidiaBackend {
             .active_hashes_per_launch_per_lane
             .store(discovered_hashes_per_launch.max(1), Ordering::Release);
         self.shared.cancel_requested.store(false, Ordering::Release);
-        self.shared.abandon_requested.store(false, Ordering::Release);
-        self.shared.soft_cancel_pending.store(false, Ordering::Release);
+        self.shared
+            .abandon_requested
+            .store(false, Ordering::Release);
+        self.shared
+            .soft_cancel_pending
+            .store(false, Ordering::Release);
         if let Ok(mut slot) = self.shared.inflight_assignment_started_at.lock() {
             *slot = None;
         }
@@ -2160,8 +2173,12 @@ impl PowBackend for NvidiaBackend {
             Ordering::Release,
         );
         self.shared.cancel_requested.store(false, Ordering::Release);
-        self.shared.abandon_requested.store(false, Ordering::Release);
-        self.shared.soft_cancel_pending.store(false, Ordering::Release);
+        self.shared
+            .abandon_requested
+            .store(false, Ordering::Release);
+        self.shared
+            .soft_cancel_pending
+            .store(false, Ordering::Release);
         if let Ok(mut slot) = self.shared.inflight_assignment_started_at.lock() {
             *slot = None;
         }
@@ -2304,7 +2321,9 @@ impl PowBackend for NvidiaBackend {
         self.shared.cancel_requested.store(true, Ordering::Release);
         let soft = self.shared.soft_cancel_allowed();
         if soft {
-            self.shared.soft_cancel_pending.store(true, Ordering::Release);
+            self.shared
+                .soft_cancel_pending
+                .store(true, Ordering::Release);
         }
         if let Some(controller) = self
             .interrupt_controller
@@ -3808,7 +3827,8 @@ fn plan_lane_storage(
     skip_supported: bool,
     second_packed_lane: bool,
 ) -> Vec<(usize, u32)> {
-    let min_blocks_for = |max_skipped: f64| (f64::from(m_blocks) * (1.0 - max_skipped)).ceil() as u32;
+    let min_blocks_for =
+        |max_skipped: f64| (f64::from(m_blocks) * (1.0 - max_skipped)).ceil() as u32;
     let packed_blocks = |lanes: usize, min_blocks: u32| -> Option<u32> {
         let per_lane_blocks = usable_bytes / (lanes.max(1) as u64) / 1024;
         let aligned = per_lane_blocks / u64::from(NVIDIA_LANE_STRIDE_ALIGN_BLOCKS)
@@ -3820,7 +3840,10 @@ fn plan_lane_storage(
     let (packed, top_lanes) = match max_lanes_override {
         Some(requested) => {
             let requested = requested.clamp(1, MAX_LANES_HARD_LIMIT);
-            (vec![(requested, NVIDIA_MAX_SKIPPED_LANE_FRACTION)], requested)
+            (
+                vec![(requested, NVIDIA_MAX_SKIPPED_LANE_FRACTION)],
+                requested,
+            )
         }
         None => {
             let mut packed = Vec::new();
@@ -5390,9 +5413,15 @@ mod tests {
         assert!(plans[0].1 < m_blocks * 7 / 8);
         // 24 GB card, 24,180 MiB usable: 11 full lanes, 13 leave about 9%.
         let usable = 24_180u64 * 1024 * 1024;
-        assert_eq!(plan_lane_storage(m_blocks, usable, 11, None, true, true)[0].0, 13);
+        assert_eq!(
+            plan_lane_storage(m_blocks, usable, 11, None, true, true)[0].0,
+            13
+        );
         // Without the second packed lane (Windows, WSL2) the first plan is one more.
-        assert_eq!(plan_lane_storage(m_blocks, usable, 11, None, true, false)[0].0, 12);
+        assert_eq!(
+            plan_lane_storage(m_blocks, usable, 11, None, true, false)[0].0,
+            12
+        );
     }
 
     #[test]
@@ -5956,7 +5985,10 @@ mod tests {
                 .expect("signal cancel");
             if abandon {
                 assert_eq!(done.hashes_done, 0, "an abandon keeps no hash");
-                assert!(elapsed < Duration::from_millis(600), "abandon took {elapsed:?}");
+                assert!(
+                    elapsed < Duration::from_millis(600),
+                    "abandon took {elapsed:?}"
+                );
             } else {
                 assert_eq!(done.hashes_done, lanes, "a stop finishes each lane's hash");
                 assert_eq!(done.solutions[..], reference.solutions[..lanes]);
