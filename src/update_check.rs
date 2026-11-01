@@ -1,29 +1,25 @@
 //! Background check for newer seine releases.
 //!
-//! One request to the GitHub releases API at startup and every
-//! `CHECK_INTERVAL` after. A newer release is logged once per version and
-//! flagged in the dashboard header. A failed check or install retries after
-//! `RETRY_INTERVAL` plus jitter, and mining code can ask for an earlier check
-//! when it receives work this build cannot mine.
+//! One release lookup at startup and every `CHECK_INTERVAL` after (the
+//! GitHub releases API, or the release page when the API refuses). A newer
+//! release is logged once per version and flagged in the dashboard header. A
+//! failed check or install retries after `RETRY_INTERVAL` plus jitter, and
+//! mining code can ask for an earlier check when it receives work this build
+//! cannot mine.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use anyhow::{bail, Context, Result};
-use serde::Deserialize;
-
 use crate::miner::ui;
 
-const LATEST_RELEASE_API_URL: &str = "https://api.github.com/repos/zpalmtree/seine/releases/latest";
 const RELEASES_URL: &str = "https://github.com/zpalmtree/seine/releases/latest";
 const CHECK_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60);
 const RETRY_INTERVAL: Duration = Duration::from_secs(60 * 60);
 const RETRY_JITTER_SECS: u64 = 15 * 60;
 /// Earliest follow-up after any check when mining asks for one early.
 const MIN_REQUESTED_INTERVAL: Duration = Duration::from_secs(10 * 60);
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Set by the release workflow; source and local builds never replace
 /// themselves with the generic release binary.
@@ -45,11 +41,6 @@ struct UpdateState {
     // Set when the notice was announced before any dashboard existed, so the
     // first dashboard built afterwards still shows it in its log.
     tui_log_pending: bool,
-}
-
-#[derive(Deserialize)]
-struct LatestRelease {
-    tag_name: String,
 }
 
 pub(crate) struct DashboardUpdate {
@@ -77,11 +68,12 @@ pub(crate) fn spawn(auto_update: bool, shutdown: Arc<AtomicBool>) {
             let mut last_check;
             loop {
                 last_check = Instant::now();
-                let succeeded = match fetch_latest_tag() {
-                    Ok(tag) => {
+                let succeeded = match crate::self_update::latest_release() {
+                    Ok(release) => {
+                        let tag = release.tag().to_string();
                         record_latest(current, &tag);
                         if auto_install && is_newer(&tag, current) {
-                            match apply_update(&shutdown) {
+                            match apply_update(release, &shutdown) {
                                 Some(true) => return,
                                 Some(false) => true,
                                 None => false,
@@ -153,8 +145,8 @@ fn jitter_secs(max: u64) -> u64 {
 /// restart the updated executable with the same arguments. Returns `Some(true)`
 /// once installed, `Some(false)` when already current, and `None` on failure
 /// (retried after `RETRY_INTERVAL`).
-fn apply_update(shutdown: &Arc<AtomicBool>) -> Option<bool> {
-    match crate::self_update::run() {
+fn apply_update(release: crate::self_update::Release, shutdown: &Arc<AtomicBool>) -> Option<bool> {
+    match crate::self_update::install(release) {
         Ok(crate::self_update::Outcome::Updated { from, to, .. }) => {
             ui::info(
                 "UPDATE",
@@ -215,28 +207,30 @@ fn notice(latest: &str) -> String {
     )
 }
 
-fn fetch_latest_tag() -> Result<String> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(REQUEST_TIMEOUT)
-        .user_agent(format!("seine/{}", crate::version::release_version()))
-        .build()?;
-    let response = client
-        .get(LATEST_RELEASE_API_URL)
-        .header("Accept", "application/vnd.github+json")
-        .send()
-        .context("release check unavailable")?;
-    if !response.status().is_success() {
-        bail!("release check returned {}", response.status());
-    }
-    let release: LatestRelease = response.json().context("invalid release response")?;
-    Ok(release.tag_name)
-}
-
+/// True when `candidate` is a later version than `current`. A final release
+/// is later than a prerelease of the same version (`v0.3.0` > `v0.3.0-rc1`);
+/// `git describe` suffixes (`v0.3.0-4-gabc1234`) are not prereleases.
 pub(crate) fn is_newer(candidate: &str, current: &str) -> bool {
     match (parse_version(candidate), parse_version(current)) {
+        (Some(c), Some(r)) if c == r => is_prerelease(current) && !is_prerelease(candidate),
         (Some(candidate), Some(current)) => candidate > current,
         _ => false,
     }
+}
+
+fn is_prerelease(raw: &str) -> bool {
+    let core = raw.trim().split('+').next().unwrap_or_default();
+    let Some((_, suffix)) = core.split_once('-') else {
+        return false;
+    };
+    // `N-gHASH` from `git describe` marks commits after a tag.
+    let describe = suffix.split_once("-g").is_some_and(|(count, hash)| {
+        !count.is_empty()
+            && count.bytes().all(|b| b.is_ascii_digit())
+            && !hash.is_empty()
+            && hash.bytes().all(|b| b.is_ascii_hexdigit())
+    });
+    !describe
 }
 
 /// The `(major, minor, patch)` of a release tag or version string.
@@ -326,5 +320,16 @@ mod tests {
         assert!(!is_newer("v0.2.21", "v0.2.22"));
         assert!(!is_newer("v0.2.22", "v0.2.22-3-gabc1234"));
         assert!(!is_newer("garbage", "v0.2.22"));
+    }
+
+    #[test]
+    fn final_release_is_newer_than_its_prereleases() {
+        assert!(is_newer("v0.3.0", "v0.3.0-rc1"));
+        assert!(is_newer("v0.3.0", "0.3.0-beta.2"));
+        assert!(!is_newer("v0.3.0-rc2", "v0.3.0"));
+        assert!(!is_newer("v0.3.0-rc1", "v0.3.0-rc1"));
+        assert!(!is_newer("v0.3.0", "v0.3.0-4-gabc1234"));
+        assert!(!is_newer("v0.3.0", "v0.3.0+build.7"));
+        assert!(is_newer("v0.3.1", "v0.3.0-rc1"));
     }
 }

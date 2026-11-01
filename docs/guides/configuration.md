@@ -72,15 +72,15 @@ which is what Blocknet pools run.
   you name it by IP address, the connection is encrypted without the name check,
   which also suits pools whose certificate does not match the address you use.
 - **Failover.** List several pools with repeated `--pool-url` flags or commas
-  (`a:3333,b:3333`). If Seine cannot connect to or log in to a pool after two
-  tries, it moves to the next one. While on a backup it checks the first pool
+  (`a:3333,b:3333`). If Seine cannot connect to or log in to a pool for about
+  30 seconds, it moves to the next one. While on a backup it checks the first pool
   every few minutes and switches back between shares once that pool answers.
   The saved config keeps the whole list.
 - **Proxy.** `--pool-proxy socks5://host:port` reaches every pool through a
   SOCKS5 proxy, for networks that block mining ports. Add `user:pass@` before the
   host if the proxy needs a login. Tor (`socks5://127.0.0.1:9050`) and an SSH tunnel
-  (`ssh -D 1080 yourserver`, then `socks5://127.0.0.1:1080`) both work. Only pool
-  connections use the proxy; pool stats and update checks connect directly.
+  (`ssh -D 1080 yourserver`, then `socks5://127.0.0.1:1080`) both work. Pool
+  connections and pool stats use the proxy; update checks connect directly.
 - **Login.** `-u ADDRESS.WORKER` sets the payout address and worker name together;
   `--pool-worker` overrides the worker part. `-p` is accepted and ignored, because
   Blocknet pools do not use passwords.

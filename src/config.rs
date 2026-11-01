@@ -363,7 +363,8 @@ struct Cli {
     pool_worker: Option<String>,
 
     /// Reach pools through a SOCKS5 proxy: socks5://[user:pass@]host:port.
-    /// Pool hostnames are resolved by the proxy.
+    /// Pool hostnames are resolved by the proxy. Covers Stratum and pool stats
+    /// requests; update checks and optional telemetry connect directly.
     #[arg(long = "pool-proxy", visible_alias = "socks5")]
     pool_proxy: Option<String>,
 
@@ -1187,7 +1188,11 @@ impl Config {
         let amd_requested = cli.backends.contains(&BackendKind::Amd);
         let amd_detection =
             if (amd_requested || cli.backends.is_empty()) && cli.amd_devices.is_empty() {
-                Some(detect_amd_devices(&mut startup_notices, amd_requested))
+                Some(detect_amd_devices(
+                    &mut startup_notices,
+                    amd_requested,
+                    cli.proxy_listen.is_none(),
+                ))
             } else {
                 None
             };
@@ -1701,8 +1706,7 @@ fn resolve_backend_selection(
     {
         Some(
             "this build supports NVIDIA GPU mining but no GPU was detected; \
-             install NVIDIA drivers + CUDA Toolkit to enable: \
-             https://developer.nvidia.com/cuda-downloads",
+             install the NVIDIA driver to enable it: https://www.nvidia.com/drivers",
         )
     } else {
         None
@@ -1744,15 +1748,18 @@ pub(crate) fn detect_nvidia_devices() -> Result<Vec<DetectedGpu>> {
 /// Skipped devices are reported through `notices` instead of spawning instances
 /// that are guaranteed to fail wavefront validation at start.
 /// Integrated GPUs are kept only when `include_integrated` is set.
+/// `raise_perf_level` is false when nothing will mine (farm proxy).
 #[cfg(all(feature = "amd", any(target_os = "linux", windows)))]
 pub(crate) fn detect_amd_devices(
     notices: &mut Vec<String>,
     include_integrated: bool,
+    raise_perf_level: bool,
 ) -> Result<Vec<DetectedGpu>> {
     let mut devices = crate::backend::amd::query_amd_devices()?;
     devices.retain(|device| include_integrated || !device.integrated);
     for device in &devices {
-        if !crate::backend::amd::supports_wavefront_size(device.wavefront_size) {
+        if !raise_perf_level || !crate::backend::amd::supports_wavefront_size(device.wavefront_size)
+        {
             continue;
         }
         let outcome = crate::backend::amd::dpm::raise_performance_level(
@@ -1775,6 +1782,7 @@ pub(crate) fn detect_amd_devices(
 pub(crate) fn detect_amd_devices(
     _notices: &mut Vec<String>,
     _include_integrated: bool,
+    _raise_perf_level: bool,
 ) -> Result<Vec<DetectedGpu>> {
     bail!("AMD support is not compiled into this build")
 }

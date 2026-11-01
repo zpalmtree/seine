@@ -17,7 +17,7 @@ For the raw CLI output, run:
 | `--payout-memo` | UTF-8 text, unset by default | Exchange deposit memo, preserved exactly. Requires a full deposit address and a compatible pool; verified Longhorn TLS endpoints use their address-suffix format automatically. Not supported in daemon mode or farm-proxy hosting. |
 | `--no-payout-memo` | flag | Ignores a saved payout memo for this run when switching back to a personal address. |
 | `--pool-worker` (`--worker`) | string | Worker name sent during pool login. |
-| `--pool-proxy` (`--socks5`) | `socks5://[user:pass@]host:port` | Sends pool connections, including backup pools and dev-fee rounds, through a SOCKS5 proxy. The proxy resolves pool hostnames. Other HTTPS requests, such as pool stats and update checks, still connect directly. |
+| `--pool-proxy` (`--socks5`) | `socks5://[user:pass@]host:port` | Sends pool connections, including backup pools and dev-fee rounds, through a SOCKS5 proxy. The proxy resolves pool hostnames. Pool stats requests use it too; update checks and optional telemetry connect directly. |
 | `--proxy-listen` | `host:port` | Runs Seine as a farm proxy instead of mining. Rigs connect to this address and share one session with `--pool-url`; every share pays `--address`. See [farm proxy](guides/farm-proxy.md). |
 | `--pass` (`-p`) | string | Accepted so launch templates that always pass a pool password keep working. Blocknet pools do not use passwords; the value is ignored. |
 | `--api-url` | URL, default auto-detected then `http://127.0.0.1:8332` | Blocknet daemon API base URL. Seine prefers Blocknet wrapper config/pidfiles/processes before falling back to loopback. Optional in daemon mode for standard wrapper-managed installs; optional in pool mode for local daemon wallet balance. |

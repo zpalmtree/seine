@@ -769,7 +769,12 @@ fn connect_pool_session(
         );
     }
     let telemetry = if connection.payout_memo.is_none() {
-        PoolUiTelemetryClient::for_destination(&connection.pool_url, &connection.address, None)
+        PoolUiTelemetryClient::for_destination(
+            &connection.pool_url,
+            &connection.address,
+            None,
+            connection.proxy.as_ref(),
+        )
     } else {
         None
     };
@@ -805,6 +810,7 @@ fn update_user_pool_telemetry(
                         pool_url,
                         &session.connection.address,
                         session.connection.payout_memo.as_deref(),
+                        session.connection.proxy.as_ref(),
                     );
                     set_tui_pool_balance_overview(tui, &session.connection.address, "---", "---");
                 }
@@ -2787,24 +2793,41 @@ where
 }
 
 impl PoolUiTelemetryClient {
-    fn for_destination(pool_url: &str, address: &str, memo: Option<&str>) -> Option<Self> {
+    /// Pool stats go through the same SOCKS proxy as the Stratum session.
+    fn for_destination(
+        pool_url: &str,
+        address: &str,
+        memo: Option<&str>,
+        proxy: Option<&crate::pool::SocksProxy>,
+    ) -> Option<Self> {
         let account = crate::pool::payout_account_for_pool(pool_url, address, memo).ok()?;
-        let mut client = Self::new(pool_url, &account)?;
+        let mut client = Self::with_proxy(pool_url, &account, proxy)?;
         if memo.is_some() && crate::pool::uses_longhorn_memos(pool_url) {
             client.expected_account = Some(account);
         }
         Some(client)
     }
 
+    #[cfg(test)]
     fn new(pool_url: &str, address: &str) -> Option<Self> {
+        Self::with_proxy(pool_url, address, None)
+    }
+
+    fn with_proxy(
+        pool_url: &str,
+        address: &str,
+        proxy: Option<&crate::pool::SocksProxy>,
+    ) -> Option<Self> {
         let base_urls = pool_api_base_urls_from_pool_url(pool_url);
         if base_urls.is_empty() {
             return None;
         }
-        let http = HttpClient::builder()
-            .timeout(POOL_TELEMETRY_TIMEOUT)
-            .build()
-            .ok()?;
+        let mut builder = HttpClient::builder().timeout(POOL_TELEMETRY_TIMEOUT);
+        if let Some(proxy) = proxy {
+            // Never fall back to a direct request when the proxy is set.
+            builder = builder.proxy(proxy.reqwest_proxy().ok()?);
+        }
+        let http = builder.build().ok()?;
         let endpoints = base_urls
             .into_iter()
             .filter_map(|base_url| {
@@ -3666,6 +3689,7 @@ mod tests {
             "stratum+ssl://us.longhornpool.net:3334",
             "address",
             Some(memo),
+            None,
         )
         .unwrap();
         let account = format!("address?memo={memo}");
@@ -3677,6 +3701,7 @@ mod tests {
             "stratum+tcp://bntpool.com:3333",
             "address",
             Some(memo),
+            None,
         )
         .unwrap();
         assert!(standard.endpoints[0].miner_balance_url.contains(
@@ -3837,6 +3862,27 @@ mod tests {
         assert!(client.rate_limit_backoff_remaining().is_some());
         balance_mock.assert_hits(1);
         fallback_mock.assert_hits(0);
+    }
+
+    #[test]
+    fn telemetry_through_a_pool_proxy_never_connects_directly() {
+        let server = MockServer::start();
+        let stats = server.mock(|when, then| {
+            when.method(GET).path("/api/stats");
+            then.status(200)
+                .json_body(json!({"chain": {"network_hashrate": 1234.0}}));
+        });
+        let dead = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let proxy = crate::pool::SocksProxy::parse(&format!(
+            "127.0.0.1:{}",
+            dead.local_addr().unwrap().port()
+        ))
+        .unwrap();
+        drop(dead);
+        let client = PoolUiTelemetryClient::with_proxy(&server.url(""), "addr", Some(&proxy))
+            .expect("telemetry client should be created");
+        assert!(client.fetch_pool_hashrate().is_err());
+        stats.assert_hits(0);
     }
 
     #[test]

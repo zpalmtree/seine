@@ -55,6 +55,9 @@ fn run() -> Result<()> {
         return backend::amd::export_code_objects(std::path::Path::new(dir));
     }
     self_update::cleanup_leftovers();
+    // Config parsing may raise AMD GPU performance levels; put them back on
+    // every return path, including config errors after detection.
+    let _restore_perf_levels = RestorePerfLevels;
     let cfg = Config::parse()?;
     let shutdown = Arc::new(AtomicBool::new(false));
     if cfg.update_check_enabled && !cfg.bench {
@@ -77,4 +80,12 @@ fn run() -> Result<()> {
         self_update::restart()?;
     }
     result
+}
+
+struct RestorePerfLevels;
+
+impl Drop for RestorePerfLevels {
+    fn drop(&mut self) {
+        backend::amd::restore_performance_levels();
+    }
 }

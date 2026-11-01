@@ -1197,7 +1197,7 @@ fn detect_available_devices() -> Vec<AvailableDeviceView> {
             memory_total_mib: device.memory_total_mib,
         }));
     }
-    if let Ok(detected) = crate::config::detect_amd_devices(&mut Vec::new(), true) {
+    if let Ok(detected) = crate::config::detect_amd_devices(&mut Vec::new(), true, false) {
         devices.extend(detected.into_iter().map(|device| AvailableDeviceView {
             vendor: "amd",
             index: device.index,
@@ -2235,7 +2235,7 @@ fn parse_backend_specs_patch(specs: &[BackendSpecPatch]) -> Result<Vec<BackendSp
 fn detected_gpu_indexes(kind: BackendKind) -> Vec<u32> {
     let detection = match kind {
         BackendKind::Nvidia => crate::config::detect_nvidia_devices(),
-        BackendKind::Amd => crate::config::detect_amd_devices(&mut Vec::new(), true),
+        BackendKind::Amd => crate::config::detect_amd_devices(&mut Vec::new(), true, true),
         BackendKind::Cpu | BackendKind::Metal => return Vec::new(),
     };
     detection

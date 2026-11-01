@@ -66,6 +66,18 @@ impl SocksProxy {
         })
     }
 
+    /// The same proxy for HTTP clients, with hostnames resolved by the proxy.
+    pub fn reqwest_proxy(&self) -> Result<reqwest::Proxy> {
+        let mut url = reqwest::Url::parse(&format!("socks5h://{}", self.authority))
+            .map_err(|err| anyhow!("invalid pool proxy address {}: {err}", self.authority))?;
+        if let Some((user, pass)) = &self.credentials {
+            url.set_username(user)
+                .and_then(|()| url.set_password(Some(pass)))
+                .map_err(|()| anyhow!("invalid pool proxy credentials"))?;
+        }
+        reqwest::Proxy::all(url).map_err(|err| anyhow!("invalid pool proxy: {err}"))
+    }
+
     /// The proxy address without credentials.
     pub fn display(&self) -> String {
         format!("socks5://{}", self.authority)

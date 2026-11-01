@@ -324,6 +324,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           body_path: RELEASE_NOTES.md
+          # Suffixed tags (v1.2.3-rc1) publish as prereleases, which the
+          # updater and the latest-release link never pick up.
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          make_latest: ${{ !contains(github.ref_name, '-') }}
           files: |
             SHA256SUMS.txt
             SHA256SUMS.txt.sig

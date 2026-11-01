@@ -273,14 +273,22 @@ static ARGON2_PTX_CC8: &str = include_str!("nvidia/argon2_cc8.ptx");
 static ARGON2_PTX_CC10: &str = include_str!("nvidia/argon2_cc10.ptx");
 const PREBUILT_ARGON2_M_BLOCKS: u32 = 1 << 21;
 
-/// The prebuilt Argon2 PTX for a device of compute capability `cc_major`, when
-/// the PoW parameters are the ones it was built for.
-fn prebuilt_argon2_ptx(cc_major: u32, m_blocks: u32, t_cost: u32) -> Option<&'static str> {
+/// The prebuilt Argon2 PTX for a device of compute capability
+/// `cc_major`.`cc_minor`, when the PoW parameters are the ones it was built
+/// for. The 7.x file targets compute_75, so Volta (7.0, 7.2) loads the
+/// compute_60 file.
+fn prebuilt_argon2_ptx(
+    cc_major: u32,
+    cc_minor: u32,
+    m_blocks: u32,
+    t_cost: u32,
+) -> Option<&'static str> {
     if m_blocks != PREBUILT_ARGON2_M_BLOCKS || t_cost != 1 {
         return None;
     }
     match cc_major {
         6 => Some(ARGON2_PTX_CC6),
+        7 if cc_minor < 5 => Some(ARGON2_PTX_CC6),
         7 => Some(ARGON2_PTX_CC7),
         8 | 9 => Some(ARGON2_PTX_CC8),
         major if major >= 10 => Some(ARGON2_PTX_CC10),
@@ -900,21 +908,46 @@ impl CudaArgon2Engine {
         // NVRTC or load the prebuilt PTX.
         let prebuilt_module = prebuilt_argon2_cubin(cc_major_u32, cc_minor_u32, m_blocks, t_cost)
             .and_then(|cubin| ctx.load_module(Ptx::from_binary(cubin.to_vec())).ok());
-        let compiled = use_nvrtc && prebuilt_module.is_none();
+        let mut compiled = use_nvrtc && prebuilt_module.is_none();
+        let load_prebuilt_ptx = || {
+            let ptx = prebuilt_argon2_ptx(cc_major_u32, cc_minor_u32, m_blocks, t_cost)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "no prebuilt Argon2 kernel for compute capability {cc_major}.{cc_minor}"
+                    )
+                })?;
+            ctx.load_module(Ptx::from_src(ptx))
+                .map_err(|err| anyhow!("failed to load prebuilt CUDA module: {err:?}"))
+        };
+        // An installed NVRTC that cannot build for this GPU (for example a
+        // CUDA release without support for its architecture) falls back to
+        // the prebuilt PTX.
+        let mut nvrtc_or_prebuilt = |nvrtc: Result<Arc<cudarc::driver::CudaModule>>| match nvrtc {
+            Ok(module) => Ok(module),
+            Err(nvrtc_err) => match load_prebuilt_ptx() {
+                Ok(module) => {
+                    crate::miner::ui::warn(
+                        "NVIDIA",
+                        format!(
+                            "GPU {device_index}: NVRTC could not build the kernel ({nvrtc_err:#}); using the built-in kernel"
+                        ),
+                    );
+                    compiled = false;
+                    Ok(module)
+                }
+                Err(prebuilt_err) => Err(nvrtc_err.context(format!("{prebuilt_err:#}"))),
+            },
+        };
         let module = if let Some(module) = prebuilt_module {
             module
         } else if !use_nvrtc {
-            let ptx = prebuilt_argon2_ptx(cc_major_u32, m_blocks, t_cost).ok_or_else(|| {
-                anyhow!("no prebuilt Argon2 kernel for compute capability {cc_major}.{cc_minor}")
-            })?;
-            ctx.load_module(Ptx::from_src(ptx))
-                .map_err(|err| anyhow!("failed to load prebuilt CUDA module: {err:?}"))?
+            load_prebuilt_ptx()?
         } else if let Some(cached) = load_cached_cubin(&cache_path) {
             match ctx.load_module(Ptx::from_binary(cached)) {
                 Ok(module) => module,
                 Err(err) => {
                     let _ = fs::remove_file(&cache_path);
-                    let compiled = compile_cuda_module_with_nvrtc_fallback(
+                    let nvrtc = compile_cuda_module_with_nvrtc_fallback(
                         CUDA_KERNEL_SRC,
                         program_name,
                         &nvrtc_cubin_options,
@@ -924,35 +957,41 @@ impl CudaArgon2Engine {
                         anyhow!(
                             "failed to compile CUDA module with NVRTC after cache load failure ({err:?}): {compile_err:#}"
                         )
-                    })?;
-                    if let NvrtcModuleArtifact::Cubin(cubin) = &compiled {
-                        let _ = persist_cached_cubin(&cache_path, cubin);
-                    }
-                    match compiled {
-                        NvrtcModuleArtifact::Cubin(cubin) => {
-                            ctx.load_module(Ptx::from_binary(cubin))
+                    })
+                    .and_then(|artifact| {
+                        if let NvrtcModuleArtifact::Cubin(cubin) = &artifact {
+                            let _ = persist_cached_cubin(&cache_path, cubin);
                         }
-                        NvrtcModuleArtifact::Ptx(ptx) => ctx.load_module(Ptx::from_src(ptx)),
-                    }
-                    .map_err(|load_err| anyhow!("failed to load CUDA module: {load_err:?}"))?
+                        match artifact {
+                            NvrtcModuleArtifact::Cubin(cubin) => {
+                                ctx.load_module(Ptx::from_binary(cubin))
+                            }
+                            NvrtcModuleArtifact::Ptx(ptx) => ctx.load_module(Ptx::from_src(ptx)),
+                        }
+                        .map_err(|load_err| anyhow!("failed to load CUDA module: {load_err:?}"))
+                    });
+                    nvrtc_or_prebuilt(nvrtc)?
                 }
             }
         } else {
-            let compiled = compile_cuda_module_with_nvrtc_fallback(
+            let nvrtc = compile_cuda_module_with_nvrtc_fallback(
                 CUDA_KERNEL_SRC,
                 program_name,
                 &nvrtc_cubin_options,
                 &nvrtc_ptx_options,
             )
-            .map_err(|err| anyhow!("failed to compile CUDA module with NVRTC: {err:#}"))?;
-            if let NvrtcModuleArtifact::Cubin(cubin) = &compiled {
-                let _ = persist_cached_cubin(&cache_path, cubin);
-            }
-            match compiled {
-                NvrtcModuleArtifact::Cubin(cubin) => ctx.load_module(Ptx::from_binary(cubin)),
-                NvrtcModuleArtifact::Ptx(ptx) => ctx.load_module(Ptx::from_src(ptx)),
-            }
-            .map_err(|load_err| anyhow!("failed to load CUDA module: {load_err:?}"))?
+            .map_err(|err| anyhow!("failed to compile CUDA module with NVRTC: {err:#}"))
+            .and_then(|artifact| {
+                if let NvrtcModuleArtifact::Cubin(cubin) = &artifact {
+                    let _ = persist_cached_cubin(&cache_path, cubin);
+                }
+                match artifact {
+                    NvrtcModuleArtifact::Cubin(cubin) => ctx.load_module(Ptx::from_binary(cubin)),
+                    NvrtcModuleArtifact::Ptx(ptx) => ctx.load_module(Ptx::from_src(ptx)),
+                }
+                .map_err(|load_err| anyhow!("failed to load CUDA module: {load_err:?}"))
+            });
+            nvrtc_or_prebuilt(nvrtc)?
         };
         let kernel_nonfused = module
             .load_function("argon2id_fill_kernel")
@@ -2000,9 +2039,15 @@ impl PowBackend for NvidiaBackend {
         // Argon2 work (`supports_pow`) and mines BLAKE2b.
         let argon2_supported = argon2_uses_nvrtc()
             || pow_params().ok().is_some_and(|params| {
-                let (cc_major, _) = query_cuda_compute_capability(selected.index).unwrap_or((0, 0));
-                prebuilt_argon2_ptx(cc_major, params.block_count() as u32, params.t_cost())
-                    .is_some()
+                let (cc_major, cc_minor) =
+                    query_cuda_compute_capability(selected.index).unwrap_or((0, 0));
+                prebuilt_argon2_ptx(
+                    cc_major,
+                    cc_minor,
+                    params.block_count() as u32,
+                    params.t_cost(),
+                )
+                .is_some()
             });
         self.argon2_supported
             .store(argon2_supported, Ordering::Release);
@@ -5888,22 +5933,24 @@ mod tests {
     #[test]
     fn prebuilt_argon2_ptx_covers_pascal_and_newer() {
         let m = PREBUILT_ARGON2_M_BLOCKS;
-        assert!(prebuilt_argon2_ptx(5, m, 1).is_none());
-        for (cc_major, ptx) in [
-            (6, ARGON2_PTX_CC6),
-            (7, ARGON2_PTX_CC7),
-            (8, ARGON2_PTX_CC8),
-            (9, ARGON2_PTX_CC8),
-            (10, ARGON2_PTX_CC10),
-            (12, ARGON2_PTX_CC10),
+        assert!(prebuilt_argon2_ptx(5, 2, m, 1).is_none());
+        for (cc_major, cc_minor, ptx) in [
+            (6, 1, ARGON2_PTX_CC6),
+            (7, 0, ARGON2_PTX_CC6),
+            (7, 2, ARGON2_PTX_CC6),
+            (7, 5, ARGON2_PTX_CC7),
+            (8, 6, ARGON2_PTX_CC8),
+            (9, 0, ARGON2_PTX_CC8),
+            (10, 0, ARGON2_PTX_CC10),
+            (12, 0, ARGON2_PTX_CC10),
         ] {
             assert!(std::ptr::eq(
-                prebuilt_argon2_ptx(cc_major, m, 1).unwrap(),
+                prebuilt_argon2_ptx(cc_major, cc_minor, m, 1).unwrap(),
                 ptx
             ));
         }
-        assert!(prebuilt_argon2_ptx(8, m / 2, 1).is_none());
-        assert!(prebuilt_argon2_ptx(8, m, 2).is_none());
+        assert!(prebuilt_argon2_ptx(8, 6, m / 2, 1).is_none());
+        assert!(prebuilt_argon2_ptx(8, 6, m, 2).is_none());
     }
 
     /// Repeats one full batch and requires identical results each time, which

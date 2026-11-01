@@ -40,8 +40,19 @@ const HEALTHY_SESSION: Duration = Duration::from_secs(60);
 /// Delay used when a `connection_limit` notice gives none.
 const DEFAULT_CONNECTION_LIMIT_DELAY: Duration = Duration::from_secs(30);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
-/// Connection attempts without a login before moving to the next pool.
+/// Connection attempts without a login before moving to the next pool...
 const FAILOVER_AFTER_FAILED_ATTEMPTS: u32 = 2;
+/// ...once the pool has also been unreachable this long, so a pool restart or
+/// brief network drop reconnects to the same pool.
+#[cfg(not(test))]
+const FAILOVER_AFTER_UNREACHABLE: Duration = Duration::from_secs(30);
+#[cfg(test)]
+const FAILOVER_AFTER_UNREACHABLE: Duration = Duration::from_secs(1);
+/// After a healthy session closes, reconnect within this window, spread so
+/// miners dropped together do not all reconnect in the same instant.
+const HEALTHY_RECONNECT_SPREAD: Duration = Duration::from_secs(2);
+/// TLS handshake timeout through a SOCKS proxy, which adds round trips.
+const PROXIED_TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
 /// How often a backup session checks whether the primary pool is back.
 const PRIMARY_RECHECK_INTERVAL: Duration = Duration::from_secs(5 * 60);
 const MAX_PRIMARY_RECHECK_INTERVAL: Duration = Duration::from_secs(60 * 60);
@@ -1274,13 +1285,17 @@ async fn run_pool_client_loop(
 }
 
 /// Pool failover bookkeeping. Seine moves to the next pool in the list after
-/// repeated attempts that never log in, stays on a pool while sessions log in,
-/// and probes the primary pool periodically while on a backup.
+/// repeated attempts that never log in over `FAILOVER_AFTER_UNREACHABLE`,
+/// stays on a pool while sessions log in, and probes the primary pool
+/// periodically while on a backup. A failed probe returns to the backup
+/// without waiting out the window.
 #[derive(Debug)]
 struct PoolFailover {
     pools: usize,
     active: usize,
     failed_attempts: u32,
+    failing_since: Option<Instant>,
+    failover_after: Duration,
     primary_recheck: Duration,
     returned_to_primary: bool,
 }
@@ -1291,6 +1306,8 @@ impl PoolFailover {
             pools: pools.max(1),
             active: 0,
             failed_attempts: 0,
+            failing_since: None,
+            failover_after: FAILOVER_AFTER_UNREACHABLE,
             primary_recheck: PRIMARY_RECHECK_INTERVAL,
             returned_to_primary: false,
         }
@@ -1299,8 +1316,13 @@ impl PoolFailover {
     /// Records how a connection attempt ended; returns true when it moved to
     /// another pool.
     fn session_ended(&mut self, logged_in: bool) -> bool {
+        self.session_ended_at(logged_in, Instant::now())
+    }
+
+    fn session_ended_at(&mut self, logged_in: bool, now: Instant) -> bool {
         if logged_in {
             self.failed_attempts = 0;
+            self.failing_since = None;
             if self.active == 0 {
                 self.returned_to_primary = false;
                 self.primary_recheck = PRIMARY_RECHECK_INTERVAL;
@@ -1308,7 +1330,12 @@ impl PoolFailover {
             return false;
         }
         self.failed_attempts += 1;
-        if self.pools < 2 || self.failed_attempts < FAILOVER_AFTER_FAILED_ATTEMPTS {
+        let failing_since = *self.failing_since.get_or_insert(now);
+        let probing_primary = self.active == 0 && self.returned_to_primary;
+        if self.pools < 2
+            || self.failed_attempts < FAILOVER_AFTER_FAILED_ATTEMPTS
+            || (!probing_primary && now.duration_since(failing_since) < self.failover_after)
+        {
             return false;
         }
         if self.active == 0 && self.returned_to_primary {
@@ -1317,6 +1344,7 @@ impl PoolFailover {
             self.primary_recheck = (self.primary_recheck * 2).min(MAX_PRIMARY_RECHECK_INTERVAL);
         }
         self.failed_attempts = 0;
+        self.failing_since = None;
         self.active = (self.active + 1) % self.pools;
         true
     }
@@ -1324,6 +1352,7 @@ impl PoolFailover {
     fn switch_to_primary(&mut self) {
         self.active = 0;
         self.failed_attempts = 0;
+        self.failing_since = None;
         self.returned_to_primary = true;
     }
 }
@@ -1404,7 +1433,12 @@ async fn connect_pool_tls(
         ),
     };
     let connector = tokio_rustls::TlsConnector::from(config);
-    match tokio::time::timeout(CONNECT_TIMEOUT, connector.connect(server_name, stream)).await {
+    let handshake_timeout = if endpoint.proxy.is_some() {
+        PROXIED_TLS_HANDSHAKE_TIMEOUT
+    } else {
+        CONNECT_TIMEOUT
+    };
+    match tokio::time::timeout(handshake_timeout, connector.connect(server_name, stream)).await {
         Ok(Ok(stream)) => Ok(stream),
         Ok(Err(err)) => Err(anyhow!(
             "TLS handshake failed with pool at {}: {err}",
@@ -1835,7 +1869,7 @@ fn friendly_pool_connect_error(endpoint: &PoolEndpoint, detail: &str) -> String 
     if lower.contains("tls handshake") {
         if lower.contains("certificate") {
             return format!(
-                "pool TLS certificate not trusted at {} (connect by IP address to skip the name check)",
+                "pool TLS certificate not trusted at {} (check the pool host name and port)",
                 endpoint.display()
             );
         }
@@ -2052,7 +2086,7 @@ impl ReconnectBackoff {
     fn after_close(&mut self, limit_delay: Option<Duration>, healthy: bool) -> Duration {
         let delay = if healthy {
             self.failures = 0;
-            Duration::ZERO
+            HEALTHY_RECONNECT_SPREAD.mul_f64(random_unit())
         } else {
             self.failed()
         };
@@ -2065,13 +2099,17 @@ impl ReconnectBackoff {
 
 /// `base` scaled by a random factor between 0.75 and 1.25.
 fn jittered(base: Duration) -> Duration {
+    base.mul_f64(0.75 + random_unit() * 0.5)
+}
+
+/// A random value in [0, 1].
+fn random_unit() -> f64 {
     let mut buf = [0u8; 2];
-    let unit = if getrandom::getrandom(&mut buf).is_ok() {
+    if getrandom::getrandom(&mut buf).is_ok() {
         f64::from(u16::from_le_bytes(buf)) / f64::from(u16::MAX)
     } else {
         0.5
-    };
-    base.mul_f64(0.75 + unit * 0.5)
+    }
 }
 
 fn parse_login_result(result: Option<Value>) -> PoolLoginAck {
@@ -2965,10 +3003,7 @@ mod tests {
         assert_eq!(limit(Duration::from_secs(30)), Duration::from_secs(30));
         assert!(limit(Duration::ZERO) <= RECONNECT_DELAY.mul_f64(1.25));
         assert_eq!(limit(Duration::from_secs(3600)), MAX_CONNECTION_LIMIT_DELAY);
-        assert_eq!(
-            ReconnectBackoff::default().after_close(None, true),
-            Duration::ZERO
-        );
+        assert!(ReconnectBackoff::default().after_close(None, true) <= HEALTHY_RECONNECT_SPREAD);
     }
 
     #[test]
@@ -2982,7 +3017,7 @@ mod tests {
         for (wait, base) in waits.iter().zip([2, 4, 8, 16, 32, 60, 60, 60]) {
             assert!(within(*wait, base), "{wait:?} vs {base}s");
         }
-        assert_eq!(backoff.after_close(None, true), Duration::ZERO);
+        assert!(backoff.after_close(None, true) <= HEALTHY_RECONNECT_SPREAD);
         assert!(
             within(backoff.failed(), 2),
             "a healthy session resets the backoff"
@@ -3374,8 +3409,33 @@ mod tests {
     }
 
     #[test]
+    fn failover_waits_out_a_brief_outage_on_the_same_pool() {
+        let mut failover = PoolFailover::new(2);
+        failover.failover_after = Duration::from_secs(30);
+        let start = Instant::now();
+        // A pool restart: refused reconnects for a few seconds.
+        for offset in [0, 2, 6, 14] {
+            assert!(!failover.session_ended_at(false, start + Duration::from_secs(offset)));
+        }
+        assert_eq!(failover.active, 0);
+        assert!(!failover.session_ended_at(true, start + Duration::from_secs(20)));
+        // A fresh outage starts its own window.
+        assert!(!failover.session_ended_at(false, start + Duration::from_secs(40)));
+        assert!(!failover.session_ended_at(false, start + Duration::from_secs(60)));
+        assert!(failover.session_ended_at(false, start + Duration::from_secs(71)));
+        assert_eq!(failover.active, 1);
+        // A failed probe of the primary returns to the backup promptly.
+        failover.switch_to_primary();
+        let probe = start + Duration::from_secs(400);
+        assert!(!failover.session_ended_at(false, probe));
+        assert!(failover.session_ended_at(false, probe + Duration::from_secs(2)));
+        assert_eq!(failover.active, 1);
+    }
+
+    #[test]
     fn failover_moves_on_after_failed_attempts_and_stays_while_logged_in() {
         let mut failover = PoolFailover::new(2);
+        failover.failover_after = Duration::ZERO;
         assert!(!failover.session_ended(false));
         assert_eq!(failover.active, 0);
         assert!(failover.session_ended(false));
@@ -3397,6 +3457,7 @@ mod tests {
     #[test]
     fn failover_backs_off_primary_checks_when_primary_will_not_log_in() {
         let mut failover = PoolFailover::new(2);
+        failover.failover_after = Duration::ZERO;
         failover.session_ended(false);
         failover.session_ended(false);
         assert_eq!(failover.active, 1);
@@ -3419,6 +3480,10 @@ mod tests {
             "TLS handshake failed with pool at x: invalid peer certificate: UnknownIssuer",
         );
         assert!(cert.contains("certificate not trusted"));
+        assert!(
+            !cert.contains("IP address"),
+            "never suggest skipping verification"
+        );
         let plain = friendly_pool_connect_error(
             &endpoint,
             "TLS handshake failed with pool at x: received corrupt message",
