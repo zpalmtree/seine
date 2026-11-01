@@ -51,7 +51,7 @@ See [collection fields and self-hosting](../telemetry/README.md).
 | `--cpu-profile` | `balanced`, `throughput`, `efficiency`; default `balanced` | Profile presets for CPU polling, flushing and batching. Both `balanced` and `throughput` target the highest measured hashrate; only opt-in `efficiency` may choose fewer workers below that peak. All profiles retain memory safeguards. |
 | `--cpu-threads-per-instance` | comma-separated integers `>=1` | Per-CPU-backend thread counts; length must match CPU instances. |
 | `--cpu-affinity-per-instance` | comma-separated `off|auto|os|pcore-only` | Per-CPU-backend affinity; length must match CPU instances. |
-| `--cpu-memory-reserve-percent` | integer `0..99`; default `5` | Subtract this percentage of effective total RAM from the automatic CPU sizing/autotune budget. `0` opts out. Explicit thread counts bypass the reserve unless autotuning is forced; fixed counts retain RAM checks; adaptive mining may pause at zero workers when RAM is insufficient. |
+| `--cpu-memory-reserve-percent` | integer `0..99`; default `5` (at most 512 MiB on hosts with 16 GiB or more, else at most 1 GiB) | Subtract this percentage of effective total RAM from the automatic CPU sizing/autotune budget. `0` opts out. Explicit thread counts bypass the reserve unless autotuning is forced; fixed counts retain RAM checks; adaptive mining may pause at zero workers when RAM is insufficient. |
 | `--allow-oversubscribe` | bool flag (default `false`) | Allows start even when configured CPU lanes exceed detected RAM budget. |
 
 ## Runtime Loop, Scheduling, and Nonce Space

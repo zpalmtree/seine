@@ -448,7 +448,8 @@ struct Cli {
     threads: Option<usize>,
 
     /// Percentage of effective total RAM left unused by automatic CPU sizing/autotuning.
-    /// Default: 5%, at most 1 GiB. Explicit thread counts override this reserve.
+    /// Default: 5%, at most 512 MiB on hosts with 16 GiB or more (else at most 1 GiB). Explicit
+    /// thread counts override this reserve.
     /// Set 0 to disable headroom.
     #[arg(long, value_parser = clap::value_parser!(u8).range(0..=99))]
     cpu_memory_reserve_percent: Option<u8>,
@@ -856,7 +857,7 @@ pub struct Config {
     /// Frozen automatic worker slots for this run; distinct from the RAM-safe
     /// manual/offline ceiling and the CPU-only cache/search maximum.
     pub cpu_autotune_worker_slots: Option<usize>,
-    /// `None` reserves 5% of effective RAM, at most 1 GiB.
+    /// `None` reserves 5% of effective RAM, at most 512 MiB with 16 GiB or more (else 1 GiB).
     pub cpu_memory_reserve_percent: Option<u8>,
     pub cpu_affinity: CpuAffinityMode,
     pub cpu_page_mode: CpuPageMode,
@@ -1299,7 +1300,7 @@ impl Config {
             startup_notices.push(format!(
                 "CPU automatic sizing reserves {} of effective RAM; cap={} thread(s) per instance (--cpu-memory-reserve-percent 0 disables the reserve)",
                 cli.cpu_memory_reserve_percent
-                    .map_or("5% (at most 1 GiB)".to_string(), |p| format!("{p}%")),
+                    .map_or("5% (at most 512 MiB with 16 GiB or more, else 1 GiB)".to_string(), |p| format!("{p}%")),
                 auto_threads_cap,
             ));
         }
@@ -3191,12 +3192,20 @@ fn auto_cpu_threads(
 }
 
 // RAM kept free by automatic sizing, as a share of the effective (cgroup-aware)
-// total; free memory already excludes what the OS uses. The default caps 5% at
-// 1 GiB: on 32 GiB hosts the full 5% left 13 of 14 possible 2 GiB arenas.
+// total; free memory already excludes what the OS uses. The default is 5%, at most
+// 1 GiB, and at most 512 MiB on hosts with 16 GiB or more.
 fn memory_reserve_bytes(effective_total: u64, reserve_percent: Option<u8>) -> u64 {
     match reserve_percent {
         Some(percent) => effective_total / 100 * u64::from(percent),
-        None => (effective_total / 100 * 5).min(1024 * 1024 * 1024),
+        None => (effective_total / 100 * 5).min(default_reserve_cap(effective_total)),
+    }
+}
+
+fn default_reserve_cap(effective_total: u64) -> u64 {
+    if effective_total >= 16 * 1024 * 1024 * 1024 {
+        512 * 1024 * 1024
+    } else {
+        1024 * 1024 * 1024
     }
 }
 
@@ -4974,6 +4983,9 @@ HugePages_Rsvd:          0
             13
         );
         assert_eq!(memory_reserve_bytes(8 * gib, None), 8 * gib / 100 * 5);
+        assert_eq!(memory_reserve_bytes(15 * gib, None), 15 * gib / 100 * 5);
+        assert_eq!(memory_reserve_bytes(16 * gib, None), gib / 2);
+        assert_eq!(memory_reserve_bytes(64 * gib, None), gib / 2);
     }
 
     #[test]

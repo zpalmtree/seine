@@ -28,7 +28,8 @@ local placement. See [Linux HugePages](linux-hugepages.md).
 
 ## Memory headroom
 
-Automatic thread sizing and autotuning reserve 5% of effective total RAM, in addition
+Automatic thread sizing and autotuning reserve 5% of effective total RAM (at most
+512 MiB on hosts with 16 GiB or more, else at most 1 GiB), in addition
 to any GPU/Metal reservation. Adjust this with `--cpu-memory-reserve-percent <0..99>`;
 `0` disables that reserve. Explicit thread counts keep their existing memory checks
 and disable tuning unless `--cpu-autotune-threads` is requested.
