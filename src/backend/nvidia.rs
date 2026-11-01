@@ -267,10 +267,10 @@ const CUDA_KERNEL_SRC: &str = include_str!("nvidia_kernel.cu");
 /// group of `arch_fill_defines`, loaded through the driver when NVRTC is not
 /// installed. The Blackwell file targets compute_100 and needs a CUDA 12.8
 /// driver, as those GPUs do. Regenerate them with `scripts/gen_argon2_ptx.py`.
-const ARGON2_PTX_CC6: &str = include_str!("nvidia/argon2_cc6.ptx");
-const ARGON2_PTX_CC7: &str = include_str!("nvidia/argon2_cc7.ptx");
-const ARGON2_PTX_CC8: &str = include_str!("nvidia/argon2_cc8.ptx");
-const ARGON2_PTX_CC10: &str = include_str!("nvidia/argon2_cc10.ptx");
+static ARGON2_PTX_CC6: &str = include_str!("nvidia/argon2_cc6.ptx");
+static ARGON2_PTX_CC7: &str = include_str!("nvidia/argon2_cc7.ptx");
+static ARGON2_PTX_CC8: &str = include_str!("nvidia/argon2_cc8.ptx");
+static ARGON2_PTX_CC10: &str = include_str!("nvidia/argon2_cc10.ptx");
 const PREBUILT_ARGON2_M_BLOCKS: u32 = 1 << 21;
 
 /// The prebuilt Argon2 PTX for a device of compute capability `cc_major`, when
