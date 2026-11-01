@@ -101,22 +101,46 @@ def run(command, data=None):
     return subprocess.run(command, input=data, text=True, capture_output=True, timeout=45)
 
 
+def check_failure(category, result=None, error=None):
+    # Do not log SQL, connection strings, payloads or arbitrary stderr. Keep the
+    # bounded failure class that operators need to distinguish query failures.
+    detail = 'process failed'
+    if isinstance(error, subprocess.TimeoutExpired):
+        detail = 'process timeout'
+    elif isinstance(error, ValueError):
+        detail = 'invalid JSON response'
+    elif isinstance(error, OSError):
+        detail = 'process unavailable'
+    elif result is not None:
+        if 'canceling statement due to statement timeout' in result.stderr:
+            detail = 'database statement timeout'
+        elif 'canceling statement due to lock timeout' in result.stderr:
+            detail = 'database lock timeout'
+        else:
+            detail = f'process exited {result.returncode}'
+    print(f'Telemetry {category} check failed: {detail}.', file=sys.stderr)
+
+
 def collect():
     results = {}
     try:
         health = run(['bash', str(ROOT / 'deploy/check.sh'), '--infrastructure-only'])
         results['infrastructure'] = health.returncode == 0
-    except (OSError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.TimeoutExpired) as error:
+        check_failure('infrastructure', error=error)
         results['infrastructure'] = None
     compose = ['docker', 'compose', '--project-directory', str(ROOT / 'deploy'),
                '--env-file', str(ROOT / 'deploy/.env'), '-f', str(ROOT / 'deploy/compose.yaml'),
                'exec', '-T', 'db', 'psql', '-X', '-U', 'telemetry', '-d', 'telemetry',
                '-qAt', '-v', 'ON_ERROR_STOP=1']
-    for category, name in [('quality', 'data_quality.sql'), ('diagnostics', 'diagnostics.sql'), ('performance', 'alerts.sql')]:
+    for category, name in [('quality', 'data_quality.sql'), ('diagnostics', 'diagnostic_alerts.sql'), ('performance', 'alerts.sql')]:
         try:
             result = run(compose, (ROOT / name).read_text())
             results[category] = json.loads(result.stdout) if result.returncode == 0 else None
-        except (OSError, subprocess.TimeoutExpired, ValueError):
+            if result.returncode:
+                check_failure(category, result=result)
+        except (OSError, subprocess.TimeoutExpired, ValueError) as error:
+            check_failure(category, error=error)
             results[category] = None
     return results
 

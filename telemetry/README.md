@@ -197,7 +197,14 @@ or triggering fresh current-run error alerts.
 
 Run `python3 telemetry/agent_report.py` for installation-weighted issue clusters
 by build, source, CPU, OS, runtime environment and backend. It includes diagnostic
-coverage separately from legacy clients; no reports does not mean no failures.
+coverage separately from legacy clients. The scheduled health and Discord checks
+use `diagnostic_alerts.sql`, which evaluates the same reliability and connection
+thresholds without constructing the full seven-day diagnostic clusters. Failed
+alert queries log a bounded failure category (including statement or lock timeout)
+without logging SQL, reports or connection credentials. No reports does not mean
+no failures.
+The full on-demand diagnostic report has a 30-second statement deadline;
+scheduled diagnostic checks retain a 15-second deadline.
 The briefing groups typed details and phases separately and prioritizes recorded errors
 and structured causes before common warnings. Its `unclean_run_clusters` includes hardware,
 previous-build/phase/uptime and installation counts with hashes in the restart report.

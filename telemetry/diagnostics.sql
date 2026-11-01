@@ -1,9 +1,13 @@
 BEGIN READ ONLY;
-SET LOCAL statement_timeout = '15s';
+-- The on-demand report builds seven-day clusters. Scheduled checks use the
+-- separate diagnostic_alerts.sql query and retain their shorter deadline.
+SET LOCAL statement_timeout = '30s';
 SET LOCAL lock_timeout = '2s';
 SET LOCAL TIME ZONE 'America/New_York';
 WITH reports AS (
-    SELECT installation_id, received_at, payload,
+    SELECT installation_id, received_at,
+           jsonb_build_object('hardware', payload->'hardware',
+                              'backends', payload->'backends') AS payload,
            payload->>'miner_version' AS version, payload->'diagnostics' AS diagnostics
     FROM telemetry_reports
     WHERE received_at >= now() - interval '7 days'

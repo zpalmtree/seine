@@ -31,7 +31,7 @@ if [[ "${1:-}" == --infrastructure-only ]]; then
     exit 0
 fi
 quality="$("${compose[@]}" exec -T db psql -X -U telemetry -d telemetry -qAt -v ON_ERROR_STOP=1 < "$deploy_dir/../data_quality.sql")"
-diagnostics="$("${compose[@]}" exec -T db psql -X -U telemetry -d telemetry -qAt -v ON_ERROR_STOP=1 < "$deploy_dir/../diagnostics.sql")"
+diagnostics="$("${compose[@]}" exec -T db psql -X -U telemetry -d telemetry -qAt -v ON_ERROR_STOP=1 < "$deploy_dir/../diagnostic_alerts.sql")"
 python3 - "$quality" "$diagnostics" <<'PYTHON'
 import json, sys
 quality, diagnostics = map(json.loads, sys.argv[1:])

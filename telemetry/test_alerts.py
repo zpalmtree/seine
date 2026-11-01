@@ -1,14 +1,47 @@
 """Alert lifecycle, privacy, delivery and threshold tests; no external messages."""
 import copy
+import io
 import json
 from pathlib import Path
 import tempfile
+import subprocess
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 import alerts
 
 
 class AlertsTests(unittest.TestCase):
+    def test_query_failure_logs_class_without_database_details(self):
+        result = SimpleNamespace(returncode=1, stdout='', stderr=(
+            'ERROR: canceling statement due to statement timeout\n'
+            'SECRET connection=private report=private'))
+        with patch('sys.stderr', new_callable=io.StringIO) as output:
+            alerts.check_failure('diagnostics', result=result)
+        self.assertEqual(output.getvalue(),
+                         'Telemetry diagnostics check failed: database statement timeout.\n')
+
+    def test_failed_query_stays_unknown_and_uses_lightweight_diagnostics(self):
+        ok = SimpleNamespace(returncode=0, stdout='{}', stderr='')
+        failed = SimpleNamespace(returncode=1, stdout='', stderr='private SQL error')
+        with patch.object(alerts, 'run', side_effect=[ok, ok, failed, ok]) as run, \
+                patch('sys.stderr', new_callable=io.StringIO) as output:
+            results = alerts.collect()
+        self.assertIsNone(results['diagnostics'])
+        self.assertEqual(run.call_args_list[2].args[1],
+                         (Path(__file__).parent / 'diagnostic_alerts.sql').read_text())
+        self.assertNotIn('private SQL error', output.getvalue())
+
+    def test_query_timeout_and_invalid_response_are_bounded(self):
+        for error, expected in [
+                (subprocess.TimeoutExpired('secret command', 45), 'process timeout'),
+                (ValueError('private payload'), 'invalid JSON response'),
+                (OSError('secret path'), 'process unavailable')]:
+            with patch('sys.stderr', new_callable=io.StringIO) as output:
+                alerts.check_failure('diagnostics', error=error)
+            self.assertEqual(output.getvalue(),
+                             f'Telemetry diagnostics check failed: {expected}.\n')
+
     def setUp(self):
         self.state = {'incidents': {}}
         self.sent = []

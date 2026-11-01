@@ -20,7 +20,11 @@ class DiagnosticSQLTests(unittest.TestCase):
                    f"('{uuid.uuid4().hex}','{identity or uuid.uuid4().hex}',now(),'{text}'::jsonb)")
 
     def diagnostics(self):
-        return json.loads(self.query((Path(__file__).parent / 'diagnostics.sql').read_text()))
+        result = json.loads(self.query((Path(__file__).parent / 'diagnostics.sql').read_text()))
+        alerts = json.loads(self.query((Path(__file__).parent / 'diagnostic_alerts.sql').read_text()))
+        for key, value in alerts.items():
+            self.assertEqual(value, result[key], key)
+        return result
 
     def test_missing_sample_context_keeps_connection_evidence_separate(self):
         fixture = json.loads((Path(__file__).parent / 'diagnostics-fixture.json').read_text())
@@ -46,6 +50,28 @@ class DiagnosticSQLTests(unittest.TestCase):
         self.assertEqual({c['connection_warning']: c['installations'] for c in clusters}, {True: 2, False: 3})
         self.assertTrue(all(c['observed_mining_phase'] for c in clusters))
         self.assertNotIn('installation_id', json.dumps(result))
+
+    def test_alert_counts_keep_distinct_installations_and_time_windows(self):
+        self.assertEqual(self.diagnostics()['status'], 'unavailable')
+        fixture = json.loads((Path(__file__).parent / 'diagnostics-fixture.json').read_text())
+        fixture['diagnostics']['previous_run_unclean'] = False
+        fixture['diagnostics']['events'] = [
+            {'code': 'run_failed', 'kind': 'general', 'count': 1},
+            {'code': 'warning', 'kind': 'general', 'count': 1,
+             'detail': {'operation': 'pool_login', 'reason': 'pool_connection_limit'}}]
+        identity = uuid.uuid4().hex
+        for hour, install in ((0.2, identity), (0.4, identity),
+                              (2, uuid.uuid4().hex), (24.5, uuid.uuid4().hex),
+                              (26, uuid.uuid4().hex)):
+            text = json.dumps(fixture).replace("'", "''")
+            self.query('INSERT INTO telemetry_reports VALUES '
+                       f"('{uuid.uuid4().hex}','{install}',now()-interval '{hour} hours','{text}'::jsonb)")
+        result = self.diagnostics()
+        self.assertEqual(result['recent_error_versions'][0]['affected_installations'], 2)
+        pool = result['pool_connection_warnings']
+        self.assertEqual(pool['last_hour_installations'], 1)
+        self.assertEqual(pool['last_hour_limit_installations'], 1)
+        self.assertAlmostEqual(pool['baseline_hourly_installations'], 2 / 24)
 
     def test_schema8_context_groups_loaded_software_and_interrupted_cleanup(self):
         fixture = json.loads((Path(__file__).parent / 'reliability-fixture.json').read_text())
