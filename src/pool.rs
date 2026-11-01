@@ -43,7 +43,8 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 /// Connection attempts without a login before moving to the next pool...
 const FAILOVER_AFTER_FAILED_ATTEMPTS: u32 = 2;
 /// ...once the pool has also been unreachable this long, so a pool restart or
-/// brief network drop reconnects to the same pool.
+/// brief network drop reconnects to the same pool. A pool that answers and
+/// rejects the login is left without waiting.
 #[cfg(not(test))]
 const FAILOVER_AFTER_UNREACHABLE: Duration = Duration::from_secs(30);
 #[cfg(test)]
@@ -698,6 +699,7 @@ async fn run_pool_client_loop(
     while !should_shutdown(process_shutdown.as_ref(), shutdown.as_ref()) {
         let endpoint = endpoints[failover.active].clone();
         let mut session_logged_in = false;
+        let mut session_login_rejected = false;
         let mut switch_to_primary = false;
         match connect_pool_transport(&endpoint).await {
             Ok(mut connection) => {
@@ -1219,6 +1221,7 @@ async fn run_pool_client_loop(
                                 let login_rejected = matches!(&event, PoolEvent::LoginRejected(_));
                                 let _ = event_tx.try_send(event);
                                 if login_rejected {
+                                    session_login_rejected = true;
                                     crate::diagnostics::record_failure(seine_telemetry::DiagnosticCode::Warning,
                                         seine_telemetry::DiagnosticKind::Authentication, None,
                                         seine_telemetry::FailureDetail::new(seine_telemetry::FailureReason::LoginRejected,
@@ -1270,7 +1273,7 @@ async fn run_pool_client_loop(
         let previous = failover.active;
         if switch_to_primary {
             failover.switch_to_primary();
-        } else if failover.session_ended(session_logged_in) {
+        } else if failover.session_ended(session_logged_in, session_login_rejected) {
             let _ = event_tx.try_send(PoolEvent::Notification(PoolNotification {
                 kind: POOL_NOTIFICATION_FAILOVER.to_string(),
                 message: format!(
@@ -1285,10 +1288,10 @@ async fn run_pool_client_loop(
 }
 
 /// Pool failover bookkeeping. Seine moves to the next pool in the list after
-/// repeated attempts that never log in over `FAILOVER_AFTER_UNREACHABLE`,
-/// stays on a pool while sessions log in, and probes the primary pool
-/// periodically while on a backup. A failed probe returns to the backup
-/// without waiting out the window.
+/// repeated attempts that never log in over `FAILOVER_AFTER_UNREACHABLE`
+/// (repeated login rejections need no wait), stays on a pool while sessions
+/// log in, and probes the primary pool periodically while on a backup. A
+/// failed probe returns to the backup without waiting out the window.
 #[derive(Debug)]
 struct PoolFailover {
     pools: usize,
@@ -1313,13 +1316,13 @@ impl PoolFailover {
         }
     }
 
-    /// Records how a connection attempt ended; returns true when it moved to
-    /// another pool.
-    fn session_ended(&mut self, logged_in: bool) -> bool {
-        self.session_ended_at(logged_in, Instant::now())
+    /// Records how a connection attempt ended (`rejected`: the pool refused
+    /// the login); returns true when it moved to another pool.
+    fn session_ended(&mut self, logged_in: bool, rejected: bool) -> bool {
+        self.session_ended_at(logged_in, rejected, Instant::now())
     }
 
-    fn session_ended_at(&mut self, logged_in: bool, now: Instant) -> bool {
+    fn session_ended_at(&mut self, logged_in: bool, rejected: bool, now: Instant) -> bool {
         if logged_in {
             self.failed_attempts = 0;
             self.failing_since = None;
@@ -1334,7 +1337,9 @@ impl PoolFailover {
         let probing_primary = self.active == 0 && self.returned_to_primary;
         if self.pools < 2
             || self.failed_attempts < FAILOVER_AFTER_FAILED_ATTEMPTS
-            || (!probing_primary && now.duration_since(failing_since) < self.failover_after)
+            || (!probing_primary
+                && !rejected
+                && now.duration_since(failing_since) < self.failover_after)
         {
             return false;
         }
@@ -3415,20 +3420,30 @@ mod tests {
         let start = Instant::now();
         // A pool restart: refused reconnects for a few seconds.
         for offset in [0, 2, 6, 14] {
-            assert!(!failover.session_ended_at(false, start + Duration::from_secs(offset)));
+            assert!(!failover.session_ended_at(false, false, start + Duration::from_secs(offset)));
         }
         assert_eq!(failover.active, 0);
-        assert!(!failover.session_ended_at(true, start + Duration::from_secs(20)));
+        assert!(!failover.session_ended_at(true, false, start + Duration::from_secs(20)));
         // A fresh outage starts its own window.
-        assert!(!failover.session_ended_at(false, start + Duration::from_secs(40)));
-        assert!(!failover.session_ended_at(false, start + Duration::from_secs(60)));
-        assert!(failover.session_ended_at(false, start + Duration::from_secs(71)));
+        assert!(!failover.session_ended_at(false, false, start + Duration::from_secs(40)));
+        assert!(!failover.session_ended_at(false, false, start + Duration::from_secs(60)));
+        assert!(failover.session_ended_at(false, false, start + Duration::from_secs(71)));
         assert_eq!(failover.active, 1);
         // A failed probe of the primary returns to the backup promptly.
         failover.switch_to_primary();
         let probe = start + Duration::from_secs(400);
-        assert!(!failover.session_ended_at(false, probe));
-        assert!(failover.session_ended_at(false, probe + Duration::from_secs(2)));
+        assert!(!failover.session_ended_at(false, false, probe));
+        assert!(failover.session_ended_at(false, false, probe + Duration::from_secs(2)));
+        assert_eq!(failover.active, 1);
+    }
+
+    #[test]
+    fn repeated_login_rejections_fail_over_without_waiting() {
+        let mut failover = PoolFailover::new(2);
+        failover.failover_after = Duration::from_secs(30);
+        let start = Instant::now();
+        assert!(!failover.session_ended_at(false, true, start));
+        assert!(failover.session_ended_at(false, true, start + Duration::from_secs(2)));
         assert_eq!(failover.active, 1);
     }
 
@@ -3436,20 +3451,20 @@ mod tests {
     fn failover_moves_on_after_failed_attempts_and_stays_while_logged_in() {
         let mut failover = PoolFailover::new(2);
         failover.failover_after = Duration::ZERO;
-        assert!(!failover.session_ended(false));
+        assert!(!failover.session_ended(false, false));
         assert_eq!(failover.active, 0);
-        assert!(failover.session_ended(false));
+        assert!(failover.session_ended(false, false));
         assert_eq!(failover.active, 1);
         // A logged-in backup session that drops reconnects to the backup.
-        assert!(!failover.session_ended(true));
-        assert!(!failover.session_ended(false));
+        assert!(!failover.session_ended(true, false));
+        assert!(!failover.session_ended(false, false));
         assert_eq!(failover.active, 1);
-        assert!(failover.session_ended(false));
+        assert!(failover.session_ended(false, false));
         assert_eq!(failover.active, 0);
 
         let mut single = PoolFailover::new(1);
         for _ in 0..5 {
-            assert!(!single.session_ended(false));
+            assert!(!single.session_ended(false, false));
         }
         assert_eq!(single.active, 0);
     }
@@ -3458,17 +3473,17 @@ mod tests {
     fn failover_backs_off_primary_checks_when_primary_will_not_log_in() {
         let mut failover = PoolFailover::new(2);
         failover.failover_after = Duration::ZERO;
-        failover.session_ended(false);
-        failover.session_ended(false);
+        failover.session_ended(false, false);
+        failover.session_ended(false, false);
         assert_eq!(failover.active, 1);
         failover.switch_to_primary();
-        failover.session_ended(false);
-        assert!(failover.session_ended(false));
+        failover.session_ended(false, false);
+        assert!(failover.session_ended(false, false));
         assert_eq!(failover.active, 1);
         assert_eq!(failover.primary_recheck, PRIMARY_RECHECK_INTERVAL * 2);
 
         failover.switch_to_primary();
-        assert!(!failover.session_ended(true));
+        assert!(!failover.session_ended(true, false));
         assert_eq!(failover.primary_recheck, PRIMARY_RECHECK_INTERVAL);
     }
 
