@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise an extracted Linux Seine binary against loopback-only, job-free fixtures."""
+"""Exercise an extracted Seine binary against loopback-only, job-free fixtures."""
 import argparse
 import hashlib
 import json
@@ -10,10 +10,10 @@ import threading
 
 if os.name != "nt":
     import pty
-import select
 import signal
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -59,38 +59,43 @@ class Miner:
             self.fd = self.process.stdout.fileno()
         self.interactive = interactive
         self.chunks = queue.Queue()
-        self.reader = None
-        if not interactive:
-            def read_output():
+        def read_output():
+            try:
                 while True:
                     chunk = os.read(self.fd, 65536)
                     self.chunks.put(chunk)
                     if not chunk:
-                        break
-            self.reader = threading.Thread(target=read_output, daemon=True)
-            self.reader.start()
+                        return
+            except OSError:
+                # POSIX terminal masters report EIO when the child closes the slave.
+                self.chunks.put(b'')
+        self.reader = threading.Thread(target=read_output, daemon=True)
+        self.reader.start()
+
+    def drain_output(self):
+        while True:
+            try:
+                self.output += self.chunks.get_nowait()
+            except queue.Empty:
+                return
 
     def wait_text(self, text, timeout=20):
         deadline = time.monotonic() + timeout
         while text.encode() not in self.output and time.monotonic() < deadline:
-            if not self.interactive:
-                try:
-                    chunk = self.chunks.get(timeout=0.1)
-                except queue.Empty:
-                    continue
-                if not chunk:
-                    break
-                self.output += chunk
-            elif select.select([self.fd], [], [], 0.1)[0]:
-                try:
-                    chunk = os.read(self.fd, 65536)
-                except OSError:
-                    break
-                if not chunk:
-                    break
-                self.output += chunk
+            try:
+                chunk = self.chunks.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            if not chunk:
+                break
+            self.output += chunk
         if text.encode() not in self.output:
             raise AssertionError(f'Missing {text!r}: {self.output.decode(errors="replace")[-2500:]}')
+
+    def report_failure(self, name):
+        self.drain_output()
+        print(f'{name} failed (miner exit={self.process.poll()}):\n'
+              f'{self.output.decode(errors="replace")[-5000:]}', file=sys.stderr, flush=True)
 
     def close(self):
         if self.process.poll() is None:
@@ -150,6 +155,7 @@ def check(binary, skip_interactive=False):
         if interactive and skip_interactive:
             continue
         with tempfile.TemporaryDirectory(prefix='seine-memo-check-') as tmp, listener() as server:
+            print(f'Checking {name}', file=sys.stderr, flush=True)
             miner = Miner(binary, Path(tmp), address, url(server), memo, interactive)
             try:
                 if name == 'unattended_missing_memo':
@@ -180,10 +186,14 @@ def check(binary, skip_interactive=False):
                     else:
                         assert miner.config.read_bytes() == miner.original
                 checks.append(name)
+            except BaseException:
+                miner.report_failure(name)
+                raise
             finally:
                 miner.close()
     # Failed primary, accepted backup, then reconnect: the memo must survive each login.
     with tempfile.TemporaryDirectory(prefix='seine-memo-check-') as tmp, listener() as primary, listener() as backup:
+        print('Checking memo_failover_and_reconnect', file=sys.stderr, flush=True)
         miner = Miner(binary, Path(tmp), EXCHANGE, url(primary)+','+url(backup), MEMO)
         try:
             for _ in range(2):
@@ -201,6 +211,9 @@ def check(binary, skip_interactive=False):
                 miner.wait_text('login accepted', timeout=30)
                 assert b'Minimum payout:' not in miner.output
             checks.append('memo_failover_and_reconnect')
+        except BaseException:
+            miner.report_failure('memo_failover_and_reconnect')
+            raise
         finally:
             miner.close()
     return checks
