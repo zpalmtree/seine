@@ -11,7 +11,14 @@ export function validateManifest(facts) {
   for (const key of ['bntpoolMinerFeePercent', 'otherPoolMinerFeePercent']) {
     if (typeof facts[key] !== 'number' || !Number.isFinite(facts[key]) || facts[key] < 0 || facts[key] > 100) throw new Error(`Invalid ${key}`);
   }
-  if (!Array.isArray(facts.assets) || facts.assets.length !== 5 || new Set(facts.assets).size !== 5) throw new Error('Expected five reviewed platform archives');
+  const platforms = ['seine-linux-aarch64.tar.gz', 'seine-linux-x86_64.tar.gz',
+    'seine-macos-aarch64.tar.gz', 'seine-macos-x86_64.tar.gz', 'seine-windows-x86_64.zip'];
+  const optional = [`seine-hiveos-${facts.tag.slice(1)}.tar.gz`, `seine-mmpos-${facts.tag.slice(1)}.tar.gz`];
+  if (!Array.isArray(facts.assets) || new Set(facts.assets).size !== facts.assets.length ||
+      !platforms.every(name => facts.assets.includes(name)) ||
+      facts.assets.some(name => !platforms.includes(name) && !optional.includes(name))) {
+    throw new Error('Expected reviewed platform archives and matching mining OS packages');
+  }
   for (const path of ['src/dev_fee.rs', 'docs/guides/nvidia.md', '.github/workflows/release.yml', 'docs/guides/configuration.md']) {
     if (!/^[a-f0-9]{64}$/.test(facts.sourceHashes?.[path])) throw new Error(`Missing reviewed source hash: ${path}`);
   }

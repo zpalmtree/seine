@@ -5,7 +5,11 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import pty
+import queue
+import threading
+
+if os.name != "nt":
+    import pty
 import select
 import signal
 import socket
@@ -54,11 +58,30 @@ class Miner:
                                             stderr=subprocess.STDOUT, start_new_session=True)
             self.fd = self.process.stdout.fileno()
         self.interactive = interactive
+        self.chunks = queue.Queue()
+        self.reader = None
+        if not interactive:
+            def read_output():
+                while True:
+                    chunk = os.read(self.fd, 65536)
+                    self.chunks.put(chunk)
+                    if not chunk:
+                        break
+            self.reader = threading.Thread(target=read_output, daemon=True)
+            self.reader.start()
 
     def wait_text(self, text, timeout=20):
         deadline = time.monotonic() + timeout
         while text.encode() not in self.output and time.monotonic() < deadline:
-            if select.select([self.fd], [], [], 0.1)[0]:
+            if not self.interactive:
+                try:
+                    chunk = self.chunks.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+                if not chunk:
+                    break
+                self.output += chunk
+            elif select.select([self.fd], [], [], 0.1)[0]:
                 try:
                     chunk = os.read(self.fd, 65536)
                 except OSError:
@@ -71,12 +94,20 @@ class Miner:
 
     def close(self):
         if self.process.poll() is None:
-            os.killpg(self.process.pid, signal.SIGTERM)
+            if os.name == 'nt':
+                self.process.terminate()
+            else:
+                os.killpg(self.process.pid, signal.SIGTERM)
             try:
                 self.process.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                os.killpg(self.process.pid, signal.SIGKILL)
+                if os.name == 'nt':
+                    self.process.kill()
+                else:
+                    os.killpg(self.process.pid, signal.SIGKILL)
                 self.process.wait(timeout=5)
+        if self.reader is not None:
+            self.reader.join(timeout=5)
         if self.interactive:
             os.close(self.fd)
         else:
@@ -107,7 +138,7 @@ def login(server, address, memo, minimum=1_000_000_000):
         raise
 
 
-def check(binary):
+def check(binary, skip_interactive=False):
     checks = []
     for name, address, memo, interactive, minimum in [
         ('ordinary_saved_config', ORDINARY, None, False, 100_000_000),
@@ -116,6 +147,8 @@ def check(binary):
         ('memo_unknown_minimum', EXCHANGE, MEMO, False, None),
         ('unattended_missing_memo', EXCHANGE, None, False, None),
     ]:
+        if interactive and skip_interactive:
+            continue
         with tempfile.TemporaryDirectory(prefix='seine-memo-check-') as tmp, listener() as server:
             miner = Miner(binary, Path(tmp), address, url(server), memo, interactive)
             try:
@@ -176,10 +209,14 @@ def check(binary):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', required=True, type=Path)
+    parser.add_argument('--skip-interactive', action='store_true', help='Skip the POSIX terminal prompt fixture')
     args = parser.parse_args()
+    if os.name == 'nt' and not args.skip_interactive:
+        parser.error('Windows requires --skip-interactive; prompt fixture uses a POSIX terminal')
     binary = args.binary.resolve(strict=True)
     print(json.dumps({'binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
-                      'passed': check(binary), 'jobs_sent': 0}, indent=2))
+                      'passed': check(binary, args.skip_interactive),
+                      'skipped': ['saved_exchange_prompt'] if args.skip_interactive else [], 'jobs_sent': 0}, indent=2))
 
 
 if __name__ == '__main__':

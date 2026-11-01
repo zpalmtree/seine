@@ -15,6 +15,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -36,6 +37,7 @@ const MAX_ARCHIVE_BYTES: u64 = 256 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 static RESTART_PENDING: AtomicBool = AtomicBool::new(false);
+static UPDATED_EXECUTABLE: OnceLock<PathBuf> = OnceLock::new();
 
 #[derive(Deserialize)]
 struct Release {
@@ -110,8 +112,25 @@ pub(crate) fn run_cli() -> Result<()> {
 pub(crate) fn run() -> Result<Outcome> {
     let current = crate::version::release_version().to_string();
     let client = http_client()?;
+    let exe = std::env::current_exe().context("cannot locate the running executable")?;
+    install_release(
+        &client,
+        RELEASE_API_URL,
+        RELEASE_SIGNING_PUBLIC_KEY_HEX,
+        current,
+        &exe,
+    )
+}
+
+fn install_release(
+    client: &reqwest::blocking::Client,
+    release_url: &str,
+    public_key: &str,
+    current: String,
+    exe: &Path,
+) -> Result<Outcome> {
     let release: Release = client
-        .get(RELEASE_API_URL)
+        .get(release_url)
         .header("Accept", "application/vnd.github+json")
         .send()
         .context("release lookup failed")?
@@ -148,12 +167,7 @@ pub(crate) fn run() -> Result<Outcome> {
     })?;
     let checksum_bytes = download_bytes(&client, &checksums.browser_download_url)?;
     let signature_bytes = download_bytes(&client, &signature.browser_download_url)?;
-    verify_release_signature(
-        &checksum_bytes,
-        &signature_bytes,
-        RELEASE_SIGNING_PUBLIC_KEY_HEX,
-    )
-    .with_context(|| {
+    verify_release_signature(&checksum_bytes, &signature_bytes, public_key).with_context(|| {
         format!(
             "release {} is not signed by the seine release key",
             release.tag_name
@@ -163,23 +177,24 @@ pub(crate) fn run() -> Result<Outcome> {
         String::from_utf8(checksum_bytes).context("checksum list is not UTF-8 text")?;
     let expected = expected_sha256(&checksum_text, name)?;
 
-    let exe = std::env::current_exe().context("cannot locate the running executable")?;
     let dir = exe
         .parent()
         .ok_or_else(|| anyhow!("executable {} has no parent directory", exe.display()))?;
     let archive = dir.join(format!(".seine-update-{name}"));
     let staged = dir.join(format!(".seine-update-{}", executable_name()));
-    let result = stage_update(&client, asset, &expected, &archive, &staged)
-        .and_then(|()| replace_executable(&exe, &staged));
+    let result = stage_update(client, asset, &expected, &archive, &staged)
+        .and_then(|()| replace_executable(exe, &staged));
     let _ = fs::remove_file(&archive);
     if result.is_err() {
         let _ = fs::remove_file(&staged);
     }
     result?;
+    // The OS may report a deleted or renamed image after replacement.
+    let _ = UPDATED_EXECUTABLE.set(exe.to_path_buf());
     Ok(Outcome::Updated {
         from: current,
         to: release.tag_name,
-        path: exe,
+        path: exe.to_path_buf(),
     })
 }
 
@@ -195,7 +210,10 @@ pub(crate) fn restart_pending() -> bool {
 /// Starts the (updated) executable with this process's arguments. On Unix this
 /// replaces the process image; on Windows it spawns the new process and exits.
 pub(crate) fn restart() -> Result<()> {
-    let exe = std::env::current_exe().context("cannot locate the running executable")?;
+    let exe = match UPDATED_EXECUTABLE.get() {
+        Some(path) => path.clone(),
+        None => std::env::current_exe().context("cannot locate the running executable")?,
+    };
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     let mut command = std::process::Command::new(&exe);
     command.args(&args);
@@ -525,5 +543,166 @@ mod tests {
         let name = asset_name().expect("release builds exist for CI platforms");
         assert!(name.starts_with("seine-"));
         assert!(name.ends_with(".tar.gz") || name.ends_with(".zip"));
+    }
+
+    #[test]
+    fn restart_fixture_child() {
+        let Some(directory) = std::env::var_os("SEINE_TEST_UPDATE_DIRECTORY") else {
+            return;
+        };
+        let directory = PathBuf::from(directory);
+        let config = directory.join("seine.config.json");
+        assert_eq!(
+            fs::read_to_string(&config).unwrap(),
+            "{\"payout_memo\":\"0001\",\"pool_worker\":\"saved worker\"}"
+        );
+        let args = std::env::args_os().collect::<Vec<_>>();
+        assert!(args
+            .iter()
+            .any(|arg| arg == "self_update::tests::restart_fixture_child"));
+        if directory.join("installed").exists() {
+            cleanup_leftovers();
+            fs::write(directory.join("restarted"), "ok").unwrap();
+            return;
+        }
+        let client = http_client().unwrap();
+        let result = install_release(
+            &client,
+            &std::env::var("SEINE_TEST_UPDATE_URL").unwrap(),
+            &std::env::var("SEINE_TEST_UPDATE_KEY").unwrap(),
+            "0.0.0".into(),
+            &std::env::current_exe().unwrap(),
+        )
+        .unwrap();
+        assert!(matches!(result, Outcome::Updated { .. }));
+        fs::write(directory.join("installed"), "ok").unwrap();
+        request_restart();
+        assert!(restart_pending());
+        restart().unwrap();
+    }
+
+    #[test]
+    fn signed_install_rejects_tampering_and_restarts_with_saved_settings() {
+        use httpmock::MockServer;
+        use ring::signature::{Ed25519KeyPair, KeyPair};
+        use std::process::{Command, Stdio};
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let exe = root.join(executable_name());
+        fs::copy(std::env::current_exe().unwrap(), &exe).unwrap();
+        let archive = root.join(asset_name().unwrap());
+        if cfg!(windows) {
+            let mut zip = zip::ZipWriter::new(fs::File::create(&archive).unwrap());
+            zip.start_file(executable_name(), zip::write::SimpleFileOptions::default())
+                .unwrap();
+            std::io::copy(&mut fs::File::open(&exe).unwrap(), &mut zip).unwrap();
+            zip.finish().unwrap();
+        } else {
+            let encoder = flate2::write::GzEncoder::new(
+                fs::File::create(&archive).unwrap(),
+                flate2::Compression::fast(),
+            );
+            let mut builder = tar::Builder::new(encoder);
+            builder
+                .append_path_with_name(&exe, executable_name())
+                .unwrap();
+            builder.into_inner().unwrap().finish().unwrap();
+        }
+        let server = MockServer::start();
+        let rng = ring::rand::SystemRandom::new();
+        let key =
+            Ed25519KeyPair::from_pkcs8(Ed25519KeyPair::generate_pkcs8(&rng).unwrap().as_ref())
+                .unwrap();
+        let public_key = hex::encode(key.public_key().as_ref());
+        let name = asset_name().unwrap();
+        let checksum = format!("{}  {name}\n", sha256_file(&archive).unwrap());
+        let signature = key.sign(checksum.as_bytes());
+        server.mock(|when, then| {
+            when.path("/release");
+            then.json_body(serde_json::json!({"tag_name":"v99.0.0", "assets": [
+                {"name":name, "browser_download_url":server.url("/archive")},
+                {"name":CHECKSUMS_ASSET,"browser_download_url":server.url("/checksums")},
+                {"name":SIGNATURE_ASSET,"browser_download_url":server.url("/signature")}
+            ]}));
+        });
+        server.mock(|when, then| {
+            when.path("/checksums");
+            then.body(checksum.as_bytes());
+        });
+        let mut bad_signature = server.mock(|when, then| {
+            when.path("/signature");
+            then.body(vec![0; 64]);
+        });
+        let client = http_client().unwrap();
+        let before = sha256_file(&exe).unwrap();
+        assert!(install_release(
+            &client,
+            &server.url("/release"),
+            &public_key,
+            "0.0.0".into(),
+            &exe
+        )
+        .is_err());
+        assert_eq!(sha256_file(&exe).unwrap(), before);
+        bad_signature.delete();
+        server.mock(|when, then| {
+            when.path("/signature");
+            then.body(signature.as_ref());
+        });
+        let mut bad_archive = server.mock(|when, then| {
+            when.path("/archive");
+            then.body("tampered");
+        });
+        let error = install_release(
+            &client,
+            &server.url("/release"),
+            &public_key,
+            "0.0.0".into(),
+            &exe,
+        )
+        .err()
+        .unwrap();
+        assert!(error.to_string().contains("checksum mismatch"));
+        assert_eq!(sha256_file(&exe).unwrap(), before);
+        bad_archive.delete();
+        server.mock(|when, then| {
+            when.path("/archive");
+            then.body(fs::read(&archive).unwrap());
+        });
+        fs::write(
+            root.join("seine.config.json"),
+            "{\"payout_memo\":\"0001\",\"pool_worker\":\"saved worker\"}",
+        )
+        .unwrap();
+        let mut child = Command::new(&exe)
+            .args([
+                "--exact",
+                "self_update::tests::restart_fixture_child",
+                "--nocapture",
+            ])
+            .env("SEINE_TEST_UPDATE_DIRECTORY", root)
+            .env("SEINE_TEST_UPDATE_URL", server.url("/release"))
+            .env("SEINE_TEST_UPDATE_KEY", public_key)
+            .stdin(Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        while std::time::Instant::now() < deadline && !root.join("restarted").exists() {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        if !root.join("restarted").exists() {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("updated process did not restart");
+        }
+        assert!(child.wait().unwrap().success());
+        // On Windows the restarted process is a child of the original process.
+        // Let its test harness release the image before removing the fixture.
+        for _ in 0..100 {
+            if fs::remove_file(&exe).is_ok() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
     }
 }

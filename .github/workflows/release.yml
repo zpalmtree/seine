@@ -123,6 +123,11 @@ jobs:
           cargo test --release --locked --target ${{ matrix.target }} -p blocknet-pow-kernel
           cargo run --release --locked --target ${{ matrix.target }} -p blocknet-pow-kernel --example verify_cpu_kernels
 
+      - name: Test updater installation and restart
+        shell: bash
+        run: |
+          cargo test --release --locked --target ${{ matrix.target }} ${{ matrix.features || '' }} self_update::tests:: -- --test-threads=1
+
       - name: Check Linux glibc requirement
         if: runner.os == 'Linux'
         shell: bash
@@ -189,6 +194,22 @@ jobs:
 
           Compress-Archive -Path (Join-Path $stage '*') -DestinationPath '${{ matrix.name }}.zip'
 
+      - name: Check packaged miner (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir package-check
+          tar -xzf "${{ matrix.name }}.tar.gz" -C package-check
+          python3 scripts/check_memo_rollout.py --binary package-check/seine
+
+      - name: Check packaged miner (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Expand-Archive -LiteralPath '${{ matrix.name }}.zip' -DestinationPath package-check
+          python scripts/check_memo_rollout.py --binary package-check/seine.exe --skip-interactive
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -198,9 +219,36 @@ jobs:
             ${{ matrix.name }}.zip
           if-no-files-found: error
 
-  release:
-    if: startsWith(github.ref, 'refs/tags/v')
+  mining-os:
     needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: seine-linux-x86_64
+      - name: Test mining OS packaging
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck jq
+          bash scripts/test_hiveos_package.sh
+          bash scripts/test_mmpos_package.sh
+      - name: Build mining OS packages
+        run: |
+          version="${GITHUB_REF_NAME}"
+          if [[ "$GITHUB_REF" != refs/tags/v* ]]; then
+            version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)-preflight.${GITHUB_SHA:0:12}"
+          fi
+          packaging/hiveos/build.sh --archive seine-linux-x86_64.tar.gz --version "$version" --out-dir dist
+          packaging/mmpos/build.sh --archive seine-linux-x86_64.tar.gz --version "$version" --out-dir dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: seine-mining-os
+          path: dist/seine-*.tar.gz
+          if-no-files-found: error
+
+  release:
+    needs: [build, mining-os]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -233,7 +281,18 @@ jobs:
           openssl pkeyutl -verify -pubin -inkey "$RUNNER_TEMP/signing.pub" -rawin -in SHA256SUMS.txt -sigfile SHA256SUMS.txt.sig
           test "$(wc -c < SHA256SUMS.txt.sig)" -eq 64
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: seine-signed-packages
+          path: |
+            SHA256SUMS.txt
+            SHA256SUMS.txt.sig
+            seine-*.tar.gz
+            seine-*.zip
+          if-no-files-found: error
+
       - name: Extract changelog section for this tag
+        if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -255,6 +314,7 @@ jobs:
           sed -n '/^\*\*Full Changelog\*\*:/p' GENERATED_NOTES.md >> RELEASE_NOTES.md
 
       - name: Create release
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           body_path: RELEASE_NOTES.md
@@ -264,53 +324,3 @@ jobs:
             seine-*.tar.gz
             seine-*.zip
           generate_release_notes: false
-
-  # HiveOS custom miner package (docs/guides/hiveos.md), built from the Linux
-  # x86_64 release archive and added to the published release. It runs after
-  # the release exists and cannot fail it.
-  hiveos:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: release
-    continue-on-error: true
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: seine-linux-x86_64
-
-      - name: Package
-        run: packaging/hiveos/build.sh --archive seine-linux-x86_64.tar.gz --version "$GITHUB_REF_NAME" --out-dir dist
-
-      - name: Attach to release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$GITHUB_REF_NAME" dist/seine-hiveos-*.tar.gz
-
-  # mmpOS custom miner package (docs/guides/mmpos.md), built the same way as
-  # the HiveOS package and added to the published release. It runs after the
-  # release exists and cannot fail it.
-  mmpos:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: release
-    continue-on-error: true
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: seine-linux-x86_64
-
-      - name: Package
-        run: packaging/mmpos/build.sh --archive seine-linux-x86_64.tar.gz --version "$GITHUB_REF_NAME" --out-dir dist
-
-      - name: Attach to release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$GITHUB_REF_NAME" dist/seine-mmpos-*.tar.gz

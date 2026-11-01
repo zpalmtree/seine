@@ -34,3 +34,15 @@ test('legacy pool-specific manifests remain checked against both fee constants',
   x.facts.sourceHashes['src/dev_fee.rs']=createHash('sha256').update(x.sources['src/dev_fee.rs']).digest('hex');
   compareRelease(x.facts,x.release,x.sources);
 });
+
+test('reviews mining OS archives explicitly with matching release versions', () => {
+  const x = fixture();
+  const packages = ['hiveos', 'mmpos'].map(os => `seine-${os}-${x.facts.tag.slice(1)}.tar.gz`);
+  x.release.assets.push(...packages.map(name => ({ name })));
+  assert.throws(() => compareRelease(x.facts, x.release, x.sources), /archives changed/);
+  x.facts.assets.push(...packages);
+  compareRelease(x.facts, x.release, x.sources);
+  for (const extra of [packages[0], 'seine-hiveos-99.0.0.tar.gz', 'seine-unknown.tar.gz']) {
+    assert.throws(() => validateManifest({ ...x.facts, assets: [...x.facts.assets, extra] }));
+  }
+});
