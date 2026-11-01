@@ -582,7 +582,16 @@ __global__ void build_seed_blocks_kernel(
 #define SEINE_AMD_BLAMKA_MAD 0
 #endif
 #endif
-#if SEINE_AMD_BLAMKA_MAD
+// SEINE_AMD_BLAMKA_NOCARRY: BlaMka from two multiply-adds and a 32-bit three-way add,
+// with no 64-bit add. On by default for RDNA4 (gfx120x).
+#ifndef SEINE_AMD_BLAMKA_NOCARRY
+#if defined(__gfx1200__) || defined(__gfx1201__)
+#define SEINE_AMD_BLAMKA_NOCARRY 1
+#else
+#define SEINE_AMD_BLAMKA_NOCARRY 0
+#endif
+#endif
+#if SEINE_AMD_BLAMKA_MAD || SEINE_AMD_BLAMKA_NOCARRY
 // a * b + c with a and b 32-bit; kept as a single instruction.
 __device__ __forceinline__ unsigned long long mad_u64_u32(
     unsigned int a, unsigned int b, unsigned long long c
@@ -598,7 +607,20 @@ __device__ __forceinline__ unsigned long long blamka(
     unsigned long long x,
     unsigned long long y
 ) {
-#if SEINE_AMD_BLAMKA_MAD
+#if SEINE_AMD_BLAMKA_NOCARRY
+    // x + y + 2*x_lo*y_lo = (x + (2*x_lo mod 2^32) * y_lo + y_lo)
+    //                       + 2^32 * (y_hi + ((x_lo >> 31) ? y_lo : 0))   (mod 2^64)
+    const unsigned int xl = static_cast<unsigned int>(x);
+    const unsigned int yl = static_cast<unsigned int>(y);
+    const unsigned int yh = static_cast<unsigned int>(y >> 32);
+    const unsigned int xmask = static_cast<unsigned int>(static_cast<int>(xl) >> 31);
+    const unsigned long long p = mad_u64_u32(xl << 1, yl, x);
+    const unsigned long long t = mad_u64_u32(yl, 1U, p);
+    // The high word as one 32-bit three-way add, kept out of a 64-bit add.
+    unsigned int hi;
+    asm("v_add3_u32 %0, %1, %2, %3" : "=v"(hi) : "v"(static_cast<unsigned int>(t >> 32)), "v"(yh), "v"(yl & xmask));
+    return (static_cast<unsigned long long>(hi) << 32) | static_cast<unsigned int>(t);
+#elif SEINE_AMD_BLAMKA_MAD
     // 2*x_lo = (2*x_lo mod 2^32) + (x_lo >> 31) * 2^32, so x + y + 2*x_lo*y_lo equals
     // (x + (2*x_lo mod 2^32) * y_lo) + (y_lo | ((((x_lo >> 31) ? y_lo : 0) + y_hi) << 32)).
     const unsigned int xl = static_cast<unsigned int>(x);
