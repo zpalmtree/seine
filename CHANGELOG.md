@@ -17,6 +17,7 @@ supported hardware only.
 
 Upgrade notes:
 - **Automatic updates are now on by default.** Use `--no-auto-update` to receive update notices without automatic installation.
+- Linux users upgrading from v0.2.45 with `--auto-update` should restart Seine once if it exits after installing the update.
 - Self-hosted telemetry collectors need the schema 13 update before upgrading miners.
 - AMD GPUs need the ROCm HIP runtime on Linux or the AMD graphics driver on Windows. Linux RDNA3 users should apply the permission command printed at startup for full speed; see [AMD setup](docs/guides/amd.md).
 - Exchange payouts require a compatible pool and your deposit memo. Follow the pool's activation instructions and payout minimum; see [pool configuration](docs/guides/configuration.md).
