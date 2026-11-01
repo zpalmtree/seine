@@ -66,6 +66,9 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             name: seine-windows-x86_64
+            # NVIDIA (default) plus the AMD HIP backend, which loads the HIP
+            # runtime the AMD graphics driver installs and uses the built-in kernels.
+            features: --features amd
           - os: macos-15-intel
             target: x86_64-apple-darwin
             name: seine-macos-x86_64
