@@ -989,7 +989,11 @@ impl CudaArgon2Engine {
             (Some(reported), Some(context)) => Some(reported.min(context)),
             (reported, context) => context.or(reported),
         };
-        let memory_budget_mib = derive_memory_budget_mib(memory_total_mib, free_mib);
+        let memory_budget_mib = derive_memory_budget_mib(
+            memory_total_mib,
+            free_mib,
+            headless_linux_device(device_index),
+        );
         let memory_budget_bytes = memory_budget_mib.saturating_mul(1024 * 1024);
         let usable_bytes = memory_budget_bytes;
         let by_memory = usize::try_from((usable_bytes / lane_bytes).max(1)).unwrap_or(1);
@@ -3754,11 +3758,20 @@ fn parse_nvidia_smi_query_output(raw: &str) -> Result<Vec<NvidiaDeviceInfo>> {
     Ok(devices)
 }
 
-fn derive_memory_budget_mib(memory_total_mib: u64, memory_free_mib: Option<u64>) -> u64 {
+/// Memory left for lanes after the reserve: a sixty-fourth of the device (at
+/// least the floor), or only the floor on a headless device.
+fn derive_memory_budget_mib(
+    memory_total_mib: u64,
+    memory_free_mib: Option<u64>,
+    headless: bool,
+) -> u64 {
     let total = memory_total_mib.max(1);
-    let reserve = (total / NVIDIA_MEMORY_RESERVE_RATIO_DENOM)
-        .max(NVIDIA_MEMORY_RESERVE_MIB_FLOOR)
-        .min(total.saturating_sub(1).max(1));
+    let reserve = if headless {
+        NVIDIA_MEMORY_RESERVE_MIB_FLOOR
+    } else {
+        (total / NVIDIA_MEMORY_RESERVE_RATIO_DENOM).max(NVIDIA_MEMORY_RESERVE_MIB_FLOOR)
+    }
+    .min(total.saturating_sub(1).max(1));
 
     let available = memory_free_mib.unwrap_or(total).max(1).min(total);
     available.saturating_sub(reserve).max(1)
@@ -3812,6 +3825,27 @@ fn fill_v1_requested() -> bool {
 /// system memory instead of failing, so those keep one packed lane.
 fn second_packed_lane_allowed() -> bool {
     cfg!(target_os = "linux") && crate::runtime_identity::runtime_environment() == "native"
+}
+
+/// Whether the device at `device_index` drives no display on native Linux: the
+/// driver reports no kernel run-time limit for it.
+fn headless_linux_device(device_index: u32) -> bool {
+    use cudarc::driver::{result as driver_result, sys::CUdevice_attribute};
+
+    if !(cfg!(target_os = "linux") && crate::runtime_identity::runtime_environment() == "native") {
+        return false;
+    }
+    let Ok(ordinal) = i32::try_from(device_index) else {
+        return false;
+    };
+    driver_result::device::get(ordinal)
+        .and_then(|device| unsafe {
+            driver_result::device::get_attribute(
+                device,
+                CUdevice_attribute::CU_DEVICE_ATTRIBUTE_KERNEL_EXEC_TIMEOUT,
+            )
+        })
+        .is_ok_and(|timeout| timeout == 0)
 }
 
 /// Lane counts to try, best first, each with the blocks stored per lane. When
@@ -4033,6 +4067,7 @@ fn build_nvidia_autotune_key(
     let memory_budget_mib = bucket_memory_budget_mib(derive_memory_budget_mib(
         selected.memory_total_mib,
         selected.memory_free_mib,
+        false,
     ));
     let lane_capacity_tier = derive_lane_capacity_tier(memory_budget_mib, m_cost_kib);
     let (compute_cap_major, compute_cap_minor) =
@@ -4457,7 +4492,7 @@ fn nvidia_autotune_candidate_beats(
 fn estimated_lane_capacity(selected: &NvidiaDeviceInfo, m_cost_kib: u32) -> usize {
     let lane_bytes = CPU_LANE_MEMORY_BYTES.max(u64::from(m_cost_kib).saturating_mul(1024));
     let memory_budget_mib =
-        derive_memory_budget_mib(selected.memory_total_mib, selected.memory_free_mib);
+        derive_memory_budget_mib(selected.memory_total_mib, selected.memory_free_mib, false);
     let memory_budget_bytes = memory_budget_mib.saturating_mul(1024 * 1024);
     usize::try_from((memory_budget_bytes / lane_bytes).max(1))
         .unwrap_or(usize::MAX)
@@ -5467,8 +5502,18 @@ mod tests {
 
     #[test]
     fn derive_memory_budget_uses_free_vram_with_headroom() {
-        let budget = derive_memory_budget_mib(10_240, Some(9_800));
+        let budget = derive_memory_budget_mib(10_240, Some(9_800), false);
         assert_eq!(budget, 9_640);
+    }
+
+    #[test]
+    fn derive_memory_budget_keeps_only_the_floor_when_headless() {
+        assert_eq!(derive_memory_budget_mib(24_564, Some(23_652), true), 23_588);
+        assert_eq!(
+            derive_memory_budget_mib(24_564, Some(23_652), false),
+            23_269
+        );
+        assert_eq!(derive_memory_budget_mib(4_096, Some(4_000), true), 3_936);
     }
 
     #[test]
