@@ -11,7 +11,7 @@ faq:
     a: 'seine 的 Windows 與 Linux 版本使用 NVIDIA 顯示卡挖礦，會在處理器之外同時使用偵測到的每一張顯示卡。在 Windows 上已內建 CUDA 執行環境，只需安裝 NVIDIA 驅動程式。在 Linux 上需安裝驅動程式與 NVRTC 函式庫。首次啟動時會為每張顯示卡調校並記住結果。'
   - q: '為什麼記憶體頻寬對挖 Blocknet 很重要？'
     a: '每次 Blocknet 雜湊都要寫滿一整塊 2 GiB 的記憶體，並從其中各處讀回資料，遠遠超出任何處理器快取的容量。因此算力取決於記憶體系統搬運資料的速度。記憶體頻寬較高、記憶體足以執行更多執行緒的電腦挖得最快。'
-sourceHash: dae9fd024abc
+sourceHash: '4d5509a6c9e1'
 translation: draft
 ---
 
@@ -25,26 +25,19 @@ translation: draft
 這些測量中最快的配置是達到 97.1 H/s 的 AMD EPYC 9355P：64 個挖礦執行緒、192 GiB RAM，在 Linux 上使用 seine 的預設設定。Blocknet 挖礦受益於記憶體頻寬，以及足夠為每個執行緒提供 2 GiB 的 RAM。NVIDIA 顯示卡可以在 CPU 之外加上自身雜湊率。
 </Answer>
 
-[c9c9638 · 2026-10-28 · 97.1 H/s](https://github.com/zpalmtree/seine/blob/master/experiments/9355p-live-20261028/README.md)
-
 Blocknet 的工作量證明是 Argon2id，每次雜湊使用一塊 2 GiB 的記憶體。這讓它成為[記憶體密集型](/zh-hant/blog/argon2id-proof-of-work-explained/)演算法：算力既取決於核心數，也同樣取決於記憶體頻寬與延遲，以及記憶體中能同時容納多少個 2 GiB 記憶體區塊。下表中排名在前的電腦，共同點就是強大的記憶體系統。
 
 ## 新增實體伺服器測量：EPYC 9355P
 
 2026年10月28日，一顆 32 核心／64 執行緒、配備 192 GiB RAM 的 EPYC 9355P 使用 seine 的預設設定挖礦 15 分鐘：不加任何參數，執行緒數、CPU 運算核心程式和記憶體分頁皆自動選擇。挖礦速度為 **97.1 H/s**。
 
-[測量記錄](https://github.com/zpalmtree/seine/blob/master/experiments/9355p-live-20261028/README.md)列出了原始碼修訂版本以及執行期間每一分鐘的雜湊率。下方雲端伺服器和 Mac 的測量各有自己的機器與設定。
-
 ## RTX 5090 在我們的測試中有多快？
 
-我們於 2026 年 10 月 25 日進行測試，使用 Windows 11、NVIDIA GeForce RTX 5090、AMD Ryzen 9 9950X3D、125.4 GiB 可用 RAM、seine v0.2.26 和 NVIDIA 驅動程式 `610.88`。透過 `--bench-kind backend`，我們交替執行兩種模式，共完成三組配對測試。每次執行包含一輪 20 秒暖機和三輪各 20 秒的測量，執行之間間隔 20 秒。運算核心程式、暫存器上限、通道及執行緒均使用自動設定。
+測量於2026年10月31日：僅使用 RTX 5090，原生 Windows 11、610.88 驅動程式及公開開發版本。穩定挖礦速率已扣除礦工軟體費用，不包含 CPU 的工作量。
 
 | 模式 | 平均 H/s |
 |---|---|
-| 僅 RTX 5090 | 7.3 |
-| RTX 5090 + Ryzen 9 9950X3D | 12.9 |
-
-表中數值是這台桌上型電腦每種模式執行三次的平均值，測試時原有應用程式保持開啟。兩種模式都使用 GPU `0` 和相同的 NVIDIA 自動調校快取。這些是本機效能測試速率；已接受的份額用來確認礦池計入了工作。[測量紀錄](https://github.com/zpalmtree/seine/blob/master/site/editorial/batches/2026-10-nvidia-guide/research.md)列出設定及各次結果。
+| 僅 RTX 5090 | 13.8 |
 
 ## 雲端伺服器與 Mac 實測比較
 
@@ -52,13 +45,13 @@ Blocknet 的工作量證明是 Argon2id，每次雜湊使用一塊 2 GiB 的記�
 
 | 硬體 | 確切晶片 | 執行緒數 | 算力 | 挖礦記憶體 |
 |---|---|---|---|---|
-| AMD EPYC · Zen 5 | EPYC 9R45 伺服器 | 32 | 49.4 H/s | 64 GiB |
+| AMD EPYC · Zen 5 | EPYC 9R45 伺服器 | 32 | 50.5 H/s | 64 GiB |
 | Arm 伺服器 | AWS Graviton4 | 32 | 39.3 H/s | 64 GiB |
-| AMD EPYC · Zen 4 | EPYC 9R14 伺服器 | 32 | 38.2 H/s | 64 GiB |
+| AMD EPYC · Zen 4 | EPYC 9R14 伺服器 | 32 | 45.3 H/s | 64 GiB |
 | Apple M4 Max | 48 GB MacBook Pro | 16 | 30.9 H/s | 32 GiB |
 | Intel Xeon | Sapphire Rapids 8488C | 32 | 26.0 H/s | 64 GiB |
 
-伺服器結果是在啟用 2 MiB 大分頁的 AWS 雲端伺服器上測得，M4 Max 結果來自一台 48 GB 的 MacBook Pro。每個數字都是完成的雜湊數除以實際耗時，取多次執行的平均值，測試時間為 2026 年 7 月至 10 月。Zen 5 結果是 seine v0.2.22 在 AWS m8a.8xlarge 上四次執行的平均值，這台電腦配備 32 核 EPYC 9R45 與 128 GiB 記憶體。
+EPYC 9R45 和 9R14 的雲端結果使用32個執行緒及 transparent huge pages，測量的是不含啟動的雜湊計算時間。其他列保留各自的測量條件。
 
 所有已測處理器的結果與每一列的測試依據，請見[效能頁面](https://github.com/zpalmtree/seine/blob/master/docs/PERFORMANCE.md)。
 
@@ -66,13 +59,11 @@ Blocknet 的工作量證明是 Argon2id，每次雜湊使用一塊 2 GiB 的記�
 
 每次 Argon2id 雜湊都會把整塊 2 GiB 記憶體寫滿一遍，並在過程中讀回先前寫入的部分。處理器的 L3 快取以 MB 計：在這台 Zen 5 伺服器上，每組八個核心共用 32 MiB，因此一次雜湊要處理的記憶體是這塊快取的 64 倍。大部分工作都是記憶體讀寫。
 
-數據也說明了這一點。在 49.4 H/s 時，這台 Zen 5 伺服器每秒寫入約 99 GiB 的新記憶體區塊（49.4 × 2 GiB）。算力會隨執行緒數增加而上升，直到記憶體系統滿載：在這台電腦上，16 個執行緒挖到 37.8 H/s，32 個執行緒挖到 49.4 H/s。seine 會在你的電腦上測出這條曲線，並選定最佳執行緒數。
-
 由此可以歸納出挑選硬體的三點：
 
 - **記憶體頻寬與核心數同樣重要。** 比較電腦時，要像看重核心數一樣看重記憶體系統。
 - **記憶體決定執行緒上限。** 每個執行緒都需要自己的 2 GiB 記憶體區塊，所以往往是記憶體先於核心數限制了執行緒數。
-- **同一顆晶片上，運算核心程式也很關鍵。** seine 為每個處理器系列提供多種 Argon2id 運算核心程式。在 EPYC 9R45 上，串流核心程式比 AVX2 快 30%（24 個執行緒時從 34.47 提升到 44.74 H/s）。在 AWS Graviton4 上，帶預取的 SHA3 核心程式比一般 NEON 快 56%（從 13.80 提升到 21.50 H/s）。seine 會在挖礦過程中選出較快的那個。
+- **同一顆晶片上，運算核心程式也很關鍵。** seine 會在挖礦時比較可用的 CPU 運算核心程式，並為你的機器選擇合適的程式。
 
 ## 每個挖礦執行緒需要多少記憶體？
 

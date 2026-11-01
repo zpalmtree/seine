@@ -11,7 +11,7 @@ faq:
     a: 'يعمل كل خيط تعدين على كتلة ذاكرة بحجم 2 GiB، لذا احسب نحو 2 GB لكل خيط. يستطيع Mac بذاكرة 16 GB تشغيل ما يصل إلى سبعة خيوط، وجهاز 32 GB ما يصل إلى 15، وجهاز 64 GB ما يصل إلى 31. ويحتسب seine الذاكرة الحرة ويوائم الخيوط أيضًا مع أنوية المعالج.'
   - q: 'هل يمكن تعدين Blocknet على Mac بمعالج Intel؟'
     a: 'نعم. ينشر seine أرشيفًا منفصلًا لأجهزة Mac بمعالج Intel هو seine-macos-x86_64.tar.gz، والخطوات هي نفسها كما في Apple Silicon. نزّله وفك ضغطه في Terminal وشغّل ./seine والصق عنوان Blocknet الخاص بك أو @name. يحدد seine عدد خيوطه حسب ذاكرتك ويبدأ التعدين على bntpool.com افتراضيًا.'
-sourceHash: '9338855a2863'
+sourceHash: '33a60ad4df0c'
 translation: draft
 ---
 
@@ -91,8 +91,6 @@ xattr -d com.apple.quarantine ./seine
 |---|---|---|
 | أقصى إنتاجية | 16، توزيع `auto` | 30.94 H/s |
 | متوازن (الحد الافتراضي في seine على هذا الجهاز) | 14، توزيع `pcore-only` | 29.26 H/s |
-
-وللمقارنة، تتقدم نتيجة 30.9 H/s على كل نتائج خوادم Arm ومعالجات Intel Xeon في [جداول الأداء](https://github.com/zpalmtree/seine/blob/master/docs/PERFORMANCE.md) الخاصة بـ seine؛ ولم يسجّل أعلى منها سوى خوادم AMD EPYC Zen 5 وZen 4. ويقارن [دليل عتاد تعدين Blocknet](/ar/blog/blocknet-mining-hardware-hashrate/) أفضل نتيجة لكل جيل من العتاد، ويتضمن [دليل Apple Silicon](https://github.com/zpalmtree/seine/blob/master/docs/guides/apple-silicon.md) ملاحظات الضبط الكاملة.
 
 ## كم خيطًا يستطيع جهاز Mac تشغيله؟
 

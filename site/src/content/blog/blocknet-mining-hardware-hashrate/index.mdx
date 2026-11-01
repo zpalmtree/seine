@@ -2,7 +2,7 @@
 title: Best hardware for Blocknet mining
 description: "Compare Blocknet mining hardware with measured results: EPYC 9355P reaches 97.1 H/s with default settings. See exact RAM, threads and the benchmark evidence."
 date: 2026-10-25
-updated: 2026-10-28
+updated: 2026-11-01
 tags: [Hardware, Hashrate, Mining guide, Argon2id, NVIDIA]
 faq:
   - q: Can a gaming PC mine Blocknet?
@@ -26,26 +26,19 @@ This guide shows which machines mine Blocknet fastest with seine, how many threa
 The fastest configuration in these measurements is an AMD EPYC 9355P at 97.1 H/s: 64 mining threads and 192 GiB of RAM on Linux with seine's default settings. Blocknet mining benefits from memory bandwidth and enough RAM for 2 GiB per thread. NVIDIA cards can add their hashrate alongside the CPU.
 </Answer>
 
-[c9c9638 · 2026-10-28 · 97.1 H/s](https://github.com/zpalmtree/seine/blob/master/experiments/9355p-live-20261028/README.md)
-
 Blocknet's proof of work is Argon2id with a 2 GiB memory block per hash. That makes it [memory-hard](/blog/argon2id-proof-of-work-explained/): hashrate depends as much on memory bandwidth and latency as on core count, and on how many of those 2 GiB blocks fit in RAM at once. A strong memory system is what the top machines in the table below have in common.
 
 ## New bare-metal measurement: EPYC 9355P
 
 On October 28, 2026, a 32-core/64-thread EPYC 9355P with 192 GiB of RAM mined for 15 minutes with seine's default settings: no flags, with the thread count, CPU kernel and memory pages chosen automatically. It mined at **97.1 H/s**.
 
-The [measurement record](https://github.com/zpalmtree/seine/blob/master/experiments/9355p-live-20261028/README.md) lists the source revision and the hashrate for every minute of the run. The cloud and Mac measurements below describe their own machines and settings.
-
 ## How fast was the RTX 5090 in our test?
 
-We tested on October 25, 2026, using Windows 11, an NVIDIA GeForce RTX 5090, an AMD Ryzen 9 9950X3D, 125.4 GiB of usable RAM, seine v0.2.26 and NVIDIA driver `610.88`. We ran three interleaved pairs with `--bench-kind backend`. Each run used one 20-second warmup and three 20-second measured rounds, with 20 seconds between runs. Kernel, register-cap, lane and thread settings were automatic.
+Measured on October 31, 2026: RTX 5090 only, native Windows 11, driver 610.88, public development build. The steady mining rate is after the miner fee; CPU work is excluded.
 
 | Mode | Mean H/s |
 |---|---|
-| RTX 5090 only | 7.3 |
-| RTX 5090 + Ryzen 9 9950X3D | 12.9 |
-
-The table averages three runs per mode on this desktop with its existing apps open. Both modes used GPU `0` and the same NVIDIA autotune cache. These are local benchmark rates; accepted shares confirm pool credit. The [measurement notes](https://github.com/zpalmtree/seine/blob/master/site/editorial/batches/2026-10-nvidia-guide/research.md) record the settings and individual results.
+| RTX 5090 only | 13.8 |
 
 ## Measured cloud-server and Mac comparison
 
@@ -53,13 +46,13 @@ These cloud and Mac results use the machines and settings described below. Minin
 
 | Hardware | Exact chip | Threads | Hashrate | Mining memory |
 |---|---|---|---|---|
-| AMD EPYC · Zen 5 | EPYC 9R45 server | 32 | 49.4 H/s | 64 GiB |
+| AMD EPYC · Zen 5 | EPYC 9R45 server | 32 | 50.5 H/s | 64 GiB |
 | Arm server | AWS Graviton4 | 32 | 39.3 H/s | 64 GiB |
-| AMD EPYC · Zen 4 | EPYC 9R14 server | 32 | 38.2 H/s | 64 GiB |
+| AMD EPYC · Zen 4 | EPYC 9R14 server | 32 | 45.3 H/s | 64 GiB |
 | Apple M4 Max | 48 GB MacBook Pro | 16 | 30.9 H/s | 32 GiB |
 | Intel Xeon | Sapphire Rapids 8488C | 32 | 26.0 H/s | 64 GiB |
 
-The server rows ran on AWS cloud machines with 2 MiB huge pages, and the M4 Max row on a 48 GB MacBook Pro. Each figure is completed hashes divided by elapsed time, averaged over repeated runs, measured between July and October 2026. The Zen 5 result is the mean of four runs with seine v0.2.22 on an AWS m8a.8xlarge, a 32-core EPYC 9R45 machine with 128 GiB of RAM.
+The EPYC 9R45 and 9R14 cloud results use 32 threads and transparent huge pages. They measure hashing time, excluding startup. Other rows retain their own measured settings.
 
 Results for every processor tested, with the evidence for each row, are on the [performance page](https://github.com/zpalmtree/seine/blob/master/docs/PERFORMANCE.md).
 
@@ -67,13 +60,11 @@ Results for every processor tested, with the evidence for each row, are on the [
 
 Each Argon2id hash fills its entire 2 GiB block once and, while doing so, reads earlier parts of it back. A processor's L3 cache is measured in megabytes: on the Zen 5 server, each group of eight cores shares 32 MiB, so a single hash works through 64 times more memory than that cache holds. Most of the work is memory traffic.
 
-The numbers show it. At 49.4 H/s, the Zen 5 server writes about 99 GiB of fresh memory blocks every second (49.4 × 2 GiB). Hashrate climbs with threads until the memory system is busy: on that machine, 16 threads mined 37.8 H/s and 32 threads mined 49.4 H/s. Seine measures that curve on your machine and settles on the best thread count.
-
 Three things follow when you choose hardware:
 
 - **Memory bandwidth counts as much as cores.** Weigh the memory system as heavily as the core count when you compare machines.
 - **RAM sets the thread ceiling.** Every thread needs its own 2 GiB block, so RAM often limits the thread count before cores do.
-- **The kernel matters on the same chip.** Seine carries several Argon2id kernels per processor family. On the EPYC 9R45, the streaming kernel mines 30% faster than AVX2 (34.47 to 44.74 H/s at 24 threads). On AWS Graviton4, the SHA3 kernel with prefetching mines 56% faster than plain NEON (13.80 to 21.50 H/s). Seine picks the faster one while it mines.
+- **The kernel matters on the same chip.** Seine compares the available CPU kernels while mining and selects one for your machine.
 
 ## How much RAM do you need for each mining thread?
 

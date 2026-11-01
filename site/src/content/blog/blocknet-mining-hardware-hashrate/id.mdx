@@ -11,7 +11,7 @@ faq:
     a: 'seine menambang dengan kartu grafis NVIDIA pada unduhan Windows dan Linux, memakai setiap kartu yang terdeteksi bersama prosesor. Di Windows, runtime CUDA sudah disertakan, jadi Anda hanya butuh driver NVIDIA. Di Linux, pasang driver dan pustaka NVRTC. Peluncuran pertama menyetel setiap kartu dan mengingat hasilnya.'
   - q: 'Mengapa bandwidth memori penting untuk menambang Blocknet?'
     a: 'Setiap hash Blocknet menulis satu blok memori 2 GiB penuh dan membaca kembali data dari seluruh bagiannya, jauh lebih banyak dari yang bisa ditampung cache prosesor mana pun. Karena itu hashrate bergantung pada seberapa cepat sistem memori memindahkan data. Komputer dengan bandwidth memori lebih besar dan RAM yang cukup untuk banyak thread menambang paling cepat.'
-sourceHash: dae9fd024abc
+sourceHash: '4d5509a6c9e1'
 translation: draft
 ---
 
@@ -25,26 +25,19 @@ Panduan ini menunjukkan komputer mana yang menambang Blocknet paling cepat denga
 Konfigurasi tercepat dalam pengukuran ini adalah AMD EPYC 9355P pada 97,1 H/s: 64 thread penambangan dan RAM 192 GiB di Linux dengan pengaturan default seine. Penambangan Blocknet mendapat manfaat dari bandwidth memori dan RAM yang cukup untuk 2 GiB per thread. Kartu NVIDIA dapat menambahkan hashrate di samping CPU.
 </Answer>
 
-[c9c9638 · 2026-10-28 · 97.1 H/s](https://github.com/zpalmtree/seine/blob/master/experiments/9355p-live-20261028/README.md)
-
 Proof of work Blocknet adalah Argon2id dengan blok memori 2 GiB per hash. Itu membuatnya [memory-hard](/id/blog/argon2id-proof-of-work-explained/): hashrate bergantung pada bandwidth dan latensi memori sama besarnya dengan jumlah core, dan pada berapa banyak blok 2 GiB itu yang muat di RAM sekaligus. Sistem memori yang kuat adalah kesamaan komputer-komputer teratas di tabel berikut.
 
 ## Pengukuran baru pada server fisik: EPYC 9355P
 
 Pada 28 Oktober 2026, EPYC 9355P dengan 32 inti/64 thread dan RAM 192 GiB menambang selama 15 menit dengan pengaturan default seine: tanpa flag, dengan jumlah thread, kernel CPU, dan halaman memori yang dipilih secara otomatis. Mesin ini menambang pada **97,1 H/s**.
 
-[Catatan pengukuran](https://github.com/zpalmtree/seine/blob/master/experiments/9355p-live-20261028/README.md) mencantumkan revisi kode sumber dan hashrate untuk setiap menit selama proses berjalan. Pengukuran cloud dan Mac di bawah menjelaskan mesin dan pengaturannya masing-masing.
-
 ## Seberapa cepat RTX 5090 dalam pengujian kami?
 
-Kami menguji pada 25 Oktober 2026 menggunakan Windows 11, NVIDIA GeForce RTX 5090, AMD Ryzen 9 9950X3D, RAM yang dapat digunakan sebesar 125,4 GiB, seine v0.2.26, dan driver NVIDIA `610.88`. Kami menjalankan tiga pasang pengujian berselang-seling dengan `--bench-kind backend`. Setiap pengujian menggunakan satu pemanasan 20 detik dan tiga putaran pengukuran masing-masing 20 detik, dengan jeda 20 detik antar-pengujian. Pengaturan kernel, batas register, lane, dan thread berlangsung otomatis.
+Diukur pada 31 Oktober 2026: hanya RTX 5090, Windows 11 native, driver 610.88, build pengembangan publik. Hashrate stabil sudah memperhitungkan biaya miner; kerja CPU tidak disertakan.
 
 | Mode | Rata-rata H/s |
 |---|---|
-| RTX 5090 saja | 7,3 |
-| RTX 5090 + Ryzen 9 9950X3D | 12,9 |
-
-Tabel menampilkan rata-rata tiga pengujian per mode pada desktop ini dengan aplikasi yang sebelumnya terbuka tetap berjalan. Kedua mode menggunakan GPU `0` dan cache penyetelan otomatis NVIDIA yang sama. Angka ini merupakan hashrate benchmark lokal; share yang diterima mengonfirmasi kredit dari pool. [Catatan pengukuran](https://github.com/zpalmtree/seine/blob/master/site/editorial/batches/2026-10-nvidia-guide/research.md) mencatat pengaturan dan hasil setiap pengujian.
+| RTX 5090 saja | 13,8 |
 
 ## Perbandingan hasil pengukuran server cloud dan Mac
 
@@ -52,13 +45,13 @@ Hasil cloud dan Mac ini memakai mesin dan pengaturan yang dijelaskan di bawah. M
 
 | Perangkat keras | Chip spesifik | Thread | Hashrate | Memori penambangan |
 |---|---|---|---|---|
-| AMD EPYC · Zen 5 | Server EPYC 9R45 | 32 | 49,4 H/s | 64 GiB |
+| AMD EPYC · Zen 5 | Server EPYC 9R45 | 32 | 50,5 H/s | 64 GiB |
 | Server Arm | AWS Graviton4 | 32 | 39,3 H/s | 64 GiB |
-| AMD EPYC · Zen 4 | Server EPYC 9R14 | 32 | 38,2 H/s | 64 GiB |
+| AMD EPYC · Zen 4 | Server EPYC 9R14 | 32 | 45,3 H/s | 64 GiB |
 | Apple M4 Max | MacBook Pro 48 GB | 16 | 30,9 H/s | 32 GiB |
 | Intel Xeon | Sapphire Rapids 8488C | 32 | 26,0 H/s | 64 GiB |
 
-Baris server dijalankan di mesin cloud AWS dengan huge pages 2 MiB, dan baris M4 Max di MacBook Pro 48 GB. Setiap angka adalah jumlah hash yang selesai dibagi waktu yang berlalu, dirata-ratakan dari beberapa kali pengujian, diukur antara Juli dan Oktober 2026. Hasil Zen 5 adalah rata-rata empat kali pengujian dengan seine v0.2.22 di AWS m8a.8xlarge, mesin EPYC 9R45 32 core dengan RAM 128 GiB.
+Hasil cloud EPYC 9R45 dan 9R14 memakai 32 thread dan transparent huge pages. Angkanya mengukur waktu hashing, tanpa startup. Baris lain mempertahankan pengaturan pengukurannya masing-masing.
 
 Hasil untuk setiap prosesor yang diuji, beserta bukti untuk setiap baris, ada di [halaman performa](https://github.com/zpalmtree/seine/blob/master/docs/PERFORMANCE.md).
 
@@ -66,13 +59,11 @@ Hasil untuk setiap prosesor yang diuji, beserta bukti untuk setiap baris, ada di
 
 Setiap hash Argon2id mengisi seluruh blok 2 GiB miliknya sekali dan, selama itu, membaca kembali bagian-bagian sebelumnya. Cache L3 prosesor diukur dalam megabyte: di server Zen 5, setiap kelompok delapan core berbagi 32 MiB, jadi satu hash bekerja melalui memori 64 kali lebih besar dari yang bisa ditampung cache itu. Sebagian besar pekerjaannya adalah lalu lintas memori.
 
-Angka-angkanya menunjukkan hal itu. Pada 49,4 H/s, server Zen 5 menulis sekitar 99 GiB blok memori baru setiap detik (49,4 × 2 GiB). Hashrate naik seiring jumlah thread sampai sistem memori sibuk: di mesin itu, 16 thread menambang 37,8 H/s dan 32 thread menambang 49,4 H/s. seine mengukur kurva itu di komputer Anda dan menetapkan jumlah thread terbaik.
-
 Tiga hal berlaku saat Anda memilih perangkat keras:
 
 - **Bandwidth memori sama pentingnya dengan core.** Timbang sistem memori sama beratnya dengan jumlah core saat membandingkan komputer.
 - **RAM menentukan batas thread.** Setiap thread membutuhkan blok 2 GiB miliknya sendiri, jadi RAM sering lebih dulu membatasi jumlah thread daripada core.
-- **Kernel berpengaruh pada chip yang sama.** seine membawa beberapa kernel Argon2id untuk setiap keluarga prosesor. Di EPYC 9R45, kernel streaming menambang 30% lebih cepat daripada AVX2 (dari 34,47 menjadi 44,74 H/s dengan 24 thread). Di AWS Graviton4, kernel SHA3 dengan prefetching menambang 56% lebih cepat daripada NEON biasa (dari 13,80 menjadi 21,50 H/s). seine memilih yang lebih cepat sambil menambang.
+- **Kernel berpengaruh pada chip yang sama.** Seine membandingkan kernel CPU yang tersedia saat menambang dan memilih satu untuk mesin Anda.
 
 ## Berapa banyak RAM yang dibutuhkan untuk setiap thread penambangan?
 

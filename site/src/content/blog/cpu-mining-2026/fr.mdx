@@ -11,7 +11,7 @@ faq:
     a: 'Un hash gourmand en mémoire a besoin de gigaoctets de mémoire rapide à chaque tentative, si bien qu''une puce conçue uniquement pour hacher aurait quand même besoin de grandes quantités de RAM à côté de chaque cœur. Les ordinateurs de bureau, les portables et les serveurs sont déjà livrés avec beaucoup de RAM et des contrôleurs mémoire rapides, ce qui rapproche le matériel que les gens possèdent de ce dont l''algorithme a besoin.'
   - q: 'Peut-on miner avec son CPU et sa carte graphique en même temps ?'
     a: 'Oui, quand vous minez Blocknet avec seine sous Windows ou Linux. seine mine à la fois sur le processeur et sur toutes les cartes graphiques NVIDIA qu''il détecte, et les hashrates s''additionnent. Il optimise le processeur pendant qu''il mine et chaque carte lors de son premier lancement : il n''y a donc rien à configurer avant de commencer.'
-sourceHash: 845e3b6a5c9d
+sourceHash: '9e40efada752'
 translation: draft
 ---
 
@@ -60,7 +60,7 @@ Trois éléments déterminent combien de hashs par seconde (H/s) un processeur p
 
 **La bande passante mémoire.** Chaque hash fait transiter des gigaoctets dans le système mémoire. À 97,1 H/s, la machine la plus rapide mesurée avec seine écrit environ 194,2 GiB de blocs mémoire neufs chaque seconde (97,1 × 2 GiB). Les processeurs dotés de plus de canaux mémoire et d'une mémoire plus rapide prennent l'avantage.
 
-**Le bon kernel.** seine embarque plusieurs kernels Argon2id : AVX2, AVX-512 et un kernel streaming sur x86, et NEON avec un chemin rapide SHA3 sur Arm. Sur une même puce, le kernel fait une grande différence. Sur AWS Graviton4, le kernel SHA3 avec prefetching mine 56 % plus vite que NEON seul (de 13,80 à 21,50 H/s), et sur l'AMD EPYC 9R45, le kernel streaming mine 30 % plus vite qu'AVX2 (de 34,47 à 44,74 H/s avec 24 threads). seine compare les kernels pendant qu'il mine et garde le plus rapide.
+**Le bon kernel.** Seine compare les kernels CPU disponibles pendant le minage et en choisit un pour votre machine.
 
 Configurations matérielles mesurées :
 
@@ -68,13 +68,15 @@ Configurations matérielles mesurées :
 |---|---|---|---|
 | AMD EPYC · Zen 5 | Serveur EPYC 9355P | 64 | 97,1 H/s |
 | Serveur Arm | AWS Graviton4 | 32 | 39,3 H/s |
-| AMD EPYC · Zen 4 | Serveur EPYC 9R14 | 32 | 38,2 H/s |
+| AMD EPYC · Zen 4 | Serveur EPYC 9R14 | 32 | 45,3 H/s |
 | Apple M4 Max | MacBook Pro 48 GB | 16 | 30,9 H/s |
 | Intel Xeon | Sapphire Rapids 8488C | 32 | 26,0 H/s |
 
 La configuration la plus rapide de ces mesures est un AMD EPYC 9355P à 97,1 H/s : 64 threads de minage et 192 GiB de RAM sous Linux avec les réglages par défaut de seine.
 
-La ligne Apple M4 Max correspond à un portable, ce qui montre à quel point un système mémoire solide convient à Argon2id. Les autres lignes serveur ont été mesurées sur des machines AWS avec des huge pages de 2 MiB. Le [guide du matériel de minage Blocknet](/fr/blog/blocknet-mining-hardware-hashrate/) approfondit les conseils d'achat et le dimensionnement de la RAM, et le [guide Mac](/fr/blog/mine-blocknet-on-mac/) couvre Apple Silicon.
+Les résultats cloud des EPYC 9R45 et 9R14 utilisent 32 threads et des transparent huge pages. Ils mesurent le temps de hachage, hors démarrage. Les autres lignes conservent leurs propres conditions de mesure.
+
+[guide du matériel de minage Blocknet](/fr/blog/blocknet-mining-hardware-hashrate/) · [guide Mac](/fr/blog/mine-blocknet-on-mac/)
 
 ## Comment commencer à miner Blocknet avec un CPU ?
 

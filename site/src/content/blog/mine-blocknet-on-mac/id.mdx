@@ -11,8 +11,8 @@ faq:
     a: 'Setiap thread penambangan mengolah satu blok memori 2 GiB, jadi rencanakan sekitar 2 GB per thread. Mac 16 GB bisa menampung hingga tujuh thread, Mac 32 GB hingga 15, dan Mac 64 GB hingga 31. seine menghitung memori yang kosong dan juga menyesuaikan jumlah thread dengan core Anda.'
   - q: 'Bisakah menambang Blocknet di Mac Intel?'
     a: 'Bisa. seine menerbitkan arsip terpisah untuk Mac Intel, seine-macos-x86_64.tar.gz, dan langkahnya sama seperti di Apple Silicon. Unduh, ekstrak di Terminal, jalankan ./seine, lalu tempel alamat Blocknet atau @name Anda. seine menyesuaikan jumlah thread dengan memori Anda dan secara bawaan mulai menambang di bntpool.com.'
-sourceHash: '9338855a2863'
-translation: reviewed
+sourceHash: '33a60ad4df0c'
+translation: draft
 ---
 
 ## Bisakah menambang Blocknet di Mac?
@@ -91,8 +91,6 @@ Hasil ini berasal dari pengujian validasi seine pada M4 Max 48 GB (12 performanc
 |---|---|---|
 | Throughput maksimum | 16, penjadwalan `auto` | 30,94 H/s |
 | Seimbang (batas bawaan seine di Mac ini) | 14, penjadwalan `pcore-only` | 29,26 H/s |
-
-Sebagai perbandingan, hasil 30,9 H/s itu berada di atas semua hasil server Arm dan Intel Xeon di [tabel performa](https://github.com/zpalmtree/seine/blob/master/docs/PERFORMANCE.md) seine; hanya server AMD EPYC Zen 5 dan Zen 4 yang terukur lebih tinggi. [Panduan perangkat keras penambangan Blocknet](/id/blog/blocknet-mining-hardware-hashrate/) membandingkan hasil terbaik untuk setiap generasi perangkat keras, dan [panduan Apple Silicon](https://github.com/zpalmtree/seine/blob/master/docs/guides/apple-silicon.md) memuat catatan penyetelan lengkapnya.
 
 ## Berapa thread yang bisa dijalankan Mac Anda?
 

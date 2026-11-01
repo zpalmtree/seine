@@ -11,7 +11,7 @@ faq:
     a: 'Một hàm băm memory-hard cần hàng gigabyte bộ nhớ nhanh cho mỗi lần thử, nên một con chip chỉ được chế tạo để băm vẫn cần lượng RAM lớn bên cạnh mỗi nhân. Máy để bàn, laptop và máy chủ vốn đã có nhiều RAM và bộ điều khiển bộ nhớ nhanh, điều này đưa phần cứng mọi người đang có đến gần với những gì thuật toán cần.'
   - q: 'Có thể đào bằng CPU và card đồ họa cùng lúc không?'
     a: 'Có, khi đào Blocknet bằng seine trên Windows hoặc Linux. seine đào trên bộ xử lý và mọi card đồ họa NVIDIA nó phát hiện được cùng một lúc, và hashrate được cộng dồn. Nó tinh chỉnh bộ xử lý trong khi đào và tinh chỉnh từng card ở lần chạy đầu tiên, nên bạn không cần cấu hình gì trước khi bắt đầu.'
-sourceHash: 845e3b6a5c9d
+sourceHash: '9e40efada752'
 translation: draft
 ---
 
@@ -60,7 +60,7 @@ Ba yếu tố quyết định một bộ xử lý tạo ra bao nhiêu lần băm
 
 **Băng thông bộ nhớ.** Mỗi lần băm chuyển hàng gigabyte dữ liệu qua hệ thống bộ nhớ. Ở 97,1 H/s, máy nhanh nhất đo được với seine ghi khoảng 194,2 GiB khối bộ nhớ mới mỗi giây (97,1 × 2 GiB). Những bộ xử lý có nhiều kênh bộ nhớ hơn và bộ nhớ nhanh hơn sẽ vượt lên.
 
-**Kernel phù hợp.** seine có nhiều kernel Argon2id: AVX2, AVX-512 và một kernel streaming trên x86, cùng NEON với đường nhanh SHA3 trên Arm. Trên cùng một chip, kernel tạo ra khác biệt lớn. Trên AWS Graviton4, kernel SHA3 có prefetch đào nhanh hơn 56% so với NEON thông thường (từ 13,80 lên 21,50 H/s), và trên AMD EPYC 9R45, kernel streaming đào nhanh hơn 30% so với AVX2 (từ 34,47 lên 44,74 H/s ở 24 luồng). seine so sánh các kernel trong khi đào và giữ kernel nhanh hơn.
+**Kernel phù hợp.** Seine so sánh các kernel CPU có sẵn trong khi đào và chọn một kernel cho máy của bạn.
 
 Các cấu hình phần cứng đã đo:
 
@@ -68,13 +68,15 @@ Các cấu hình phần cứng đã đo:
 |---|---|---|---|
 | AMD EPYC · Zen 5 | Máy chủ EPYC 9355P | 64 | 97,1 H/s |
 | Máy chủ Arm | AWS Graviton4 | 32 | 39,3 H/s |
-| AMD EPYC · Zen 4 | Máy chủ EPYC 9R14 | 32 | 38,2 H/s |
+| AMD EPYC · Zen 4 | Máy chủ EPYC 9R14 | 32 | 45,3 H/s |
 | Apple M4 Max | MacBook Pro 48 GB | 16 | 30,9 H/s |
 | Intel Xeon | Sapphire Rapids 8488C | 32 | 26,0 H/s |
 
 Cấu hình nhanh nhất trong các phép đo này là AMD EPYC 9355P đạt 97,1 H/s: 64 luồng đào và 192 GiB RAM trên Linux với thiết lập mặc định của seine.
 
-Dòng Apple M4 Max là một chiếc laptop, cho thấy một hệ thống bộ nhớ mạnh phù hợp với Argon2id đến mức nào. Các dòng máy chủ còn lại chạy trên máy AWS với huge pages 2 MiB. [Hướng dẫn phần cứng đào Blocknet](/vi/blog/blocknet-mining-hardware-hashrate/) trình bày chi tiết lời khuyên khi mua và cách chọn dung lượng RAM, còn [hướng dẫn cho Mac](/vi/blog/mine-blocknet-on-mac/) trình bày về Apple Silicon.
+Kết quả đám mây EPYC 9R45 và 9R14 dùng 32 luồng và transparent huge pages. Các số liệu đo thời gian băm, không tính khởi động. Các hàng khác giữ nguyên điều kiện đo riêng.
+
+[Hướng dẫn phần cứng đào Blocknet](/vi/blog/blocknet-mining-hardware-hashrate/) · [hướng dẫn cho Mac](/vi/blog/mine-blocknet-on-mac/)
 
 ## Làm sao để bắt đầu đào Blocknet bằng CPU?
 

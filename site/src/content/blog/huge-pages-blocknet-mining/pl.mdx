@@ -11,7 +11,7 @@ faq:
     a: 'Domyślny tryb stron seine używa zarezerwowanej puli stron 2 MiB, a potem transparent huge pages. Aby użyć stron 1 GiB, zarezerwuj dwie na wątek, najlepiej przy starcie systemu przez hugepagesz=1G hugepages=N, i uruchom seine z --cpu-page-mode large-1g. Ten tryb działa w systemie Linux x86_64 i WSL i daje około 2% ponad strony 2 MiB.'
   - q: 'Jak włączyć large pages dla seine w systemie Windows?'
     a: 'Nadaj swojemu kontu Windows prawo Blokowanie stron w pamięci w secpol.msc w sekcji Zasady lokalne i Przypisywanie praw użytkownika, a potem wyloguj się i zaloguj ponownie. seine sam włącza to prawo przy starcie i przydziela arenę 2 GiB każdego wątku na large pages. W wersjach Home nadaj to prawo narzędziem takim jak ntrights.'
-sourceHash: 1d106194ae48
+sourceHash: '56854c537c73'
 translation: draft
 ---
 
@@ -38,8 +38,6 @@ Z huge pages jeden wpis w TLB obejmuje 512 lub 262 144 razy więcej pamięci, w
 ## O ile szybciej kopie się z huge pages?
 
 [Poradnik o huge pages](https://github.com/zpalmtree/seine/blob/master/docs/guides/linux-hugepages.md) w dokumentacji seine nazywa je największą pojedynczą dźwignią strojenia przy kopaniu na CPU w systemie Linux. Na hoście walidacyjnym zarezerwowane strony 2 MiB dały około **4–6%**, a strony 1 GiB dodały kolejne mniej więcej **2%**. Poradnik zauważa też, że przy wielu działających wątkach pokrycie huge pages zwykle znaczy więcej niż strojenie pod zestaw instrukcji.
-
-Wcześniejsze wyniki EPYC 9R45 na [wykresie wydajności](/pl/#performance) seine zmierzono z jawnie zarezerwowanymi huge pages 2 MiB. Wynik 49,4 H/s z procesora AMD EPYC Zen 5 (EPYC 9R45) przy 32 wątkach, zmierzony w październiku 2026, uzyskano z 34 407 zarezerwowanymi stronami, czyli tyle, ile podaje wiersz dla 32 wątków w tabeli poniżej. [Poradnik o sprzęcie do kopania](/pl/blog/blocknet-mining-hardware-hashrate/) zawiera pełne wyniki według generacji.
 
 Nawet bez rezerwacji seine prosi jądro systemu Linux o transparent huge pages. Zarezerwowana pula daje więcej, bo strony są odłożone z góry, więc każdy wątek je dostaje, niezależnie od tego, jak bardzo pamięć zdążyła się pofragmentować.
 

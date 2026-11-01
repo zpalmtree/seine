@@ -2,7 +2,7 @@
 title: '如何使用 NVIDIA GPU 挖掘 Blocknet'
 description: '使用 seine 在 NVIDIA GPU 上挖掘 Blocknet。了解 Windows 或 Linux 的设置方法、CPU 与 GPU 同时挖矿、设备算力检查及启动问题排查。'
 tags: ['挖矿指南', 'NVIDIA', 'GPU']
-sourceHash: 6a693c616f37
+sourceHash: '035e97230185'
 translation: draft
 faq:
   - q: 'seine 能同时使用 CPU 和 NVIDIA GPU 吗？'
@@ -86,14 +86,11 @@ NVIDIA 后端显示为 `nvidia#1`、`nvidia#2` 等，CPU 则有独立的一行�
 
 ## RTX 5090 在我们的测试中有多快？
 
-我们于 2026 年 10 月 25 日进行了测试，使用 Windows 11、NVIDIA GeForce RTX 5090、AMD Ryzen 9 9950X3D、125.4 GiB 可用 RAM、seine v0.2.26 和 NVIDIA 驱动 `610.88`。通过 `--bench-kind backend`，我们交替运行两种模式，共完成三组配对测试。每次运行包含一轮 20 秒预热和三轮各 20 秒的测量，运行之间间隔 20 秒。计算内核、寄存器上限、通道和线程均使用自动设置。
+测量于2026年10月31日：仅使用 RTX 5090，原生 Windows 11、610.88 驱动和公开开发版本。稳定挖矿速率已扣除矿工软件费用，不包含 CPU 的工作量。
 
 | 模式 | 平均 H/s |
 |---|---|
-| 仅 RTX 5090 | 7.3 |
-| RTX 5090 + Ryzen 9 9950X3D | 12.9 |
-
-表中数值是这台桌面电脑每种模式运行三次的平均值，测试时原有应用保持打开。两种模式都使用 GPU `0` 和相同的 NVIDIA 自动调优缓存。这些是本地基准测试速率；已接受的份额用于确认矿池计入了工作。[测量记录](https://github.com/zpalmtree/seine/blob/master/site/editorial/batches/2026-10-nvidia-guide/research.md)列出了设置和各次结果。
+| 仅 RTX 5090 | 13.8 |
 
 ## 如果没有 NVIDIA 行，应该检查什么？
 

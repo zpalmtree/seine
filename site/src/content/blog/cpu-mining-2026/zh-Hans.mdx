@@ -11,7 +11,7 @@ faq:
     a: '内存密集型哈希每次尝试都需要数 GB 的高速内存，所以专为哈希设计的芯片仍然要在每个核心旁边配备大量内存。台式机、笔记本电脑和服务器出厂时就带有充足的内存和高速内存控制器，因此人们已有的硬件本来就接近算法所需。'
   - q: '可以同时用 CPU 和显卡挖矿吗？'
     a: '可以，在 Windows 或 Linux 上用 seine 挖 Blocknet 时就能做到。seine 会同时在处理器和检测到的每张 NVIDIA 显卡上挖矿，算力相加。它在挖矿时调优处理器，并在每张显卡首次启动时为其调优，所以开始之前无需任何配置。'
-sourceHash: 845e3b6a5c9d
+sourceHash: '9e40efada752'
 translation: draft
 ---
 
@@ -60,7 +60,7 @@ Blocknet 四个问题都能答好。它是一种[默认隐私](/zh-hans/blog/blo
 
 **内存带宽。** 每次哈希都要让数 GB 的数据经过内存系统。在 97.1 H/s 时，用 seine 测得的最快机器每秒写入约 194.2 GiB 的新内存块（97.1 × 2 GiB）。内存通道更多、内存更快的处理器会领先。
 
-**合适的计算内核。** seine 带有多种 Argon2id 计算内核：x86 上有 AVX2、AVX-512 和流式内核，Arm 上有带 SHA3 快速路径的 NEON。在同一颗芯片上，计算内核的差别很大。在 AWS Graviton4 上，带预取的 SHA3 内核比普通 NEON 快 56%（从 13.80 提升到 21.50 H/s）；在 AMD EPYC 9R45 上，流式内核比 AVX2 快 30%（24 线程时从 34.47 提升到 44.74 H/s）。seine 会在挖矿时比较各个计算内核并保留更快的那个。
+**合适的计算内核。** seine 会在挖矿时比较可用的 CPU 计算内核，并为你的机器选择合适的内核。
 
 已测量的硬件配置：
 
@@ -68,13 +68,15 @@ Blocknet 四个问题都能答好。它是一种[默认隐私](/zh-hans/blog/blo
 |---|---|---|---|
 | AMD EPYC · Zen 5 | EPYC 9355P 服务器 | 64 | 97.1 H/s |
 | Arm 服务器 | AWS Graviton4 | 32 | 39.3 H/s |
-| AMD EPYC · Zen 4 | EPYC 9R14 服务器 | 32 | 38.2 H/s |
+| AMD EPYC · Zen 4 | EPYC 9R14 服务器 | 32 | 45.3 H/s |
 | Apple M4 Max | 48 GB MacBook Pro | 16 | 30.9 H/s |
 | Intel Xeon | Sapphire Rapids 8488C | 32 | 26.0 H/s |
 
 这些测量中最快的配置是达到 97.1 H/s 的 AMD EPYC 9355P：64 个挖矿线程、192 GiB RAM，在 Linux 上使用 seine 的默认设置。
 
-Apple M4 Max 这一行是一台笔记本电脑，说明强大的内存系统与 Argon2id 非常契合。其余服务器各行在启用 2 MiB 大页内存的 AWS 机器上运行。[Blocknet 挖矿硬件指南](/zh-hans/blog/blocknet-mining-hardware-hashrate/)深入介绍了选购建议和内存规划，[Mac 指南](/zh-hans/blog/mine-blocknet-on-mac/)介绍了 Apple Silicon。
+EPYC 9R45 和 9R14 的云端结果使用32个线程及 transparent huge pages，测量的是不含启动的哈希计算时间。其他行保留各自的测量条件。
+
+[Blocknet 挖矿硬件指南](/zh-hans/blog/blocknet-mining-hardware-hashrate/) · [Mac 指南](/zh-hans/blog/mine-blocknet-on-mac/)
 
 ## 如何开始用 CPU 挖 Blocknet？
 

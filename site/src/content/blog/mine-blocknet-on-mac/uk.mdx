@@ -11,7 +11,7 @@ faq:
     a: 'Кожен потік майнінгу працює з блоком пам''яті 2 GiB, тож розраховуйте приблизно на 2 GB на потік. Mac з 16 GB вміщує до семи потоків, з 32 GB — до 15, а з 64 GB — до 31. seine враховує вільну пам''ять і також узгоджує кількість потоків із ядрами процесора.'
   - q: 'Чи можна майнити Blocknet на Mac з Intel?'
     a: 'Так. seine випускає окремий архів для Mac з Intel, seine-macos-x86_64.tar.gz, і кроки такі самі, як на Apple Silicon. Завантажте його, розпакуйте в Терміналі, запустіть ./seine і вставте свою адресу Blocknet або @name. seine визначає кількість потоків за обсягом пам''яті й за замовчуванням починає майнити на bntpool.com.'
-sourceHash: '9338855a2863'
+sourceHash: '33a60ad4df0c'
 translation: draft
 ---
 
@@ -91,8 +91,6 @@ MacBook Pro з чипом M4 Max і 48 GB пам'яті майнив Blocknet з
 |---|---|---|
 | Максимальна продуктивність | 16, розподіл `auto` | 30,94 H/s |
 | Збалансоване (стеля seine за замовчуванням на цьому Mac) | 14, розподіл `pcore-only` | 29,26 H/s |
-
-Для порівняння: результат 30,9 H/s вищий за всі результати Arm-серверів та Intel Xeon у [таблицях продуктивності](https://github.com/zpalmtree/seine/blob/master/docs/PERFORMANCE.md) seine; вищі показники виміряно лише на серверах AMD EPYC Zen 5 і Zen 4. [Посібник з обладнання для майнінгу Blocknet](/uk/blog/blocknet-mining-hardware-hashrate/) порівнює найкращий результат для кожного покоління обладнання, а в [посібнику з Apple Silicon](https://github.com/zpalmtree/seine/blob/master/docs/guides/apple-silicon.md) є повні нотатки з налаштування.
 
 ## Скільки потоків потягне ваш Mac?
 

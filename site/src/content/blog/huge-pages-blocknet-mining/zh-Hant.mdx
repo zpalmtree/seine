@@ -11,7 +11,7 @@ faq:
     a: 'seine 的預設分頁模式會先使用預留的 2 MiB 大分頁池，然後使用透明大分頁。要使用 1 GiB 大分頁，請為每個執行緒預留兩個，最好在開機時用 hugepagesz=1G hugepages=N 預留，並以 --cpu-page-mode large-1g 啟動 seine。此模式適用於 x86_64 Linux 與 WSL，在 2 MiB 大分頁之上再提升約 2%。'
   - q: '如何在 Windows 上為 seine 啟用大型分頁？'
     a: '在 secpol.msc 的「本機原則」與「使用者權限指派」中，把「鎖定記憶體分頁」（Lock pages in memory）權限授予你的 Windows 帳戶，然後登出再重新登入。seine 啟動時會為自己啟用該權限，並以大型分頁配置每個執行緒的 2 GiB 區域。家用版可用 ntrights 等工具授予該權限。'
-sourceHash: 1d106194ae48
+sourceHash: '56854c537c73'
 translation: draft
 ---
 
@@ -38,8 +38,6 @@ Blocknet 的工作量證明讓這種查找變得頻繁。每次雜湊都會用 1
 ## 使用大分頁後挖礦能快多少？
 
 seine 的[大分頁指南](https://github.com/zpalmtree/seine/blob/master/docs/guides/linux-hugepages.md)稱它是 Linux 上 CPU 挖礦最重要的單項調校設定。在驗證機上，預留的 2 MiB 大分頁帶來約 **4–6%** 的提升，1 GiB 大分頁再多約 **2%**。指南也指出，當執行的執行緒很多時，大分頁的涵蓋程度通常比指令集調校更重要。
-
-seine [效能圖表](/zh-hant/#performance)中的先前 EPYC 9R45 的結果是在明確預留的 2 MiB 大分頁下測得的。AMD EPYC Zen 5（EPYC 9R45）在 32 個執行緒下跑出的 49.4 H/s 測於 2026 年 10 月，當時預留了 34,407 個分頁，與下表中 32 執行緒那一列的數字相同。[挖礦硬體指南](/zh-hant/blog/blocknet-mining-hardware-hashrate/)列出了各代硬體的完整結果。
 
 即使沒有預留，seine 在 Linux 上也會向核心要求透明大分頁。預留的大分頁池效果更好，因為這些分頁是事先保留的，無論記憶體碎片化到什麼程度，每個執行緒都能取得。
 

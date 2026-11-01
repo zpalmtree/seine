@@ -11,7 +11,7 @@ faq:
     a: 'Hash memory-hard membutuhkan memori cepat bergiga-giga byte untuk setiap percobaan, sehingga chip yang dibuat khusus untuk hashing tetap membutuhkan RAM dalam jumlah besar di samping setiap core. Desktop, laptop, dan server sudah dilengkapi RAM yang banyak dan pengendali memori yang cepat, sehingga perangkat keras yang dimiliki orang sudah dekat dengan kebutuhan algoritma itu.'
   - q: 'Bisakah menambang dengan CPU dan kartu grafis sekaligus?'
     a: 'Bisa, saat menambang Blocknet dengan seine di Windows atau Linux. seine menambang dengan prosesor dan setiap kartu grafis NVIDIA yang terdeteksi secara bersamaan, dan hashrate-nya dijumlahkan. seine menyetel prosesor sambil menambang dan setiap kartu pada peluncuran pertamanya, jadi tidak ada yang perlu dikonfigurasi sebelum Anda mulai.'
-sourceHash: 845e3b6a5c9d
+sourceHash: '9e40efada752'
 translation: draft
 ---
 
@@ -60,7 +60,7 @@ Tiga hal menentukan berapa banyak hash per detik (H/s) yang dihasilkan sebuah pr
 
 **Bandwidth memori.** Setiap hash memindahkan gigabyte data melalui sistem memori. Pada 97,1 H/s, mesin tercepat yang diukur dengan seine menulis sekitar 194,2 GiB blok memori baru setiap detik (97,1 × 2 GiB). Prosesor dengan lebih banyak kanal memori dan memori yang lebih cepat unggul.
 
-**Kernel yang tepat.** seine membawa beberapa kernel Argon2id: AVX2, AVX-512, dan kernel streaming di x86, serta NEON dengan jalur cepat SHA3 di Arm. Pada chip yang sama, kernel membuat perbedaan besar. Di AWS Graviton4, kernel SHA3 dengan prefetching menambang 56% lebih cepat daripada NEON biasa (dari 13,80 menjadi 21,50 H/s), dan di AMD EPYC 9R45 kernel streaming menambang 30% lebih cepat daripada AVX2 (dari 34,47 menjadi 44,74 H/s dengan 24 thread). seine membandingkan kernel sambil menambang dan mempertahankan yang lebih cepat.
+**Kernel yang tepat.** Seine membandingkan kernel CPU yang tersedia saat menambang dan memilih satu untuk mesin Anda.
 
 Konfigurasi perangkat keras yang telah diukur:
 
@@ -68,13 +68,15 @@ Konfigurasi perangkat keras yang telah diukur:
 |---|---|---|---|
 | AMD EPYC · Zen 5 | Server EPYC 9355P | 64 | 97,1 H/s |
 | Server Arm | AWS Graviton4 | 32 | 39,3 H/s |
-| AMD EPYC · Zen 4 | Server EPYC 9R14 | 32 | 38,2 H/s |
+| AMD EPYC · Zen 4 | Server EPYC 9R14 | 32 | 45,3 H/s |
 | Apple M4 Max | MacBook Pro 48 GB | 16 | 30,9 H/s |
 | Intel Xeon | Sapphire Rapids 8488C | 32 | 26,0 H/s |
 
 Konfigurasi tercepat dalam pengukuran ini adalah AMD EPYC 9355P pada 97,1 H/s: 64 thread penambangan dan RAM 192 GiB di Linux dengan pengaturan default seine.
 
-Baris Apple M4 Max adalah laptop, yang menunjukkan betapa cocoknya sistem memori yang kuat untuk Argon2id. Baris server lainnya dijalankan di mesin AWS dengan huge pages 2 MiB. [Panduan perangkat keras penambangan Blocknet](/id/blog/blocknet-mining-hardware-hashrate/) membahas saran pembelian dan ukuran RAM secara mendalam, dan [panduan Mac](/id/blog/mine-blocknet-on-mac/) membahas Apple Silicon.
+Hasil cloud EPYC 9R45 dan 9R14 memakai 32 thread dan transparent huge pages. Angkanya mengukur waktu hashing, tanpa startup. Baris lain mempertahankan pengaturan pengukurannya masing-masing.
+
+[Panduan perangkat keras penambangan Blocknet](/id/blog/blocknet-mining-hardware-hashrate/) · [panduan Mac](/id/blog/mine-blocknet-on-mac/)
 
 ## Bagaimana cara mulai menambang Blocknet dengan CPU?
 

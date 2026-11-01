@@ -11,7 +11,7 @@ faq:
     a: 'seine''in varsayılan sayfa modu önce ayrılmış 2 MiB havuzunu, ardından transparent huge pages''i kullanır. 1 GiB sayfaları kullanmak için iş parçacığı başına iki sayfa ayırın (tercihen açılışta hugepagesz=1G hugepages=N ile) ve seine''i --cpu-page-mode large-1g ile başlatın. Bu mod x86_64 Linux ve WSL''de çalışır ve 2 MiB sayfaların üzerine yaklaşık %2 ekler.'
   - q: 'Windows''ta seine için large pages nasıl açılır?'
     a: 'secpol.msc içinde Yerel İlkeler ve Kullanıcı Hakları Ataması altında Windows hesabınıza Bellekteki sayfaları kilitle (Lock pages in memory) hakkını verin, ardından oturumu kapatıp yeniden açın. seine başlangıçta bu hakkı kendisi için etkinleştirir ve her iş parçacığının 2 GiB alanını large pages ile ayırır. Home sürümlerinde bu hakkı ntrights gibi bir araçla verin.'
-sourceHash: 1d106194ae48
+sourceHash: '56854c537c73'
 translation: draft
 ---
 
@@ -38,8 +38,6 @@ Huge pages ile tek bir TLB girdisi 512 veya 262.144 kat daha fazla belleği kaps
 ## Huge pages ile madencilik ne kadar hızlanır?
 
 seine'in [huge pages rehberi](https://github.com/zpalmtree/seine/blob/master/docs/guides/linux-hugepages.md), bunları Linux'ta CPU madenciliğinde tek başına en etkili ayar olarak tanımlar. Doğrulama makinesinde ayrılmış 2 MiB sayfalar yaklaşık **%4–6** ekledi, 1 GiB sayfalar ise buna yaklaşık **%2** daha ekledi. Rehber ayrıca, çok sayıda iş parçacığı çalışırken huge page kapsamının genellikle komut seti ayarından daha önemli olduğunu belirtir.
-
-seine'in [performans grafiğindeki](/tr/#performance) önceki EPYC 9R45 sonuçları açıkça ayrılmış 2 MiB huge pages ile ölçüldü. Ekim 2026'da AMD EPYC Zen 5 (EPYC 9R45) üzerinde 32 iş parçacığıyla ölçülen 49,4 H/s, 34.407 ayrılmış sayfayla elde edildi; bu, aşağıdaki tablodaki 32 iş parçacığı satırıyla aynı sayıdır. [Madencilik donanımı rehberi](/tr/blog/blocknet-mining-hardware-hashrate/) nesillere göre tüm sonuçları içerir.
 
 Ayırma yapılmasa bile seine Linux'ta çekirdekten transparent huge pages ister. Ayrılmış havuz ise daha fazlasını sağlar, çünkü sayfalar baştan ayrılır; böylece bellek ne kadar parçalanmış olursa olsun her iş parçacığı bu sayfaları alır.
 

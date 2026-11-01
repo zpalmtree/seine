@@ -12,7 +12,7 @@ faq:
     a: 'โหมดหน้าหน่วยความจำเริ่มต้นของ seine ใช้พูลหน้า 2 MiB ที่จองไว้ แล้วจึงใช้ transparent huge pages หากต้องการหน้า 1 GiB ให้จองสองหน้าต่อเธรด โดยควรจองตอนบูตด้วย hugepagesz=1G hugepages=N และเริ่ม seine ด้วย --cpu-page-mode large-1g โหมดนี้ใช้ได้บน Linux x86_64 และ WSL และเพิ่มความเร็วประมาณ 2% จากหน้า 2 MiB'
   - q: 'เปิด large pages ให้ seine บน Windows อย่างไร?'
     a: 'ให้สิทธิ์ Lock pages in memory แก่บัญชี Windows ของคุณใน secpol.msc ที่ Local Policies และ User Rights Assignment แล้วออกจากระบบและเข้าสู่ระบบอีกครั้ง seine เปิดใช้สิทธิ์นี้เองตอนเริ่มทำงานและจัดสรรหน่วยความจำ 2 GiB ของแต่ละเธรดด้วย large pages ในรุ่น Home ให้มอบสิทธิ์ด้วยเครื่องมืออย่าง ntrights'
-sourceHash: 1d106194ae48
+sourceHash: '56854c537c73'
 translation: draft
 ---
 
@@ -39,8 +39,6 @@ Proof of Work ของ Blocknet ทำให้ต้องไล่ตาร�
 ## ขุดด้วย huge pages เร็วขึ้นเท่าไร?
 
 [คู่มือ huge pages](https://github.com/zpalmtree/seine/blob/master/docs/guides/linux-hugepages.md) ของ seine ระบุว่าเป็นตัวปรับจูนที่ให้ผลมากที่สุดสำหรับการขุดด้วย CPU บน Linux บนเครื่องทดสอบ หน้า 2 MiB ที่จองไว้เพิ่มความเร็วประมาณ **4–6%** และหน้า 1 GiB เพิ่มได้อีกประมาณ **2%** คู่มือยังระบุว่าเมื่อใช้หลายเธรด การครอบคลุมของ huge pages มักสำคัญกว่าการปรับชุดคำสั่ง
-
-ผลเดิมของ EPYC 9R45ใน[ตารางประสิทธิภาพ](/th/#performance) ของ seine วัดด้วย huge pages ขนาด 2 MiB ที่จองไว้อย่างชัดเจน ผล 49.4 H/s จาก AMD EPYC Zen 5 (EPYC 9R45) ที่ 32 เธรด วัดในเดือนตุลาคม 2026 โดยจองไว้ 34,407 หน้า ตรงกับแถว 32 เธรดในตารางด้านล่าง [คู่มือฮาร์ดแวร์ขุด](/th/blog/blocknet-mining-hardware-hashrate/) มีผลครบแยกตามรุ่น
 
 แม้ไม่จองไว้ seine ก็ร้องขอ transparent huge pages จากเคอร์เนลบน Linux พูลที่จองไว้ช่วยเพิ่มความแน่นอน เพราะกันหน้าไว้ล่วงหน้า ทุกเธรดจึงได้รับหน้าเหล่านี้ไม่ว่าหน่วยความจำจะกระจัดกระจายเพียงใด
 

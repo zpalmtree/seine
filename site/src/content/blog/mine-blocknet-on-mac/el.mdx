@@ -11,7 +11,7 @@ faq:
     a: 'Κάθε νήμα εξόρυξης δουλεύει σε ένα μπλοκ μνήμης 2 GiB, οπότε υπολογίστε περίπου 2 GB ανά νήμα. Ένα Mac με 16 GB χωρά έως επτά νήματα, ένα με 32 GB έως 15 και ένα με 64 GB έως 31. Το seine μετρά την ελεύθερη μνήμη και επίσης ταιριάζει τα νήματα στους πυρήνες σας.'
   - q: 'Μπορώ να κάνω εξόρυξη Blocknet σε Mac με Intel;'
     a: 'Ναι. Το seine δημοσιεύει ξεχωριστό αρχείο για Mac με Intel, το seine-macos-x86_64.tar.gz, και τα βήματα είναι ίδια με το Apple Silicon. Κατεβάστε το, αποσυμπιέστε το στο Τερματικό, εκτελέστε ./seine και επικολλήστε τη διεύθυνση Blocknet ή το @name σας. Το seine προσαρμόζει τα νήματα στη μνήμη σας και ξεκινά εξόρυξη στο bntpool.com από προεπιλογή.'
-sourceHash: '9338855a2863'
+sourceHash: '33a60ad4df0c'
 translation: draft
 ---
 
@@ -91,8 +91,6 @@ xattr -d com.apple.quarantine ./seine
 |---|---|---|
 | Μέγιστη απόδοση | 16, προγραμματισμός `auto` | 30,94 H/s |
 | Ισορροπημένη (το προεπιλεγμένο ανώτατο όριο του seine σε αυτό το Mac) | 14, προγραμματισμός `pcore-only` | 29,26 H/s |
-
-Για σύγκριση, το αποτέλεσμα των 30,9 H/s είναι μπροστά από κάθε αποτέλεσμα διακομιστή Arm και Intel Xeon στους [πίνακες επιδόσεων](https://github.com/zpalmtree/seine/blob/master/docs/PERFORMANCE.md) του seine· μόνο οι διακομιστές AMD EPYC Zen 5 και Zen 4 μέτρησαν υψηλότερα. Ο [οδηγός υλικού εξόρυξης Blocknet](/el/blog/blocknet-mining-hardware-hashrate/) συγκρίνει το καλύτερο αποτέλεσμα κάθε γενιάς υλικού και ο [οδηγός για το Apple Silicon](https://github.com/zpalmtree/seine/blob/master/docs/guides/apple-silicon.md) έχει όλες τις σημειώσεις ρύθμισης.
 
 ## Πόσα νήματα μπορεί να τρέξει το Mac σας;
 

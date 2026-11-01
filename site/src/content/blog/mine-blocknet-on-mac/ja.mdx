@@ -11,8 +11,8 @@ faq:
     a: '各マイニングスレッドは 2 GiB のメモリブロックを使って処理するので、1 スレッドあたり約 2 GB を見込んでください。16 GB の Mac なら最大 7 スレッド、32 GB なら最大 15 スレッド、64 GB なら最大 31 スレッドです。seine は空きメモリを数え、スレッド数をコア数にも合わせます。'
   - q: 'Intel Mac で Blocknet をマイニングできますか？'
     a: 'はい。seine は Intel Mac 向けに別のアーカイブ seine-macos-x86_64.tar.gz を公開しており、手順は Apple シリコンと同じです。ダウンロードしてターミナルで展開し、./seine を実行して Blocknet アドレスまたは @name を貼り付けます。seine はメモリに合わせてスレッド数を決め、デフォルトで bntpool.com でマイニングを始めます。'
-sourceHash: '9338855a2863'
-translation: reviewed
+sourceHash: '33a60ad4df0c'
+translation: draft
 ---
 
 ## Mac で Blocknet をマイニングできますか？
@@ -91,8 +91,6 @@ M4 Max チップを搭載した 48 GB の MacBook Pro は、CPU だけで 16 ス
 |---|---|---|
 | 最大スループット | 16、`auto` スケジューリング | 30.94 H/s |
 | バランス（この Mac での seine のデフォルト上限） | 14、`pcore-only` スケジューリング | 29.26 H/s |
-
-参考までに、30.9 H/s という結果は、seine の[パフォーマンス表](https://github.com/zpalmtree/seine/blob/master/docs/PERFORMANCE.md)にあるどの Arm サーバーや Intel Xeon の結果よりも上で、これより高かったのは AMD EPYC Zen 5 と Zen 4 のサーバーだけです。[Blocknet マイニングハードウェアガイド](/ja/blog/blocknet-mining-hardware-hashrate/)ではハードウェア世代ごとの最高結果を比較しており、[Apple シリコンガイド](https://github.com/zpalmtree/seine/blob/master/docs/guides/apple-silicon.md)にはチューニングの詳細がまとめられています。
 
 ## Mac で動かせるスレッド数は？
 

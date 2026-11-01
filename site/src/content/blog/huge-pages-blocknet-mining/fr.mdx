@@ -11,7 +11,7 @@ faq:
     a: 'Le mode de pages par défaut de seine utilise le pool réservé de pages de 2 MiB, puis les transparent huge pages. Pour utiliser des pages de 1 GiB, réservez-en deux par thread, de préférence au démarrage avec hugepagesz=1G hugepages=N, et lancez seine avec --cpu-page-mode large-1g. Ce mode fonctionne sous Linux x86_64 et WSL et ajoute environ 2 % par rapport aux pages de 2 MiB.'
   - q: 'Comment activer les large pages pour seine sous Windows ?'
     a: 'Accordez à votre compte Windows le droit Verrouiller les pages en mémoire dans secpol.msc, sous Stratégies locales puis Attribution des droits utilisateur, puis déconnectez-vous et reconnectez-vous. seine active ce droit pour lui-même au démarrage et alloue la zone de 2 GiB de chaque thread avec des large pages. Sur les éditions Famille, accordez le droit avec un outil comme ntrights.'
-sourceHash: 1d106194ae48
+sourceHash: '56854c537c73'
 translation: draft
 ---
 
@@ -38,8 +38,6 @@ Avec des huge pages, une entrée du TLB couvre 512 ou 262 144 fois plus de mém
 ## Quel gain de vitesse apportent les huge pages ?
 
 Le [guide des huge pages](https://github.com/zpalmtree/seine/blob/master/docs/guides/linux-hugepages.md) de seine les présente comme le levier de réglage le plus important pour le minage CPU sous Linux. Sur la machine de validation, des pages réservées de 2 MiB ont apporté environ **4 à 6 %**, et les pages de 1 GiB environ **2 %** de plus. Le guide note aussi qu'une fois de nombreux threads lancés, la couverture en huge pages compte généralement davantage que le réglage du jeu d'instructions.
-
-Les résultats antérieurs de l’EPYC 9R45 du [graphique de performances](/fr/#performance) de seine ont été mesurés avec des huge pages explicites de 2 MiB. Les 49,4 H/s d'un AMD EPYC Zen 5 (EPYC 9R45) à 32 threads, mesurés en octobre 2026, ont tourné avec 34 407 pages réservées, le même chiffre que la ligne 32 threads du tableau ci-dessous. Le [guide du matériel de minage](/fr/blog/blocknet-mining-hardware-hashrate/) présente tous les résultats par génération.
 
 Même sans réservation, seine demande au noyau des transparent huge pages sous Linux. Un pool réservé va plus loin, car les pages sont mises de côté à l'avance : chaque thread les obtient, quel que soit le degré de fragmentation de la mémoire.
 

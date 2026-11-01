@@ -11,7 +11,7 @@ faq:
     a: 'แต่ละเธรดขุดประมวลผลบล็อกหน่วยความจำ 2 GiB จึงควรเผื่อประมาณ 2 GB ต่อเธรด Mac 16 GB รองรับได้สูงสุดเจ็ดเธรด รุ่น 32 GB สูงสุด 15 เธรด และรุ่น 64 GB สูงสุด 31 เธรด seine นับหน่วยความจำที่ว่างและปรับจำนวนเธรดให้ตรงกับคอร์ด้วย'
   - q: 'ขุด Blocknet บน Mac ที่ใช้ Intel ได้หรือไม่?'
     a: 'ได้ seine มีไฟล์แยกสำหรับ Mac ที่ใช้ Intel คือ seine-macos-x86_64.tar.gz และขั้นตอนเหมือนบน Apple Silicon ดาวน์โหลด แตกไฟล์ใน Terminal เรียก ./seine แล้ววางที่อยู่ Blocknet หรือ @name ของคุณ seine ปรับจำนวนเธรดตามหน่วยความจำและเริ่มขุดบน bntpool.com โดยค่าเริ่มต้น'
-sourceHash: '9338855a2863'
+sourceHash: '33a60ad4df0c'
 translation: draft
 ---
 
@@ -91,8 +91,6 @@ MacBook Pro 48 GB ที่ใช้ชิป M4 Max ขุด Blocknet ได�
 |---|---|---|
 | อัตราประมวลผลสูงสุด | 16, การจัดงาน `auto` | 30.94 H/s |
 | สมดุล (เพดานเริ่มต้นของ seine บน Mac นี้) | 14, การจัดงาน `pcore-only` | 29.26 H/s |
-
-เพื่อให้เห็นภาพ ผล 30.9 H/s สูงกว่าทุกผลของเซิร์ฟเวอร์ Arm และ Intel Xeon ใน[ตารางประสิทธิภาพ](https://github.com/zpalmtree/seine/blob/master/docs/PERFORMANCE.md) ของ seine มีเพียงเซิร์ฟเวอร์ AMD EPYC Zen 5 และ Zen 4 ที่วัดได้สูงกว่า [คู่มือฮาร์ดแวร์ขุด Blocknet](/th/blog/blocknet-mining-hardware-hashrate/) เปรียบเทียบผลที่ดีที่สุดของฮาร์ดแวร์แต่ละรุ่น และ[คู่มือ Apple Silicon](https://github.com/zpalmtree/seine/blob/master/docs/guides/apple-silicon.md) มีรายละเอียดการปรับจูนครบ
 
 ## Mac ของคุณรันได้กี่เธรด?
 

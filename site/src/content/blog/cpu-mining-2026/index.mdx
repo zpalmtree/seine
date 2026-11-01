@@ -2,7 +2,7 @@
 title: "CPU mining in 2026: what to mine with a CPU"
 description: CPU mining in 2026 explained. Learn why memory-hard coins like Blocknet favor ordinary computers, what makes a CPU fast, and how to start mining with seine.
 date: 2026-10-25
-updated: 2026-10-27
+updated: 2026-11-01
 tags: [CPU mining, Argon2id, Mining guide, Hardware]
 faq:
   - q: Which coins can you mine with a CPU in 2026?
@@ -61,7 +61,7 @@ Three things decide how many hashes per second (H/s) a processor produces on Blo
 
 **Memory bandwidth.** Every hash moves gigabytes through the memory system. At 97.1 H/s, the fastest machine measured with seine writes about 194.2 GiB of fresh memory blocks every second (97.1 × 2 GiB). Processors with more memory channels and faster memory pull ahead.
 
-**The right kernel.** Seine carries several Argon2id kernels: AVX2, AVX-512 and a streaming kernel on x86, and NEON with a SHA3 fast path on Arm. On the same chip the kernel makes a large difference. On AWS Graviton4, the SHA3 kernel with prefetching mines 56% faster than plain NEON (13.80 to 21.50 H/s), and on the AMD EPYC 9R45 the streaming kernel mines 30% faster than AVX2 (34.47 to 44.74 H/s at 24 threads). Seine compares kernels while it mines and keeps the faster one.
+**The right kernel.** Seine compares the available CPU kernels while mining and selects one for your machine.
 
 Measured hardware configurations:
 
@@ -69,13 +69,15 @@ Measured hardware configurations:
 |---|---|---|---|
 | AMD EPYC · Zen 5 | EPYC 9355P server | 64 | 97.1 H/s |
 | Arm server | AWS Graviton4 | 32 | 39.3 H/s |
-| AMD EPYC · Zen 4 | EPYC 9R14 server | 32 | 38.2 H/s |
+| AMD EPYC · Zen 4 | EPYC 9R14 server | 32 | 45.3 H/s |
 | Apple M4 Max | 48 GB MacBook Pro | 16 | 30.9 H/s |
 | Intel Xeon | Sapphire Rapids 8488C | 32 | 26.0 H/s |
 
 The fastest configuration in these measurements is an AMD EPYC 9355P at 97.1 H/s: 64 mining threads and 192 GiB of RAM on Linux with seine's default settings.
 
-The Apple M4 Max row is a laptop, which shows how well a strong memory system suits Argon2id. The other server rows ran on AWS machines with 2 MiB huge pages. The [Blocknet mining hardware guide](/blog/blocknet-mining-hardware-hashrate/) covers buying advice and RAM sizing in depth, and the [Mac guide](/blog/mine-blocknet-on-mac/) covers Apple Silicon.
+The EPYC 9R45 and 9R14 cloud results use 32 threads and transparent huge pages. They measure hashing time, excluding startup. Other rows retain their own measured settings.
+
+[Blocknet mining hardware guide](/blog/blocknet-mining-hardware-hashrate/) · [Mac guide](/blog/mine-blocknet-on-mac/)
 
 ## How do you start CPU mining Blocknet?
 

@@ -11,7 +11,7 @@ faq:
     a: 'Bellek yoğun bir hash her deneme için gigabaytlarca hızlı bellek ister, bu yüzden yalnızca hash için üretilmiş bir çip bile her çekirdeğin yanında büyük miktarda RAM''e ihtiyaç duyar. Masaüstü bilgisayarlar, dizüstüler ve sunucular zaten bol RAM ve hızlı bellek denetleyicileriyle gelir; bu da insanların sahip olduğu donanımı algoritmanın ihtiyacına yaklaştırır.'
   - q: 'CPU''nuz ve ekran kartınızla aynı anda madencilik yapabilir misiniz?'
     a: 'Evet, Windows veya Linux''ta seine ile Blocknet madenciliği yaparken. seine işlemcide ve algıladığı her NVIDIA ekran kartında aynı anda madencilik yapar ve hashrate''ler toplanır. İşlemciyi madencilik yaparken, her kartı ise ilk açılışta ayarlar; bu yüzden başlamadan önce yapılandırmanız gereken hiçbir şey yoktur.'
-sourceHash: 845e3b6a5c9d
+sourceHash: '9e40efada752'
 translation: draft
 ---
 
@@ -60,7 +60,7 @@ Bir işlemcinin Blocknet'te saniyede kaç hash (H/s) üreteceğini üç şey bel
 
 **Bellek bant genişliği.** Her hash bellek sistemi üzerinden gigabaytlarca veri taşır. seine ile ölçülen en hızlı makine, 97,1 H/s'de her saniye yaklaşık 194,2 GiB yeni bellek bloğu yazar (97,1 × 2 GiB). Daha fazla bellek kanalına ve daha hızlı belleğe sahip işlemciler öne geçer.
 
-**Doğru kernel.** seine birkaç Argon2id kernel'i taşır: x86'da AVX2, AVX-512 ve bir streaming kernel'i, Arm'da ise SHA3 hızlı yoluna sahip NEON. Aynı çipte kernel büyük bir fark yaratır. AWS Graviton4'te önceden getirme kullanan SHA3 kernel'i düz NEON'dan %56 daha hızlı madencilik yapar (13,80'den 21,50 H/s'ye); AMD EPYC 9R45'te ise streaming kernel'i AVX2'den %30 daha hızlıdır (24 iş parçacığında 34,47'den 44,74 H/s'ye). seine madencilik yaparken kernel'leri karşılaştırır ve daha hızlı olanı tutar.
+**Doğru kernel.** Seine madencilik sırasında mevcut CPU çekirdek kodlarını karşılaştırır ve makineniz için birini seçer.
 
 Ölçülen donanım yapılandırmaları:
 
@@ -68,13 +68,15 @@ Bir işlemcinin Blocknet'te saniyede kaç hash (H/s) üreteceğini üç şey bel
 |---|---|---|---|
 | AMD EPYC · Zen 5 | EPYC 9355P sunucu | 64 | 97,1 H/s |
 | Arm sunucu | AWS Graviton4 | 32 | 39,3 H/s |
-| AMD EPYC · Zen 4 | EPYC 9R14 sunucu | 32 | 38,2 H/s |
+| AMD EPYC · Zen 4 | EPYC 9R14 sunucu | 32 | 45,3 H/s |
 | Apple M4 Max | 48 GB MacBook Pro | 16 | 30,9 H/s |
 | Intel Xeon | Sapphire Rapids 8488C | 32 | 26,0 H/s |
 
 Bu ölçümlerdeki en hızlı yapılandırma, 97,1 H/s ile AMD EPYC 9355P’dir: Linux’ta seine’in varsayılan ayarlarıyla 64 madencilik iş parçacığı ve 192 GiB RAM.
 
-Apple M4 Max satırı bir dizüstü bilgisayardır ve güçlü bir bellek sisteminin Argon2id'ye ne kadar uygun olduğunu gösterir. Diğer sunucu satırları 2 MiB'lık huge pages ile AWS makinelerinde çalıştırıldı. [Blocknet madencilik donanımı rehberi](/tr/blog/blocknet-mining-hardware-hashrate/) satın alma önerilerini ve RAM boyutlandırmayı ayrıntılı olarak ele alır; [Mac rehberi](/tr/blog/mine-blocknet-on-mac/) ise Apple Silicon'u anlatır.
+EPYC 9R45 ve 9R14 bulut sonuçları 32 iş parçacığı ve transparent huge pages kullanır. Başlatma hariç hash hesaplama süresini ölçerler. Diğer satırlar kendi ölçüm ayarlarını korur.
+
+[Blocknet madencilik donanımı rehberi](/tr/blog/blocknet-mining-hardware-hashrate/) · [Mac rehberi](/tr/blog/mine-blocknet-on-mac/)
 
 ## Blocknet CPU madenciliğine nasıl başlanır?
 

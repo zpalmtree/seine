@@ -2,7 +2,7 @@
 title: 'NVIDIA GPUでBlocknetをマイニングする方法'
 description: 'seineでNVIDIA GPUを使ってBlocknetをマイニング。Windows・Linuxの設定、CPUとの併用、ハッシュレートの確認、起動時の問題への対処を解説します。'
 tags: ['マイニングガイド', 'NVIDIA', 'GPU']
-sourceHash: 6a693c616f37
+sourceHash: '035e97230185'
 translation: draft
 faq:
   - q: 'seineはCPUとNVIDIA GPUを同時に使えますか？'
@@ -86,14 +86,11 @@ NVIDIAバックエンドは`nvidia#1`、`nvidia#2`などと表示され、CPUに
 
 ## テストでのRTX 5090の速度は？
 
-2026年10月25日に、Windows 11、NVIDIA GeForce RTX 5090、AMD Ryzen 9 9950X3D、利用可能なRAM 125.4 GiB、seine v0.2.26、NVIDIAドライバー`610.88`を使用してテストしました。`--bench-kind backend`を使い、両モードを交互に実行する比較を3組行いました。各実行には20秒のウォームアップ1回と20秒の測定ラウンド3回を含め、実行の間に20秒の間隔を置きました。カーネル、レジスタ上限、レーン数、スレッド数は自動設定でした。
+2026年10月31日測定。RTX 5090単体、ネイティブのWindows 11、ドライバー610.88、公開開発ビルドを使用。安定時のマイニング速度はマイナー手数料控除後の値で、CPUの処理は含みません。
 
 | モード | 平均 H/s |
 |---|---|
-| RTX 5090のみ | 7.3 |
-| RTX 5090 + Ryzen 9 9950X3D | 12.9 |
-
-表は、このデスクトップPCで既存のアプリを開いたまま各モードを3回実行した平均値です。両モードでGPU `0`と同じNVIDIA自動調整キャッシュを使用しました。これらはローカルベンチマークの速度であり、プールへの計上は受理されたシェアで確認します。[測定メモ](https://github.com/zpalmtree/seine/blob/master/site/editorial/batches/2026-10-nvidia-guide/research.md)には設定と個別の結果を記録しています。
+| RTX 5090のみ | 13.8 |
 
 ## NVIDIAの行が表示されないときは何を確認しますか？
 

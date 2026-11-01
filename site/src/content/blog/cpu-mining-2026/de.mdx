@@ -11,7 +11,7 @@ faq:
     a: 'Ein speicherintensiver Hash braucht für jeden Versuch Gigabytes an schnellem Speicher, sodass auch ein reiner Hash-Chip große Mengen RAM neben jedem Kern bräuchte. Desktop-PCs, Laptops und Server haben bereits reichlich RAM und schnelle Speichercontroller, womit die Hardware, die man ohnehin besitzt, nah an dem liegt, was der Algorithmus braucht.'
   - q: 'Kann man gleichzeitig mit CPU und Grafikkarte minen?'
     a: 'Ja, beim Blocknet-Mining mit seine unter Windows oder Linux. seine mint gleichzeitig auf dem Prozessor und jeder erkannten NVIDIA-Grafikkarte, und die Hashraten addieren sich. Den Prozessor optimiert es während des Minings und jede Karte beim ersten Start, es gibt also vor dem Start nichts zu konfigurieren.'
-sourceHash: 845e3b6a5c9d
+sourceHash: '9e40efada752'
 translation: draft
 ---
 
@@ -60,7 +60,7 @@ Drei Dinge entscheiden, wie viele Hashes pro Sekunde (H/s) ein Prozessor bei Blo
 
 **Speicherbandbreite.** Jeder Hash bewegt Gigabytes durch das Speichersystem. Bei 97,1 H/s schreibt der schnellste mit seine gemessene Rechner jede Sekunde etwa 194,2 GiB an frischen Speicherblöcken (97,1 × 2 GiB). Prozessoren mit mehr Speicherkanälen und schnellerem Speicher ziehen davon.
 
-**Der richtige Kernel.** seine bringt mehrere Argon2id-Kernel mit: AVX2, AVX-512 und einen Streaming-Kernel auf x86 sowie NEON mit einem schnellen SHA3-Pfad auf Arm. Auf demselben Chip macht der Kernel einen großen Unterschied. Auf AWS Graviton4 mint der SHA3-Kernel mit Prefetching 56 % schneller als reines NEON (13,80 auf 21,50 H/s), und auf dem AMD EPYC 9R45 mint der Streaming-Kernel 30 % schneller als AVX2 (34,47 auf 44,74 H/s bei 24 Threads). seine vergleicht die Kernel während des Minings und behält den schnelleren.
+**Der richtige Kernel.** Seine vergleicht beim Mining die verfügbaren CPU-Kernel und wählt einen für deinen Rechner aus.
 
 Gemessene Hardware-Konfigurationen:
 
@@ -68,7 +68,7 @@ Gemessene Hardware-Konfigurationen:
 |---|---|---|---|
 | AMD EPYC · Zen 5 | EPYC-9355P-Server | 64 | 97,1 H/s |
 | Arm-Server | AWS Graviton4 | 32 | 39,3 H/s |
-| AMD EPYC · Zen 4 | EPYC-9R14-Server | 32 | 38,2 H/s |
+| AMD EPYC · Zen 4 | EPYC-9R14-Server | 32 | 45,3 H/s |
 | Apple M4 Max | MacBook Pro mit 48 GB | 16 | 30,9 H/s |
 | Intel Xeon | Sapphire Rapids 8488C | 32 | 26,0 H/s |
 

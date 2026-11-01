@@ -11,8 +11,8 @@ faq:
     a: '채굴 스레드 하나는 2 GiB 메모리 블록을 처리하므로 스레드당 약 2 GB로 계획하십시오. 16 GB Mac은 최대 7개, 32 GB Mac은 최대 15개, 64 GB Mac은 최대 31개의 스레드를 실행할 수 있습니다. seine는 남은 메모리를 계산하고 코어 수에도 스레드 수를 맞춥니다.'
   - q: 'Intel Mac에서 Blocknet을 채굴할 수 있습니까?'
     a: '네. seine는 Intel Mac용으로 별도의 아카이브인 seine-macos-x86_64.tar.gz를 제공하며, 과정은 Apple 실리콘과 같습니다. 다운로드하고 터미널에서 압축을 푼 뒤 ./seine를 실행하고 Blocknet 주소나 @name을 붙여넣으십시오. seine가 메모리에 맞게 스레드 수를 정하고 기본값인 bntpool.com에서 채굴을 시작합니다.'
-sourceHash: '9338855a2863'
-translation: reviewed
+sourceHash: '33a60ad4df0c'
+translation: draft
 ---
 
 ## Mac에서 Blocknet을 채굴할 수 있습니까?
@@ -91,8 +91,6 @@ M4 Max 칩을 탑재한 48 GB MacBook Pro는 CPU만으로 16스레드에서 30.9
 |---|---|---|
 | 최대 처리량 | 16, `auto` 스케줄링 | 30.94 H/s |
 | 균형 (이 Mac에서 seine의 기본 상한) | 14, `pcore-only` 스케줄링 | 29.26 H/s |
-
-참고로 30.9 H/s는 seine [성능 표](https://github.com/zpalmtree/seine/blob/master/docs/PERFORMANCE.md)의 모든 Arm 서버와 Intel Xeon 결과보다 높으며, 이보다 높은 것은 AMD EPYC Zen 5와 Zen 4 서버뿐입니다. [Blocknet 채굴 하드웨어 가이드](/ko/blog/blocknet-mining-hardware-hashrate/)에서 하드웨어 세대별 최고 결과를 비교하며, [Apple 실리콘 가이드](https://github.com/zpalmtree/seine/blob/master/docs/guides/apple-silicon.md)에 전체 튜닝 내용이 있습니다.
 
 ## Mac은 스레드를 몇 개 실행할 수 있습니까?
 

@@ -2,7 +2,7 @@
   "note": "Best measured hashrate per hardware generation, shown on the landing page (specs row and bars). Update the numbers here; labels are brand names or a message key (\"perfArm\") so nothing needs retranslating.",
   "best": [
     {
-      "label": "AMD EPYC \u00b7 Zen 5",
+      "label": "AMD EPYC · Zen 5",
       "chip": "EPYC 9355P",
       "threads": 64,
       "hps": 97.1,
@@ -12,13 +12,13 @@
       "memoryGiB": 192
     },
     {
-      "label": "AMD EPYC \u00b7 Zen 4",
+      "label": "AMD EPYC · Zen 4",
       "chip": "EPYC 9554P",
-      "threads": 64,
-      "hps": 75.0,
-      "source": "experiments/headline-20261027/summary.json",
-      "selection": "manual_fixed_configuration",
-      "metric_scope": "whole_invocation"
+      "threads": 128,
+      "hps": 81.4,
+      "source": "docs/PERFORMANCE.md#amd-epyc-9554p-bare-metal",
+      "selection": "automatic_settings_live_mining",
+      "metric_scope": "counted_hashes_over_elapsed_including_startup"
     },
     {
       "labelKey": "perfArm",
@@ -37,6 +37,16 @@
       "chip": "8488C",
       "threads": 32,
       "hps": 26.0
+    }
+  ],
+  "gpu": [
+    {
+      "chip": "RTX 5090",
+      "hps": 13.8,
+      "os": "Windows 11",
+      "scope": "GPU only",
+      "metric_scope": "steady_mining_after_miner_fee",
+      "measured": "2026-10-31"
     }
   ]
 }

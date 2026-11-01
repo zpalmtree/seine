@@ -1,5 +1,25 @@
 # seineminer.com blog fact sheet
 
+
+## Current published performance — November 1, 2026
+
+Use `site/src/data/benchmarks.json`, `docs/assets/charts/benchmarks.json` and
+`docs/PERFORMANCE.md` for current figures. Dated measurements below are historical.
+
+- EPYC 9355P: **97.1 H/s**, steady mining, default settings, 64 threads, 192 GiB RAM.
+- EPYC 9554P: **81.4 H/s**, automatic settings, 128 threads, 384 GiB RAM;
+  local completed hashes over elapsed time, including startup.
+- Cloud EPYC 9R45 / 9R14: **50.5 / 45.3 H/s**, 32 threads, transparent huge pages;
+  hashing time, excluding startup. These are VM allocations.
+- RTX 5090: **13.8 H/s**, GPU only, native Windows 11, driver 610.88,
+  steady mining after the miner fee; public development build measured October 31.
+  Do not add a separately measured CPU rate to invent a combined result.
+- Graviton4 **39.3 H/s**, M4 Max **30.9 H/s**, Xeon 8488C **26.0 H/s** remain current.
+
+Public articles link to the performance guide, not private measurement records.
+The older 68.3/75.0 CPU and 7.3/12.9 GPU figures below describe earlier settings
+and builds; they are not the current headline results.
+
 Initial research checked 2026-10-25; release, platform and pool facts rechecked 2026-10-26. Writers may state only what is listed here. Every bullet ends with its source.
 
 **Released behavior:** `release-facts.json` pins the reviewed public release. Source on `master` may be newer and must not be described as released. Historical benchmark versions and screenshots retain their original labels.
@@ -365,7 +385,7 @@ Initial research checked 2026-10-25; release, platform and pool facts rechecked 
 
 **Historical "best per generation" snapshot** (superseded for current headline claims; retain for dated comparisons), from `seine@master:docs/assets/charts/benchmarks.json:112-143` (checked 2026-10-25).
 
-**Earlier update 2026-10-25 (superseded by the 9355P result below):** the owner approved **49.4 H/s for AMD EPYC · Zen 5 (EPYC 9R45, 32 threads)** for the site, from a new 32-thread run. It replaced the 44.7 H/s / 24-thread headline below. The current site and introductory guides use 68.3 H/s on EPYC 9355P, with 64 mining threads, 192 GiB RAM and manually prepared 1 GiB pages; see the detailed measurement at the end of this sheet and `site/src/data/benchmarks.json`.
+**Earlier update 2026-10-25 (superseded by the 9355P result below):** the owner approved **49.4 H/s for AMD EPYC · Zen 5 (EPYC 9R45, 32 threads)** for the site, from a new 32-thread run. It replaced the 44.7 H/s / 24-thread headline below. The site and introductory guides at that time used 68.3 H/s on EPYC 9355P, with 64 mining threads, 192 GiB RAM and manually prepared 1 GiB pages; see the detailed measurement at the end of this sheet and `site/src/data/benchmarks.json`.
   - Source: AWS m8a.8xlarge, seine v0.2.22, avx512-256-stream kernel, 32 threads, 49.39 H/s mean of 4 runs, 2026-10-25 (in-progress AWS hardware campaign).
   - Evidence: `seine:experiments/readme-hardware-20261025/summary.json`, host "zen5-turin" (AMD EPYC 9R45, 32 cores, no SMT), in seine PR #59 (`codex/zen5-turin-result`), which also updates `benchmarks.json`, `PERFORMANCE.md` and the README. TODO: switch this to the master path once #59 merges.
 

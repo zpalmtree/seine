@@ -2,7 +2,7 @@
 title: 'Comment miner Blocknet avec un GPU NVIDIA'
 description: 'Minez Blocknet avec un GPU NVIDIA et seine. Configurez Windows ou Linux, utilisez CPU et GPU, vérifiez les hashrates et résolvez les problèmes au démarrage.'
 tags: ['Guide de minage', 'NVIDIA', 'GPU']
-sourceHash: 6a693c616f37
+sourceHash: '035e97230185'
 translation: draft
 faq:
   - q: 'seine peut-il utiliser le CPU et le GPU NVIDIA ensemble ?'
@@ -86,14 +86,11 @@ Le premier lancement prépare et règle les kernels GPU. seine enregistre les r�
 
 ## Quelle vitesse la RTX 5090 a-t-elle atteinte lors de notre test ?
 
-Nous avons effectué les tests le 25 octobre 2026 avec Windows 11, une NVIDIA GeForce RTX 5090, un AMD Ryzen 9 9950X3D, 125,4 GiB de RAM utilisable, seine v0.2.26 et le pilote NVIDIA `610.88`. Nous avons exécuté trois paires alternées avec `--bench-kind backend`. Chaque exécution comprenait un échauffement de 20 secondes et trois séries mesurées de 20 secondes, avec 20 secondes entre les exécutions. Les réglages du kernel, de la limite de registres, des lanes et des threads étaient automatiques.
+Mesuré le 31 octobre 2026 : RTX 5090 seule, Windows 11 natif, pilote 610.88, version publique de développement. Le taux de minage stabilisé tient compte des frais du mineur ; le travail du CPU est exclu.
 
 | Mode | H/s moyens |
 |---|---|
-| RTX 5090 seule | 7,3 |
-| RTX 5090 + Ryzen 9 9950X3D | 12,9 |
-
-Le tableau présente la moyenne de trois exécutions par mode sur cet ordinateur, en laissant ouvertes les applications déjà présentes. Les deux modes utilisaient le GPU `0` et le même cache de réglage automatique NVIDIA. Il s'agit de hashrates de benchmark locaux ; les shares acceptés confirment le travail crédité par le pool. Les [notes de mesure](https://github.com/zpalmtree/seine/blob/master/site/editorial/batches/2026-10-nvidia-guide/research.md) consignent les réglages et les résultats individuels.
+| RTX 5090 seule | 13,8 |
 
 ## Que vérifier si une ligne NVIDIA est absente ?
 

@@ -95,14 +95,14 @@ automatically. More options: [setup and configuration](docs/guides/configuration
 ## Performance
 
 <p align="center">
-  <img src="docs/assets/charts/best.svg" alt="Best measured hashrate by platform: AMD EPYC 9355P Zen 5 97.1 H/s, EPYC 9554P Zen 4 75.0, Arm server (AWS Graviton4) 39.3, Apple M4 Max 30.9, Intel Xeon 26.0" width="900">
+  <img src="docs/assets/charts/best.svg" alt="Best measured hashrate by platform: AMD EPYC 9355P Zen 5 97.1 H/s, EPYC 9554P Zen 4 81.4, Arm server (AWS Graviton4) 39.3, Apple M4 Max 30.9, Intel Xeon 26.0" width="900">
 </p>
 
-**97.1 H/s on the AMD EPYC 9355P** with default settings, and **75.0 H/s on
-the EPYC 9554P** with 64 mining threads and 1 GiB huge pages.
+**97.1 H/s on the AMD EPYC 9355P** with default settings, and **81.4 H/s on
+the EPYC 9554P** with 128 mining threads selected automatically.
 [Measurements and settings](docs/PERFORMANCE.md).
 
-Every number is a measured result from repeated runs. Results for every CPU tested:
+These are measured results on the stated hardware and settings. Results for every CPU tested:
 **[performance results](docs/PERFORMANCE.md)**.
 
 ## Get the most from your hardware

@@ -11,7 +11,7 @@ faq:
     a: 'La modalità di pagina predefinita di seine usa la riserva di pagine da 2 MiB e poi le transparent huge pages. Per usare le pagine da 1 GiB, riservane due per thread, preferibilmente all''avvio con hugepagesz=1G hugepages=N, e avvia seine con --cpu-page-mode large-1g. Questa modalità funziona su Linux x86_64 e WSL e aggiunge circa il 2% rispetto alle pagine da 2 MiB.'
   - q: 'Come attivo le large pages per seine su Windows?'
     a: 'Assegna al tuo account Windows il diritto Blocco di pagine in memoria (Lock pages in memory) in secpol.msc, sotto Criteri locali e Assegnazione diritti utente, poi esci e rientra. seine attiva il diritto per sé all''avvio e alloca l''area da 2 GiB di ogni thread con le large pages. Sulle edizioni Home, concedi il diritto con uno strumento come ntrights.'
-sourceHash: 1d106194ae48
+sourceHash: '56854c537c73'
 translation: draft
 ---
 
@@ -38,8 +38,6 @@ Con le huge pages, una voce del TLB copre 512 o 262.144 volte più memoria, quin
 ## Quanto è più veloce il mining con le huge pages?
 
 La [guida alle huge pages](https://github.com/zpalmtree/seine/blob/master/docs/guides/linux-hugepages.md) di seine le indica come la singola leva di ottimizzazione più importante per il mining con CPU su Linux. Sull'host di validazione, le pagine riservate da 2 MiB hanno aggiunto circa il **4-6%** e le pagine da 1 GiB circa un altro **2%**. La guida nota anche che, quando girano molti thread, la copertura con huge pages di solito conta più dell'ottimizzazione per set di istruzioni.
-
-I precedenti risultati dell’EPYC 9R45 nel [grafico delle prestazioni](/it/#performance) di seine sono stati misurati con huge pages esplicite da 2 MiB. I 49,4 H/s di un AMD EPYC Zen 5 (EPYC 9R45) con 32 thread, misurati a ottobre 2026, sono stati ottenuti con 34.407 pagine riservate, lo stesso valore della riga da 32 thread nella tabella qui sotto. La [guida all'hardware per il mining](/it/blog/blocknet-mining-hardware-hashrate/) riporta tutti i risultati per generazione.
 
 Anche senza una riserva, seine chiede al kernel le transparent huge pages su Linux. Una riserva va oltre perché le pagine vengono messe da parte in anticipo, quindi ogni thread le ottiene a prescindere da quanto sia diventata frammentata la memoria.
 

@@ -3,14 +3,14 @@
   "desktop": [
     {
       "name": "Apple M4 Max",
-      "sub": "48 GB MacBook Pro \u00b7 16 threads",
+      "sub": "48 GB MacBook Pro · 16 threads",
       "category": "apple",
       "hps": 30.94,
       "source": "perf-results/2026-07-10 (mac-threads14-vs15 / max throughput run)"
     },
     {
       "name": "AMD Ryzen 9 9950X3D",
-      "sub": "Zen 5 desktop \u00b7 16 threads \u00b7 Windows",
+      "sub": "Zen 5 desktop · 16 threads · Windows",
       "category": "amd",
       "hps": 10.312,
       "source": "experiments/high-end-streaming-20261025 (native Windows, streaming kernel, 4 pairs)"
@@ -19,7 +19,7 @@
   "servers": [
     {
       "name": "AMD EPYC 9R45",
-      "sub": "Zen 5 Turin \u00b7 32 threads",
+      "sub": "Zen 5 Turin · 32 threads",
       "category": "amd",
       "hps": 50.46967465683834,
       "source": "experiments/turin-prefetch-20261026/summary.json",
@@ -31,7 +31,7 @@
     },
     {
       "name": "AMD EPYC 9R14",
-      "sub": "Zen 4 Genoa \u00b7 32 threads",
+      "sub": "Zen 4 Genoa · 32 threads",
       "category": "amd",
       "hps": 45.30133877734545,
       "source": "experiments/genoa-fences-20261026/summary.json",
@@ -43,7 +43,7 @@
     },
     {
       "name": "AMD EPYC 7R13",
-      "sub": "Zen 3 Milan \u00b7 16 threads",
+      "sub": "Zen 3 Milan · 16 threads",
       "category": "amd",
       "hps": 18.08664075756821,
       "source": "experiments/zen3-release-20261027/summary.json",
@@ -55,7 +55,7 @@
     },
     {
       "name": "AMD EPYC 7R32",
-      "sub": "Zen 2 Rome \u00b7 16 threads",
+      "sub": "Zen 2 Rome · 16 threads",
       "category": "amd",
       "hps": 17.416101804547615,
       "source": "experiments/chart-refresh-20261027/summary.json",
@@ -67,70 +67,70 @@
     },
     {
       "name": "AMD EPYC 7571",
-      "sub": "Zen 1 Naples \u00b7 16 threads",
+      "sub": "Zen 1 Naples · 16 threads",
       "category": "amd",
       "hps": 9.384,
       "source": "experiments/readme-hardware-20261025/summary.json (m5a.8xlarge, AVX2)"
     },
     {
       "name": "Intel Xeon 8488C",
-      "sub": "Sapphire Rapids \u00b7 32 threads",
+      "sub": "Sapphire Rapids · 32 threads",
       "category": "intel",
       "hps": 26.0,
       "source": "experiments/readme-hardware-20261025/summary.json (m7i.8xlarge, streaming kernel)"
     },
     {
       "name": "Intel Xeon 6975P-C",
-      "sub": "Granite Rapids \u00b7 32 threads",
+      "sub": "Granite Rapids · 32 threads",
       "category": "intel",
       "hps": 24.418,
       "source": "experiments/readme-hardware-20261025/summary.json (m8i.8xlarge, streaming kernel)"
     },
     {
       "name": "Intel Xeon 8375C",
-      "sub": "Ice Lake \u00b7 32 threads",
+      "sub": "Ice Lake · 32 threads",
       "category": "intel",
       "hps": 24.322,
       "source": "experiments/readme-hardware-20261025/summary.json (m6i.8xlarge, streaming kernel)"
     },
     {
       "name": "Intel Xeon 8259CL",
-      "sub": "Cascade Lake \u00b7 24 threads",
+      "sub": "Cascade Lake · 24 threads",
       "category": "intel",
       "hps": 15.685,
       "source": "experiments/readme-hardware-20261025/summary.json (m5n.8xlarge, streaming kernel)"
     },
     {
       "name": "Intel Xeon 8175M",
-      "sub": "Skylake \u00b7 32 threads",
+      "sub": "Skylake · 32 threads",
       "category": "intel",
       "hps": 15.644,
       "source": "experiments/readme-hardware-20261025/summary.json (m5.8xlarge, streaming kernel)"
     },
     {
       "name": "Intel Xeon E5-2686 v4",
-      "sub": "Broadwell \u00b7 32 threads",
+      "sub": "Broadwell · 32 threads",
       "category": "intel",
       "hps": 12.954,
       "source": "experiments/readme-hardware-20261025/summary.json (r4.8xlarge, AVX2)"
     },
     {
       "name": "AWS Graviton4",
-      "sub": "Neoverse V2 \u00b7 32 threads",
+      "sub": "Neoverse V2 · 32 threads",
       "category": "arm",
       "hps": 39.287,
       "source": "experiments/readme-hardware-20261025/summary.json (m8g.8xlarge, NEON + SHA3 kernel)"
     },
     {
       "name": "AWS Graviton3",
-      "sub": "Neoverse V1 \u00b7 32 threads",
+      "sub": "Neoverse V1 · 32 threads",
       "category": "arm",
       "hps": 27.703,
       "source": "experiments/readme-hardware-20261025/summary.json (m7g.8xlarge, NEON + SHA3 kernel)"
     },
     {
       "name": "AWS Graviton2",
-      "sub": "Neoverse N1 \u00b7 30 threads",
+      "sub": "Neoverse N1 · 30 threads",
       "category": "arm",
       "hps": 18.627,
       "source": "experiments/readme-hardware-20261025/summary.json (m6g.8xlarge, NEON)"
@@ -138,8 +138,8 @@
   ],
   "best": [
     {
-      "name": "AMD EPYC \u00b7 Zen 5",
-      "sub": "9355P \u00b7 32C/64T \u00b7 default settings",
+      "name": "AMD EPYC · Zen 5",
+      "sub": "9355P · 32C/64T · default settings",
       "category": "amd",
       "hps": 97.1,
       "source": "experiments/9355p-live-20261028/summary.json",
@@ -149,41 +149,38 @@
       "page_backing": "transparent_huge_pages"
     },
     {
-      "name": "AMD EPYC \u00b7 Zen 4",
-      "sub": "9554P \u00b7 64C/128T \u00b7 1 GiB pages",
+      "name": "AMD EPYC · Zen 4",
+      "sub": "9554P · 64C/128T · automatic settings",
       "category": "amd",
-      "hps": 75.03753457931028,
-      "source": "experiments/headline-20261027/summary.json",
-      "source_revision": "8a822f767bdc6a8b2effd7565751f47ba2c6846d",
-      "selection": "manual_fixed_configuration",
-      "metric_scope": "whole_invocation",
-      "page_backing": "explicit_1g_hugetlb",
-      "repetitions": 3
+      "hps": 81.36212255772647,
+      "source": "docs/PERFORMANCE.md#amd-epyc-9554p-bare-metal",
+      "selection": "automatic_settings_live_mining",
+      "metric_scope": "counted_hashes_over_elapsed_including_startup"
     },
     {
       "name": "Arm server",
-      "sub": "AWS Graviton4 \u00b7 32 threads",
+      "sub": "AWS Graviton4 · 32 threads",
       "category": "arm",
       "hps": 39.287
     },
     {
       "name": "Apple M4 Max",
-      "sub": "48 GB MacBook Pro \u00b7 16 threads",
+      "sub": "48 GB MacBook Pro · 16 threads",
       "category": "apple",
       "hps": 30.94
     },
     {
       "name": "Intel Xeon",
-      "sub": "Sapphire Rapids 8488C \u00b7 32 threads",
+      "sub": "Sapphire Rapids 8488C · 32 threads",
       "category": "intel",
       "hps": 26.0
     }
   ],
-  "note_best": "Best measured configuration per CPU generation; includes fixed manual configurations. EPYC 9554P and 9375F are complete bare-metal sockets; AWS rows are VM allocations. Settings and methodology: docs/PERFORMANCE.md.",
+  "note_best": "Best measured configuration per CPU generation. EPYC 9355P and 9554P are complete bare-metal sockets; AWS rows are VM allocations. Settings and measurement scope: docs/PERFORMANCE.md.",
   "bare_metal": [
     {
       "name": "AMD EPYC 9355P",
-      "sub": "32 cores / 64 threads \u00b7 1 GiB pages",
+      "sub": "32 cores / 64 threads · 1 GiB pages",
       "category": "amd",
       "hps": 77.07157408717545,
       "source": "experiments/headline-20261027/summary.json",

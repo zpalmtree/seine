@@ -11,7 +11,7 @@ faq:
     a: 'Każdy wątek kopiący przetwarza blok pamięci o rozmiarze 2 GiB, więc licz około 2 GB na wątek. Mac z 16 GB pomieści do siedmiu wątków, Mac z 32 GB do 15, a Mac z 64 GB do 31. seine liczy wolną pamięć i dopasowuje też liczbę wątków do Twoich rdzeni.'
   - q: 'Czy można kopać Blocknet na Macu z procesorem Intel?'
     a: 'Tak. seine publikuje osobne archiwum dla Maców z procesorem Intel, seine-macos-x86_64.tar.gz, a kroki są takie same jak na Apple Silicon. Pobierz je, rozpakuj w Terminalu, uruchom ./seine i wklej swój adres Blocknet lub @name. seine dobiera liczbę wątków do Twojej pamięci i domyślnie zaczyna kopać na bntpool.com.'
-sourceHash: '9338855a2863'
+sourceHash: '33a60ad4df0c'
 translation: draft
 ---
 
@@ -91,8 +91,6 @@ Te wyniki pochodzą z testów walidacyjnych seine na M4 Max z 48 GB (12 rdzeni w
 |---|---|---|
 | Maksymalna wydajność | 16, przydział `auto` | 30,94 H/s |
 | Zrównoważone (domyślny limit seine na tym Macu) | 14, przydział `pcore-only` | 29,26 H/s |
-
-Dla porównania: wynik 30,9 H/s wyprzedza wszystkie wyniki serwerów Arm i procesorów Intel Xeon w [tabelach wydajności](https://github.com/zpalmtree/seine/blob/master/docs/PERFORMANCE.md) seine; wyżej wypadły tylko serwery AMD EPYC Zen 5 i Zen 4. [Poradnik o sprzęcie do kopania Blocknetu](/pl/blog/blocknet-mining-hardware-hashrate/) porównuje najlepsze wyniki dla każdej generacji sprzętu, a [poradnik dla Apple Silicon](https://github.com/zpalmtree/seine/blob/master/docs/guides/apple-silicon.md) zawiera pełne uwagi o strojeniu.
 
 ## Ile wątków udźwignie Twój Mac?
 

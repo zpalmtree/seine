@@ -2,7 +2,7 @@
 title: Huge pages for faster Blocknet mining
 description: Reserve huge pages on Linux and WSL, or large pages on Windows, so seine maps each 2 GiB Argon2id arena with fewer TLB misses and mines Blocknet faster.
 date: 2026-10-25
-updated: 2026-10-26
+updated: 2026-11-01
 tags: [Mining guide, Huge pages, Linux, Windows, Performance]
 faq:
   - q: Do I need huge pages to mine Blocknet with seine?
@@ -39,8 +39,6 @@ With huge pages, one TLB entry covers 512 or 262,144 times as much memory, so fa
 ## How much faster is mining with huge pages?
 
 Seine's [huge pages guide](https://github.com/zpalmtree/seine/blob/master/docs/guides/linux-hugepages.md) calls them the single biggest tuning knob for CPU mining on Linux. On the validation host, reserved 2 MiB pages added about **4–6%**, and 1 GiB pages added a further **2%** or so. The guide also notes that once many threads are running, huge-page coverage usually matters more than instruction-set tuning.
-
-The earlier EPYC 9R45 result on seine's [performance chart](/#performance) was measured with explicit 2 MiB huge pages. The 49.4 H/s from an AMD EPYC Zen 5 (EPYC 9R45) at 32 threads, measured in October 2026, ran with 34,407 pages reserved, the same figure as the 32-thread row in the table below. The [mining hardware guide](/blog/blocknet-mining-hardware-hashrate/) has the full results by generation.
 
 Even without a reservation, seine asks the kernel for transparent huge pages on Linux. A reserved pool goes further because the pages are set aside up front, so every thread gets them no matter how fragmented memory has become.
 

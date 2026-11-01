@@ -2,7 +2,7 @@
 title: 'NVIDIA GPU로 Blocknet 채굴하기'
 description: 'seine으로 NVIDIA GPU에서 Blocknet을 채굴하세요. Windows·Linux 설정, CPU 병행 사용, 해시레이트 확인과 시작 오류 해결 안내.'
 tags: ['채굴 가이드', 'NVIDIA', 'GPU']
-sourceHash: 6a693c616f37
+sourceHash: '035e97230185'
 translation: draft
 faq:
   - q: 'seine은 CPU와 NVIDIA GPU를 함께 사용할 수 있나요?'
@@ -86,14 +86,11 @@ NVIDIA 백엔드는 `nvidia#1`, `nvidia#2` 등으로 표시되며 CPU에는 별�
 
 ## 테스트에서 RTX 5090의 속도는 얼마였나요?
 
-2026년 10월 25일 Windows 11, NVIDIA GeForce RTX 5090, AMD Ryzen 9 9950X3D, 사용 가능한 RAM 125.4 GiB, seine v0.2.26, NVIDIA 드라이버 `610.88`을 사용해 테스트했습니다. `--bench-kind backend`로 두 모드를 번갈아 실행하는 비교를 세 쌍 진행했습니다. 각 실행에는 20초 예열 한 번과 20초 측정 라운드 세 번이 포함되었으며, 실행 사이에는 20초 간격을 두었습니다. 커널, 레지스터 제한, 레인 및 스레드 설정은 자동이었습니다.
+2026년 10월 31일 측정: RTX 5090 단독, 네이티브 Windows 11, 드라이버 610.88, 공개 개발 빌드. 안정 상태의 채굴 속도는 채굴 소프트웨어 수수료를 차감한 값이며 CPU 작업은 제외합니다.
 
 | 모드 | 평균 H/s |
 |---|---|
-| RTX 5090만 사용 | 7.3 |
-| RTX 5090 + Ryzen 9 9950X3D | 12.9 |
-
-표는 기존 앱을 열어 둔 이 데스크톱에서 모드별로 세 번 실행한 평균값입니다. 두 모드 모두 GPU `0`을 사용하고 동일한 NVIDIA 자동 튜닝 캐시를 공유했습니다. 이는 로컬 벤치마크 속도이며, 풀이 작업을 인정했는지는 승인된 셰어로 확인합니다. [측정 기록](https://github.com/zpalmtree/seine/blob/master/site/editorial/batches/2026-10-nvidia-guide/research.md)에 설정과 개별 결과가 정리되어 있습니다.
+| RTX 5090만 사용 | 13.8 |
 
 ## NVIDIA 행이 보이지 않으면 무엇을 확인해야 하나요?
 

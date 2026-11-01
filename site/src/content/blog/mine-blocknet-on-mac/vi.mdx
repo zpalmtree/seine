@@ -11,8 +11,8 @@ faq:
     a: 'Mỗi luồng đào xử lý một vùng nhớ 2 GiB, nên hãy tính khoảng 2 GB cho mỗi luồng. Mac 16 GB chạy được tối đa bảy luồng, Mac 32 GB tối đa 15 và Mac 64 GB tối đa 31. seine tính bộ nhớ còn trống và đồng thời khớp số luồng với số nhân của bạn.'
   - q: 'Có thể đào Blocknet trên Mac Intel không?'
     a: 'Có. seine phát hành một gói riêng cho Mac Intel, seine-macos-x86_64.tar.gz, và các bước giống hệt trên Apple Silicon. Tải về, giải nén trong Terminal, chạy ./seine rồi dán địa chỉ Blocknet hoặc @name của bạn. seine chọn số luồng theo bộ nhớ của bạn và mặc định bắt đầu đào trên bntpool.com.'
-sourceHash: '9338855a2863'
-translation: reviewed
+sourceHash: '33a60ad4df0c'
+translation: draft
 ---
 
 ## Có thể đào Blocknet trên Mac không?
@@ -91,8 +91,6 @@ Các kết quả này đến từ đợt kiểm chứng của seine trên một 
 |---|---|---|
 | Thông lượng tối đa | 16, xếp lịch `auto` | 30,94 H/s |
 | Cân bằng (mức trần mặc định của seine trên máy Mac này) | 14, xếp lịch `pcore-only` | 29,26 H/s |
-
-Để so sánh, kết quả 30,9 H/s vượt mọi kết quả máy chủ Arm và Intel Xeon trong [bảng hiệu năng](https://github.com/zpalmtree/seine/blob/master/docs/PERFORMANCE.md) của seine; chỉ có máy chủ AMD EPYC Zen 5 và Zen 4 đo được cao hơn. [Hướng dẫn phần cứng đào Blocknet](/vi/blog/blocknet-mining-hardware-hashrate/) so sánh kết quả tốt nhất của từng thế hệ phần cứng, và [hướng dẫn Apple Silicon](https://github.com/zpalmtree/seine/blob/master/docs/guides/apple-silicon.md) có đầy đủ ghi chú tinh chỉnh.
 
 ## Mac của bạn chạy được bao nhiêu luồng?
 

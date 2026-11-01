@@ -11,7 +11,7 @@ faq:
     a: 'Der Standardmodus von seine nutzt den reservierten 2-MiB-Pool und danach Transparent Huge Pages. Für 1-GiB-Pages reservierst du zwei pro Thread, am besten beim Booten mit hugepagesz=1G hugepages=N, und startest seine mit --cpu-page-mode large-1g. Dieser Modus funktioniert unter x86_64-Linux und WSL und bringt etwa 2 % zusätzlich zu 2-MiB-Pages.'
   - q: 'Wie aktiviere ich Large Pages für seine unter Windows?'
     a: 'Gib deinem Windows-Konto in secpol.msc unter Lokale Richtlinien und Zuweisen von Benutzerrechten das Recht Sperren von Seiten im Speicher (Lock pages in memory), dann melde dich ab und wieder an. seine aktiviert das Recht beim Start für sich selbst und legt den 2-GiB-Speicherbereich jedes Threads mit Large Pages an. Bei Home-Editionen vergibst du das Recht mit einem Tool wie ntrights.'
-sourceHash: 1d106194ae48
+sourceHash: '56854c537c73'
 translation: draft
 ---
 
@@ -38,8 +38,6 @@ Mit Huge Pages deckt ein TLB-Eintrag 512- oder 262.144-mal so viel Speicher ab. 
 ## Wie viel schneller ist Mining mit Huge Pages?
 
 Die [Huge-Pages-Anleitung](https://github.com/zpalmtree/seine/blob/master/docs/guides/linux-hugepages.md) von seine nennt sie die wichtigste einzelne Stellschraube für CPU-Mining unter Linux. Auf dem Validierungsrechner brachten reservierte 2-MiB-Pages etwa **4–6 %**, und 1-GiB-Pages legten noch einmal rund **2 %** drauf. Die Anleitung hält außerdem fest, dass bei vielen laufenden Threads die Abdeckung mit Huge Pages meist mehr ausmacht als die Optimierung auf einen bestimmten Befehlssatz.
-
-Die früheren EPYC-9R45-Ergebnisse im [Leistungsdiagramm](/de/#performance) von seine wurden mit explizit reservierten 2-MiB-Huge-Pages gemessen. Die 49,4 H/s eines AMD EPYC Zen 5 (EPYC 9R45) mit 32 Threads, gemessen im Oktober 2026, liefen mit 34.407 reservierten Pages, derselben Zahl wie in der Zeile für 32 Threads in der Tabelle unten. Der [Leitfaden zur Mining-Hardware](/de/blog/blocknet-mining-hardware-hashrate/) enthält alle Ergebnisse nach Generation.
 
 Auch ohne Reservierung fordert seine unter Linux beim Kernel Transparent Huge Pages an. Ein reservierter Pool geht weiter, weil die Pages vorab zurückgelegt werden, sodass jeder Thread sie bekommt, egal wie fragmentiert der Speicher inzwischen ist.
 

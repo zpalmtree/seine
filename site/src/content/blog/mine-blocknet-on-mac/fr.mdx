@@ -11,7 +11,7 @@ faq:
     a: 'Chaque thread de minage travaille sur un bloc de mémoire de 2 GiB : comptez donc environ 2 GB par thread. Un Mac de 16 GB peut accueillir jusqu''à sept threads, un Mac de 32 GB jusqu''à 15 et un Mac de 64 GB jusqu''à 31. seine compte la mémoire libre et adapte aussi le nombre de threads à vos cœurs.'
   - q: 'Peut-on miner Blocknet sur un Mac Intel ?'
     a: 'Oui. seine publie une archive distincte pour les Mac Intel, seine-macos-x86_64.tar.gz, et les étapes sont les mêmes que sur Apple Silicon. Téléchargez-la, décompressez-la dans le Terminal, lancez ./seine et collez votre adresse Blocknet ou votre @name. seine dimensionne ses threads selon votre mémoire et commence à miner sur bntpool.com par défaut.'
-sourceHash: '9338855a2863'
+sourceHash: '33a60ad4df0c'
 translation: draft
 ---
 
@@ -91,8 +91,6 @@ Ces résultats proviennent de la campagne de validation de seine sur un M4 Max d
 |---|---|---|
 | Débit maximal | 16, placement `auto` | 30,94 H/s |
 | Équilibré (plafond par défaut de seine sur ce Mac) | 14, placement `pcore-only` | 29,26 H/s |
-
-Pour situer, le résultat de 30,9 H/s devance tous les résultats des serveurs Arm et des Intel Xeon dans les [tableaux de performances](https://github.com/zpalmtree/seine/blob/master/docs/PERFORMANCE.md) de seine ; seuls les serveurs AMD EPYC Zen 5 et Zen 4 ont obtenu des résultats plus élevés. Le [guide du matériel de minage Blocknet](/fr/blog/blocknet-mining-hardware-hashrate/) compare le meilleur résultat de chaque génération de matériel, et le [guide Apple Silicon](https://github.com/zpalmtree/seine/blob/master/docs/guides/apple-silicon.md) contient toutes les notes de réglage.
 
 ## Combien de threads votre Mac peut-il faire tourner ?
 

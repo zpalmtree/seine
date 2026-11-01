@@ -11,8 +11,8 @@ faq:
     a: 'Cada hilo de minería trabaja sobre un bloque de memoria de 2 GiB, así que calcula unos 2 GB por hilo. Un Mac de 16 GB admite hasta siete hilos, uno de 32 GB hasta 15 y uno de 64 GB hasta 31. seine cuenta la memoria libre y además ajusta los hilos a tus núcleos.'
   - q: '¿Se puede minar Blocknet en un Mac con Intel?'
     a: 'Sí. seine publica un archivo aparte para los Mac con Intel, seine-macos-x86_64.tar.gz, y los pasos son los mismos que en Apple Silicon. Descárgalo, descomprímelo en Terminal, ejecuta ./seine y pega tu dirección de Blocknet o tu @name. seine ajusta sus hilos a tu memoria y empieza a minar en bntpool.com de forma predeterminada.'
-sourceHash: '9338855a2863'
-translation: reviewed
+sourceHash: '33a60ad4df0c'
+translation: draft
 ---
 
 ## ¿Se puede minar Blocknet en un Mac?
@@ -91,8 +91,6 @@ Estos resultados proceden de la batería de validación de seine en un M4 Max de
 |---|---|---|
 | Rendimiento máximo | 16, asignación `auto` | 30,94 H/s |
 | Equilibrado (el límite predeterminado de seine en este Mac) | 14, asignación `pcore-only` | 29,26 H/s |
-
-Como referencia, el resultado de 30,9 H/s supera a todos los resultados de servidores Arm e Intel Xeon de las [tablas de rendimiento](https://github.com/zpalmtree/seine/blob/master/docs/PERFORMANCE.md) de seine; solo los servidores AMD EPYC Zen 5 y Zen 4 obtuvieron más. La [guía de hardware para minar Blocknet](/es/blog/blocknet-mining-hardware-hashrate/) compara el mejor resultado de cada generación de hardware, y la [guía de Apple Silicon](https://github.com/zpalmtree/seine/blob/master/docs/guides/apple-silicon.md) recoge todas las notas de ajuste.
 
 ## ¿Cuántos hilos puede ejecutar tu Mac?
 

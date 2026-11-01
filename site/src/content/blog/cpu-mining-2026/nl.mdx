@@ -11,7 +11,7 @@ faq:
     a: 'Een geheugenintensieve hash heeft voor elke poging gigabytes snel geheugen nodig, dus een chip die alleen voor hashen is gebouwd, zou nog steeds grote hoeveelheden RAM naast elke core nodig hebben. Desktops, laptops en servers hebben al veel RAM en snelle geheugencontrollers, waardoor de hardware die mensen bezitten dicht bij komt wat het algoritme nodig heeft.'
   - q: 'Kun je tegelijk met je CPU en je videokaart minen?'
     a: 'Ja, als je Blocknet minet met seine op Windows of Linux. seine minet tegelijk op de processor en op elke NVIDIA-videokaart die het vindt, en de hashrates tellen op. Het stemt de processor af terwijl het minet en elke kaart bij de eerste start, dus er valt niets in te stellen voordat je begint.'
-sourceHash: 845e3b6a5c9d
+sourceHash: '9e40efada752'
 translation: draft
 ---
 
@@ -60,7 +60,7 @@ Drie dingen bepalen hoeveel hashes per seconde (H/s) een processor op Blocknet h
 
 **Geheugenbandbreedte.** Elke hash verplaatst gigabytes door het geheugensysteem. Bij 97,1 H/s schrijft de snelste computer die met seine is gemeten elke seconde ongeveer 194,2 GiB aan nieuwe geheugenblokken (97,1 × 2 GiB). Processors met meer geheugenkanalen en sneller geheugen lopen voor.
 
-**De juiste kernel.** seine heeft meerdere Argon2id-kernels: AVX2, AVX-512 en een streaming-kernel op x86, en NEON met een snel SHA3-pad op Arm. Op dezelfde chip maakt de kernel een groot verschil. Op AWS Graviton4 minet de SHA3-kernel met prefetching 56% sneller dan gewone NEON (van 13,80 naar 21,50 H/s), en op de AMD EPYC 9R45 minet de streaming-kernel 30% sneller dan AVX2 (van 34,47 naar 44,74 H/s bij 24 threads). seine vergelijkt kernels terwijl het minet en houdt de snelste aan.
+**De juiste kernel.** Seine vergelijkt de beschikbare CPU-kernels tijdens het minen en kiest er een voor je machine.
 
 Gemeten hardwareconfiguraties:
 
@@ -68,13 +68,15 @@ Gemeten hardwareconfiguraties:
 |---|---|---|---|
 | AMD EPYC · Zen 5 | EPYC 9355P-server | 64 | 97,1 H/s |
 | Arm-server | AWS Graviton4 | 32 | 39,3 H/s |
-| AMD EPYC · Zen 4 | EPYC 9R14-server | 32 | 38,2 H/s |
+| AMD EPYC · Zen 4 | EPYC 9R14-server | 32 | 45,3 H/s |
 | Apple M4 Max | MacBook Pro met 48 GB | 16 | 30,9 H/s |
 | Intel Xeon | Sapphire Rapids 8488C | 32 | 26,0 H/s |
 
 De snelste configuratie in deze metingen is een AMD EPYC 9355P met 97,1 H/s: 64 miningthreads en 192 GiB RAM op Linux met de standaardinstellingen van seine.
 
-De rij van de Apple M4 Max is een laptop, wat laat zien hoe goed een sterk geheugensysteem bij Argon2id past. De overige serverrijen draaiden op AWS-machines met huge pages van 2 MiB. De [hardwaregids voor Blocknet-minen](/nl/blog/blocknet-mining-hardware-hashrate/) behandelt koopadvies en de juiste hoeveelheid RAM uitgebreid, en de [Mac-gids](/nl/blog/mine-blocknet-on-mac/) behandelt Apple Silicon.
+De cloudresultaten voor EPYC 9R45 en 9R14 gebruiken 32 threads en transparent huge pages. Ze meten de hashtijd zonder opstarten. De andere rijen behouden hun eigen meetinstellingen.
+
+[hardwaregids voor Blocknet-minen](/nl/blog/blocknet-mining-hardware-hashrate/) · [Mac-gids](/nl/blog/mine-blocknet-on-mac/)
 
 ## Hoe begin je met Blocknet minen op je CPU?
 

@@ -11,7 +11,7 @@ faq:
     a: 'seine, Windows ve Linux indirmeleriyle NVIDIA ekran kartlarında madencilik yapar ve algıladığı her kartı işlemciyle birlikte kullanır. Windows''ta CUDA çalışma zamanı dahildir, bu yüzden yalnızca NVIDIA sürücüsüne ihtiyacınız olur. Linux''ta sürücüyü ve NVRTC kütüphanelerini kurun. İlk açılışta her kart ayarlanır ve sonuç hatırlanır.'
   - q: 'Blocknet madenciliğinde bellek bant genişliği neden önemlidir?'
     a: 'Her Blocknet hash''i 2 GiB''lık bir bellek bloğunun tamamını yazar ve bloğun her yerinden veri geri okur; bu, herhangi bir işlemci önbelleğinin tutabileceğinden çok daha fazladır. Bu yüzden hashrate, bellek sisteminin veriyi ne kadar hızlı taşıdığına bağlıdır. Bellek bant genişliği yüksek ve çok sayıda iş parçacığına yetecek RAM''e sahip makineler en hızlı madencilik yapar.'
-sourceHash: dae9fd024abc
+sourceHash: '4d5509a6c9e1'
 translation: draft
 ---
 
@@ -25,26 +25,19 @@ Bu rehber, seine ile hangi makinelerin Blocknet madenciliğini en hızlı yaptı
 Bu ölçümlerdeki en hızlı yapılandırma, 97,1 H/s ile AMD EPYC 9355P’dir: Linux’ta seine’in varsayılan ayarlarıyla 64 madencilik iş parçacığı ve 192 GiB RAM. Blocknet madenciliği, bellek bant genişliğinden ve iş parçacığı başına 2 GiB sağlayacak yeterli RAM’den yararlanır. NVIDIA kartları, CPU’nun yanına kendi hash güçlerini ekleyebilir.
 </Answer>
 
-[c9c9638 · 2026-10-28 · 97.1 H/s](https://github.com/zpalmtree/seine/blob/master/experiments/9355p-live-20261028/README.md)
-
 Blocknet'in iş kanıtı, hash başına 2 GiB'lık bir bellek bloğu kullanan Argon2id'dir. Bu onu [bellek yoğun](/tr/blog/argon2id-proof-of-work-explained/) kılar: hashrate, çekirdek sayısı kadar bellek bant genişliğine ve gecikmesine, ayrıca bu 2 GiB'lık bloklardan kaçının aynı anda RAM'e sığdığına bağlıdır. Aşağıdaki tablodaki en iyi makinelerin ortak noktası güçlü bir bellek sistemidir.
 
 ## Fiziksel sunucuda yeni ölçüm: EPYC 9355P
 
 28 Ekim 2026 tarihinde, 32 çekirdekli/64 iş parçacıklı ve 192 GiB RAM’e sahip bir EPYC 9355P, seine’in varsayılan ayarlarıyla 15 dakika boyunca madencilik yaptı: hiçbir bayrak kullanılmadı; iş parçacığı sayısı, CPU kernel’i ve bellek sayfaları otomatik olarak seçildi. **97,1 H/s** hızla madencilik yaptı.
 
-[Ölçüm kaydı](https://github.com/zpalmtree/seine/blob/master/experiments/9355p-live-20261028/README.md), kaynak kodunun revizyonunu ve çalıştırmanın her dakikasındaki hash gücünü listeler. Aşağıdaki bulut ve Mac ölçümleri kendi makinelerini ve ayarlarını açıklar.
-
 ## Testimizde RTX 5090 ne kadar hızlıydı?
 
-Testleri 25 Ekim 2026'da Windows 11, NVIDIA GeForce RTX 5090, AMD Ryzen 9 9950X3D, 125,4 GiB kullanılabilir RAM, seine v0.2.26 ve NVIDIA sürücüsü `610.88` ile yaptık. `--bench-kind backend` kullanarak sırayla değişen üç test çifti çalıştırdık. Her çalıştırmada bir 20 saniyelik ısınma ve üç 20 saniyelik ölçüm turu kullandık; çalıştırmalar arasında 20 saniye bekledik. Kernel, yazmaç sınırı, lane ve iş parçacığı ayarları otomatikti.
+31 Ekim 2026 ölçümü: yalnızca RTX 5090, yerel Windows 11, sürücü 610.88, herkese açık geliştirme derlemesi. Kararlı hash hızı madenci ücreti düşüldükten sonraki değerdir; CPU çalışması dahil değildir.
 
 | Mod | Ortalama H/s |
 |---|---|
-| Yalnızca RTX 5090 | 7,3 |
-| RTX 5090 + Ryzen 9 9950X3D | 12,9 |
-
-Tablo, mevcut uygulamalar açık bırakılarak bu masaüstünde her mod için yapılan üç çalıştırmanın ortalamasını gösterir. Her iki mod da GPU `0` ve aynı NVIDIA otomatik ayarlama önbelleğini kullandı. Bunlar yerel performans testi hash hızlarıdır; kabul edilen paylar, işin havuz tarafından hesaba yazıldığını doğrular. [Ölçüm notları](https://github.com/zpalmtree/seine/blob/master/site/editorial/batches/2026-10-nvidia-guide/research.md) ayarları ve tek tek sonuçları kaydeder.
+| Yalnızca RTX 5090 | 13,8 |
 
 ## Bulut sunucularının ve Mac’in ölçümlü karşılaştırması
 
@@ -52,13 +45,13 @@ Bu bulut ve Mac sonuçları aşağıda açıklanan makineleri ve ayarları kulla
 
 | Donanım | Tam çip | İş parçacığı | Hashrate | Madencilik belleği |
 |---|---|---|---|---|
-| AMD EPYC · Zen 5 | EPYC 9R45 sunucu | 32 | 49,4 H/s | 64 GiB |
+| AMD EPYC · Zen 5 | EPYC 9R45 sunucu | 32 | 50,5 H/s | 64 GiB |
 | Arm sunucu | AWS Graviton4 | 32 | 39,3 H/s | 64 GiB |
-| AMD EPYC · Zen 4 | EPYC 9R14 sunucu | 32 | 38,2 H/s | 64 GiB |
+| AMD EPYC · Zen 4 | EPYC 9R14 sunucu | 32 | 45,3 H/s | 64 GiB |
 | Apple M4 Max | 48 GB MacBook Pro | 16 | 30,9 H/s | 32 GiB |
 | Intel Xeon | Sapphire Rapids 8488C | 32 | 26,0 H/s | 64 GiB |
 
-Sunucu satırları 2 MiB'lık huge pages ile AWS bulut makinelerinde, M4 Max satırı ise 48 GB'lık bir MacBook Pro'da çalıştırıldı. Her değer, tamamlanan hash sayısının geçen süreye bölünmesiyle elde edilir, tekrarlanan çalıştırmaların ortalamasıdır ve Temmuz ile Ekim 2026 arasında ölçülmüştür. Zen 5 sonucu, 128 GiB RAM'li, 32 çekirdekli bir EPYC 9R45 makinesi olan AWS m8a.8xlarge üzerinde seine v0.2.22 ile yapılan dört çalıştırmanın ortalamasıdır.
+EPYC 9R45 ve 9R14 bulut sonuçları 32 iş parçacığı ve transparent huge pages kullanır. Başlatma hariç hash hesaplama süresini ölçerler. Diğer satırlar kendi ölçüm ayarlarını korur.
 
 Test edilen her işlemcinin sonuçları, her satırın kanıtıyla birlikte [performans sayfasında](https://github.com/zpalmtree/seine/blob/master/docs/PERFORMANCE.md) yer alır.
 
@@ -66,13 +59,11 @@ Test edilen her işlemcinin sonuçları, her satırın kanıtıyla birlikte [per
 
 Her Argon2id hash'i 2 GiB'lık bloğunun tamamını bir kez doldurur ve bunu yaparken bloğun önceki kısımlarını geri okur. Bir işlemcinin L3 önbelleği megabaytlarla ölçülür: Zen 5 sunucuda her sekiz çekirdekli grup 32 MiB paylaşır, bu yüzden tek bir hash bu önbelleğin tuttuğundan 64 kat daha fazla bellek üzerinde çalışır. İşin büyük kısmı bellek trafiğidir.
 
-Sayılar bunu gösterir. 49,4 H/s'de Zen 5 sunucu her saniye yaklaşık 99 GiB yeni bellek bloğu yazar (49,4 × 2 GiB). Hashrate, bellek sistemi meşgul olana kadar iş parçacıklarıyla birlikte artar: o makinede 16 iş parçacığı 37,8 H/s, 32 iş parçacığı ise 49,4 H/s üretti. seine bu eğriyi bilgisayarınızda ölçer ve en iyi iş parçacığı sayısında karar kılar.
-
 Donanım seçerken bundan üç sonuç çıkar:
 
 - **Bellek bant genişliği çekirdekler kadar önemlidir.** Makineleri karşılaştırırken bellek sistemine çekirdek sayısı kadar ağırlık verin.
 - **İş parçacığı tavanını RAM belirler.** Her iş parçacığının kendi 2 GiB'lık bloğuna ihtiyacı vardır, bu yüzden iş parçacığı sayısını çoğu zaman çekirdeklerden önce RAM sınırlar.
-- **Aynı çipte kernel önemlidir.** seine her işlemci ailesi için birkaç Argon2id kernel'i taşır. EPYC 9R45'te streaming kernel'i AVX2'den %30 daha hızlı madencilik yapar (24 iş parçacığında 34,47'den 44,74 H/s'ye). AWS Graviton4'te önceden getirme kullanan SHA3 kernel'i düz NEON'dan %56 daha hızlı madencilik yapar (13,80'den 21,50 H/s'ye). seine madencilik yaparken daha hızlı olanı seçer.
+- **Aynı çipte kernel önemlidir.** Seine madencilik sırasında mevcut CPU çekirdek kodlarını karşılaştırır ve makineniz için birini seçer.
 
 ## Her madencilik iş parçacığı için ne kadar RAM gerekir?
 

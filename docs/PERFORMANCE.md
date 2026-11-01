@@ -5,7 +5,9 @@ memory-hard, so hashrate depends as much on memory bandwidth and latency as on c
 count. Seine ships hand-tuned kernels for each instruction set and picks the
 fastest one for your machine while it mines.
 
-Every number on this page is a measured result from repeated runs. Chart data lives
+These are measured results on the stated hardware and settings.
+Live mining and offline benchmarks have different measurement scopes, noted below.
+Chart data lives
 in [`assets/charts/benchmarks.json`](assets/charts/benchmarks.json).
 
 A thread here is one hashing thread with its own 2 GiB arena, the same number you set
@@ -16,8 +18,8 @@ with `--threads` or see as "Threads" on the dashboard.
 **97.1 H/s** while mining (median of minutes 2-15; 96.4 H/s averaged over all
 15 minutes from a cold start) on a 32-core/64-thread Zen 5 EPYC 9355P with 192 GiB of
 RAM on Linux. Seine ran with no tuning flags and an empty data directory and chose
-64 threads and transparent huge pages itself. The rate is accepted hashes over the
-900 seconds since launch, startup included.
+64 threads and transparent huge pages itself. The 97.1 H/s figure is the steady
+mining rate; 96.4 H/s includes startup.
 
 ## AMD EPYC 9375F bare metal
 
@@ -28,9 +30,10 @@ counting every completed hash over the whole run including startup and shutdown.
 
 ## AMD EPYC 9554P bare metal
 
-**75.04 H/s** on a complete 64-core/128-thread Zen 4 Genoa socket with 384 GiB of
-DDR5-4800 across twelve channels on Linux: v0.2.39 with 64 fixed mining threads and
-1 GiB huge pages. Three fresh 120-second runs measured 75.03, 75.05 and 75.02 H/s.
+**81.4 H/s** on a complete 64-core/128-thread Zen 4 EPYC 9554P with 384 GiB
+of RAM on Linux. Automatic settings selected 128 mining threads and automatic
+memory pages. This is completed local hashes divided by elapsed time over a
+15-minute live mining session, including startup.
 
 ## AMD EPYC 9355P bare metal, fixed settings
 
@@ -60,6 +63,10 @@ DDR5-4800 across twelve channels on Linux: v0.2.39 with 64 fixed mining threads 
 | AWS Graviton3 | Neoverse V1 | m7g.8xlarge | 32 | 27.70 |
 | AWS Graviton2 | Neoverse N1 | m6g.8xlarge | 30 | 18.63 |
 
+The EPYC 9R45 and 9R14 rows use 32 fixed threads and transparent huge pages.
+Their rates measure hashing time; they exclude startup. These are the measured
+VM allocations, not whole-socket estimates.
+
 ## Desktops and laptops
 
 <img src="assets/charts/desktop.svg" alt="Hashrate on desktops and laptops" width="900">
@@ -72,6 +79,13 @@ DDR5-4800 across twelve channels on Linux: v0.2.39 with 64 fixed mining threads 
 
 NVIDIA GPUs mine at the same time as the CPU and their rates add up; see the
 [NVIDIA guide](guides/nvidia.md).
+
+## NVIDIA RTX 5090 on Windows
+
+**13.8 H/s** steady mining after the miner fee, GPU only, on native Windows 11
+with NVIDIA driver 610.88 and 15 automatically selected lanes. Measured on
+October 31, 2026 with a public development build. This is a GPU result;
+CPU + GPU totals require a separate combined measurement.
 
 ## Benchmark your own machine
 

@@ -11,7 +11,7 @@ faq:
     a: 'seine 的 Windows 和 Linux 版本使用 NVIDIA 显卡挖矿，会在处理器之外同时使用检测到的每一张显卡。在 Windows 上已内置 CUDA 运行库，只需安装 NVIDIA 驱动。在 Linux 上需安装驱动和 NVRTC 库。首次启动时会为每张显卡调优并记住结果。'
   - q: '为什么内存带宽对挖 Blocknet 很重要？'
     a: '每次 Blocknet 哈希都要写满一整块 2 GiB 的内存，并从其中各处读回数据，远远超出任何处理器缓存的容量。因此算力取决于内存系统搬运数据的速度。内存带宽更高、内存足够运行更多线程的机器挖得最快。'
-sourceHash: dae9fd024abc
+sourceHash: '4d5509a6c9e1'
 translation: draft
 ---
 
@@ -25,26 +25,19 @@ translation: draft
 这些测量中最快的配置是达到 97.1 H/s 的 AMD EPYC 9355P：64 个挖矿线程、192 GiB RAM，在 Linux 上使用 seine 的默认设置。Blocknet 挖矿受益于内存带宽，以及足够为每个线程提供 2 GiB 的 RAM。NVIDIA 显卡可以在 CPU 之外叠加自身哈希率。
 </Answer>
 
-[c9c9638 · 2026-10-28 · 97.1 H/s](https://github.com/zpalmtree/seine/blob/master/experiments/9355p-live-20261028/README.md)
-
 Blocknet 的工作量证明是 Argon2id，每次哈希使用一块 2 GiB 的内存。这让它成为[内存密集型](/zh-hans/blog/argon2id-proof-of-work-explained/)算法：算力既取决于核心数，也同样取决于内存带宽和延迟，以及内存中能同时容纳多少个 2 GiB 内存块。下表中排名靠前的机器，共同点就是强大的内存系统。
 
 ## 新增物理服务器测量：EPYC 9355P
 
 2026年10月28日，一颗 32 核心／64 线程、配备 192 GiB RAM 的 EPYC 9355P 使用 seine 的默认设置挖矿 15 分钟：不加任何参数，线程数、CPU 计算内核和内存页均自动选择。挖矿速度为 **97.1 H/s**。
 
-[测量记录](https://github.com/zpalmtree/seine/blob/master/experiments/9355p-live-20261028/README.md)列出了源码修订版本以及运行期间每一分钟的哈希率。下方云服务器和 Mac 的测量各有自己的机器与设置。
-
 ## RTX 5090 在我们的测试中有多快？
 
-我们于 2026 年 10 月 25 日进行了测试，使用 Windows 11、NVIDIA GeForce RTX 5090、AMD Ryzen 9 9950X3D、125.4 GiB 可用 RAM、seine v0.2.26 和 NVIDIA 驱动 `610.88`。通过 `--bench-kind backend`，我们交替运行两种模式，共完成三组配对测试。每次运行包含一轮 20 秒预热和三轮各 20 秒的测量，运行之间间隔 20 秒。计算内核、寄存器上限、通道和线程均使用自动设置。
+测量于2026年10月31日：仅使用 RTX 5090，原生 Windows 11、610.88 驱动和公开开发版本。稳定挖矿速率已扣除矿工软件费用，不包含 CPU 的工作量。
 
 | 模式 | 平均 H/s |
 |---|---|
-| 仅 RTX 5090 | 7.3 |
-| RTX 5090 + Ryzen 9 9950X3D | 12.9 |
-
-表中数值是这台桌面电脑每种模式运行三次的平均值，测试时原有应用保持打开。两种模式都使用 GPU `0` 和相同的 NVIDIA 自动调优缓存。这些是本地基准测试速率；已接受的份额用于确认矿池计入了工作。[测量记录](https://github.com/zpalmtree/seine/blob/master/site/editorial/batches/2026-10-nvidia-guide/research.md)列出了设置和各次结果。
+| 仅 RTX 5090 | 13.8 |
 
 ## 云服务器与 Mac 实测比较
 
@@ -52,13 +45,13 @@ Blocknet 的工作量证明是 Argon2id，每次哈希使用一块 2 GiB 的内�
 
 | 硬件 | 具体芯片 | 线程数 | 算力 | 挖矿内存 |
 |---|---|---|---|---|
-| AMD EPYC · Zen 5 | EPYC 9R45 服务器 | 32 | 49.4 H/s | 64 GiB |
+| AMD EPYC · Zen 5 | EPYC 9R45 服务器 | 32 | 50.5 H/s | 64 GiB |
 | Arm 服务器 | AWS Graviton4 | 32 | 39.3 H/s | 64 GiB |
-| AMD EPYC · Zen 4 | EPYC 9R14 服务器 | 32 | 38.2 H/s | 64 GiB |
+| AMD EPYC · Zen 4 | EPYC 9R14 服务器 | 32 | 45.3 H/s | 64 GiB |
 | Apple M4 Max | 48 GB MacBook Pro | 16 | 30.9 H/s | 32 GiB |
 | Intel Xeon | Sapphire Rapids 8488C | 32 | 26.0 H/s | 64 GiB |
 
-服务器结果是在启用 2 MiB 大页的 AWS 云服务器上测得的，M4 Max 结果来自一台 48 GB 的 MacBook Pro。每个数字都是完成的哈希数除以实际耗时，取多次运行的平均值，测试时间为 2026 年 7 月至 10 月。Zen 5 结果是 seine v0.2.22 在 AWS m8a.8xlarge 上四次运行的平均值，该机器配备 32 核 EPYC 9R45 和 128 GiB 内存。
+EPYC 9R45 和 9R14 的云端结果使用32个线程及 transparent huge pages，测量的是不含启动的哈希计算时间。其他行保留各自的测量条件。
 
 所有已测处理器的结果及每一行的测试依据，见[性能页面](https://github.com/zpalmtree/seine/blob/master/docs/PERFORMANCE.md)。
 
@@ -66,13 +59,11 @@ Blocknet 的工作量证明是 Argon2id，每次哈希使用一块 2 GiB 的内�
 
 每次 Argon2id 哈希都会把整块 2 GiB 内存写满一遍，并在此过程中读回之前写入的部分。处理器的 L3 缓存以兆字节计：在这台 Zen 5 服务器上，每组八个核心共享 32 MiB，因此一次哈希要处理的内存是这块缓存的 64 倍。大部分工作都是内存读写。
 
-数据也说明了这一点。在 49.4 H/s 时，这台 Zen 5 服务器每秒写入约 99 GiB 的新内存块（49.4 × 2 GiB）。算力会随线程数增加而上升，直到内存系统满载：在这台机器上，16 个线程挖到 37.8 H/s，32 个线程挖到 49.4 H/s。seine 会在你的机器上测出这条曲线，并选定最佳线程数。
-
 由此可以得出挑选硬件的三点：
 
 - **内存带宽与核心数同样重要。** 比较机器时，要像看重核心数一样看重内存系统。
 - **内存决定线程上限。** 每个线程都需要自己的 2 GiB 内存块，所以往往是内存先于核心数限制了线程数。
-- **同一颗芯片上，计算内核也很关键。** seine 为每个处理器系列提供多种 Argon2id 计算内核。在 EPYC 9R45 上，流式内核比 AVX2 快 30%（24 线程时从 34.47 提升到 44.74 H/s）。在 AWS Graviton4 上，带预取的 SHA3 内核比普通 NEON 快 56%（从 13.80 提升到 21.50 H/s）。seine 会在挖矿过程中选出更快的那个。
+- **同一颗芯片上，计算内核也很关键。** seine 会在挖矿时比较可用的 CPU 计算内核，并为你的机器选择合适的内核。
 
 ## 每个挖矿线程需要多少内存？
 

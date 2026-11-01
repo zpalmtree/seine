@@ -11,7 +11,7 @@ faq:
     a: 'seine mine sur les cartes graphiques NVIDIA avec les téléchargements Windows et Linux, en utilisant chaque carte détectée en plus du processeur. Sous Windows, le runtime CUDA est inclus : il vous suffit du pilote NVIDIA. Sous Linux, installez le pilote et les bibliothèques NVRTC. Le premier lancement optimise chaque carte et mémorise le résultat.'
   - q: 'Pourquoi la bande passante mémoire compte-t-elle pour miner Blocknet ?'
     a: 'Chaque hash Blocknet écrit un bloc mémoire complet de 2 GiB et relit des données réparties dans tout ce bloc, bien plus que ce que contient n''importe quel cache de processeur. Le hashrate dépend donc de la vitesse à laquelle le système mémoire déplace les données. Les machines dotées de plus de bande passante mémoire et d''assez de RAM pour de nombreux threads minent le plus vite.'
-sourceHash: dae9fd024abc
+sourceHash: '4d5509a6c9e1'
 translation: draft
 ---
 
@@ -25,26 +25,19 @@ Ce guide montre quelles machines minent Blocknet le plus vite avec seine, combie
 La configuration la plus rapide de ces mesures est un AMD EPYC 9355P à 97,1 H/s : 64 threads de minage et 192 GiB de RAM sous Linux avec les réglages par défaut de seine. Le minage Blocknet bénéficie de la bande passante mémoire et de 2 GiB de RAM par thread. Les cartes NVIDIA peuvent ajouter leur hashrate à celui du CPU.
 </Answer>
 
-[c9c9638 · 2026-10-28 · 97.1 H/s](https://github.com/zpalmtree/seine/blob/master/experiments/9355p-live-20261028/README.md)
-
 La preuve de travail de Blocknet est Argon2id avec un bloc mémoire de 2 GiB par hash. Elle est donc [gourmande en mémoire](/fr/blog/argon2id-proof-of-work-explained/) : le hashrate dépend autant de la bande passante et de la latence mémoire que du nombre de cœurs, et du nombre de ces blocs de 2 GiB qui tiennent en RAM en même temps. Un système mémoire solide est le point commun des meilleures machines du tableau ci-dessous.
 
 ## Nouvelle mesure sur serveur physique : EPYC 9355P
 
 Le 28 octobre 2026, un EPYC 9355P à 32 cœurs et 64 threads, avec 192 GiB de RAM, a miné pendant 15 minutes avec les réglages par défaut de seine : aucune option, le nombre de threads, le kernel CPU et les pages mémoire étant choisis automatiquement. Il a miné à **97,1 H/s**.
 
-Le [relevé de mesure](https://github.com/zpalmtree/seine/blob/master/experiments/9355p-live-20261028/README.md) indique la révision du code et le hashrate de chaque minute de l’exécution. Les mesures cloud et Mac ci-dessous décrivent leurs propres machines et réglages.
-
 ## Quelle vitesse la RTX 5090 a-t-elle atteinte lors de notre test ?
 
-Nous avons effectué les tests le 25 octobre 2026 avec Windows 11, une NVIDIA GeForce RTX 5090, un AMD Ryzen 9 9950X3D, 125,4 GiB de RAM utilisable, seine v0.2.26 et le pilote NVIDIA `610.88`. Nous avons exécuté trois paires alternées avec `--bench-kind backend`. Chaque exécution comprenait un échauffement de 20 secondes et trois séries mesurées de 20 secondes, avec 20 secondes entre les exécutions. Les réglages du kernel, de la limite de registres, des lanes et des threads étaient automatiques.
+Mesuré le 31 octobre 2026 : RTX 5090 seule, Windows 11 natif, pilote 610.88, version publique de développement. Le taux de minage stabilisé tient compte des frais du mineur ; le travail du CPU est exclu.
 
 | Mode | H/s moyens |
 |---|---|
-| RTX 5090 seule | 7,3 |
-| RTX 5090 + Ryzen 9 9950X3D | 12,9 |
-
-Le tableau présente la moyenne de trois exécutions par mode sur cet ordinateur, en laissant ouvertes les applications déjà présentes. Les deux modes utilisaient le GPU `0` et le même cache de réglage automatique NVIDIA. Il s'agit de hashrates de benchmark locaux ; les shares acceptés confirment le travail crédité par le pool. Les [notes de mesure](https://github.com/zpalmtree/seine/blob/master/site/editorial/batches/2026-10-nvidia-guide/research.md) consignent les réglages et les résultats individuels.
+| RTX 5090 seule | 13,8 |
 
 ## Comparaison mesurée des serveurs cloud et du Mac
 
@@ -52,13 +45,13 @@ Ces résultats cloud et Mac utilisent les machines et réglages décrits ci-dess
 
 | Matériel | Puce exacte | Threads | Hashrate | Mémoire de minage |
 |---|---|---|---|---|
-| AMD EPYC · Zen 5 | Serveur EPYC 9R45 | 32 | 49,4 H/s | 64 GiB |
+| AMD EPYC · Zen 5 | Serveur EPYC 9R45 | 32 | 50,5 H/s | 64 GiB |
 | Serveur Arm | AWS Graviton4 | 32 | 39,3 H/s | 64 GiB |
-| AMD EPYC · Zen 4 | Serveur EPYC 9R14 | 32 | 38,2 H/s | 64 GiB |
+| AMD EPYC · Zen 4 | Serveur EPYC 9R14 | 32 | 45,3 H/s | 64 GiB |
 | Apple M4 Max | MacBook Pro 48 GB | 16 | 30,9 H/s | 32 GiB |
 | Intel Xeon | Sapphire Rapids 8488C | 32 | 26,0 H/s | 64 GiB |
 
-Les lignes serveur ont été mesurées sur des machines cloud AWS avec des huge pages de 2 MiB, et la ligne M4 Max sur un MacBook Pro de 48 GB. Chaque valeur correspond au nombre de hashs terminés divisé par le temps écoulé, moyenné sur plusieurs exécutions, mesuré entre juillet et octobre 2026. Le résultat Zen 5 est la moyenne de quatre exécutions avec seine v0.2.22 sur une AWS m8a.8xlarge, une machine EPYC 9R45 à 32 cœurs dotée de 128 GiB de RAM.
+Les résultats cloud des EPYC 9R45 et 9R14 utilisent 32 threads et des transparent huge pages. Ils mesurent le temps de hachage, hors démarrage. Les autres lignes conservent leurs propres conditions de mesure.
 
 Les résultats de chaque processeur testé, avec les preuves pour chaque ligne, se trouvent sur la [page des performances](https://github.com/zpalmtree/seine/blob/master/docs/PERFORMANCE.md).
 
@@ -66,13 +59,11 @@ Les résultats de chaque processeur testé, avec les preuves pour chaque ligne, 
 
 Chaque hash Argon2id remplit une fois l'intégralité de son bloc de 2 GiB et, ce faisant, relit des parties antérieures de ce bloc. Le cache L3 d'un processeur se mesure en mégaoctets : sur le serveur Zen 5, chaque groupe de huit cœurs partage 32 MiB, si bien qu'un seul hash parcourt 64 fois plus de mémoire que ce que contient ce cache. L'essentiel du travail est du trafic mémoire.
 
-Les chiffres le montrent. À 49,4 H/s, le serveur Zen 5 écrit environ 99 GiB de blocs mémoire neufs chaque seconde (49,4 × 2 GiB). Le hashrate augmente avec les threads jusqu'à ce que le système mémoire soit saturé : sur cette machine, 16 threads ont miné à 37,8 H/s et 32 threads à 49,4 H/s. seine mesure cette courbe sur votre machine et retient le meilleur nombre de threads.
-
 Trois conséquences pour le choix du matériel :
 
 - **La bande passante mémoire compte autant que les cœurs.** Accordez au système mémoire autant de poids qu'au nombre de cœurs quand vous comparez des machines.
 - **La RAM fixe le plafond de threads.** Chaque thread a besoin de son propre bloc de 2 GiB, donc la RAM limite souvent le nombre de threads avant les cœurs.
-- **Le kernel compte sur une même puce.** seine embarque plusieurs kernels Argon2id par famille de processeurs. Sur l'EPYC 9R45, le kernel streaming mine 30 % plus vite qu'AVX2 (de 34,47 à 44,74 H/s avec 24 threads). Sur AWS Graviton4, le kernel SHA3 avec prefetching mine 56 % plus vite que NEON seul (de 13,80 à 21,50 H/s). seine choisit le plus rapide pendant qu'il mine.
+- **Le kernel compte sur une même puce.** Seine compare les kernels CPU disponibles pendant le minage et en choisit un pour votre machine.
 
 ## De combien de RAM a besoin chaque thread de minage ?
 

@@ -11,7 +11,7 @@ faq:
     a: 'seine의 기본 페이지 모드는 예약된 2 MiB 풀을 먼저 사용하고, 그다음 투명 휴즈 페이지를 사용합니다. 1 GiB 페이지를 쓰려면 스레드당 2개를 예약하고(가급적 부팅 시 hugepagesz=1G hugepages=N으로), --cpu-page-mode large-1g로 seine를 실행하십시오. 이 모드는 x86_64 Linux와 WSL에서 동작하며 2 MiB 페이지보다 약 2% 더 빠릅니다.'
   - q: 'Windows에서 seine용 라지 페이지는 어떻게 켭니까?'
     a: 'secpol.msc의 로컬 정책(Local Policies) 아래 사용자 권한 할당(User Rights Assignment)에서 Windows 계정에 메모리에 페이지 잠금(Lock pages in memory) 권한을 부여한 뒤 로그아웃했다가 다시 로그인하십시오. seine는 시작할 때 이 권한을 스스로 활성화하고 각 스레드의 2 GiB 영역을 라지 페이지로 할당합니다. Home 에디션에서는 ntrights 같은 도구로 권한을 부여하십시오.'
-sourceHash: 1d106194ae48
+sourceHash: '56854c537c73'
 translation: draft
 ---
 
@@ -38,8 +38,6 @@ Blocknet의 작업 증명에서는 이런 탐색이 자주 일어납니다. 해�
 ## 휴즈 페이지로 채굴은 얼마나 빨라집니까?
 
 seine의 [휴즈 페이지 가이드](https://github.com/zpalmtree/seine/blob/master/docs/guides/linux-hugepages.md)는 휴즈 페이지를 Linux CPU 채굴에서 가장 큰 단일 튜닝 요소로 꼽습니다. 검증 머신에서 예약된 2 MiB 페이지는 약 **4~6%**, 1 GiB 페이지는 추가로 약 **2%**의 향상을 보였습니다. 가이드에 따르면 많은 스레드가 실행될 때는 보통 명령어 집합 튜닝보다 휴즈 페이지 적용 범위가 더 중요합니다.
-
-seine [성능 차트](/ko/#performance)의 이전 EPYC 9R45 결과는 명시적으로 예약한 2 MiB 휴즈 페이지로 측정했습니다. 2026년 10월에 AMD EPYC Zen 5(EPYC 9R45)에서 32스레드로 측정한 49.4 H/s는 34,407페이지를 예약한 상태에서 나왔으며, 이는 아래 표의 32스레드 행과 같은 수치입니다. 세대별 전체 결과는 [채굴 하드웨어 가이드](/ko/blog/blocknet-mining-hardware-hashrate/)에 있습니다.
 
 예약하지 않아도 seine는 Linux에서 커널에 투명 휴즈 페이지를 요청합니다. 예약된 풀은 페이지를 미리 확보해 두기 때문에, 메모리가 아무리 단편화되어도 모든 스레드가 휴즈 페이지를 받을 수 있어 효과가 더 큽니다.
 

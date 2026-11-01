@@ -11,7 +11,7 @@ faq:
     a: 'El modo de páginas predeterminado de seine usa el grupo reservado de páginas de 2 MiB y, después, transparent huge pages. Para usar páginas de 1 GiB, reserva dos por hilo, preferiblemente en el arranque con hugepagesz=1G hugepages=N, e inicia seine con --cpu-page-mode large-1g. Ese modo funciona en Linux x86_64 y WSL y aporta alrededor de un 2% más que las páginas de 2 MiB.'
   - q: '¿Cómo activo las large pages para seine en Windows?'
     a: 'Concede a tu cuenta de Windows el derecho Bloquear páginas en la memoria en secpol.msc, en Directivas locales y Asignación de derechos de usuario, y luego cierra sesión y vuelve a entrar. seine activa ese derecho para sí mismo al iniciarse y asigna el área de 2 GiB de cada hilo con large pages. En las ediciones Home, concede el derecho con una herramienta como ntrights.'
-sourceHash: 1d106194ae48
+sourceHash: '56854c537c73'
 translation: draft
 ---
 
@@ -38,8 +38,6 @@ Con huge pages, una entrada de la TLB cubre 512 o 262.144 veces más memoria, de
 ## ¿Cuánto más rápido se mina con huge pages?
 
 La [guía de huge pages](https://github.com/zpalmtree/seine/blob/master/docs/guides/linux-hugepages.md) de seine las considera el ajuste que más influye en la minería con CPU en Linux. En el equipo de validación, las páginas de 2 MiB reservadas aportaron alrededor de un **4–6%**, y las páginas de 1 GiB, aproximadamente un **2%** adicional. La guía también señala que, cuando hay muchos hilos funcionando, la cobertura con huge pages suele importar más que el ajuste del conjunto de instrucciones.
-
-Los resultados anteriores del EPYC 9R45 del [gráfico de rendimiento](/es/#performance) de seine se midieron con huge pages explícitas de 2 MiB. Los 49,4 H/s de un AMD EPYC Zen 5 (EPYC 9R45) con 32 hilos, medidos en octubre de 2026, se obtuvieron con 34.407 páginas reservadas, la misma cifra que la fila de 32 hilos de la tabla de abajo. La [guía de hardware de minería](/es/blog/blocknet-mining-hardware-hashrate/) recoge todos los resultados por generación.
 
 Incluso sin reserva, seine pide al kernel transparent huge pages en Linux. Un grupo reservado va más allá porque las páginas se apartan de antemano, así que todos los hilos las obtienen por muy fragmentada que esté la memoria.
 

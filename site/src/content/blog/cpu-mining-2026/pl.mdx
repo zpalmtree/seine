@@ -11,7 +11,7 @@ faq:
     a: 'Hash wymagający dużo pamięci potrzebuje przy każdej próbie gigabajtów szybkiej pamięci, więc układ zbudowany wyłącznie do haszowania nadal potrzebowałby dużo RAM obok każdego rdzenia. Komputery stacjonarne, laptopy i serwery mają już mnóstwo RAM i szybkie kontrolery pamięci, dzięki czemu sprzęt, który ludzie już mają, jest bliski temu, czego potrzebuje algorytm.'
   - q: 'Czy można kopać jednocześnie na CPU i karcie graficznej?'
     a: 'Tak, kopiąc Blocknet z seine w systemie Windows lub Linux. seine kopie jednocześnie na procesorze i na każdej wykrytej karcie graficznej NVIDIA, a hashrate się sumuje. Procesor dostraja podczas kopania, a każdą kartę przy pierwszym uruchomieniu, więc przed startem nie trzeba niczego konfigurować.'
-sourceHash: 845e3b6a5c9d
+sourceHash: '9e40efada752'
 translation: draft
 ---
 
@@ -60,7 +60,7 @@ O tym, ile hashy na sekundę (H/s) procesor wytwarza w Blocknet, decydują trzy 
 
 **Przepustowość pamięci.** Każdy hash przesyła przez system pamięci gigabajty danych. Przy 97,1 H/s najszybsza maszyna zmierzona z seine zapisuje co sekundę około 194,2 GiB nowych bloków pamięci (97,1 × 2 GiB). Procesory z większą liczbą kanałów pamięci i szybszą pamięcią wychodzą na prowadzenie.
 
-**Właściwe jądro obliczeniowe.** seine ma kilka jąder Argon2id: AVX2, AVX-512 i jądro strumieniowe na x86 oraz NEON ze ścieżką przyspieszoną SHA3 na Arm. Na tym samym układzie jądro robi dużą różnicę. Na AWS Graviton4 jądro SHA3 z prefetchingiem kopie o 56% szybciej niż zwykły NEON (z 13,80 do 21,50 H/s), a na AMD EPYC 9R45 jądro strumieniowe kopie o 30% szybciej niż AVX2 (z 34,47 do 44,74 H/s przy 24 wątkach). seine porównuje jądra podczas kopania i zostawia szybsze.
+**Właściwe jądro obliczeniowe.** Seine porównuje dostępne kernele CPU podczas kopania i wybiera jeden dla twojego komputera.
 
 Zmierzone konfiguracje sprzętowe:
 
@@ -68,13 +68,15 @@ Zmierzone konfiguracje sprzętowe:
 |---|---|---|---|
 | AMD EPYC · Zen 5 | serwer EPYC 9355P | 64 | 97,1 H/s |
 | Serwer Arm | AWS Graviton4 | 32 | 39,3 H/s |
-| AMD EPYC · Zen 4 | serwer EPYC 9R14 | 32 | 38,2 H/s |
+| AMD EPYC · Zen 4 | serwer EPYC 9R14 | 32 | 45,3 H/s |
 | Apple M4 Max | MacBook Pro 48 GB | 16 | 30,9 H/s |
 | Intel Xeon | Sapphire Rapids 8488C | 32 | 26,0 H/s |
 
 Najszybsza konfiguracja w tych pomiarach to AMD EPYC 9355P osiągający 97,1 H/s: 64 wątki kopania i 192 GiB RAM w Linuksie przy domyślnych ustawieniach seine.
 
-Wiersz Apple M4 Max to laptop, co pokazuje, jak dobrze mocny system pamięci pasuje do Argon2id. Pozostałe wiersze serwerowe zmierzono na maszynach AWS z huge pages 2 MiB. [Poradnik o sprzęcie do kopania Blocknet](/pl/blog/blocknet-mining-hardware-hashrate/) szczegółowo omawia porady zakupowe i dobór RAM, a [poradnik dla Maca](/pl/blog/mine-blocknet-on-mac/) opisuje Apple Silicon.
+Wyniki chmurowe EPYC 9R45 i 9R14 uzyskano przy 32 wątkach i transparent huge pages. Obejmują czas haszowania bez uruchamiania. Pozostałe wiersze zachowują własne warunki pomiaru.
+
+[Poradnik o sprzęcie do kopania Blocknet](/pl/blog/blocknet-mining-hardware-hashrate/) · [poradnik dla Maca](/pl/blog/mine-blocknet-on-mac/)
 
 ## Jak zacząć kopać Blocknet na CPU?
 

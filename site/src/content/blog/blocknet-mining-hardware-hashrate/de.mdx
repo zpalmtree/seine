@@ -11,7 +11,7 @@ faq:
     a: 'seine mint mit den Downloads für Windows und Linux auf NVIDIA-Grafikkarten und nutzt jede erkannte Karte zusätzlich zum Prozessor. Unter Windows ist die CUDA-Runtime enthalten, du brauchst also nur den NVIDIA-Treiber. Unter Linux installierst du den Treiber und die NVRTC-Bibliotheken. Der erste Start optimiert jede Karte und merkt sich das Ergebnis.'
   - q: 'Warum ist die Speicherbandbreite beim Blocknet-Mining wichtig?'
     a: 'Jeder Blocknet-Hash schreibt einen kompletten 2-GiB-Speicherblock und liest Daten von überall daraus zurück, weit mehr, als irgendein Prozessor-Cache fasst. Die Hashrate hängt daher davon ab, wie schnell das Speichersystem Daten bewegt. Am schnellsten minen Rechner mit hoher Speicherbandbreite und genug RAM für viele Threads.'
-sourceHash: dae9fd024abc
+sourceHash: '4d5509a6c9e1'
 translation: draft
 ---
 
@@ -25,26 +25,19 @@ Diese Anleitung zeigt, welche Rechner Blocknet mit seine am schnellsten minen, w
 Die schnellste hier gemessene Konfiguration ist ein AMD EPYC 9355P mit 97,1 H/s: 64 Mining-Threads und 192 GiB RAM unter Linux mit den Standardeinstellungen von seine. Blocknet-Mining profitiert von Speicherbandbreite und ausreichend RAM für 2 GiB pro Thread. NVIDIA-Karten können ihre Hashrate zusätzlich zur CPU beitragen.
 </Answer>
 
-[c9c9638 · 2026-10-28 · 97.1 H/s](https://github.com/zpalmtree/seine/blob/master/experiments/9355p-live-20261028/README.md)
-
 Blocknets Proof of Work ist Argon2id mit einem 2-GiB-Speicherblock pro Hash. Das macht ihn [speicherintensiv](/de/blog/argon2id-proof-of-work-explained/): Die Hashrate hängt genauso stark von Speicherbandbreite und Latenz ab wie von der Anzahl der Kerne, und davon, wie viele dieser 2-GiB-Blöcke gleichzeitig in den RAM passen. Ein starkes Speichersystem ist das, was die Spitzenrechner in der Tabelle unten gemeinsam haben.
 
 ## Neue Bare-Metal-Messung: EPYC 9355P
 
 Am 28. Oktober 2026 minte ein EPYC 9355P mit 32 Kernen und 64 Threads sowie 192 GiB RAM 15 Minuten lang mit den Standardeinstellungen von seine: ohne Flags, Thread-Anzahl, CPU-Kernel und Speicherseiten wurden automatisch gewählt. Er minte mit **97,1 H/s**.
 
-Der [Messbericht](https://github.com/zpalmtree/seine/blob/master/experiments/9355p-live-20261028/README.md) nennt die Quellcode-Revision und die Hashrate für jede Minute des Laufs. Die folgenden Cloud- und Mac-Messungen haben jeweils eigene Maschinen und Einstellungen.
-
 ## Wie schnell war die RTX 5090 in unserem Test?
 
-Wir haben am 25. Oktober 2026 mit Windows 11, einer NVIDIA GeForce RTX 5090, einem AMD Ryzen 9 9950X3D, 125,4 GiB nutzbarem RAM, seine v0.2.26 und dem NVIDIA-Treiber `610.88` getestet. Wir haben drei abwechselnde Testpaare mit `--bench-kind backend` ausgeführt. Jeder Durchlauf bestand aus einer Aufwärmphase von 20 Sekunden und drei Messrunden von jeweils 20 Sekunden, mit 20 Sekunden zwischen den Durchläufen. Kernel, Registerlimit, Lanes und Threads wurden automatisch eingestellt.
+Gemessen am 31. Oktober 2026: nur RTX 5090, natives Windows 11, Treiber 610.88, öffentlicher Entwicklungsbuild. Die stabile Mining-Rate berücksichtigt die Miner-Gebühr; CPU-Arbeit ist nicht enthalten.
 
 | Modus | Durchschnittliche H/s |
 |---|---|
-| Nur RTX 5090 | 7,3 |
-| RTX 5090 + Ryzen 9 9950X3D | 12,9 |
-
-Die Tabelle zeigt den Mittelwert von drei Durchläufen pro Modus auf diesem Desktop, während die bereits geöffneten Apps geöffnet blieben. Beide Modi verwendeten GPU `0` und denselben NVIDIA-Autotune-Cache. Dies sind lokale Benchmark-Hashraten; angenommene Shares bestätigen die Anrechnung durch den Pool. Die [Messnotizen](https://github.com/zpalmtree/seine/blob/master/site/editorial/batches/2026-10-nvidia-guide/research.md) dokumentieren die Einstellungen und Einzelergebnisse.
+| Nur RTX 5090 | 13,8 |
 
 ## Gemessener Vergleich von Cloud-Servern und Mac
 
@@ -52,9 +45,9 @@ Diese Cloud- und Mac-Ergebnisse nutzen die unten beschriebenen Maschinen und Ein
 
 | Hardware | Genauer Chip | Threads | Hashrate | Mining-Speicher |
 |---|---|---|---|---|
-| AMD EPYC · Zen 5 | EPYC-9R45-Server | 32 | 49,4 H/s | 64 GiB |
+| AMD EPYC · Zen 5 | EPYC-9R45-Server | 32 | 50,5 H/s | 64 GiB |
 | Arm-Server | AWS Graviton4 | 32 | 39,3 H/s | 64 GiB |
-| AMD EPYC · Zen 4 | EPYC-9R14-Server | 32 | 38,2 H/s | 64 GiB |
+| AMD EPYC · Zen 4 | EPYC-9R14-Server | 32 | 45,3 H/s | 64 GiB |
 | Apple M4 Max | MacBook Pro mit 48 GB | 16 | 30,9 H/s | 32 GiB |
 | Intel Xeon | Sapphire Rapids 8488C | 32 | 26,0 H/s | 64 GiB |
 
@@ -66,13 +59,11 @@ Ergebnisse für jeden getesteten Prozessor, mit den Belegen für jede Zeile, ste
 
 Jeder Argon2id-Hash füllt seinen gesamten 2-GiB-Block einmal und liest dabei frühere Teile davon zurück. Der L3-Cache eines Prozessors wird in Megabyte gemessen: Auf dem Zen-5-Server teilt sich jede Gruppe aus acht Kernen 32 MiB, ein einzelner Hash arbeitet sich also durch 64-mal mehr Speicher, als dieser Cache fasst. Der größte Teil der Arbeit ist Speicherverkehr.
 
-Die Zahlen zeigen es. Bei 49,4 H/s schreibt der Zen-5-Server jede Sekunde etwa 99 GiB an frischen Speicherblöcken (49,4 × 2 GiB). Die Hashrate steigt mit den Threads, bis das Speichersystem ausgelastet ist: Auf diesem Rechner kamen 16 Threads auf 37,8 H/s und 32 Threads auf 49,4 H/s. seine misst diese Kurve auf deinem Rechner und bleibt bei der besten Thread-Anzahl.
-
 Für die Wahl der Hardware folgen daraus drei Dinge:
 
 - **Speicherbandbreite zählt so viel wie Kerne.** Gewichte beim Vergleich von Rechnern das Speichersystem genauso stark wie die Anzahl der Kerne.
 - **Der RAM legt die Obergrenze für Threads fest.** Jeder Thread braucht seinen eigenen 2-GiB-Block, daher begrenzt oft der RAM die Thread-Anzahl, bevor es die Kerne tun.
-- **Der Kernel macht auf demselben Chip einen Unterschied.** seine bringt pro Prozessorfamilie mehrere Argon2id-Kernel mit. Auf dem EPYC 9R45 mint der Streaming-Kernel 30 % schneller als AVX2 (34,47 auf 44,74 H/s bei 24 Threads). Auf AWS Graviton4 mint der SHA3-Kernel mit Prefetching 56 % schneller als reines NEON (13,80 auf 21,50 H/s). seine wählt während des Minings den schnelleren.
+- **Der Kernel macht auf demselben Chip einen Unterschied.** Seine vergleicht beim Mining die verfügbaren CPU-Kernel und wählt einen für deinen Rechner aus.
 
 ## Wie viel RAM brauchst du pro Mining-Thread?
 

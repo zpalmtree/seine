@@ -2,7 +2,7 @@
 title: 'Blocknet mit einer NVIDIA-GPU minen'
 description: 'Mine Blocknet mit einer NVIDIA-GPU und seine. Richte Windows oder Linux ein, nutze CPU und GPU, prüfe Hashraten und behebe Probleme beim Start des Miners.'
 tags: ['Mining-Anleitung', 'NVIDIA', 'GPU']
-sourceHash: 6a693c616f37
+sourceHash: '035e97230185'
 translation: draft
 faq:
   - q: 'Kann seine CPU und NVIDIA-GPU gleichzeitig nutzen?'
@@ -86,14 +86,11 @@ Beim ersten Start werden die GPU-Kernel vorbereitet und abgestimmt. seine speich
 
 ## Wie schnell war die RTX 5090 in unserem Test?
 
-Wir haben am 25. Oktober 2026 mit Windows 11, einer NVIDIA GeForce RTX 5090, einem AMD Ryzen 9 9950X3D, 125,4 GiB nutzbarem RAM, seine v0.2.26 und dem NVIDIA-Treiber `610.88` getestet. Wir haben drei abwechselnde Testpaare mit `--bench-kind backend` ausgeführt. Jeder Durchlauf bestand aus einer Aufwärmphase von 20 Sekunden und drei Messrunden von jeweils 20 Sekunden, mit 20 Sekunden zwischen den Durchläufen. Kernel, Registerlimit, Lanes und Threads wurden automatisch eingestellt.
+Gemessen am 31. Oktober 2026: nur RTX 5090, natives Windows 11, Treiber 610.88, öffentlicher Entwicklungsbuild. Die stabile Mining-Rate berücksichtigt die Miner-Gebühr; CPU-Arbeit ist nicht enthalten.
 
 | Modus | Durchschnittliche H/s |
 |---|---|
-| Nur RTX 5090 | 7,3 |
-| RTX 5090 + Ryzen 9 9950X3D | 12,9 |
-
-Die Tabelle zeigt den Mittelwert von drei Durchläufen pro Modus auf diesem Desktop, während die bereits geöffneten Apps geöffnet blieben. Beide Modi verwendeten GPU `0` und denselben NVIDIA-Autotune-Cache. Dies sind lokale Benchmark-Hashraten; angenommene Shares bestätigen die Anrechnung durch den Pool. Die [Messnotizen](https://github.com/zpalmtree/seine/blob/master/site/editorial/batches/2026-10-nvidia-guide/research.md) dokumentieren die Einstellungen und Einzelergebnisse.
+| Nur RTX 5090 | 13,8 |
 
 ## Was solltest du prüfen, wenn eine NVIDIA-Zeile fehlt?
 

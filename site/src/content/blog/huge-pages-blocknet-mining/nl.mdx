@@ -11,7 +11,7 @@ faq:
     a: 'De standaard page-modus van seine gebruikt de gereserveerde pool van 2 MiB en daarna transparent huge pages. Om pages van 1 GiB te gebruiken, reserveer je er twee per thread, bij voorkeur bij het opstarten met hugepagesz=1G hugepages=N, en start je seine met --cpu-page-mode large-1g. Die modus werkt op x86_64 Linux en WSL en levert ongeveer 2% extra op bovenop pages van 2 MiB.'
   - q: 'Hoe zet ik large pages aan voor seine op Windows?'
     a: 'Geef je Windows-account het recht Lock pages in memory in secpol.msc onder Local Policies en User Rights Assignment, en meld je daarna af en weer aan. seine schakelt het recht bij het starten voor zichzelf in en reserveert de arena van 2 GiB van elke thread met large pages. Op Home-edities ken je het recht toe met een tool zoals ntrights.'
-sourceHash: 1d106194ae48
+sourceHash: '56854c537c73'
 translation: draft
 ---
 
@@ -38,8 +38,6 @@ Met huge pages dekt één TLB-entry 512 of 262.144 keer zoveel geheugen af, zoda
 ## Hoeveel sneller is minen met huge pages?
 
 De [huge pages-handleiding](https://github.com/zpalmtree/seine/blob/master/docs/guides/linux-hugepages.md) van seine noemt ze de allerbelangrijkste tuningknop voor CPU-mining op Linux. Op de validatiehost leverden gereserveerde pages van 2 MiB ongeveer **4–6%** op, en pages van 1 GiB nog eens zo'n **2%**. De handleiding merkt ook op dat zodra er veel threads draaien, de dekking met huge pages meestal meer uitmaakt dan tuning op instructieset.
-
-De eerdere EPYC 9R45-resultaten in de [prestatiegrafiek](/nl/#performance) van seine zijn gemeten met expliciete huge pages van 2 MiB. De 49,4 H/s van een AMD EPYC Zen 5 (EPYC 9R45) met 32 threads, gemeten in oktober 2026, draaide met 34.407 gereserveerde pages, hetzelfde getal als de rij voor 32 threads in de tabel hieronder. De [gids over mininghardware](/nl/blog/blocknet-mining-hardware-hashrate/) heeft de volledige resultaten per generatie.
 
 Ook zonder reservering vraagt seine op Linux de kernel om transparent huge pages. Een gereserveerde pool gaat verder, omdat de pages vooraf apart worden gezet, zodat elke thread ze krijgt, hoe gefragmenteerd het geheugen ook is geraakt.
 

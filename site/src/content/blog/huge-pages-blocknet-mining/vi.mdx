@@ -11,7 +11,7 @@ faq:
     a: 'Chế độ trang mặc định của seine dùng nhóm trang 2 MiB đã dành sẵn, sau đó đến transparent huge pages. Để dùng trang 1 GiB, hãy dành sẵn hai trang cho mỗi luồng, tốt nhất là lúc khởi động bằng hugepagesz=1G hugepages=N, rồi chạy seine với --cpu-page-mode large-1g. Chế độ này chạy trên Linux x86_64 và WSL, cho thêm khoảng 2% so với trang 2 MiB.'
   - q: 'Làm sao bật large pages cho seine trên Windows?'
     a: 'Cấp cho tài khoản Windows của bạn quyền Lock pages in memory trong secpol.msc, mục Local Policies và User Rights Assignment, rồi đăng xuất và đăng nhập lại. seine tự kích hoạt quyền này khi khởi động và cấp phát vùng nhớ 2 GiB của mỗi luồng bằng large pages. Trên các bản Home, hãy cấp quyền bằng một công cụ như ntrights.'
-sourceHash: 1d106194ae48
+sourceHash: '56854c537c73'
 translation: draft
 ---
 
@@ -38,8 +38,6 @@ Với huge pages, một mục TLB phủ lượng bộ nhớ gấp 512 hoặc 262
 ## Đào bằng huge pages nhanh hơn bao nhiêu?
 
 [Hướng dẫn huge pages](https://github.com/zpalmtree/seine/blob/master/docs/guides/linux-hugepages.md) của seine gọi đây là thiết lập tinh chỉnh có tác động lớn nhất khi đào bằng CPU trên Linux. Trên máy kiểm chứng, trang 2 MiB dành sẵn cho thêm khoảng **4–6%**, và trang 1 GiB cho thêm chừng **2%** nữa. Hướng dẫn cũng lưu ý rằng khi chạy nhiều luồng, độ phủ huge pages thường quan trọng hơn việc tinh chỉnh theo tập lệnh.
-
-Các kết quả EPYC 9R45 trước đây trên [biểu đồ hiệu năng](/vi/#performance) của seine được đo với huge pages 2 MiB dành sẵn tường minh. Mức 49,4 H/s từ AMD EPYC Zen 5 (EPYC 9R45) ở 32 luồng, đo vào tháng 10 năm 2026, chạy với 34.407 trang dành sẵn, đúng bằng con số ở hàng 32 luồng trong bảng bên dưới. [Hướng dẫn phần cứng đào coin](/vi/blog/blocknet-mining-hardware-hashrate/) có đầy đủ kết quả theo từng thế hệ.
 
 Ngay cả khi không dành sẵn, seine vẫn yêu cầu nhân Linux cấp transparent huge pages. Một nhóm trang dành sẵn còn đi xa hơn vì các trang được để riêng ngay từ đầu, nên mọi luồng đều nhận được chúng dù bộ nhớ đã bị phân mảnh đến đâu.
 

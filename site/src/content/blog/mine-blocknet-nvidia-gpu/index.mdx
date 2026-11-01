@@ -2,6 +2,7 @@
 title: How to mine Blocknet with an NVIDIA GPU
 description: Mine Blocknet with an NVIDIA GPU using seine. Set up Windows or Linux, choose CPU and GPU mining, check device hashrates, and troubleshoot startup.
 date: 2026-10-25
+updated: 2026-11-01
 tags: [Mining guide, NVIDIA, GPU]
 faq:
   - q: Can seine use the CPU and NVIDIA GPU together?
@@ -86,14 +87,11 @@ The first launch prepares and tunes the GPU kernels. Seine saves NVIDIA autotune
 
 ## How fast was the RTX 5090 in our test?
 
-We tested on October 25, 2026, using Windows 11, an NVIDIA GeForce RTX 5090, an AMD Ryzen 9 9950X3D, 125.4 GiB of usable RAM, seine v0.2.26 and NVIDIA driver `610.88`. We ran three interleaved pairs with `--bench-kind backend`. Each run used one 20-second warmup and three 20-second measured rounds, with 20 seconds between runs. Kernel, register-cap, lane and thread settings were automatic.
+Measured on October 31, 2026: RTX 5090 only, native Windows 11, driver 610.88, public development build. The steady mining rate is after the miner fee; CPU work is excluded.
 
 | Mode | Mean H/s |
 |---|---|
-| RTX 5090 only | 7.3 |
-| RTX 5090 + Ryzen 9 9950X3D | 12.9 |
-
-The table averages three runs per mode on this desktop with its existing apps open. Both modes used GPU `0` and the same NVIDIA autotune cache. These are local benchmark rates; accepted shares confirm pool credit. The [measurement notes](https://github.com/zpalmtree/seine/blob/master/site/editorial/batches/2026-10-nvidia-guide/research.md) record the settings and individual results.
+| RTX 5090 only | 13.8 |
 
 ## What should you check if an NVIDIA row is missing?
 

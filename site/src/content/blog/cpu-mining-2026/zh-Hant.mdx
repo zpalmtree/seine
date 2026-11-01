@@ -11,7 +11,7 @@ faq:
     a: '記憶體密集型雜湊每次嘗試都需要數 GB 的高速記憶體，所以專為雜湊設計的晶片仍然要在每個核心旁邊配備大量記憶體。桌上型電腦、筆記型電腦與伺服器出廠時就有充足的記憶體與高速記憶體控制器，因此人們已有的硬體本來就接近演算法所需。'
   - q: '可以同時用 CPU 與顯示卡挖礦嗎？'
     a: '可以，在 Windows 或 Linux 上用 seine 挖 Blocknet 時就能做到。seine 會同時在處理器與偵測到的每張 NVIDIA 顯示卡上挖礦，算力相加。它在挖礦時調校處理器，並在每張顯示卡首次啟動時為其調校，所以開始之前不需要任何設定。'
-sourceHash: 845e3b6a5c9d
+sourceHash: '9e40efada752'
 translation: draft
 ---
 
@@ -60,7 +60,7 @@ Blocknet 四個問題都能答好。它是一種[預設隱私](/zh-hant/blog/blo
 
 **記憶體頻寬。** 每次雜湊都要讓數 GB 的資料經過記憶體系統。在 97.1 H/s 時，用 seine 測得的最快機器每秒寫入約 194.2 GiB 的新記憶體區塊（97.1 × 2 GiB）。記憶體通道更多、記憶體更快的處理器會領先。
 
-**合適的運算核心程式。** seine 帶有多種 Argon2id 運算核心程式：x86 上有 AVX2、AVX-512 與串流核心程式，Arm 上有帶 SHA3 快速路徑的 NEON。在同一顆晶片上，運算核心程式的差別很大。在 AWS Graviton4 上，帶預取的 SHA3 核心程式比一般 NEON 快 56%（從 13.80 提升到 21.50 H/s）；在 AMD EPYC 9R45 上，串流核心程式比 AVX2 快 30%（24 個執行緒時從 34.47 提升到 44.74 H/s）。seine 會在挖礦時比較各個運算核心程式並保留較快的那個。
+**合適的運算核心程式。** seine 會在挖礦時比較可用的 CPU 運算核心程式，並為你的機器選擇合適的程式。
 
 已測量的硬體配置：
 
@@ -68,13 +68,15 @@ Blocknet 四個問題都能答好。它是一種[預設隱私](/zh-hant/blog/blo
 |---|---|---|---|
 | AMD EPYC · Zen 5 | EPYC 9355P 伺服器 | 64 | 97.1 H/s |
 | Arm 伺服器 | AWS Graviton4 | 32 | 39.3 H/s |
-| AMD EPYC · Zen 4 | EPYC 9R14 伺服器 | 32 | 38.2 H/s |
+| AMD EPYC · Zen 4 | EPYC 9R14 伺服器 | 32 | 45.3 H/s |
 | Apple M4 Max | 48 GB MacBook Pro | 16 | 30.9 H/s |
 | Intel Xeon | Sapphire Rapids 8488C | 32 | 26.0 H/s |
 
 這些測量中最快的配置是達到 97.1 H/s 的 AMD EPYC 9355P：64 個挖礦執行緒、192 GiB RAM，在 Linux 上使用 seine 的預設設定。
 
-Apple M4 Max 這一列是一台筆記型電腦，說明強大的記憶體系統與 Argon2id 非常契合。其餘伺服器各列在啟用 2 MiB 大分頁的 AWS 機器上執行。[Blocknet 挖礦硬體指南](/zh-hant/blog/blocknet-mining-hardware-hashrate/)深入介紹了選購建議與記憶體規劃，[Mac 指南](/zh-hant/blog/mine-blocknet-on-mac/)介紹了 Apple Silicon。
+EPYC 9R45 和 9R14 的雲端結果使用32個執行緒及 transparent huge pages，測量的是不含啟動的雜湊計算時間。其他列保留各自的測量條件。
+
+[Blocknet 挖礦硬體指南](/zh-hant/blog/blocknet-mining-hardware-hashrate/) · [Mac 指南](/zh-hant/blog/mine-blocknet-on-mac/)
 
 ## 如何開始用 CPU 挖 Blocknet？
 

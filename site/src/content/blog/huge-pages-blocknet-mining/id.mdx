@@ -11,7 +11,7 @@ faq:
     a: 'Mode halaman bawaan seine memakai pool halaman 2 MiB yang dicadangkan, lalu transparent huge pages. Untuk memakai halaman 1 GiB, cadangkan dua per thread, sebaiknya saat boot dengan hugepagesz=1G hugepages=N, lalu jalankan seine dengan --cpu-page-mode large-1g. Mode itu berjalan di Linux x86_64 dan WSL serta menambah sekitar 2% di atas halaman 2 MiB.'
   - q: 'Bagaimana cara mengaktifkan large pages untuk seine di Windows?'
     a: 'Berikan hak Lock pages in memory ke akun Windows Anda di secpol.msc, di bawah Local Policies dan User Rights Assignment, lalu keluar dan masuk lagi. seine mengaktifkan hak itu untuk dirinya sendiri saat mulai dan mengalokasikan arena 2 GiB setiap thread dengan large pages. Di edisi Home, berikan hak tersebut dengan alat seperti ntrights.'
-sourceHash: 1d106194ae48
+sourceHash: '56854c537c73'
 translation: draft
 ---
 
@@ -38,8 +38,6 @@ Dengan huge pages, satu entri TLB mencakup memori 512 atau 262.144 kali lebih ba
 ## Seberapa besar huge pages mempercepat penambangan?
 
 [Panduan huge pages](https://github.com/zpalmtree/seine/blob/master/docs/guides/linux-hugepages.md) milik seine menyebutnya sebagai pengaturan tunggal paling berpengaruh untuk penambangan CPU di Linux. Di host validasi, halaman 2 MiB yang dicadangkan menambah sekitar **4–6%**, dan halaman 1 GiB menambah kira-kira **2%** lagi. Panduan itu juga mencatat bahwa begitu banyak thread berjalan, cakupan huge pages biasanya lebih berpengaruh daripada penyetelan set instruksi.
-
-Hasil EPYC 9R45 sebelumnya di [grafik performa](/id/#performance) seine diukur dengan huge pages 2 MiB yang dicadangkan secara eksplisit. Angka 49,4 H/s dari AMD EPYC Zen 5 (EPYC 9R45) dengan 32 thread, yang diukur pada Oktober 2026, berjalan dengan 34.407 halaman yang dicadangkan, sama dengan angka di baris 32 thread pada tabel di bawah. [Panduan perangkat keras penambangan](/id/blog/blocknet-mining-hardware-hashrate/) memuat hasil lengkap per generasi.
 
 Bahkan tanpa pencadangan, seine meminta transparent huge pages ke kernel di Linux. Pool yang dicadangkan lebih unggul karena halamannya disisihkan sejak awal, sehingga setiap thread mendapatkannya seberapa pun terfragmentasinya memori.
 

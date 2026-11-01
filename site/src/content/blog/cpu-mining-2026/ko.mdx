@@ -11,7 +11,7 @@ faq:
     a: '메모리 하드 해시는 시도할 때마다 수 기가바이트의 빠른 메모리가 필요하므로, 해시 계산 전용 칩도 코어마다 옆에 많은 RAM이 있어야 합니다. 데스크톱, 노트북, 서버는 이미 넉넉한 RAM과 빠른 메모리 컨트롤러를 갖추고 있으므로, 사람들이 가진 하드웨어가 알고리즘에 필요한 것과 잘 맞습니다.'
   - q: 'CPU와 그래픽 카드로 동시에 채굴할 수 있습니까?'
     a: '네, Windows나 Linux에서 seine로 Blocknet을 채굴할 때 가능합니다. seine는 프로세서와 감지한 모든 NVIDIA 그래픽 카드로 동시에 채굴하며, 해시레이트가 합산됩니다. 프로세서는 채굴하면서, 각 카드는 첫 실행 때 튜닝하므로 시작 전에 설정할 것이 없습니다.'
-sourceHash: 845e3b6a5c9d
+sourceHash: '9e40efada752'
 translation: draft
 ---
 
@@ -60,7 +60,7 @@ Blocknet은 네 가지 모두를 충족합니다. [기본 프라이버시](/ko/b
 
 **메모리 대역폭.** 해시마다 수 기가바이트가 메모리 시스템을 오갑니다. seine로 측정한 가장 빠른 컴퓨터는 97.1 H/s에서 매초 약 194.2 GiB의 새 메모리 블록을 씁니다(97.1 × 2 GiB). 메모리 채널이 더 많고 메모리가 더 빠른 프로세서가 앞서 나갑니다.
 
-**알맞은 커널.** seine는 여러 Argon2id 커널을 제공합니다. x86에서는 AVX2, AVX-512, 스트리밍 커널, Arm에서는 SHA3 고속 경로를 갖춘 NEON입니다. 같은 칩에서도 커널에 따라 큰 차이가 납니다. AWS Graviton4에서는 프리페치를 적용한 SHA3 커널이 일반 NEON보다 56% 빠르게 채굴하고(13.80 H/s → 21.50 H/s), AMD EPYC 9R45에서는 스트리밍 커널이 AVX2보다 30% 빠르게 채굴합니다(24 스레드 기준 34.47 H/s → 44.74 H/s). seine는 채굴하면서 커널을 비교해 더 빠른 쪽을 유지합니다.
+**알맞은 커널.** seine은 채굴 중 사용 가능한 CPU 커널을 비교하고 해당 컴퓨터에 맞는 커널을 선택합니다.
 
 측정된 하드웨어 구성:
 
@@ -68,13 +68,15 @@ Blocknet은 네 가지 모두를 충족합니다. [기본 프라이버시](/ko/b
 |---|---|---|---|
 | AMD EPYC · Zen 5 | EPYC 9355P 서버 | 64 | 97.1 H/s |
 | Arm 서버 | AWS Graviton4 | 32 | 39.3 H/s |
-| AMD EPYC · Zen 4 | EPYC 9R14 서버 | 32 | 38.2 H/s |
+| AMD EPYC · Zen 4 | EPYC 9R14 서버 | 32 | 45.3 H/s |
 | Apple M4 Max | 48 GB MacBook Pro | 16 | 30.9 H/s |
 | Intel Xeon | Sapphire Rapids 8488C | 32 | 26.0 H/s |
 
 이 측정에서 가장 빠른 구성은 97.1 H/s를 기록한 AMD EPYC 9355P입니다. Linux에서 seine의 기본 설정으로 채굴 스레드 64개와 RAM 192 GiB를 사용했습니다. Blocknet 채굴은 메모리 대역폭과 스레드당 2 GiB를 제공할 만큼 충분한 RAM의 이점을 얻습니다. NVIDIA 카드는 CPU와 함께 해시레이트를 더할 수 있습니다.
 
-Apple M4 Max 항목은 노트북으로, 강력한 메모리 시스템이 Argon2id에 얼마나 잘 맞는지 보여 줍니다. 다른 서버 항목은 2 MiB 휴즈 페이지를 쓴 AWS 머신에서 측정했습니다. 구매 조언과 RAM 용량 계산은 [Blocknet 채굴 하드웨어 가이드](/ko/blog/blocknet-mining-hardware-hashrate/)에서 자세히 다루며, Apple 실리콘은 [Mac 가이드](/ko/blog/mine-blocknet-on-mac/)에서 다룹니다.
+EPYC 9R45 및 9R14 클라우드 결과는 32개 스레드와 transparent huge pages를 사용합니다. 시작 시간을 제외한 해싱 시간을 측정합니다. 다른 행은 각자의 측정 조건을 유지합니다.
+
+[Blocknet 채굴 하드웨어 가이드](/ko/blog/blocknet-mining-hardware-hashrate/) · [Mac 가이드](/ko/blog/mine-blocknet-on-mac/)
 
 ## Blocknet CPU 채굴은 어떻게 시작합니까?
 

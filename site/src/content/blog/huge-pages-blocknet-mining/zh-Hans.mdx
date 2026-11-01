@@ -11,7 +11,7 @@ faq:
     a: 'seine 的默认页面模式先使用预留的 2 MiB 大页池，然后使用透明大页。要使用 1 GiB 大页，请为每个线程预留两个，最好在启动时用 hugepagesz=1G hugepages=N 预留，并用 --cpu-page-mode large-1g 启动 seine。该模式适用于 x86_64 Linux 和 WSL，在 2 MiB 大页的基础上再提升约 2%。'
   - q: '如何在 Windows 上为 seine 启用大页面？'
     a: '在 secpol.msc 的“本地策略”和“用户权限分配”中，把“锁定内存页”（Lock pages in memory）权限授予你的 Windows 账户，然后注销并重新登录。seine 启动时会为自己启用该权限，并用大页面分配每个线程的 2 GiB 区域。家庭版可用 ntrights 等工具授予该权限。'
-sourceHash: 1d106194ae48
+sourceHash: '56854c537c73'
 translation: draft
 ---
 
@@ -38,8 +38,6 @@ Blocknet 的工作量证明让这种遍历变得频繁。每次哈希都会用 1
 ## 使用大页后挖矿能快多少？
 
 seine 的[大页指南](https://github.com/zpalmtree/seine/blob/master/docs/guides/linux-hugepages.md)称它是 Linux 上 CPU 挖矿最重要的单项调优设置。在验证机上，预留的 2 MiB 大页带来约 **4–6%** 的提升，1 GiB 大页再多约 **2%**。指南还指出，当运行的线程很多时，大页的覆盖程度通常比指令集调优更重要。
-
-seine [性能图表](/zh-hans/#performance)中的先前 EPYC 9R45 的结果是在显式 2 MiB 大页下测得的。AMD EPYC Zen 5（EPYC 9R45）在 32 个线程下跑出的 49.4 H/s 测于 2026 年 10 月，当时预留了 34,407 个大页，与下表中 32 线程那一行的数字相同。[挖矿硬件指南](/zh-hans/blog/blocknet-mining-hardware-hashrate/)列出了各代硬件的完整结果。
 
 即使没有预留，seine 在 Linux 上也会向内核请求透明大页。预留的大页池效果更好，因为这些页面是事先留出的，无论内存碎片化到什么程度，每个线程都能拿到。
 

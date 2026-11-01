@@ -2,7 +2,7 @@
 title: 'Blocknet minen met een NVIDIA-GPU'
 description: 'Mine Blocknet met een NVIDIA-GPU en seine. Stel Windows of Linux in, gebruik CPU en GPU, controleer hashrates en verhelp problemen bij het opstarten.'
 tags: ['Mininghandleiding', 'NVIDIA', 'GPU']
-sourceHash: 6a693c616f37
+sourceHash: '035e97230185'
 translation: draft
 faq:
   - q: 'Kan seine de CPU en NVIDIA-GPU tegelijk gebruiken?'
@@ -86,14 +86,11 @@ De eerste start bereidt de GPU-kernels voor en stemt ze af. seine slaat de resul
 
 ## Hoe snel was de RTX 5090 in onze test?
 
-We testten op 25 oktober 2026 met Windows 11, een NVIDIA GeForce RTX 5090, een AMD Ryzen 9 9950X3D, 125,4 GiB bruikbaar RAM, seine v0.2.26 en NVIDIA-driver `610.88`. We voerden drie afwisselende paren uit met `--bench-kind backend`. Elke run bestond uit één opwarmronde van 20 seconden en drie gemeten rondes van 20 seconden, met 20 seconden tussen de runs. De instellingen voor kernel, registermaximum, lanes en threads waren automatisch.
+Gemeten op 31 oktober 2026: alleen RTX 5090, native Windows 11, driver 610.88, openbare ontwikkelbuild. De stabiele hashrate is na aftrek van de minervergoeding; CPU-werk is niet meegerekend.
 
 | Modus | Gemiddelde H/s |
 |---|---|
-| Alleen RTX 5090 | 7,3 |
-| RTX 5090 + Ryzen 9 9950X3D | 12,9 |
-
-De tabel toont het gemiddelde van drie runs per modus op deze desktop, terwijl de bestaande apps open bleven. Beide modi gebruikten GPU `0` en dezelfde NVIDIA-autotunecache. Dit zijn lokale benchmarkhashrates; geaccepteerde shares bevestigen dat de pool het werk bijschrijft. De [meetnotities](https://github.com/zpalmtree/seine/blob/master/site/editorial/batches/2026-10-nvidia-guide/research.md) bevatten de instellingen en afzonderlijke resultaten.
+| Alleen RTX 5090 | 13,8 |
 
 ## Wat moet je controleren als een NVIDIA-rij ontbreekt?
 

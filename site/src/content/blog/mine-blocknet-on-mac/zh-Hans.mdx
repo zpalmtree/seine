@@ -11,8 +11,8 @@ faq:
     a: '每个挖矿线程都要处理一块 2 GiB 的内存，所以每个线程大约按 2 GB 计算。16 GB 的 Mac 最多可容纳七个线程，32 GB 最多 15 个，64 GB 最多 31 个。seine 会计算空闲内存，并让线程数与你的核心数相匹配。'
   - q: '可以在 Intel Mac 上挖 Blocknet 吗？'
     a: '可以。seine 为 Intel Mac 单独发布了一个压缩包 seine-macos-x86_64.tar.gz，步骤与 Apple 芯片相同。下载后在终端中解压，运行 ./seine，并粘贴你的 Blocknet 地址或 @name。seine 会根据内存确定线程数，并默认在 bntpool.com 上开始挖矿。'
-sourceHash: '9338855a2863'
-translation: reviewed
+sourceHash: '33a60ad4df0c'
+translation: draft
 ---
 
 ## 可以在 Mac 上挖 Blocknet 吗？
@@ -91,8 +91,6 @@ Apple 芯片围绕统一内存构建，[Apple 的描述](https://www.apple.com/n
 |---|---|---|
 | 最大吞吐量 | 16，`auto` 调度 | 30.94 H/s |
 | 均衡（seine 在这台 Mac 上的默认上限） | 14，`pcore-only` 调度 | 29.26 H/s |
-
-作为参考，30.9 H/s 的结果高于 seine [性能表](https://github.com/zpalmtree/seine/blob/master/docs/PERFORMANCE.md)中所有 Arm 服务器和 Intel Xeon 的结果，只有 AMD EPYC Zen 5 和 Zen 4 服务器测得更高。[Blocknet 挖矿硬件指南](/zh-hans/blog/blocknet-mining-hardware-hashrate/)对比了各代硬件的最佳结果，完整的调优说明见 [Apple 芯片指南](https://github.com/zpalmtree/seine/blob/master/docs/guides/apple-silicon.md)。
 
 ## 你的 Mac 能运行多少个线程？
 

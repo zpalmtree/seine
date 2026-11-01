@@ -11,7 +11,7 @@ faq:
     a: 'O modo de página padrão do seine usa o pool reservado de 2 MiB e, depois, transparent huge pages. Para usar páginas de 1 GiB, reserve duas por thread, de preferência na inicialização com hugepagesz=1G hugepages=N, e inicie o seine com --cpu-page-mode large-1g. Esse modo funciona no Linux x86_64 e no WSL e acrescenta cerca de 2% em relação às páginas de 2 MiB.'
   - q: 'Como ativo large pages para o seine no Windows?'
     a: 'Dê à sua conta do Windows o direito Bloquear páginas na memória (Lock pages in memory) no secpol.msc, em Políticas Locais e Atribuição de Direitos de Usuário, e depois saia e entre de novo na conta. O seine ativa esse direito para si mesmo ao iniciar e aloca a arena de 2 GiB de cada thread com large pages. Nas edições Home, conceda o direito com uma ferramenta como o ntrights.'
-sourceHash: 1d106194ae48
+sourceHash: '56854c537c73'
 translation: draft
 ---
 
@@ -38,8 +38,6 @@ Com huge pages, uma entrada da TLB cobre 512 ou 262.144 vezes mais memória, ent
 ## Quanto mais rápido fica a mineração com huge pages?
 
 O [guia de huge pages](https://github.com/zpalmtree/seine/blob/master/docs/guides/linux-hugepages.md) do seine diz que elas são o ajuste que mais rende na mineração por CPU no Linux. No host de validação, páginas reservadas de 2 MiB acrescentaram cerca de **4–6%**, e páginas de 1 GiB acrescentaram mais uns **2%**. O guia também observa que, com muitas threads rodando, a cobertura por huge pages costuma pesar mais do que o ajuste para o conjunto de instruções.
-
-Os resultados anteriores do EPYC 9R45 no [gráfico de desempenho](/pt-br/#performance) do seine foram medidos com huge pages explícitas de 2 MiB. Os 49,4 H/s de um AMD EPYC Zen 5 (EPYC 9R45) com 32 threads, medidos em outubro de 2026, rodaram com 34.407 páginas reservadas, o mesmo valor da linha de 32 threads da tabela abaixo. O [guia de hardware para mineração](/pt-br/blog/blocknet-mining-hardware-hashrate/) traz os resultados completos por geração.
 
 Mesmo sem reserva, o seine pede transparent huge pages ao kernel no Linux. Um pool reservado vai além porque as páginas são separadas de antemão, então todas as threads as recebem por mais fragmentada que a memória esteja.
 

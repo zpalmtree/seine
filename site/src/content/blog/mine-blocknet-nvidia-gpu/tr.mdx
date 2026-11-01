@@ -2,7 +2,7 @@
 title: 'NVIDIA GPU ile Blocknet madenciliği nasıl yapılır?'
 description: 'seine ile NVIDIA GPU''da Blocknet kazın. Windows veya Linux''u kurun, CPU ve GPU kullanın, cihaz hash hızlarını kontrol edin ve başlangıç sorunlarını çözün.'
 tags: ['Madencilik rehberi', 'NVIDIA', 'GPU']
-sourceHash: 6a693c616f37
+sourceHash: '035e97230185'
 translation: draft
 faq:
   - q: 'seine CPU ve NVIDIA GPU''yu birlikte kullanabilir mi?'
@@ -86,14 +86,11 @@ Bu görüntü, RTX 5090 ile gerçek bir havuz oturumunu gösterir. Aşağıdaki 
 
 ## Testimizde RTX 5090 ne kadar hızlıydı?
 
-Testleri 25 Ekim 2026'da Windows 11, NVIDIA GeForce RTX 5090, AMD Ryzen 9 9950X3D, 125,4 GiB kullanılabilir RAM, seine v0.2.26 ve NVIDIA sürücüsü `610.88` ile yaptık. `--bench-kind backend` kullanarak sırayla değişen üç test çifti çalıştırdık. Her çalıştırmada bir 20 saniyelik ısınma ve üç 20 saniyelik ölçüm turu kullandık; çalıştırmalar arasında 20 saniye bekledik. Kernel, yazmaç sınırı, lane ve iş parçacığı ayarları otomatikti.
+31 Ekim 2026 ölçümü: yalnızca RTX 5090, yerel Windows 11, sürücü 610.88, herkese açık geliştirme derlemesi. Kararlı hash hızı madenci ücreti düşüldükten sonraki değerdir; CPU çalışması dahil değildir.
 
 | Mod | Ortalama H/s |
 |---|---|
-| Yalnızca RTX 5090 | 7,3 |
-| RTX 5090 + Ryzen 9 9950X3D | 12,9 |
-
-Tablo, mevcut uygulamalar açık bırakılarak bu masaüstünde her mod için yapılan üç çalıştırmanın ortalamasını gösterir. Her iki mod da GPU `0` ve aynı NVIDIA otomatik ayarlama önbelleğini kullandı. Bunlar yerel performans testi hash hızlarıdır; kabul edilen paylar, işin havuz tarafından hesaba yazıldığını doğrular. [Ölçüm notları](https://github.com/zpalmtree/seine/blob/master/site/editorial/batches/2026-10-nvidia-guide/research.md) ayarları ve tek tek sonuçları kaydeder.
+| Yalnızca RTX 5090 | 13,8 |
 
 ## Bir NVIDIA satırı eksikse neyi kontrol etmelisiniz?
 

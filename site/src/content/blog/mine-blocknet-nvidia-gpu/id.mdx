@@ -2,7 +2,7 @@
 title: 'Cara menambang Blocknet dengan GPU NVIDIA'
 description: 'Tambang Blocknet dengan GPU NVIDIA memakai seine. Siapkan Windows atau Linux, gunakan CPU dan GPU, periksa hashrate, dan atasi masalah saat memulai.'
 tags: ['Panduan penambangan', 'NVIDIA', 'GPU']
-sourceHash: 6a693c616f37
+sourceHash: '035e97230185'
 translation: draft
 faq:
   - q: 'Bisakah seine menggunakan CPU dan GPU NVIDIA bersamaan?'
@@ -86,14 +86,11 @@ Peluncuran pertama menyiapkan dan menyetel kernel GPU. seine menyimpan hasil pen
 
 ## Seberapa cepat RTX 5090 dalam pengujian kami?
 
-Kami menguji pada 25 Oktober 2026 menggunakan Windows 11, NVIDIA GeForce RTX 5090, AMD Ryzen 9 9950X3D, RAM yang dapat digunakan sebesar 125,4 GiB, seine v0.2.26, dan driver NVIDIA `610.88`. Kami menjalankan tiga pasang pengujian berselang-seling dengan `--bench-kind backend`. Setiap pengujian menggunakan satu pemanasan 20 detik dan tiga putaran pengukuran masing-masing 20 detik, dengan jeda 20 detik antar-pengujian. Pengaturan kernel, batas register, lane, dan thread berlangsung otomatis.
+Diukur pada 31 Oktober 2026: hanya RTX 5090, Windows 11 native, driver 610.88, build pengembangan publik. Hashrate stabil sudah memperhitungkan biaya miner; kerja CPU tidak disertakan.
 
 | Mode | Rata-rata H/s |
 |---|---|
-| RTX 5090 saja | 7,3 |
-| RTX 5090 + Ryzen 9 9950X3D | 12,9 |
-
-Tabel menampilkan rata-rata tiga pengujian per mode pada desktop ini dengan aplikasi yang sebelumnya terbuka tetap berjalan. Kedua mode menggunakan GPU `0` dan cache penyetelan otomatis NVIDIA yang sama. Angka ini merupakan hashrate benchmark lokal; share yang diterima mengonfirmasi kredit dari pool. [Catatan pengukuran](https://github.com/zpalmtree/seine/blob/master/site/editorial/batches/2026-10-nvidia-guide/research.md) mencatat pengaturan dan hasil setiap pengujian.
+| RTX 5090 saja | 13,8 |
 
 ## Apa yang perlu diperiksa jika baris NVIDIA tidak muncul?
 
