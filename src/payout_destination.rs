@@ -25,6 +25,18 @@ pub fn account_id(address: &str, memo: Option<&str>) -> String {
     }
 }
 
+pub fn format_amount(atomic: u64) -> String {
+    let whole = atomic / 100_000_000;
+    let fraction = atomic % 100_000_000;
+    if fraction == 0 {
+        whole.to_string()
+    } else {
+        format!("{whole}.{fraction:08}")
+            .trim_end_matches('0')
+            .to_string()
+    }
+}
+
 pub fn known_exchange(address: &str) -> Option<&'static str> {
     match address.trim() {
         "ZJZqGfDPCVg78CRH5Z33CtHafg911Dp5Bauf1Dnxg5jgXx7Whqsvqka96FCV8W6QZXNDKzJefkFU6bwDEGBewqPrTWjij" => Some("SafeTrade"),

@@ -963,7 +963,7 @@ impl Config {
             }
         }
         let user_config_path = cli.data_dir.join(DEFAULT_USER_CONFIG_FILE);
-        let user_cfg = read_user_config(&user_config_path)?;
+        let mut user_cfg = read_user_config(&user_config_path)?;
         let user_config_exists = user_cfg.is_some();
         let mut dev_fee_pool_worker = user_cfg
             .as_ref()
@@ -1002,15 +1002,13 @@ impl Config {
                 cli.pool_worker = Some(generate_default_pool_worker());
             }
         }
-        if !cli.bench
-            && cli.payout_memo.is_none()
-            && cli
-                .mining_address
-                .as_deref()
-                .and_then(crate::payout_destination::known_exchange)
-                .is_some()
-        {
-            bail!("this shared exchange address requires a memo; use --payout-memo with the memo from your deposit page");
+        if resolve_required_payout_memo(
+            &mut cli,
+            io::stdin().is_terminal() && io::stderr().is_terminal(),
+            &mut io::stdin().lock(),
+            &mut io::stderr(),
+        )? {
+            persist_prompted_payout_memo(&cli, user_cfg.as_mut(), &user_config_path)?;
         }
         if dev_fee_pool_worker.is_none() {
             let generated = generate_default_dev_fee_pool_worker();
@@ -2627,6 +2625,65 @@ fn should_validate_pool_mode_inputs(cli: &Cli) -> bool {
     !cli.bench && cli.mode.unwrap_or(MiningMode::Pool) == MiningMode::Pool
 }
 
+fn resolve_required_payout_memo(
+    cli: &mut Cli,
+    interactive: bool,
+    input: &mut impl io::BufRead,
+    output: &mut impl Write,
+) -> Result<bool> {
+    if cli.bench || cli.payout_memo.is_some() {
+        return Ok(false);
+    }
+    let Some(exchange) = cli
+        .mining_address
+        .as_deref()
+        .and_then(crate::payout_destination::known_exchange)
+    else {
+        return Ok(false);
+    };
+    if cli.mode.unwrap_or(MiningMode::Pool) != MiningMode::Pool || cli.proxy_listen.is_some() {
+        bail!(
+            "this shared exchange address requires memo payouts through a direct pool connection"
+        );
+    }
+    if !interactive || cli.service || cli.no_payout_memo {
+        bail!("this shared exchange address requires a memo; use --payout-memo with the memo from your deposit page");
+    }
+    writeln!(output, "{exchange} requires a deposit memo.")?;
+    loop {
+        write!(output, "Enter your deposit memo: ")?;
+        output.flush()?;
+        let mut memo = String::new();
+        if input.read_line(&mut memo)? == 0 {
+            bail!("a deposit memo is required");
+        }
+        let memo = memo.trim_end_matches(['\r', '\n']).to_string();
+        match crate::payout_destination::validate_memo(&memo) {
+            Ok(()) => {
+                cli.payout_memo = Some(memo);
+                validate_payout_memo_config(cli)?;
+                return Ok(true);
+            }
+            Err(error) => writeln!(output, "{error}")?,
+        }
+    }
+}
+
+fn persist_prompted_payout_memo(
+    cli: &Cli,
+    saved: Option<&mut UserConfig>,
+    path: &Path,
+) -> Result<()> {
+    // A command-line destination override must not change the saved destination.
+    if let Some(saved) = saved {
+        if saved.address.as_deref().map(str::trim) == cli.mining_address.as_deref().map(str::trim) {
+            saved.payout_memo = cli.payout_memo.clone();
+            write_user_config(path, saved)?;
+        }
+    }
+    Ok(())
+}
+
 fn resolve_first_run_pool_inputs(cli: &mut Cli, user_config_path: &Path) -> Result<()> {
     let mode = cli.mode.unwrap_or(MiningMode::Pool);
     cli.mode = Some(mode);
@@ -2655,34 +2712,7 @@ fn resolve_first_run_pool_inputs(cli: &mut Cli, user_config_path: &Path) -> Resu
         cli.mining_address = Some(address);
     }
 
-    if cli.payout_memo.is_none()
-        && cli
-            .mining_address
-            .as_deref()
-            .and_then(crate::payout_destination::known_exchange)
-            .is_some()
-    {
-        if !interactive {
-            bail!("this shared exchange address requires --payout-memo");
-        }
-        eprintln!("This exchange uses a shared address. A deposit memo is required.");
-        loop {
-            eprint!("Enter your deposit memo: ");
-            io::stderr().flush()?;
-            let mut memo = String::new();
-            if io::stdin().read_line(&mut memo)? == 0 {
-                bail!("a deposit memo is required");
-            }
-            let memo = memo.trim_end_matches(['\r', '\n']).to_string();
-            match crate::payout_destination::validate_memo(&memo) {
-                Ok(()) => {
-                    cli.payout_memo = Some(memo);
-                    break;
-                }
-                Err(error) => eprintln!("{error}"),
-            }
-        }
-    }
+    resolve_required_payout_memo(cli, interactive, &mut io::stdin().lock(), &mut io::stderr())?;
     if cli
         .pool_url
         .as_ref()
@@ -3834,6 +3864,118 @@ mod tests {
         cli.mode = Some(MiningMode::Daemon);
         assert!(validate_payout_memo_config(&cli).is_err());
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    const TEST_EXCHANGE_ADDRESS: &str = "ZJZqGfDPCVg78CRH5Z33CtHafg911Dp5Bauf1Dnxg5jgXx7Whqsvqka96FCV8W6QZXNDKzJefkFU6bwDEGBewqPrTWjij";
+
+    #[test]
+    fn existing_exchange_prompt_preserves_memo_and_saved_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let mut saved = UserConfig {
+            address: Some(TEST_EXCHANGE_ADDRESS.into()),
+            pool_worker: Some("keep-worker".into()),
+            dev_fee_pool_worker: Some("keep-dev-worker".into()),
+            ..Default::default()
+        };
+        let mut cli = sample_cli();
+        cli.mode = Some(MiningMode::Pool);
+        apply_user_config_defaults(&mut cli, Some(&saved));
+        let mut output = Vec::new();
+        assert!(resolve_required_payout_memo(
+            &mut cli,
+            true,
+            &mut &b"\n ID0001 \r\n"[..],
+            &mut output
+        )
+        .unwrap());
+        assert_eq!(cli.payout_memo.as_deref(), Some(" ID0001 "));
+        persist_prompted_payout_memo(&cli, Some(&mut saved), &path).unwrap();
+        let persisted = read_user_config(&path).unwrap().unwrap();
+        assert_eq!(persisted.payout_memo, cli.payout_memo);
+        assert_eq!(persisted.pool_worker.as_deref(), Some("keep-worker"));
+        assert_eq!(
+            persisted.dev_fee_pool_worker.as_deref(),
+            Some("keep-dev-worker")
+        );
+        assert!(
+            !resolve_required_payout_memo(&mut cli, true, &mut &b""[..], &mut Vec::new()).unwrap()
+        );
+        // An override cannot pair the new memo with the old saved address.
+        saved.address = Some(crate::dev_fee::DEV_ADDRESS.into());
+        saved.payout_memo = None;
+        persist_prompted_payout_memo(&cli, Some(&mut saved), &path).unwrap();
+        assert_eq!(saved.payout_memo, None);
+    }
+
+    #[test]
+    fn missing_memo_never_prompts_services_or_ordinary_wallets() {
+        for (interactive, service, no_memo, mode, should_error) in [
+            (false, false, false, MiningMode::Pool, true),
+            (true, true, false, MiningMode::Pool, true),
+            (true, false, true, MiningMode::Pool, true),
+            (true, false, false, MiningMode::Daemon, true),
+        ] {
+            let mut cli = sample_cli();
+            cli.mode = Some(mode);
+            cli.service = service;
+            cli.no_payout_memo = no_memo;
+            cli.mining_address = Some(TEST_EXCHANGE_ADDRESS.into());
+            let mut output = Vec::new();
+            assert_eq!(
+                resolve_required_payout_memo(
+                    &mut cli,
+                    interactive,
+                    &mut &b"DEMO001\n"[..],
+                    &mut output
+                )
+                .is_err(),
+                should_error
+            );
+            assert!(output.is_empty());
+        }
+        let mut cli = sample_cli();
+        cli.mode = Some(MiningMode::Pool);
+        cli.mining_address = Some(crate::dev_fee::DEV_ADDRESS.into());
+        let mut output = Vec::new();
+        assert!(!resolve_required_payout_memo(&mut cli, true, &mut &b""[..], &mut output).unwrap());
+        assert!(output.is_empty());
+        cli.mining_address = Some(TEST_EXCHANGE_ADDRESS.into());
+        assert!(resolve_required_payout_memo(&mut cli, true, &mut &b""[..], &mut output).is_err());
+        assert!(cli.payout_memo.is_none());
+    }
+
+    #[test]
+    #[ignore = "exports the actual missing-memo prompt with synthetic input"]
+    fn export_memo_prompt_showcase() {
+        let mut captures = Vec::new();
+        for (title, input, interactive) in [
+            ("Saved exchange address / missing memo", "", true),
+            ("Invalid memo / try again", "\n", true),
+            ("Unattended / memo required", "", false),
+        ] {
+            let mut cli = sample_cli();
+            cli.mode = Some(MiningMode::Pool);
+            cli.mining_address = Some(TEST_EXCHANGE_ADDRESS.into());
+            let mut output = Vec::new();
+            let result = resolve_required_payout_memo(
+                &mut cli,
+                interactive,
+                &mut input.as_bytes(),
+                &mut output,
+            );
+            if !interactive {
+                write!(&mut output, "{}", result.unwrap_err()).unwrap();
+            }
+            captures.push((title, String::from_utf8(output).unwrap()));
+        }
+        let path = Path::new("docs/showcases/exchange-payouts");
+        fs::create_dir_all(path).unwrap();
+        fs::write(
+            path.join("prompts.json"),
+            serde_json::to_string(&captures).unwrap(),
+        )
+        .unwrap();
     }
 
     fn sample_cli() -> Cli {

@@ -315,6 +315,17 @@ pub(super) fn set_tui_pending_nvidia(tui: &mut Option<TuiDisplay>, count: u64) {
     }
 }
 
+pub(super) fn set_tui_pool_payout_minimum(tui: &mut Option<TuiDisplay>, minimum: Option<u64>) {
+    if let Some(display) = tui.as_mut() {
+        if let Ok(mut s) = display.state.lock() {
+            s.pool_payout_minimum = minimum
+                .filter(|amount| *amount > 0)
+                .map(|amount| format!("{} BNT", crate::payout_destination::format_amount(amount)));
+        }
+        display.request_render();
+    }
+}
+
 pub(super) fn set_tui_pool_balance_overview(
     tui: &mut Option<TuiDisplay>,
     address: &str,

@@ -28,12 +28,13 @@ own deposit memo with a pool that supports memo payouts:
 ```
 
 Seine checks pool support before mining and reports the pool's memo payout
-minimum. Known shared addresses require a memo; first-run setup prompts for one
-when needed. Unknown or rotated addresses can use `--payout-memo` too. Personal
+minimum in the TUI. Known shared addresses require a memo; interactive startup
+prompts for a missing memo, including for saved addresses. Unknown or rotated addresses can use `--payout-memo` too. Personal
 wallets and ordinary Blocknet IDs need no new flag. Memo mining requires the full
 address and is not supported in daemon mode or through Seine farm proxies.
 
-First-run setup saves the memo with the address, preserving case and leading zeros. When
+Setup saves the memo with the address, preserving case and leading zeros. A memo
+entered for a command-line address override is used only for that run. When
 changing a saved exchange address, explicitly provide the new memo, or use
 `--no-payout-memo` to switch to a personal wallet. A changed address or memo has a
 separate pool balance. Command-line overrides apply to the current run; edit

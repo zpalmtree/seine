@@ -433,3 +433,118 @@ fn capture_log(state: &TuiStateInner, width: u16, height: u16) -> String {
     html.push_str("</pre>");
     html
 }
+
+#[test]
+#[ignore = "writes exchange payout showcase from the real terminal renderer"]
+fn export_exchange_payout_showcase() {
+    let path = std::path::Path::new("docs/showcases/exchange-payouts");
+    std::fs::create_dir_all(path).unwrap();
+    let mut html = String::from(
+        r#"<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Seine exchange payouts</title><style>body{margin:24px;background:#101318;color:#b4bec8;font:14px system-ui}h1{font-size:24px}h2{font-size:17px}pre{background:#080b10;padding:16px;font:13px/1.35 monospace;width:max-content;max-width:100%;overflow:auto;box-sizing:border-box}section{margin:28px 0}.mobile{display:none}.prompt{white-space:pre-wrap;max-width:100%;width:960px}code{overflow-wrap:anywhere}@media(max-width:700px){body{margin:12px}.desktop{display:none}.mobile{display:block}pre{font-size:12px;padding:8px}}</style><h1>Seine exchange payouts</h1><p>Actual Seine terminal components with demo data. The pool supplies the payout minimum.</p>"#,
+    );
+    for (slug, title, minimum, status) in [
+        (
+            "mining",
+            "Mining / 10 BNT minimum",
+            Some("10 BNT"),
+            "hashing",
+        ),
+        (
+            "loading",
+            "Connecting / waiting for pool minimum",
+            Some("awaiting pool"),
+            "pool-connected",
+        ),
+        (
+            "empty",
+            "New account / no rewards yet",
+            Some("10 BNT"),
+            "hashing",
+        ),
+        (
+            "reconnect",
+            "Reconnecting / last confirmed minimum",
+            Some("10 BNT"),
+            "pool-disconnected",
+        ),
+        (
+            "rejected",
+            "Memo unsupported / mining stopped",
+            Some("awaiting pool"),
+            "pool-login-rejected",
+        ),
+        (
+            "regular",
+            "Personal wallet / pool minimum",
+            Some("0.1 BNT"),
+            "hashing",
+        ),
+        (
+            "legacy",
+            "Pool without a minimum in its reply",
+            None,
+            "hashing",
+        ),
+    ] {
+        let mut state = TuiStateInner::new();
+        state.mode = "pool".into();
+        state.version = env!("CARGO_PKG_VERSION").into();
+        state.state = status.into();
+        state.threads = 2;
+        state.pool_worker = "demo-worker".into();
+        state.api_url = "stratum+tcp://pool.example:3333".into();
+        state.backends_desc = "cpu".into();
+        state.round_hashrate = "2.500 H/s".into();
+        state.avg_hashrate = "2.400 H/s".into();
+        state.pool_address = "demo-deposit-address".into();
+        state.pool_pending = "2.50 BNT".into();
+        state.pool_paid = "10.00 BNT".into();
+        state.pool_payout_minimum = minimum.map(str::to_string);
+        if slug == "empty" {
+            state.pool_pending = "0.00 BNT".into();
+            state.pool_paid = "0.00 BNT".into();
+        }
+        if matches!(slug, "loading" | "rejected") {
+            state.pool_pending = "---".into();
+            state.pool_paid = "---".into();
+            state.round_hashrate = "0.000 H/s".into();
+            state.avg_hashrate = "0.000 H/s".into();
+        }
+        if slug == "rejected" {
+            state.push_log(LogEntry {
+                elapsed_secs: 0.0,
+                level: LogLevel::Error,
+                tag: "AUTH".into(),
+                message: "pool did not acknowledge the payout memo; no shares will be submitted"
+                    .into(),
+            });
+        }
+        html.push_str(&format!("<section id='{slug}'><h2>{title}</h2><div class='desktop'>{}</div><div class='mobile'>{}</div></section>", capture(&state, 120, 30), capture(&state, 40, 18)));
+    }
+    let prompts: Vec<(String, String)> =
+        serde_json::from_str(&std::fs::read_to_string(path.join("prompts.json")).unwrap()).unwrap();
+    for (index, (title, text)) in prompts.iter().enumerate() {
+        html.push_str(&format!(
+            "<section id='prompt-{index}'><h2>{}</h2><pre class='prompt'>{}</pre></section>",
+            escape(title),
+            escape(text)
+        ));
+    }
+    html.push_str("<p>Captured from these source revisions:</p>");
+    for source in [
+        "src/miner/tui.rs",
+        "src/config.rs",
+        "src/miner/mining_pool.rs",
+    ] {
+        let revision = std::process::Command::new("git")
+            .args(["hash-object", source])
+            .output()
+            .unwrap();
+        html.push_str(&format!(
+            "<p>{source}: <code>{}</code></p>",
+            String::from_utf8_lossy(&revision.stdout).trim()
+        ));
+    }
+    html.push_str("</html>");
+    std::fs::write(path.join("index.html"), html).unwrap();
+}

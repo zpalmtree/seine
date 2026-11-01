@@ -26,8 +26,8 @@ use super::block_latency;
 use super::mining::MiningRuntimeBackends;
 use super::mining_tui::{
     init_tui_display, render_tui_now, set_tui_dev_fee_active, set_tui_pending_nvidia,
-    set_tui_pool_balance_overview, set_tui_state_label, set_tui_wallet_overview, update_tui,
-    RoundUiView, TuiDisplay,
+    set_tui_pool_balance_overview, set_tui_pool_payout_minimum, set_tui_state_label,
+    set_tui_wallet_overview, update_tui, RoundUiView, TuiDisplay,
 };
 use super::runtime::{maybe_print_stats, seed_backend_weights, work_distribution_weights};
 use super::scheduler::NonceReservation;
@@ -813,6 +813,11 @@ pub(super) fn run_pool_mining_loop(
     let mut work_id_cursor = 1u64;
     let mut epoch = 0u64;
     let mut last_hash_poll = Instant::now();
+    if let Some(state) = tui_state.as_ref() {
+        if let Ok(mut state) = state.lock() {
+            state.pool_payout_minimum = cfg.payout_memo.as_ref().map(|_| "awaiting pool".into());
+        }
+    }
     let mut tui = init_tui_display(tui_state, Arc::clone(&shutdown), Arc::clone(&history));
     let mut dev_fee_tracker = DevFeeTracker::new();
     let mut dev_fee_round_started = Instant::now();
@@ -894,6 +899,7 @@ pub(super) fn run_pool_mining_loop(
                                 &mut dev_session.resume_job,
                                 &mut dev_session.recent_submit_lookup,
                                 &stats,
+                                &mut tui,
                             );
                         }
                     } else {
@@ -907,6 +913,7 @@ pub(super) fn run_pool_mining_loop(
                                 &mut user_session.resume_job,
                                 &mut user_session.recent_submit_lookup,
                                 &stats,
+                                &mut tui,
                             );
                         }
                     }
@@ -1224,6 +1231,7 @@ pub(super) fn run_pool_mining_loop(
                     &mut user_session.resume_job,
                     &mut user_session.recent_submit_lookup,
                     &stats,
+                    &mut tui,
                 );
             }
         }
@@ -1257,6 +1265,7 @@ pub(super) fn run_pool_mining_loop(
                     &mut dev_session.resume_job,
                     &mut dev_session.recent_submit_lookup,
                     &stats,
+                    &mut tui,
                 );
             }
         }
@@ -1621,8 +1630,15 @@ fn handle_active_pool_event(
         }
         PoolEvent::LoginAccepted(ack) => {
             if mode.is_user() {
+                set_tui_pool_payout_minimum(tui, ack.min_payout_atomic);
                 if let Some(minimum) = ack.min_payout_atomic {
-                    info("PAYOUT", format!("Memo accepted. Minimum payout: {} BNT; larger payouts reduce small exchange deposits.", minimum as f64 / 100_000_000.0));
+                    info(
+                        "PAYOUT",
+                        format!(
+                            "Minimum payout: {} BNT.",
+                            crate::payout_destination::format_amount(minimum)
+                        ),
+                    );
                 }
                 let required = if ack.required_capabilities.is_empty() {
                     "none".to_string()
@@ -1897,6 +1913,7 @@ fn handle_inactive_pool_event(
     inactive_job: &mut Option<ActivePoolJob>,
     recent_submit_lookup: &mut RecentPendingSubmitLookup,
     stats: &Stats,
+    tui: &mut Option<TuiDisplay>,
 ) {
     match event {
         PoolEvent::Connected => {
@@ -1915,8 +1932,15 @@ fn handle_inactive_pool_event(
         }
         PoolEvent::LoginAccepted(ack) => {
             if mode.is_user() {
+                set_tui_pool_payout_minimum(tui, ack.min_payout_atomic);
                 if let Some(minimum) = ack.min_payout_atomic {
-                    info("PAYOUT", format!("Memo accepted. Minimum payout: {} BNT; larger payouts reduce small exchange deposits.", minimum as f64 / 100_000_000.0));
+                    info(
+                        "PAYOUT",
+                        format!(
+                            "Minimum payout: {} BNT.",
+                            crate::payout_destination::format_amount(minimum)
+                        ),
+                    );
                 }
                 let required = if ack.required_capabilities.is_empty() {
                     "none".to_string()
@@ -3407,6 +3431,7 @@ mod tests {
             &mut parked,
             &mut lookup,
             &stats,
+            &mut None,
         );
         let kept = parked.as_ref().expect("rebind must keep the parked job");
         assert_eq!(kept.job.job_id, "job-2");
@@ -3427,6 +3452,7 @@ mod tests {
             &mut parked,
             &mut lookup,
             &stats,
+            &mut None,
         );
         assert!(parked.is_none(), "new block must discard the parked job");
         shutdown.store(true, std::sync::atomic::Ordering::Relaxed);

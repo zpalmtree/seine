@@ -109,6 +109,7 @@ pub struct TuiStateInner {
     pub pool_address: String,
     pub pool_pending: String,
     pub pool_paid: String,
+    pub pool_payout_minimum: Option<String>,
     pub wallet_visible: bool,
     pub wallet_address: String,
     pub wallet_pending: String,
@@ -164,6 +165,7 @@ impl TuiStateInner {
             pool_address: "---".to_string(),
             pool_pending: "---".to_string(),
             pool_paid: "---".to_string(),
+            pool_payout_minimum: None,
             wallet_visible: false,
             wallet_address: "---".to_string(),
             wallet_pending: "---".to_string(),
@@ -493,6 +495,11 @@ fn draw_compact_dashboard(frame: &mut ratatui::Frame, area: Rect, state: &TuiSta
             state.height
         )),
     ];
+    if state.mode == "pool" {
+        if let Some(minimum) = &state.pool_payout_minimum {
+            lines.insert(4, Line::from(format!("Min payout: {minimum}")));
+        }
+    }
     if let Some(latest) = &state.update_available {
         lines.push(Line::from(Span::styled(
             format!("Update {latest} available"),
@@ -940,11 +947,12 @@ fn config_uses_two_columns(width: u16) -> bool {
 }
 
 fn wallet_panel_height(state: &TuiStateInner) -> u16 {
-    if state.mode == "pool" && state.wallet_visible {
+    let base = if state.mode == "pool" && state.wallet_visible {
         6
     } else {
         4
-    }
+    };
+    base + u16::from(state.mode == "pool" && state.pool_payout_minimum.is_some())
 }
 
 fn draw_config_runtime_panel(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
@@ -972,7 +980,7 @@ fn draw_config_wallet_panel(frame: &mut ratatui::Frame, area: Rect, state: &TuiS
     let inner_width = area.width.saturating_sub(2) as usize;
     let pool_address = compact_wallet_address(&state.pool_address);
     let wallet_address = compact_wallet_address(&state.wallet_address);
-    let (title, wallet_lines) = if state.mode == "pool" && state.wallet_visible {
+    let (title, mut wallet_lines) = if state.mode == "pool" && state.wallet_visible {
         (
             " BALANCES ",
             vec![
@@ -1023,6 +1031,11 @@ fn draw_config_wallet_panel(frame: &mut ratatui::Frame, area: Rect, state: &TuiS
             ],
         )
     };
+    if state.mode == "pool" {
+        if let Some(minimum) = &state.pool_payout_minimum {
+            wallet_lines.insert(2, kv_line("Min payout", minimum));
+        }
+    }
     let wallet_block = Block::default()
         .title(Span::styled(title, TITLE_STYLE))
         .borders(Borders::ALL)
@@ -1314,6 +1327,26 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    #[test]
+    fn payout_minimum_survives_full_and_compact_layouts() {
+        let mut state = TuiStateInner::new();
+        state.mode = "pool".into();
+        state.pool_payout_minimum = Some("10 BNT".into());
+        for wallet_visible in [false, true] {
+            state.wallet_visible = wallet_visible;
+            for (width, height) in [(160, 32), (120, 30), (80, 24), (40, 18), (40, 8)] {
+                let text = render_text(&state, width, height);
+                assert!(text.contains("Min payout"), "{width}x{height}: {text}");
+                assert!(text.contains("10 BNT"), "{width}x{height}: {text}");
+            }
+        }
+        state.pool_payout_minimum = None;
+        assert!(!render_text(&state, 120, 30).contains("Min payout"));
+        state.mode = "daemon".into();
+        state.pool_payout_minimum = Some("10 BNT".into());
+        assert!(!render_text(&state, 120, 30).contains("Min payout"));
     }
 
     #[test]
