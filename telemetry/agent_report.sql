@@ -3,32 +3,38 @@ SET LOCAL statement_timeout = '15s';
 SET LOCAL lock_timeout = '2s';
 SET LOCAL TIME ZONE 'America/New_York';
 
-WITH reports AS (
-    SELECT installation_id, received_at,
-           payload->>'miner_version' AS version,
-           payload #>> '{hardware,cpu_model}' AS cpu,
-           payload #>> '{hardware,os}' AS os,
-           coalesce(payload #>> '{diagnostics,reason}', 'periodic') = 'periodic' AS performance_window,
-           jsonb_build_object(
-               'os_version', payload #> '{hardware,os_version}',
-               'runtime_environment', payload #> '{hardware,runtime_environment}',
-               'memory_gib', payload #> '{hardware,memory_gib}',
-               'logical_cpus', payload #> '{hardware,logical_cpus}',
-               'physical_cores', payload #> '{hardware,physical_cores}',
-               'cpu_vendor', payload #> '{hardware,cpu_vendor}',
-               'cpu_family', payload #> '{hardware,cpu_family}',
-               'cpu_model_id', payload #> '{hardware,cpu_model_id}',
-               'build_target', payload->'build_target',
-               'build_features', payload->'build_features',
-               'build_commit', payload #> '{diagnostics,build_commit}',
-               'source_fingerprint', payload #> '{diagnostics,source_fingerprint}',
-               'mode', payload #> '{diagnostics,mode}',
-               'resources', NULLIF(payload #> '{hardware,resources}', 'null'::jsonb) - 'available_memory_gib'
-           ) AS context,
-           payload->'backends' AS backends
+WITH decoded AS MATERIALIZED (
+    SELECT installation_id, received_at, p.*
     FROM telemetry_reports
-    WHERE received_at >= now() - interval '7 days'
-      AND NOT (payload->>'debug_build')::boolean
+    CROSS JOIN LATERAL jsonb_to_record(payload) AS p(
+        debug_build boolean, miner_version text, hardware jsonb,
+        diagnostics jsonb, build_target text, build_features text, backends jsonb
+    )
+    WHERE received_at >= now() - interval '7 days' AND NOT p.debug_build
+), reports AS (
+    SELECT installation_id, received_at,
+           miner_version AS version,
+           hardware->>'cpu_model' AS cpu,
+           hardware->>'os' AS os,
+           coalesce(diagnostics->>'reason', 'periodic') = 'periodic' AS performance_window,
+           jsonb_build_object(
+               'os_version', hardware->'os_version',
+               'runtime_environment', hardware->'runtime_environment',
+               'memory_gib', hardware->'memory_gib',
+               'logical_cpus', hardware->'logical_cpus',
+               'physical_cores', hardware->'physical_cores',
+               'cpu_vendor', hardware->'cpu_vendor',
+               'cpu_family', hardware->'cpu_family',
+               'cpu_model_id', hardware->'cpu_model_id',
+               'build_target', to_jsonb(build_target),
+               'build_features', to_jsonb(build_features),
+               'build_commit', diagnostics->'build_commit',
+               'source_fingerprint', diagnostics->'source_fingerprint',
+               'mode', diagnostics->'mode',
+               'resources', NULLIF(hardware->'resources', 'null'::jsonb) - 'available_memory_gib'
+           ) AS context,
+           backends
+    FROM decoded
 ), latest AS (
     SELECT DISTINCT ON (installation_id) * FROM reports
     ORDER BY installation_id, received_at DESC

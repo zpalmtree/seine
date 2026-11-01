@@ -2,7 +2,7 @@
 use serde::{Deserialize, Serialize};
 pub mod tuning;
 
-pub const SCHEMA_VERSION: u32 = 12;
+pub const SCHEMA_VERSION: u32 = 13;
 pub const MAX_BODY_BYTES: usize = 32 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -73,6 +73,9 @@ pub enum FailureReason {
     NvrtcUnavailable,
     /// The pool refused the session at its connection limit (schema 12).
     PoolConnectionLimit,
+    BackendControlFailed,
+    BackendEnqueueTimedOut,
+    BackendExecutionTimedOut,
 }
 
 /// An observed session or OS shutdown request, not proof that cleanup finished or the cause
@@ -152,6 +155,8 @@ pub enum DiagnosticOperation {
     PoolWrite,
     PoolLogin,
     BackendStartup,
+    BackendCancel,
+    BackendFence,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -268,6 +273,21 @@ pub struct DiagnosticEvent {
 }
 
 impl DiagnosticEvent {
+    fn schema12_compatible(&self) -> bool {
+        self.source != "deps/tokio-1.49.0/src/sync/notify.rs"
+            && self.detail.as_ref().is_none_or(|d| {
+                !matches!(
+                    d.reason,
+                    FailureReason::BackendControlFailed
+                        | FailureReason::BackendEnqueueTimedOut
+                        | FailureReason::BackendExecutionTimedOut
+                ) && !matches!(
+                    d.operation,
+                    DiagnosticOperation::BackendCancel | DiagnosticOperation::BackendFence
+                )
+            })
+    }
+
     fn schema11_compatible(&self) -> bool {
         self.detail
             .as_ref()
@@ -349,6 +369,7 @@ pub const DEPENDENCY_SOURCES: &[&str] = &[
     "deps/cudarc-0.19.5/src/lib.rs",
     "deps/cudarc-0.19.5/src/driver/sys/mod.rs",
     "deps/cudarc-0.19.5/src/nvrtc/sys/mod.rs",
+    "deps/tokio-1.49.0/src/sync/notify.rs",
 ];
 
 pub fn valid_source(source: &str) -> bool {
@@ -591,6 +612,13 @@ impl Report {
                                 r.shutdown_request
                                     .is_none_or(ShutdownRequest::schema8_compatible)
                             })))
+                    && (self.schema_version >= 13
+                        || (d.events.iter().all(DiagnosticEvent::schema12_compatible)
+                            && d.previous_run.as_ref().is_none_or(|r| {
+                                r.recent_events
+                                    .iter()
+                                    .all(DiagnosticEvent::schema12_compatible)
+                            })))
                     && (self.schema_version >= 12
                         || (d.events.iter().all(DiagnosticEvent::schema11_compatible)
                             && d.previous_run.as_ref().is_none_or(|r| {
@@ -658,6 +686,49 @@ impl Report {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn control_details_and_notify_sources_require_schema13_in_current_and_previous_events() {
+        let base: Report =
+            serde_json::from_str(include_str!("../reliability-fixture.json")).unwrap();
+        let mut variants = Vec::new();
+        for operation in [
+            DiagnosticOperation::BackendCancel,
+            DiagnosticOperation::BackendFence,
+        ] {
+            for reason in [
+                FailureReason::BackendControlFailed,
+                FailureReason::BackendEnqueueTimedOut,
+                FailureReason::BackendExecutionTimedOut,
+            ] {
+                let mut event = base.diagnostics.as_ref().unwrap().events[0].clone();
+                event.detail = Some(FailureDetail::new(reason, operation));
+                variants.push(event);
+            }
+        }
+        let mut event = base.diagnostics.as_ref().unwrap().events[0].clone();
+        event.source = "deps/tokio-1.49.0/src/sync/notify.rs".into();
+        variants.push(event);
+        for event in variants {
+            for previous in [false, true] {
+                let mut report = base.clone();
+                let diagnostics = report.diagnostics.as_mut().unwrap();
+                if previous {
+                    let run = diagnostics.previous_run.as_mut().unwrap();
+                    let mut event = event.clone();
+                    event.first_seen_secs = 0;
+                    event.last_seen_secs = 0;
+                    run.recent_events = vec![event];
+                } else {
+                    diagnostics.events = vec![event.clone()];
+                }
+                report.schema_version = 13;
+                assert!(report.validate());
+                report.schema_version = 12;
+                assert!(!report.validate());
+            }
+        }
+    }
 
     #[test]
     fn schema8_context_is_optional_bounded_and_cannot_be_downgraded() {

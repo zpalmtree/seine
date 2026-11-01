@@ -4,6 +4,14 @@ Seine hardware and performance reporting, with a separate Rust/Axum
 collector and PostgreSQL database. Pool Stratum, wallet and daemon contracts are
 unchanged. A collector outage drops reports without stopping mining.
 
+Schema 13 records backend control failures with the backend type, cancel/fence
+operation, and enqueue/execution timeout stage. A backend-returned error remains
+`backend_control_failed`; its category is a hint, not a proven timeout stage.
+The fixed dependency-source allowlist also includes Tokio 1.49.0's
+`src/sync/notify.rs`, without recording panic contents or local paths.
+Deploy the schema-13 collector before schema-13 miners. Schemas 1–12 remain
+accepted; no SQL storage migration is required.
+
 Schema 12 adds the diagnostic reason `pool_connection_limit`: the pool sent a
 `connection_limit` notification before closing the session, so the miner waits
 the pool's suggested delay before reconnecting. Deploy the schema-12 collector
@@ -136,7 +144,7 @@ The strict upload schema is in [src/lib.rs](src/lib.rs), with an example in
 
 The [reliability fixture](reliability-fixture.json) demonstrates schema 5; the
 [diagnostic fixture](diagnostics-fixture.json) retains schema-4 compatibility coverage.
-The current schema-7 collector accepts schemas 1–6. Deploy it before schema-7 miners.
+The collector accepts schemas 1–13. Deploy schema-13 support before schema-13 miners.
 The recorder starts after configuration parsing, before address resolution,
 backend initialization and tuning. UI warnings/errors identify their original
 call site through `track_caller`; backend error and quarantine paths also report
@@ -374,8 +382,10 @@ not "hardware is slow."
 A separate six-hour data-quality query counts inventory-only, sampled and stable
 reports. Five installations of the same version, each with at least three reports
 spanning two hours and no backend samples, fail both the agent briefing and the
-five-minute service check. This detects a broken sampling path even when HTTPS
-and the database are healthy. Low report counts alone are not an outage; unstable
+five-minute service check. This flags sustained missing samples even when HTTPS
+and the database are healthy. `inventory_only_clusters` separately shows observed
+pool connection warnings and mining phase; neither a mining checkpoint nor the
+absence of a connection warning proves that usable work was available. Low report counts alone are not an outage; unstable
 tuning windows remain visible in the stable-sample count.
 Send the user a concise interpretation and next action rather than raw SQL output.
 

@@ -74,7 +74,8 @@ def main():
         briefing['assessment'] = (
             'Hardware inventory is arriving without performance samples from at least five '
             'installations of one version, each reporting at least three times over two hours. '
-            'Investigate the miner sampling path; waiting for cohorts is not sufficient.'
+            'Investigate the miner sampling path and pool connectivity using inventory_only_clusters; '
+            'missing samples alone do not prove a sampling bug.'
         )
     diagnostics = briefing.get('diagnostics', {})
     briefing['diagnostic_interpretation'] = (

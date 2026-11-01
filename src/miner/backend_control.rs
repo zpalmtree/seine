@@ -4,6 +4,9 @@ use std::time::Duration;
 
 use anyhow::{bail, Result};
 use crossbeam_channel::Receiver;
+use seine_telemetry::{
+    DiagnosticCode, DiagnosticKind, DiagnosticOperation, FailureDetail, FailureReason,
+};
 
 use crate::backend::{BackendEvent, BackendInstanceId};
 
@@ -353,7 +356,16 @@ fn run_backend_control_phase(
             .max(Duration::from_millis(1));
         let backend_id = slot.id;
         let backend = slot.backend.name();
-        match outcome_slot.take() {
+        let outcome = outcome_slot.take();
+        if let Some((kind, detail)) = control_failure_detail(phase, outcome.as_ref()) {
+            crate::diagnostics::record_failure(
+                DiagnosticCode::BackendQuarantined,
+                kind,
+                Some(backend),
+                detail,
+            );
+        }
+        match outcome {
             Some(BackendTaskDispatchResult::Completed(Ok(()))) => survivors.push((idx, slot)),
             Some(BackendTaskDispatchResult::Completed(Err(err))) => {
                 backend_executor.quarantine_backend(backend_id, Arc::clone(&slot.backend));
@@ -401,6 +413,32 @@ fn run_backend_control_phase(
     )
 }
 
+fn control_failure_detail(
+    phase: BackendControlPhase,
+    outcome: Option<&BackendTaskDispatchResult>,
+) -> Option<(DiagnosticKind, FailureDetail)> {
+    let (reason, kind) = match outcome {
+        Some(BackendTaskDispatchResult::Completed(Ok(()))) => return None,
+        Some(BackendTaskDispatchResult::Completed(Err(err))) => (
+            FailureReason::BackendControlFailed,
+            crate::diagnostics::classify(&format!("{err:#}")),
+        ),
+        Some(BackendTaskDispatchResult::TimedOut(BackendTaskTimeoutKind::Enqueue)) => (
+            FailureReason::BackendEnqueueTimedOut,
+            DiagnosticKind::Timeout,
+        ),
+        Some(BackendTaskDispatchResult::TimedOut(BackendTaskTimeoutKind::Execution)) | None => (
+            FailureReason::BackendExecutionTimedOut,
+            DiagnosticKind::Timeout,
+        ),
+    };
+    let operation = match phase {
+        BackendControlPhase::Cancel => DiagnosticOperation::BackendCancel,
+        BackendControlPhase::Fence => DiagnosticOperation::BackendFence,
+    };
+    Some((kind, FailureDetail::new(reason, operation)))
+}
+
 fn merge_backend_failures(failures: &mut BackendFailureMap, additional: BackendFailureMap) {
     for (backend_id, (backend, messages)) in additional {
         failures
@@ -408,5 +446,56 @@ fn merge_backend_failures(failures: &mut BackendFailureMap, additional: BackendF
             .or_insert_with(|| (backend, Vec::new()))
             .1
             .extend(messages);
+    }
+}
+
+#[cfg(test)]
+mod diagnostic_tests {
+    use super::*;
+
+    #[test]
+    fn control_failures_keep_operation_and_timeout_stage() {
+        for (phase, operation) in [
+            (
+                BackendControlPhase::Cancel,
+                DiagnosticOperation::BackendCancel,
+            ),
+            (
+                BackendControlPhase::Fence,
+                DiagnosticOperation::BackendFence,
+            ),
+        ] {
+            for (stage, reason) in [
+                (
+                    BackendTaskTimeoutKind::Enqueue,
+                    FailureReason::BackendEnqueueTimedOut,
+                ),
+                (
+                    BackendTaskTimeoutKind::Execution,
+                    FailureReason::BackendExecutionTimedOut,
+                ),
+            ] {
+                let result = BackendTaskDispatchResult::TimedOut(stage);
+                let (kind, detail) = control_failure_detail(phase, Some(&result)).unwrap();
+                assert_eq!(kind, DiagnosticKind::Timeout);
+                assert_eq!(detail.reason, reason);
+                assert_eq!(detail.operation, operation);
+            }
+        }
+        let success = BackendTaskDispatchResult::Completed(Ok(()));
+        assert!(control_failure_detail(BackendControlPhase::Cancel, Some(&success)).is_none());
+        let failure =
+            BackendTaskDispatchResult::Completed(Err(anyhow::anyhow!("idle wait timed out")));
+        let (kind, detail) =
+            control_failure_detail(BackendControlPhase::Cancel, Some(&failure)).unwrap();
+        assert_eq!(kind, DiagnosticKind::Timeout);
+        assert_eq!(detail.reason, FailureReason::BackendControlFailed);
+        assert_eq!(
+            control_failure_detail(BackendControlPhase::Fence, None)
+                .unwrap()
+                .1
+                .reason,
+            FailureReason::BackendExecutionTimedOut
+        );
     }
 }

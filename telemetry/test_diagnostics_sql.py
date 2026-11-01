@@ -22,6 +22,31 @@ class DiagnosticSQLTests(unittest.TestCase):
     def diagnostics(self):
         return json.loads(self.query((Path(__file__).parent / 'diagnostics.sql').read_text()))
 
+    def test_missing_sample_context_keeps_connection_evidence_separate(self):
+        fixture = json.loads((Path(__file__).parent / 'diagnostics-fixture.json').read_text())
+        for index in range(5):
+            identity = uuid.uuid4().hex
+            value = copy.deepcopy(fixture)
+            value['backends'] = []
+            value['diagnostics']['reason'] = 'periodic'
+            value['diagnostics']['phase'] = 'mining'
+            value['diagnostics']['events'] = []
+            if index < 2:
+                value['diagnostics']['events'] = [{
+                    'detail': {'operation': 'pool_connect', 'reason': 'connection_timed_out'},
+                }]
+            for hour in (5, 3, 1):
+                payload = json.dumps(value).replace("'", "''")
+                self.query("INSERT INTO telemetry_reports VALUES "
+                           f"('{uuid.uuid4().hex}','{identity}',now()-interval '{hour} hours','{payload}'::jsonb)")
+        result = json.loads(self.query((Path(__file__).parent / 'data_quality.sql').read_text()))
+        self.assertEqual(result['status'], 'error')
+        self.assertEqual(result['versions'][0]['sustained_inventory_only_installations'], 5)
+        clusters = result['inventory_only_clusters']
+        self.assertEqual({c['connection_warning']: c['installations'] for c in clusters}, {True: 2, False: 3})
+        self.assertTrue(all(c['observed_mining_phase'] for c in clusters))
+        self.assertNotIn('installation_id', json.dumps(result))
+
     def test_schema8_context_groups_loaded_software_and_interrupted_cleanup(self):
         fixture = json.loads((Path(__file__).parent / 'reliability-fixture.json').read_text())
         fixture['schema_version'] = 8

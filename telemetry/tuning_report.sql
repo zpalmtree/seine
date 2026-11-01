@@ -2,24 +2,35 @@
 BEGIN READ ONLY;
 SET LOCAL statement_timeout = '15s';
 SET LOCAL lock_timeout = '2s';
+-- JSON array estimates overstate trial expansion and understate qualification.
+-- Keep relational joins from rescanning the trial sets; lateral JSON expansion
+-- still uses nested loops. All settings end with this read-only transaction.
+SET LOCAL jit = off;
+SET LOCAL enable_nestloop = off;
+SET LOCAL work_mem = '64MB';
 SET LOCAL TIME ZONE 'America/New_York';
-WITH reports AS (
-    SELECT installation_id, report_id, received_at, payload
+WITH reports AS MATERIALIZED (
+    SELECT installation_id, received_at, p.*
     FROM telemetry_reports
-    WHERE received_at >= now() - interval '7 days'
-      AND NOT (payload->>'debug_build')::boolean
-      AND payload->'tuning' IS NOT NULL AND payload->'tuning' <> 'null'::jsonb
+    CROSS JOIN LATERAL jsonb_to_record(payload) AS p(
+        debug_build boolean, miner_version text, hardware jsonb, diagnostics jsonb,
+        build_target text, build_features text, tuning jsonb
+    )
+    WHERE received_at >= now() - interval '7 days' AND NOT p.debug_build
+      AND p.tuning IS NOT NULL AND p.tuning <> 'null'::jsonb
 ), raw AS (
-    SELECT installation_id, received_at, payload,
-           payload #>> '{tuning,run_id}' AS run_id,
+    SELECT installation_id, received_at,
+           jsonb_build_object('version', miner_version,
+               'build_commit', diagnostics->'build_commit') AS source_build,
+           tuning->>'run_id' AS run_id,
            (trial->>'trial_id')::bigint AS trial_id, trial->'outcome' AS outcome,
            jsonb_build_object(
-               'hardware', (payload->'hardware') - 'resources',
-               'build_target', payload->'build_target', 'build_features', payload->'build_features',
-               'source_fingerprint', payload #> '{diagnostics,source_fingerprint}',
-               'mode', payload #> '{diagnostics,mode}'
+               'hardware', hardware - 'resources',
+               'build_target', build_target, 'build_features', build_features,
+               'source_fingerprint', diagnostics->'source_fingerprint',
+               'mode', diagnostics->'mode'
            ) AS environment
-    FROM reports CROSS JOIN LATERAL jsonb_array_elements(payload #> '{tuning,trials}') trial
+    FROM reports CROSS JOIN LATERAL jsonb_array_elements(tuning->'trials') trial
 ), identities AS (
     SELECT installation_id, run_id, trial_id,
            count(DISTINCT jsonb_build_array(outcome, environment)) AS variants
@@ -37,7 +48,9 @@ WITH reports AS (
     WHERE i.variants = 1
     ORDER BY r.installation_id, r.run_id, r.trial_id, received_at
 ), windows AS (
-    SELECT t.*, position, sample,
+    SELECT installation_id, run_id, trial_id, position,
+           (outcome #>> '{policy,required_gain_bps}')::double precision / 10000 AS required_gain_ratio,
+           outcome #>> '{policy,quantization}' AS quantization,
            (sample->>'hashes')::bigint AS hashes,
            (sample->>'elapsed_ms')::bigint AS elapsed_ms,
            (sample->>'hashes')::double precision / NULLIF((sample->>'elapsed_ms')::double precision, 0) AS rate,
@@ -53,27 +66,30 @@ WITH reports AS (
             AND (sample #> '{context,resources}') - 'available_memory_mib'
                 = (outcome #> '{context_before,resources}') - 'available_memory_mib') AS stable
     FROM trials t CROSS JOIN LATERAL jsonb_array_elements(outcome->'samples') WITH ORDINALITY s(sample, position)
-), health AS (
+), health AS MATERIALIZED (
     SELECT installation_id, run_id, trial_id, count(*) AS windows,
            bool_and(stable) AS stable,
            bool_and(sufficient) AS sufficient
     FROM windows GROUP BY 1,2,3
+), adjacent AS (
+    SELECT installation_id, run_id, trial_id, required_gain_ratio, quantization, position, hashes, elapsed_ms, rate,
+           lead(rate) OVER trial_window AS candidate_rate,
+           lead(elapsed_ms) OVER trial_window AS candidate_elapsed_ms,
+           lead(hashes, 2) OVER trial_window AS after_hashes,
+           lead(elapsed_ms, 2) OVER trial_window AS after_elapsed_ms,
+           lead(rate, 2) OVER trial_window AS after_rate
+    FROM windows
+    WINDOW trial_window AS (PARTITION BY installation_id, run_id, trial_id ORDER BY position)
 ), cycles AS (
-    SELECT a.installation_id, a.run_id, a.trial_id,
-           (a.outcome #>> '{policy,required_gain_bps}')::double precision / 10000 AS required_gain_ratio,
-           b.rate / NULLIF((a.hashes + c.hashes)::double precision / (a.elapsed_ms + c.elapsed_ms), 0) AS ratio,
-           abs(c.rate / NULLIF(a.rate, 0) - 1) AS drift,
-           CASE WHEN a.outcome #>> '{policy,quantization}' = 'three_window_hash'
-                THEN (1.0/a.elapsed_ms + 1.0/b.elapsed_ms + 1.0/c.elapsed_ms)
-                    / NULLIF((a.hashes + c.hashes)::double precision / (a.elapsed_ms + c.elapsed_ms), 0)
+    SELECT installation_id, run_id, trial_id,
+           required_gain_ratio,
+           candidate_rate / NULLIF((hashes + after_hashes)::double precision / (elapsed_ms + after_elapsed_ms), 0) AS ratio,
+           abs(after_rate / NULLIF(rate, 0) - 1) AS drift,
+           CASE WHEN quantization = 'three_window_hash'
+                THEN (1.0/elapsed_ms + 1.0/candidate_elapsed_ms + 1.0/after_elapsed_ms)
+                    / NULLIF((hashes + after_hashes)::double precision / (elapsed_ms + after_elapsed_ms), 0)
                 ELSE 0 END AS quantization_ratio
-    FROM windows a JOIN windows b
-      ON (a.installation_id,a.run_id,a.trial_id) = (b.installation_id,b.run_id,b.trial_id)
-     AND b.position = a.position + 1
-    JOIN windows c
-      ON (a.installation_id,a.run_id,a.trial_id) = (c.installation_id,c.run_id,c.trial_id)
-     AND c.position = a.position + 2
-    WHERE a.position % 3 = 1
+    FROM adjacent WHERE position % 3 = 1 AND after_elapsed_ms IS NOT NULL
 ), measured AS (
     SELECT installation_id, run_id, trial_id, count(*) AS cycles,
            percentile_cont(0.5) WITHIN GROUP (ORDER BY ratio) AS ratio,
@@ -82,7 +98,9 @@ WITH reports AS (
            max(drift) AS maximum_baseline_drift, max(quantization_ratio) AS maximum_quantization_ratio
     FROM cycles GROUP BY 1,2,3
 ), qualified AS (
-    SELECT t.*, m.ratio, m.minimum_cycle_ratio, m.maximum_cycle_ratio, m.maximum_baseline_drift, m.maximum_quantization_ratio,
+    SELECT t.installation_id, t.received_at, t.source_build, t.context,
+           outcome - 'samples' - 'context_before' - 'context_after' - 'baseline' - 'candidate' - 'policy' AS outcome,
+           m.ratio, m.minimum_cycle_ratio, m.maximum_cycle_ratio, m.maximum_baseline_drift, m.maximum_quantization_ratio,
            (outcome->>'decision' = 'gain' AND outcome->>'applied' = 'candidate' AND m.cycles = 2
             AND m.minimum_gain_above_resolution > 0) AS confirmed_gain
     FROM trials t JOIN health h USING (installation_id, run_id, trial_id)
@@ -168,6 +186,9 @@ WITH reports AS (
            percentile_cont(0.5) WITHIN GROUP (ORDER BY i.median_switching_ms) AS median_switching_ms,
            min(first_received) AS first_received, max(last_received) AS last_received
     FROM installations i JOIN observations o USING (context, installation_id) GROUP BY 1
+), provenance AS (
+    SELECT context, jsonb_agg(DISTINCT source_build) AS provenance
+    FROM qualified GROUP BY context
 ), hints AS (
     SELECT c.*, false AS automatic_default_eligible, 'requires_native_validation' AS status,
            'throughput' AS objective,
@@ -181,10 +202,9 @@ WITH reports AS (
            (to_jsonb(v) - 'context') || jsonb_build_object(
                'unqualified_trials', v.observed_trials - c.qualified_trials,
                'cost_scope', 'all_outcomes_installation_weighted') AS evidence_coverage,
-           (SELECT jsonb_agg(DISTINCT jsonb_build_object('version', payload->'miner_version',
-               'build_commit', payload #> '{diagnostics,build_commit}')) FROM qualified q
-               WHERE q.context = c.context) AS provenance
-    FROM cohorts c JOIN coverage v USING (context) WHERE installations >= 5
+           p.provenance
+    FROM cohorts c JOIN coverage v USING (context) JOIN provenance p USING (context)
+    WHERE installations >= 5
 ), outcomes AS (
     SELECT outcome->>'kind' AS kind, outcome->>'decision' AS decision,
            outcome->>'reason' AS reason, count(*) AS trials,
@@ -206,7 +226,7 @@ SELECT jsonb_build_object(
         OR environment->>'mode' IS NULL OR environment->>'mode' NOT IN ('pool','daemon')),
     'staged_kind_trials', (SELECT count(*) FROM trials WHERE outcome->>'kind' <> 'cpu_kernel'),
     'conflicting_trial_identities', (SELECT count(*) FROM identities WHERE variants > 1),
-    'reported_dropped_trials', coalesce((SELECT sum((payload #>> '{tuning,dropped_trials}')::bigint) FROM reports), 0),
+    'reported_dropped_trials', coalesce((SELECT sum((tuning->>'dropped_trials')::bigint) FROM reports), 0),
     'outcomes', coalesce((SELECT jsonb_agg(outcomes ORDER BY kind, decision, reason) FROM outcomes), '[]'::jsonb),
     'cohorts_below_coverage', (SELECT count(*) FROM cohorts WHERE installations < 5),
     'ranked_hints', coalesce((SELECT jsonb_agg(h) FROM (SELECT * FROM hints ORDER BY

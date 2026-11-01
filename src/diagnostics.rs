@@ -885,6 +885,27 @@ mod tests {
     }
 
     #[test]
+    fn notify_panic_source_keeps_only_the_allowlisted_dependency_suffix() {
+        assert_eq!(
+            normalize_source(
+                "/private/home/.cargo/registry/src/index/tokio-1.49.0/src/sync/notify.rs"
+            ),
+            "deps/tokio-1.49.0/src/sync/notify.rs"
+        );
+        assert_eq!(
+            normalize_source(r"C:\private\cargo\tokio-1.49.0\src\sync\notify.rs"),
+            "deps/tokio-1.49.0/src/sync/notify.rs"
+        );
+        for source in [
+            "/private/tokio-1.49.0/src/sync/private.rs",
+            "/private/tokio-1.49.1/src/sync/notify.rs",
+            "/private/my-tokio-1.49.0/src/sync/notify.rs",
+        ] {
+            assert_eq!(normalize_source(source), "unknown");
+        }
+    }
+
+    #[test]
     fn dependency_sources_strip_only_fixed_allowlisted_locations() {
         for source in [
             "/home/private/.cargo/registry/src/index.example/cudarc-0.19.2/src/lib.rs",

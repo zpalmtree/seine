@@ -725,7 +725,17 @@ impl PowBackend for CpuBackend {
         if !self.shared.started.load(Ordering::SeqCst) {
             return Ok(());
         }
-        request_work_pause(&self.shared)?;
+        let generation = request_work_pause_generation(&self.shared)?;
+        // Let an ordinary in-flight hash finish and submit its solution. Reserve
+        // half the deadline for slice-boundary cancellation on stalled hosts.
+        let now = Instant::now();
+        let grace = now + deadline.saturating_duration_since(now) / 2;
+        if wait_for_idle_until(&self.shared, grace).is_ok() {
+            return Ok(());
+        }
+        self.shared
+            .abandon_through_generation
+            .fetch_max(generation, Ordering::AcqRel);
         wait_for_idle_until(&self.shared, deadline)
     }
 
@@ -1484,23 +1494,29 @@ fn wait_for_worker_enabled(shared: &Shared, thread_idx: usize) -> bool {
 }
 
 fn request_work_pause(shared: &Shared) -> Result<()> {
-    let generation = {
+    request_work_pause_generation(shared).map(|_| ())
+}
+
+fn request_work_pause_generation(shared: &Shared) -> Result<u64> {
+    let cancelled_generation = {
         let mut control = shared
             .work_control
             .lock()
             .map_err(|_| anyhow!("CPU control lock poisoned"))?;
+        let cancelled_generation = control.generation;
         control.generation = control.generation.wrapping_add(1).max(1);
         control.work = None;
-        control.generation
+        shared
+            .work_generation
+            .store(control.generation, Ordering::Release);
+        cancelled_generation
     };
-
-    shared.work_generation.store(generation, Ordering::Release);
     shared.work_cv.notify_all();
     shared.ready_cv.notify_all();
     if shared.active_workers.load(Ordering::Acquire) == 0 {
         maybe_finalize_assignment(shared);
     }
-    Ok(())
+    Ok(cancelled_generation)
 }
 
 fn wait_for_idle(shared: &Shared) -> Result<()> {
@@ -2558,6 +2574,69 @@ mod tests {
 
         backend.shared.active_workers.store(0, Ordering::Release);
         backend.shared.idle_cv.notify_all();
+    }
+
+    #[test]
+    fn cancel_abandons_slow_hash_before_deadline_but_keeps_new_work_eligible() {
+        let backend = CpuBackend::new(1, CpuAffinityMode::Off);
+        backend.shared.started.store(true, Ordering::Release);
+        backend.shared.active_workers.store(1, Ordering::Release);
+        backend.shared.work_control.lock().unwrap().generation = 7;
+        backend.shared.work_generation.store(7, Ordering::Release);
+        let shared = Arc::clone(&backend.shared);
+        let worker = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while shared.abandon_through_generation.load(Ordering::Acquire) < 7
+                && Instant::now() < deadline
+            {
+                thread::sleep(Duration::from_millis(1));
+            }
+            let abandoned = shared.abandon_through_generation.load(Ordering::Acquire) == 7;
+            let mut active = true;
+            super::mark_worker_inactive(&shared, &mut active);
+            abandoned
+        });
+        let result = backend.cancel_work_with_deadline(Instant::now() + Duration::from_secs(1));
+        assert!(worker.join().unwrap(), "slow hash must see cancellation");
+        result.expect("cooperative worker should stop before the control deadline");
+        assert!(
+            backend.shared.work_generation.load(Ordering::Acquire)
+                > backend
+                    .shared
+                    .abandon_through_generation
+                    .load(Ordering::Acquire)
+        );
+    }
+
+    #[test]
+    fn cancel_preserves_hashes_that_finish_during_grace() {
+        let backend = CpuBackend::new(1, CpuAffinityMode::Off);
+        backend.shared.started.store(true, Ordering::Release);
+        backend.shared.active_workers.store(1, Ordering::Release);
+        backend.shared.work_control.lock().unwrap().generation = 7;
+        backend.shared.work_generation.store(7, Ordering::Release);
+        let shared = Arc::clone(&backend.shared);
+        let worker = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while shared.work_generation.load(Ordering::Acquire) == 7 && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(1));
+            }
+            let mut pending_hashes = 1;
+            super::flush_hashes(&shared, 0, &mut pending_hashes);
+            let mut active = true;
+            super::mark_worker_inactive(&shared, &mut active);
+        });
+        let result = backend.cancel_work_with_deadline(Instant::now() + Duration::from_secs(1));
+        worker.join().unwrap();
+        result.unwrap();
+        assert_eq!(backend.take_hashes(), 1);
+        assert_eq!(
+            backend
+                .shared
+                .abandon_through_generation
+                .load(Ordering::Acquire),
+            0
+        );
     }
 
     #[test]
