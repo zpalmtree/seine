@@ -47,15 +47,16 @@ class Miner:
         self.output = b''
         args = [str(binary), '--data-dir', str(directory), '--backend', 'cpu', '--threads', '1',
                 '--ui', 'plain', '--disable-cpu-autotune-threads', '--disable-update-check', '--telemetry', 'off']
+        env = dict(os.environ, NO_COLOR='1', CLICOLOR='0', CLICOLOR_FORCE='0', TERM='dumb')
         if interactive:
             self.fd, slave = pty.openpty()
             try:
-                self.process = subprocess.Popen(args, stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
+                self.process = subprocess.Popen(args, stdin=slave, stdout=slave, stderr=slave, start_new_session=True, env=env)
             finally:
                 os.close(slave)
         else:
             self.process = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                            stderr=subprocess.STDOUT, start_new_session=True)
+                                            stderr=subprocess.STDOUT, start_new_session=True, env=env)
             self.fd = self.process.stdout.fileno()
         self.interactive = interactive
         self.chunks = queue.Queue()
