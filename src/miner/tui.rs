@@ -423,7 +423,7 @@ fn draw_dashboard(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner)
     let device_rows = active_rows + pending_count;
     let devices_height: u16 = if device_rows > 0 { 2 + device_rows } else { 0 };
     let runtime_panel_height: u16 = 4;
-    let wallet_panel_height = wallet_panel_height(state);
+    let wallet_panel_height = wallet_panel_height(state, area.width);
     let config_height: u16 = if config_two_columns {
         runtime_panel_height.max(wallet_panel_height)
     } else {
@@ -923,7 +923,7 @@ fn draw_devices(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner, w
 }
 
 fn draw_config(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
-    let wallet_height = wallet_panel_height(state);
+    let wallet_height = wallet_panel_height(state, area.width);
     if config_uses_two_columns(area.width) {
         let cols = Layout::default()
             .direction(Direction::Horizontal)
@@ -946,13 +946,42 @@ fn config_uses_two_columns(width: u16) -> bool {
     width >= CONFIG_TWO_COLUMN_MIN_WIDTH
 }
 
-fn wallet_panel_height(state: &TuiStateInner) -> u16 {
+fn wallet_panel_height(state: &TuiStateInner, config_width: u16) -> u16 {
     let base = if state.mode == "pool" && state.wallet_visible {
         6
     } else {
         4
     };
-    base + u16::from(state.mode == "pool" && state.pool_payout_minimum.is_some())
+    let panel_width = if config_uses_two_columns(config_width) {
+        config_width / 2
+    } else {
+        config_width
+    };
+    base + if state.mode == "pool" {
+        pool_paid_lines(state, panel_width.saturating_sub(2) as usize).len() as u16 - 1
+    } else {
+        0
+    }
+}
+
+fn pool_paid_lines(state: &TuiStateInner, inner_width: usize) -> Vec<Line<'static>> {
+    let label = if state.wallet_visible {
+        "P.Paid"
+    } else {
+        "Paid"
+    };
+    if let Some(minimum) = &state.pool_payout_minimum {
+        let line =
+            wallet_line_with_right(label, &state.pool_paid, "Min payout", minimum, inner_width);
+        if line.width() <= inner_width {
+            return vec![line];
+        }
+        return vec![
+            kv_line(label, &state.pool_paid),
+            kv_line("Min payout", minimum),
+        ];
+    }
+    vec![kv_line(label, &state.pool_paid)]
 }
 
 fn draw_config_runtime_panel(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
@@ -1032,9 +1061,7 @@ fn draw_config_wallet_panel(frame: &mut ratatui::Frame, area: Rect, state: &TuiS
         )
     };
     if state.mode == "pool" {
-        if let Some(minimum) = &state.pool_payout_minimum {
-            wallet_lines.insert(2, kv_line("Min payout", minimum));
-        }
+        wallet_lines.splice(1..2, pool_paid_lines(state, inner_width));
     }
     let wallet_block = Block::default()
         .title(Span::styled(title, TITLE_STYLE))
@@ -1340,6 +1367,14 @@ mod tests {
                 let text = render_text(&state, width, height);
                 assert!(text.contains("Min payout"), "{width}x{height}: {text}");
                 assert!(text.contains("10 BNT"), "{width}x{height}: {text}");
+                if width >= 120 {
+                    assert!(
+                        text.lines().any(|line| line.contains("Paid")
+                            && line.contains("Min payout")
+                            && line.contains("10 BNT")),
+                        "{width}x{height}: {text}"
+                    );
+                }
             }
         }
         state.pool_payout_minimum = None;

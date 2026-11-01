@@ -29,3 +29,7 @@ Desktop and mobile captures cover mining, waiting for the minimum, an empty
 balance, reconnecting, rejected memo support, personal wallets, older pools,
 and the missing/invalid memo prompts. The rejected state also covers mining
 being disabled until the pool acknowledges the memo.
+
+The minimum shares the Paid row, aligned right when it fits. Narrow layouts
+retain a separate line to keep both values readable. The 18 dashboard tests
+and desktop/mobile captures were rerun after this layout change.
