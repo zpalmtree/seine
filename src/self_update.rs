@@ -35,6 +35,12 @@ const MAX_TEXT_ASSET_BYTES: usize = 64 * 1024;
 /// Release archives are a few MiB; refuse anything that could fill a disk.
 const MAX_ARCHIVE_BYTES: u64 = 256 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+/// How long the new executable may take to report its version before the
+/// update is abandoned.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Checks a staged executable before it replaces the running one.
+type VerifyExecutable = fn(&Path, &str) -> Result<()>;
 
 static RESTART_PENDING: AtomicBool = AtomicBool::new(false);
 static UPDATED_EXECUTABLE: OnceLock<PathBuf> = OnceLock::new();
@@ -121,6 +127,7 @@ pub(crate) fn run() -> Result<Outcome> {
         RELEASE_SIGNING_PUBLIC_KEY_HEX,
         current,
         &exe,
+        probe_executable,
     )
 }
 
@@ -130,6 +137,7 @@ fn install_release(
     public_key: &str,
     current: String,
     exe: &Path,
+    verify: VerifyExecutable,
 ) -> Result<Outcome> {
     let release: Release = client
         .get(release_url)
@@ -185,6 +193,7 @@ fn install_release(
     let archive = dir.join(format!(".seine-update-{name}"));
     let staged = dir.join(format!(".seine-update-{}", executable_name()));
     let result = stage_update(client, asset, &expected, &archive, &staged)
+        .and_then(|()| verify(&staged, &release.tag_name))
         .and_then(|()| replace_executable(exe, &staged));
     let _ = fs::remove_file(&archive);
     if result.is_err() {
@@ -331,6 +340,54 @@ fn stage_update(
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(staged, fs::Permissions::from_mode(0o755))
             .context("cannot mark the new executable runnable")?;
+    }
+    Ok(())
+}
+
+/// Runs the staged executable with `--version` and requires it to exit
+/// cleanly and report `tag`, so a binary that cannot start on this host (wrong
+/// architecture, missing libraries, corrupt file) never replaces a working one.
+fn probe_executable(staged: &Path, tag: &str) -> Result<()> {
+    use std::process::{Command, Stdio};
+    let mut child = Command::new(staged)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .context("the new executable does not start on this system")?;
+    let mut stdout = child.stdout.take().context("no output pipe")?;
+    let reader = std::thread::spawn(move || {
+        let mut output = Vec::new();
+        let _ = (&mut stdout).take(4096).read_to_end(&mut output);
+        output
+    });
+    let deadline = std::time::Instant::now() + PROBE_TIMEOUT;
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            bail!("the new executable did not report its version within {PROBE_TIMEOUT:?}");
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let output = reader.join().unwrap_or_default();
+    if !status.success() {
+        bail!("the new executable failed its startup check ({status})");
+    }
+    let output = String::from_utf8_lossy(&output);
+    let expected = crate::update_check::version_triple(tag);
+    let reported = output
+        .split_whitespace()
+        .any(|word| expected.is_some() && crate::update_check::version_triple(word) == expected);
+    if !reported {
+        bail!(
+            "the new executable reports {:?}, expected {tag}",
+            output.trim()
+        );
     }
     Ok(())
 }
@@ -547,6 +604,50 @@ mod tests {
         assert!(name.ends_with(".tar.gz") || name.ends_with(".zip"));
     }
 
+    // The fixtures package the test harness, which has no `--version`.
+    fn accept_any(_: &Path, _: &str) -> Result<()> {
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join(name);
+        fs::write(&path, body).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn startup_probe_accepts_only_a_working_binary_of_the_release_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let good = script(dir.path(), "good", "#!/bin/sh\necho seine v99.0.0\n");
+        probe_executable(&good, "v99.0.0").unwrap();
+        assert!(probe_executable(&good, "v99.0.1").is_err());
+        let failing = script(
+            dir.path(),
+            "failing",
+            "#!/bin/sh\necho seine v99.0.0\nexit 3\n",
+        );
+        assert!(probe_executable(&failing, "v99.0.0").is_err());
+        let garbage = script(dir.path(), "garbage", "\x7fELF not really\n");
+        assert!(probe_executable(&garbage, "v99.0.0").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_startup_probe_keeps_the_running_executable() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("seine");
+        fs::write(&exe, "original").unwrap();
+        let staged = script(dir.path(), "staged", "#!/bin/sh\nexit 1\n");
+        let result =
+            probe_executable(&staged, "v99.0.0").and_then(|()| replace_executable(&exe, &staged));
+        assert!(result.is_err());
+        assert_eq!(fs::read_to_string(&exe).unwrap(), "original");
+    }
+
     #[test]
     fn restart_fixture_child() {
         let Some(directory) = std::env::var_os("SEINE_TEST_UPDATE_DIRECTORY") else {
@@ -574,6 +675,7 @@ mod tests {
             &std::env::var("SEINE_TEST_UPDATE_KEY").unwrap(),
             "0.0.0".into(),
             &std::env::current_exe().unwrap(),
+            accept_any,
         )
         .unwrap();
         assert!(matches!(result, Outcome::Updated { .. }));
@@ -642,7 +744,8 @@ mod tests {
             &server.url("/release"),
             &public_key,
             "0.0.0".into(),
-            &exe
+            &exe,
+            accept_any,
         )
         .is_err());
         assert_eq!(sha256_file(&exe).unwrap(), before);
@@ -661,6 +764,7 @@ mod tests {
             &public_key,
             "0.0.0".into(),
             &exe,
+            accept_any,
         )
         .err()
         .unwrap();

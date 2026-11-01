@@ -87,6 +87,8 @@ jobs:
     env:
       # Set only after HTTPS ingestion and the published privacy policy are verified.
       SEINE_TELEMETRY_URL: ${{ vars.SEINE_TELEMETRY_URL }}
+      # Lets these binaries install newer releases automatically.
+      SEINE_RELEASE_BUILD: "1"
 
     steps:
       - name: Install build tools (container)

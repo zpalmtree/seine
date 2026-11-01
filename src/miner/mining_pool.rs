@@ -1699,6 +1699,8 @@ fn handle_active_pool_event(
             if mode.is_user() {
                 error("AUTH", format!("login rejected: {message}"));
             }
+            // Pools and farm proxies turn away outdated miners at login.
+            crate::update_check::request_check_soon();
             *latest_job = None;
             *connected = false;
             if active_job.is_some() {
@@ -2152,6 +2154,29 @@ fn apply_submit_ack_difficulty(
     Ok(())
 }
 
+fn pause_for_unsupported_job(
+    reason: &str,
+    backends: &mut Vec<BackendSlot>,
+    backend_executor: &super::backend_executor::BackendExecutor,
+    active_job: &mut Option<ActivePoolJob>,
+    tui: &mut Option<TuiDisplay>,
+) {
+    super::note_unsupported_work(reason);
+    if active_job.is_some() {
+        if let Err(err) =
+            super::cancel_backend_slots(backends, RuntimeMode::Mining, backend_executor)
+        {
+            warn(
+                "BACKEND",
+                format!("pool cancel failed for unsupported work: {err:#}"),
+            );
+        }
+        let _ = super::quiesce_backend_slots(backends, RuntimeMode::Mining, backend_executor);
+        *active_job = None;
+    }
+    set_tui_state_label(tui, "update-required");
+}
+
 #[allow(clippy::too_many_arguments)]
 fn assign_pool_job(
     mode: PoolConnectionMode,
@@ -2169,13 +2194,19 @@ fn assign_pool_job(
     tui: &mut Option<TuiDisplay>,
 ) -> Result<()> {
     let handled_at = Instant::now();
-    // Returning an error exits the mining loop through normal backend teardown.
-    // Merely ignoring this job would leave workers hashing the previous template.
-    let pow = blocknet_pow_spec::ensure_supported_pow(
+    // Work this build cannot mine stops the backends (so they do not keep
+    // hashing the previous template) but keeps the session and the update
+    // checker alive.
+    let pow = match blocknet_pow_spec::ensure_supported_pow(
         job.height,
         super::provisional_faraday_pow_allowed(),
-    )
-    .map_err(|reason| anyhow::anyhow!(reason))?;
+    ) {
+        Ok(pow) => pow,
+        Err(reason) => {
+            pause_for_unsupported_job(reason, backends, backend_executor, active_job, tui);
+            return Ok(());
+        }
+    };
     crate::backend::note_network_pow(pow);
     let nonce_count = job.nonce_count();
     if nonce_count == 0 {
@@ -2194,8 +2225,11 @@ fn assign_pool_job(
             return Ok(());
         }
     };
-    blocknet_pow_spec::validate_header_length(header_base.len())
-        .map_err(|reason| anyhow::anyhow!(reason))?;
+    if let Err(reason) = blocknet_pow_spec::validate_header_length(header_base.len()) {
+        pause_for_unsupported_job(reason, backends, backend_executor, active_job, tui);
+        return Ok(());
+    }
+    super::clear_unsupported_work_notice();
 
     if let Some(current) = active_job.as_mut() {
         if same_pool_template_identity(current, &job, header_base.as_ref(), network_target.as_ref())
@@ -3295,6 +3329,67 @@ mod tests {
             "telemetry must not consume hashes twice"
         );
         assert_eq!(job.round_backend_hashes[&7], 339);
+    }
+
+    #[test]
+    fn unsupported_work_stops_backends_without_ending_the_session() {
+        use crate::backend::{BackendEvent, BackendInstanceId, PowBackend, WorkAssignment};
+        use crate::miner::{backend_executor::BackendExecutor, BackendSlot};
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        struct CancelCounting(AtomicU64);
+        impl PowBackend for CancelCounting {
+            fn name(&self) -> &'static str {
+                "cpu"
+            }
+            fn lanes(&self) -> usize {
+                1
+            }
+            fn set_instance_id(&self, _: BackendInstanceId) {}
+            fn set_event_sink(&self, _: crossbeam_channel::Sender<BackendEvent>) {}
+            fn start(&self) -> anyhow::Result<()> {
+                Ok(())
+            }
+            fn stop(&self) {}
+            fn assign_work(&self, _: WorkAssignment) -> anyhow::Result<()> {
+                Ok(())
+            }
+            fn cancel_work(&self) -> anyhow::Result<()> {
+                self.0.fetch_add(1, Ordering::AcqRel);
+                Ok(())
+            }
+            fn fence(&self) -> anyhow::Result<()> {
+                Ok(())
+            }
+            fn take_hashes(&self) -> u64 {
+                0
+            }
+        }
+        let backend = Arc::new(CancelCounting(AtomicU64::new(0)));
+        let mut slots = vec![BackendSlot {
+            id: 3,
+            backend: backend.clone(),
+            lanes: 1,
+            runtime_policy: Default::default(),
+            capabilities: backend.capabilities(),
+        }];
+        let executor = BackendExecutor::new();
+        let mut active = Some(test_active_job(1));
+        let mut tui = None;
+        super::pause_for_unsupported_job(
+            "Faraday PoW is not supported by this build",
+            &mut slots,
+            &executor,
+            &mut active,
+            &mut tui,
+        );
+        assert!(active.is_none(), "the old job must not keep being mined");
+        assert!(backend.0.load(Ordering::Acquire) >= 1);
+        // Repeated unsupported jobs while paused are a no-op for backends.
+        let cancels = backend.0.load(Ordering::Acquire);
+        super::pause_for_unsupported_job("x", &mut slots, &executor, &mut active, &mut tui);
+        assert_eq!(backend.0.load(Ordering::Acquire), cancels);
+        crate::miner::clear_unsupported_work_notice();
     }
 
     fn test_daemon_client(server: &MockServer, token: &str) -> ApiClient {

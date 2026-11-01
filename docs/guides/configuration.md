@@ -101,10 +101,18 @@ startup overrides.
 Short terminal windows use a compact dashboard that keeps the CPU thread count,
 mining state, and hashrate visible. Press `q` or `Ctrl+C` to quit.
 
-Seine checks GitHub for a newer release at startup and every 12 hours. When one
-exists, the dashboard header shows `update vX.Y.Z available` and the log gets
-one line with the download link (plain and API modes log the same line). The
-check never interrupts mining; pass `--disable-update-check` to turn it off.
+Seine checks GitHub for a newer release at startup and every 12 hours, and
+retries within about an hour when a check or install fails. When one exists, the
+dashboard header shows `update vX.Y.Z available` and the log gets one line with
+the download link (plain and API modes log the same line). Official release
+downloads then install the update automatically: the signed archive is verified,
+the new executable must start before it replaces the old one, and Seine stops
+mining cleanly and restarts with the same arguments. Pass `--no-auto-update` to
+keep only the notice, or `--disable-update-check` to turn the check off. Builds
+you compile yourself only show the notice.
+
+If a pool or daemon sends work that needs a newer release, Seine pauses mining
+instead of exiting and checks for an update right away.
 
 On Windows, a fatal error after double-clicking `seine.exe` with no arguments
 leaves its console open until you press Enter. Launches from an existing shell,

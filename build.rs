@@ -17,6 +17,7 @@ fn main() {
     emit_rerun_inputs(&source_roots);
     emit_git_rerun_inputs();
     for key in [
+        "SEINE_RELEASE_BUILD",
         "SEINE_GIT_TAG",
         "BNMINER_GIT_TAG",
         "SEINE_GIT_COMMIT",
@@ -29,6 +30,11 @@ fn main() {
         "CARGO_ENCODED_RUSTFLAGS",
     ] {
         println!("cargo:rerun-if-env-changed={key}");
+    }
+
+    // Only the release workflow sets this; it gates automatic installs.
+    if std::env::var("SEINE_RELEASE_BUILD").as_deref() == Ok("1") {
+        println!("cargo:rustc-env=SEINE_RELEASE_BUILD=1");
     }
 
     if let Some(tag) = first_nonempty_env(&["SEINE_GIT_TAG", "BNMINER_GIT_TAG"])

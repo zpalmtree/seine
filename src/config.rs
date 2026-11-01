@@ -423,7 +423,7 @@ struct Cli {
     data_dir: PathBuf,
 
     /// One or more mining backends. Repeat the flag or pass comma-separated values.
-    /// When omitted, Seine auto-detects available backends (CPU + NVIDIA when available).
+    /// When omitted, Seine auto-detects available backends (CPU, plus NVIDIA and discrete AMD GPUs when available).
     #[arg(
         long = "backend",
         value_enum,

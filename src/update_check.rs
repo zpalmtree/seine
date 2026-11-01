@@ -2,13 +2,14 @@
 //!
 //! One request to the GitHub releases API at startup and every
 //! `CHECK_INTERVAL` after. A newer release is logged once per version and
-//! flagged in the dashboard header. Failures are silent; the next interval
-//! retries.
+//! flagged in the dashboard header. A failed check or install retries after
+//! `RETRY_INTERVAL` plus jitter, and mining code can ask for an earlier check
+//! when it receives work this build cannot mine.
 
-use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
@@ -18,7 +19,21 @@ use crate::miner::ui;
 const LATEST_RELEASE_API_URL: &str = "https://api.github.com/repos/zpalmtree/seine/releases/latest";
 const RELEASES_URL: &str = "https://github.com/zpalmtree/seine/releases/latest";
 const CHECK_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60);
+const RETRY_INTERVAL: Duration = Duration::from_secs(60 * 60);
+const RETRY_JITTER_SECS: u64 = 15 * 60;
+/// Earliest follow-up after any check when mining asks for one early.
+const MIN_REQUESTED_INTERVAL: Duration = Duration::from_secs(10 * 60);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Set by the release workflow; source and local builds never replace
+/// themselves with the generic release binary.
+const RELEASE_BUILD: bool = match option_env!("SEINE_RELEASE_BUILD") {
+    Some(value) => value.len() == 1 && value.as_bytes()[0] == b'1',
+    None => false,
+};
+
+static AUTO_INSTALL: AtomicBool = AtomicBool::new(false);
+static WAKE: (Mutex<bool>, Condvar) = (Mutex::new(false), Condvar::new());
 
 static STATE: Mutex<UpdateState> = Mutex::new(UpdateState {
     latest: None,
@@ -48,23 +63,97 @@ pub(crate) fn spawn(auto_update: bool, shutdown: Arc<AtomicBool>) {
     if parse_version(current).is_none() {
         return;
     }
+    let auto_install = auto_update && RELEASE_BUILD;
+    AUTO_INSTALL.store(auto_install, Ordering::Release);
+    if auto_update && !RELEASE_BUILD {
+        ui::info(
+            "UPDATE",
+            "automatic installs are off for builds not made by the seine release workflow; new releases are still announced",
+        );
+    }
     let _ = thread::Builder::new()
         .name("update-check".to_string())
-        .spawn(move || loop {
-            if let Ok(tag) = fetch_latest_tag() {
-                record_latest(current, &tag);
-                if auto_update && is_newer(&tag, current) && apply_update(&shutdown) {
-                    return;
-                }
+        .spawn(move || {
+            let mut last_check;
+            loop {
+                last_check = Instant::now();
+                let succeeded = match fetch_latest_tag() {
+                    Ok(tag) => {
+                        record_latest(current, &tag);
+                        if auto_install && is_newer(&tag, current) {
+                            match apply_update(&shutdown) {
+                                Some(true) => return,
+                                Some(false) => true,
+                                None => false,
+                            }
+                        } else {
+                            true
+                        }
+                    }
+                    Err(_) => false,
+                };
+                let wait = if succeeded {
+                    CHECK_INTERVAL
+                } else {
+                    RETRY_INTERVAL + Duration::from_secs(jitter_secs(RETRY_JITTER_SECS))
+                };
+                wait_for_next_check(last_check, wait);
             }
-            thread::sleep(CHECK_INTERVAL);
         });
 }
 
+/// True when this process installs newer releases by itself.
+pub(crate) fn auto_install_active() -> bool {
+    AUTO_INSTALL.load(Ordering::Acquire)
+}
+
+/// Asks the background checker to look for a release soon, at most once per
+/// `MIN_REQUESTED_INTERVAL` after the previous check. A no-op when the checker
+/// is not running.
+pub(crate) fn request_check_soon() {
+    let (lock, cvar) = &WAKE;
+    *lock.lock().unwrap_or_else(|e| e.into_inner()) = true;
+    cvar.notify_all();
+}
+
+fn wait_for_next_check(last_check: Instant, wait: Duration) {
+    let (lock, cvar) = &WAKE;
+    let mut requested = lock.lock().unwrap_or_else(|e| e.into_inner());
+    loop {
+        let elapsed = last_check.elapsed();
+        if elapsed >= wait {
+            break;
+        }
+        if *requested && elapsed >= MIN_REQUESTED_INTERVAL {
+            break;
+        }
+        let until = if *requested {
+            MIN_REQUESTED_INTERVAL.min(wait)
+        } else {
+            wait
+        };
+        let (guard, _) = cvar
+            .wait_timeout(requested, until.saturating_sub(elapsed))
+            .unwrap_or_else(|e| e.into_inner());
+        requested = guard;
+    }
+    *requested = false;
+}
+
+/// Spreads retries from rigs that failed together (shared outage, rate limit).
+fn jitter_secs(max: u64) -> u64 {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos() as u64)
+        .unwrap_or(0);
+    (nanos ^ u64::from(std::process::id()).wrapping_mul(0x9E37_79B9)) % max.max(1)
+}
+
 /// `--auto-update`: install the newer release, then stop mining so `main` can
-/// restart the updated executable with the same arguments. A failed attempt is
-/// retried at the next check.
-fn apply_update(shutdown: &Arc<AtomicBool>) -> bool {
+/// restart the updated executable with the same arguments. Returns `Some(true)`
+/// once installed, `Some(false)` when already current, and `None` on failure
+/// (retried after `RETRY_INTERVAL`).
+fn apply_update(shutdown: &Arc<AtomicBool>) -> Option<bool> {
     match crate::self_update::run() {
         Ok(crate::self_update::Outcome::Updated { from, to, .. }) => {
             ui::info(
@@ -73,15 +162,15 @@ fn apply_update(shutdown: &Arc<AtomicBool>) -> bool {
             );
             crate::self_update::request_restart();
             crate::shutdown::request_auto_update(shutdown);
-            true
+            Some(true)
         }
-        Ok(crate::self_update::Outcome::UpToDate { .. }) => false,
+        Ok(crate::self_update::Outcome::UpToDate { .. }) => Some(false),
         Err(err) => {
             ui::warn(
                 "UPDATE",
-                format!("automatic update failed: {err:#}; retrying at the next check"),
+                format!("automatic update failed: {err:#}; retrying within about an hour"),
             );
-            false
+            None
         }
     }
 }
@@ -150,6 +239,11 @@ pub(crate) fn is_newer(candidate: &str, current: &str) -> bool {
     }
 }
 
+/// The `(major, minor, patch)` of a release tag or version string.
+pub(crate) fn version_triple(raw: &str) -> Option<(u64, u64, u64)> {
+    parse_version(raw)
+}
+
 /// Parses `v1.2.3` / `1.2.3`, ignoring any `-pre` or `+build` suffix
 /// (including `git describe` output such as `v0.2.22-3-gabc1234`).
 fn parse_version(raw: &str) -> Option<(u64, u64, u64)> {
@@ -171,7 +265,41 @@ fn parse_version(raw: &str) -> Option<(u64, u64, u64)> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_newer, parse_version};
+    use super::{is_newer, jitter_secs, parse_version, wait_for_next_check, WAKE};
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+
+    // Both wait tests share the process-wide wake flag.
+    static WAKE_TEST: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn requested_check_waits_for_the_minimum_spacing() {
+        let _serial = WAKE_TEST.lock().unwrap_or_else(|e| e.into_inner());
+        // A request right after a check must not wake the checker early.
+        let started = Instant::now();
+        *WAKE.0.lock().unwrap() = true;
+        wait_for_next_check(started, Duration::from_millis(50));
+        assert!(started.elapsed() >= Duration::from_millis(50));
+        assert!(!*WAKE.0.lock().unwrap());
+    }
+
+    #[test]
+    fn requested_check_wakes_once_the_spacing_has_passed() {
+        let _serial = WAKE_TEST.lock().unwrap_or_else(|e| e.into_inner());
+        let last = Instant::now() - super::MIN_REQUESTED_INTERVAL;
+        *WAKE.0.lock().unwrap() = true;
+        let started = Instant::now();
+        wait_for_next_check(last, Duration::from_secs(3600));
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn jitter_stays_in_range() {
+        for _ in 0..100 {
+            assert!(jitter_secs(900) < 900);
+        }
+        assert_eq!(jitter_secs(0), 0);
+    }
 
     #[test]
     fn parses_release_tags_and_describe_output() {

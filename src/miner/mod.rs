@@ -65,6 +65,8 @@ use tui::{new_tui_state, TuiState};
 use ui::{info, warn};
 
 const TEMPLATE_RETRY_DELAY: Duration = Duration::from_secs(2);
+/// Re-fetch spacing while solo work needs a newer release.
+const UNSUPPORTED_WORK_RETRY_DELAY: Duration = Duration::from_secs(30);
 const MIN_EVENT_WAIT: Duration = Duration::from_millis(1);
 const BACKEND_EVENT_SOURCE_CAPACITY_MAX: usize = 256;
 const CPU_AUTOTUNE_RECORD_SCHEMA_VERSION: u32 = 11;
@@ -117,6 +119,29 @@ pub(super) const PROVISIONAL_FARADAY_POW_ENV: &str = "SEINE_FARADAY_PROVISIONAL_
 
 pub(crate) fn provisional_faraday_pow_allowed() -> bool {
     std::env::var_os(PROVISIONAL_FARADAY_POW_ENV).is_some_and(|value| value == "1")
+}
+
+static UNSUPPORTED_WORK_NOTICE: AtomicBool = AtomicBool::new(false);
+
+/// Work this build cannot mine (a PoW or header format from a later release)
+/// pauses mining instead of ending the process, so the update checker can
+/// install a release that supports it. Warns once per pause.
+pub(super) fn note_unsupported_work(reason: &str) {
+    crate::update_check::request_check_soon();
+    if !UNSUPPORTED_WORK_NOTICE.swap(true, Ordering::AcqRel) {
+        let action = if crate::update_check::auto_install_active() {
+            "checking for an update"
+        } else {
+            "install the newest release (seine --self-update)"
+        };
+        ui::warn("UPDATE", format!("mining paused: {reason}; {action}"));
+    }
+}
+
+pub(super) fn clear_unsupported_work_notice() {
+    if UNSUPPORTED_WORK_NOTICE.swap(false, Ordering::AcqRel) {
+        ui::info("UPDATE", "mining resumed");
+    }
 }
 
 struct DistributeWorkOptions<'a> {

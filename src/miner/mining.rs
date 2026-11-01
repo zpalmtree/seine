@@ -55,7 +55,7 @@ use super::{
     cancel_backend_slots, collect_backend_hashes, distribute_work, format_round_backend_telemetry,
     next_work_id, pending_backend_slot_label, quiesce_backend_slots, solution_backend_label,
     total_lanes, BackendRoundTelemetry, BackendSlot, RuntimeBackendEventAction, RuntimeMode,
-    TEMPLATE_RETRY_DELAY,
+    TEMPLATE_RETRY_DELAY, UNSUPPORTED_WORK_RETRY_DELAY,
 };
 
 type BackendEventAction = RuntimeBackendEventAction;
@@ -851,8 +851,15 @@ fn prepare_round_template(
         ) {
             Ok(pow) => pow,
             Err(reason) => {
-                warn("TEMPLATE", reason);
-                return None;
+                // Keep the process (and the update checker) alive; an
+                // installed update restarts through the shutdown flag.
+                super::note_unsupported_work(reason);
+                if !sleep_with_shutdown(shutdown, UNSUPPORTED_WORK_RETRY_DELAY) {
+                    return None;
+                }
+                let next_template = control_plane.resolve_next_template(tui)?;
+                *template = next_template;
+                continue;
             }
         };
         crate::backend::note_network_pow(pow);
@@ -871,14 +878,15 @@ fn prepare_round_template(
         };
 
         if let Err(reason) = blocknet_pow_spec::validate_header_length(header_base.len()) {
-            warn("TEMPLATE", reason);
-            if !sleep_with_shutdown(shutdown, TEMPLATE_RETRY_DELAY) {
+            super::note_unsupported_work(reason);
+            if !sleep_with_shutdown(shutdown, UNSUPPORTED_WORK_RETRY_DELAY) {
                 return None;
             }
             let next_template = control_plane.resolve_next_template(tui)?;
             *template = next_template;
             continue;
         }
+        super::clear_unsupported_work_notice();
 
         let target = match parse_target(&template.target) {
             Ok(target) => target,
