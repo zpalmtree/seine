@@ -33,3 +33,8 @@ being disabled until the pool acknowledges the memo.
 The minimum shares the Paid row, aligned right when it fits. Narrow layouts
 retain a separate line to keep both values readable. The 18 dashboard tests
 and desktop/mobile captures were rerun after this layout change.
+
+Memo compatibility: 81 pool/protocol/runtime tests and 18 dashboard tests passed;
+the default-feature binary check passed. Live, share-free TLS login checks passed
+on both Longhorn regions. The new memo-without-minimum and Longhorn captures show
+successful mining fixtures with no minimum label. Payouts were not exercised.

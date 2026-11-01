@@ -103,6 +103,8 @@ struct PoolConnectionConfig {
 
 #[derive(Debug, Clone)]
 struct PoolUiTelemetryClient {
+    pool_url: String,
+    expected_account: Option<String>,
     endpoints: Vec<PoolTelemetryEndpoint>,
     http: HttpClient,
     rate_limit_backoff_until: Arc<Mutex<Option<Instant>>>,
@@ -112,6 +114,7 @@ struct PoolUiTelemetryClient {
 #[derive(Debug)]
 struct PoolTelemetryRefreshResult {
     request_id: u64,
+    pool_url: Option<String>,
     hashrate: Option<String>,
     balances: Option<(String, String)>,
     local_wallet: Option<LocalDaemonWalletSnapshot>,
@@ -765,12 +768,12 @@ fn connect_pool_session(
             ),
         );
     }
-    let account = crate::payout_destination::account_id(
-        &connection.address,
-        connection.payout_memo.as_deref(),
-    );
-    let telemetry = PoolUiTelemetryClient::new(&connection.pool_url, &account);
-    if telemetry.is_none() && connection.mode.is_user() {
+    let telemetry = if connection.payout_memo.is_none() {
+        PoolUiTelemetryClient::for_destination(&connection.pool_url, &connection.address, None)
+    } else {
+        None
+    };
+    if telemetry.is_none() && connection.mode.is_user() && connection.payout_memo.is_none() {
         warn(
             "STATS",
             format!(
@@ -783,6 +786,35 @@ fn connect_pool_session(
         set_tui_pool_balance_overview(tui, &connection.address, "---", "---");
     }
     Ok((pool_client, telemetry))
+}
+
+fn update_user_pool_telemetry(
+    event: &PoolEvent,
+    session: &mut PoolSession,
+    tui: &mut Option<TuiDisplay>,
+) {
+    match event {
+        PoolEvent::LoginAccepted(ack) => {
+            if let Some(pool_url) = ack.pool_url.as_deref() {
+                if session
+                    .telemetry
+                    .as_ref()
+                    .is_none_or(|client| client.pool_url != pool_url)
+                {
+                    session.telemetry = PoolUiTelemetryClient::for_destination(
+                        pool_url,
+                        &session.connection.address,
+                        session.connection.payout_memo.as_deref(),
+                    );
+                    set_tui_pool_balance_overview(tui, &session.connection.address, "---", "---");
+                }
+            }
+        }
+        PoolEvent::Disconnected(_) | PoolEvent::LoginRejected(_) => {
+            session.telemetry = None;
+        }
+        _ => {}
+    }
 }
 
 pub(super) fn run_pool_mining_loop(
@@ -904,6 +936,7 @@ pub(super) fn run_pool_mining_loop(
                         }
                     } else {
                         for event in user_session.client.drain_events() {
+                            update_user_pool_telemetry(&event, &mut user_session, &mut tui);
                             handle_inactive_pool_event(
                                 event,
                                 PoolConnectionMode::User,
@@ -1040,7 +1073,9 @@ pub(super) fn run_pool_mining_loop(
             if telemetry_inflight_request_id == Some(result.request_id) {
                 telemetry_inflight_request_id = None;
             }
-            if let Some(hashrate) = result.hashrate {
+            let current_pool =
+                result.pool_url.as_deref() == user_telemetry.map(|client| client.pool_url.as_str());
+            if let Some(hashrate) = result.hashrate.filter(|_| current_pool) {
                 pool_network_hashrate = hashrate;
             }
             if let Some(snapshot) = result.local_wallet {
@@ -1065,10 +1100,13 @@ pub(super) fn run_pool_mining_loop(
                     );
                     local_wallet_mismatch_logged = true;
                 }
-            } else if let Some((pending, paid)) = result.balances {
+            } else if let Some((pending, paid)) = result.balances.filter(|_| current_pool) {
                 set_tui_pool_balance_overview(&mut tui, user_address, &pending, &paid);
             }
 
+            if !current_pool {
+                continue;
+            }
             if result.errors.is_empty() {
                 if pool_telemetry_warning_logged {
                     info("STATS", "pool telemetry recovered");
@@ -1129,6 +1167,7 @@ pub(super) fn run_pool_mining_loop(
                         });
                         let _ = tx.send(PoolTelemetryRefreshResult {
                             request_id,
+                            pool_url: telemetry.as_ref().map(|client| client.pool_url.clone()),
                             hashrate,
                             balances,
                             local_wallet,
@@ -1202,6 +1241,7 @@ pub(super) fn run_pool_mining_loop(
 
         let mut processed_pool_event = false;
         for event in user_session.client.drain_events() {
+            update_user_pool_telemetry(&event, &mut user_session, &mut tui);
             if active_mode == PoolConnectionMode::User {
                 processed_pool_event = true;
                 handle_active_pool_event(
@@ -2713,6 +2753,15 @@ where
 }
 
 impl PoolUiTelemetryClient {
+    fn for_destination(pool_url: &str, address: &str, memo: Option<&str>) -> Option<Self> {
+        let account = crate::pool::payout_account_for_pool(pool_url, address, memo).ok()?;
+        let mut client = Self::new(pool_url, &account)?;
+        if memo.is_some() && crate::pool::uses_longhorn_memos(pool_url) {
+            client.expected_account = Some(account);
+        }
+        Some(client)
+    }
+
     fn new(pool_url: &str, address: &str) -> Option<Self> {
         let base_urls = pool_api_base_urls_from_pool_url(pool_url);
         if base_urls.is_empty() {
@@ -2724,15 +2773,30 @@ impl PoolUiTelemetryClient {
             .ok()?;
         let endpoints = base_urls
             .into_iter()
-            .map(|base_url| PoolTelemetryEndpoint {
-                stats_url: format!("{base_url}/api/stats"),
-                miner_balance_url: format!(
-                    "{base_url}/api/miner/{address}/balance?include_pending_estimate=false"
-                ),
-                miner_url: format!("{base_url}/api/miner/{address}?include_pending_estimate=false"),
+            .filter_map(|base_url| {
+                let mut miner_url = reqwest::Url::parse(&base_url).ok()?;
+                miner_url
+                    .path_segments_mut()
+                    .ok()?
+                    .extend(["api", "miner", address]);
+                let mut balance_url = miner_url.clone();
+                balance_url.path_segments_mut().ok()?.push("balance");
+                miner_url
+                    .query_pairs_mut()
+                    .append_pair("include_pending_estimate", "false");
+                balance_url
+                    .query_pairs_mut()
+                    .append_pair("include_pending_estimate", "false");
+                Some(PoolTelemetryEndpoint {
+                    stats_url: format!("{base_url}/api/stats"),
+                    miner_balance_url: balance_url.to_string(),
+                    miner_url: miner_url.to_string(),
+                })
             })
             .collect::<Vec<_>>();
         Some(Self {
+            pool_url: crate::pool::primary_pool_url(pool_url).to_string(),
+            expected_account: None,
             endpoints,
             http,
             rate_limit_backoff_until: Arc::new(Mutex::new(None)),
@@ -2821,7 +2885,7 @@ impl PoolUiTelemetryClient {
                         });
                     errors.push(format!(
                         "GET {} failed: {err:#}",
-                        endpoint.miner_balance_url
+                        pool_telemetry_url_for_log(&endpoint.miner_balance_url)
                     ));
                     if !legacy_route_missing {
                         continue;
@@ -2835,7 +2899,10 @@ impl PoolUiTelemetryClient {
                     if self.is_rate_limited() {
                         return Err(err);
                     }
-                    errors.push(format!("GET {} failed: {err:#}", endpoint.miner_url));
+                    errors.push(format!(
+                        "GET {} failed: {err:#}",
+                        pool_telemetry_url_for_log(&endpoint.miner_url)
+                    ));
                 }
             }
         }
@@ -2882,10 +2949,15 @@ impl PoolUiTelemetryClient {
                 .unwrap_or(POOL_TELEMETRY_REFRESH_INTERVAL)
                 .as_secs()
                 .max(1);
-            bail!("GET {url} rate limited; retry in {secs}s");
+            bail!(
+                "GET {} rate limited; retry in {secs}s",
+                pool_telemetry_url_for_log(url)
+            );
         }
-        let response = response.error_for_status()?;
-        Ok(response.json()?)
+        let response = response
+            .error_for_status()
+            .map_err(reqwest::Error::without_url)?;
+        Ok(response.json().map_err(reqwest::Error::without_url)?)
     }
 
     fn record_rate_limit_backoff(&self, retry_after: Option<Duration>) {
@@ -2900,8 +2972,19 @@ impl PoolUiTelemetryClient {
     }
 
     fn fetch_balance_from_url(&self, url: &str) -> Result<(String, String)> {
-        let response = self.http.get(url).send()?;
+        let response = self
+            .http
+            .get(url)
+            .send()
+            .map_err(reqwest::Error::without_url)?;
         let body = self.json_or_rate_limit(response, url)?;
+        if self
+            .expected_account
+            .as_deref()
+            .is_some_and(|account| body.get("address").and_then(Value::as_str) != Some(account))
+        {
+            bail!("pool returned balances for a different payout destination");
+        }
         let pending = body
             .pointer("/balance/pending_confirmed")
             .and_then(Value::as_u64)
@@ -2914,6 +2997,14 @@ impl PoolUiTelemetryClient {
             format_atomic_units_bnt(pending),
             format_atomic_units_bnt(paid),
         ))
+    }
+}
+
+fn pool_telemetry_url_for_log(url: &str) -> String {
+    if let Some((base, _)) = url.split_once("/api/miner/") {
+        format!("{base}/api/miner/[account]")
+    } else {
+        url.to_string()
     }
 }
 
@@ -2971,6 +3062,9 @@ fn div_ceil_u64(value: u64, divisor: u64) -> u64 {
 }
 
 fn pool_api_base_urls_from_pool_url(pool_url: &str) -> Vec<String> {
+    if crate::pool::uses_longhorn_memos(pool_url) {
+        return vec!["https://longhornpool.net".into()];
+    }
     let trimmed = crate::pool::primary_pool_url(pool_url);
     if trimmed.is_empty() {
         return Vec::new();
@@ -3468,6 +3562,107 @@ mod tests {
             backend: "cpu",
             found_at: std::time::Instant::now(),
         }
+    }
+
+    #[test]
+    fn memo_telemetry_uses_pool_specific_identity_and_encodes_reserved_characters() {
+        let memo = "ID0001%2F?x=a&b=#";
+        let client = PoolUiTelemetryClient::for_destination(
+            "stratum+ssl://us.longhornpool.net:3334",
+            "address",
+            Some(memo),
+        )
+        .unwrap();
+        let account = format!("address?memo={memo}");
+        assert_eq!(client.expected_account.as_deref(), Some(account.as_str()));
+        let url = &client.endpoints[0].miner_balance_url;
+        assert_eq!(url, "https://longhornpool.net/api/miner/address%3Fmemo=ID0001%252F%3Fx=a&b=%23/balance?include_pending_estimate=false");
+        assert!(!super::pool_telemetry_url_for_log(url).contains("ID0001"));
+        let standard = PoolUiTelemetryClient::for_destination(
+            "stratum+tcp://bntpool.com:3333",
+            "address",
+            Some(memo),
+        )
+        .unwrap();
+        assert!(standard.endpoints[0].miner_balance_url.contains(
+            &crate::payout_destination::account_id("address", Some(memo))
+        ));
+        assert!(!standard.endpoints[0].miner_balance_url.contains("ID0001"));
+    }
+
+    #[test]
+    fn memo_telemetry_rejects_an_aggregate_or_different_memo_balance() {
+        for returned in ["address", "address?memo=OTHER", "address?memo=DEMO001"] {
+            let server = MockServer::start();
+            let response = server.mock(|when, then| {
+                when.method(GET);
+                then.status(200).json_body(json!({"address":returned,"balance":{"pending_confirmed":100000000,"paid":200000000}}));
+            });
+            let mut client =
+                PoolUiTelemetryClient::new(&server.url(""), "address?memo=DEMO001").unwrap();
+            client.expected_account = Some("address?memo=DEMO001".into());
+            assert_eq!(
+                client.fetch_pool_balances().is_ok(),
+                returned == "address?memo=DEMO001"
+            );
+            response.assert_hits(1);
+        }
+    }
+
+    #[test]
+    fn memo_telemetry_tracks_accepted_pool_switches() {
+        let shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let client = crate::pool::PoolClient::connect(
+            "127.0.0.1:1",
+            "address".into(),
+            "rig".into(),
+            shutdown.clone(),
+        )
+        .unwrap();
+        let mut session = super::PoolSession {
+            connection: super::PoolConnectionConfig {
+                payout_memo: Some("DEMO001".into()),
+                mode: PoolConnectionMode::User,
+                pool_url: "stratum+tcp://bntpool.com:3333,stratum+ssl://us.longhornpool.net:3334"
+                    .into(),
+                proxy: None,
+                address: "address".into(),
+                worker: "rig".into(),
+            },
+            client,
+            telemetry: None,
+            latest_job: None,
+            connected: false,
+            resume_job: None,
+            recent_submit_lookup: Default::default(),
+        };
+        for url in [
+            "stratum+ssl://us.longhornpool.net:3334",
+            "stratum+tcp://bntpool.com:3333",
+        ] {
+            let event = crate::pool::PoolEvent::LoginAccepted(crate::pool::PoolLoginAck {
+                pool_url: Some(url.into()),
+                payout_account: None,
+                min_payout_atomic: None,
+                protocol_version: 2,
+                capabilities: vec![],
+                required_capabilities: vec![],
+            });
+            super::update_user_pool_telemetry(&event, &mut session, &mut None);
+            let telemetry = session.telemetry.as_ref().unwrap();
+            assert_eq!(telemetry.pool_url, url);
+            assert_eq!(
+                telemetry.expected_account.is_some(),
+                url.contains("longhorn")
+            );
+            super::update_user_pool_telemetry(
+                &crate::pool::PoolEvent::Disconnected("test".into()),
+                &mut session,
+                &mut None,
+            );
+            assert!(session.telemetry.is_none());
+        }
+        shutdown.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     #[test]

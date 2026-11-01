@@ -185,6 +185,8 @@ pub struct PoolSubmitRetry {
 
 #[derive(Debug, Clone)]
 pub struct PoolLoginAck {
+    /// Set locally from the transport, never from the server reply.
+    pub pool_url: Option<String>,
     pub payout_account: Option<String>,
     pub min_payout_atomic: Option<u64>,
     pub protocol_version: u32,
@@ -286,6 +288,9 @@ impl PoolClient {
         }
         let mut endpoints = parse_pool_endpoints(pool_url)?;
         for endpoint in &mut endpoints {
+            endpoint
+                .memo_protocol()
+                .login_address(&address, payout_memo.as_deref())?;
             endpoint.proxy = proxy.cloned();
         }
         let (submit_tx, submit_rx) = bounded::<PoolSubmit>(CHANNEL_CAPACITY);
@@ -481,7 +486,7 @@ struct LoginResult {
     #[serde(default)]
     payout_account: Option<String>,
     #[serde(default)]
-    min_payout_atomic: Option<u64>,
+    min_payout_atomic: Option<Value>,
     #[serde(default)]
     protocol_version: Option<u32>,
     #[serde(default)]
@@ -500,7 +505,62 @@ struct PoolEndpoint {
     proxy: Option<SocksProxy>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MemoProtocol {
+    AcknowledgedField,
+    LonghornAddress,
+}
+
+impl MemoProtocol {
+    fn login_address(self, address: &str, memo: Option<&str>) -> Result<String> {
+        let Some(memo) = memo else {
+            return Ok(address.to_string());
+        };
+        crate::payout_destination::validate_memo(memo)?;
+        if self == Self::LonghornAddress {
+            if !memo.bytes().all(|byte| byte.is_ascii_graphic()) {
+                bail!("Longhorn memos require 1–124 printable ASCII characters without spaces");
+            }
+            Ok(format!("{address}?memo={memo}"))
+        } else {
+            Ok(address.to_string())
+        }
+    }
+}
+
+/// The account key used by the selected pool's API, with no address-only fallback.
+pub fn payout_account_for_pool(
+    pool_url: &str,
+    address: &str,
+    memo: Option<&str>,
+) -> Result<String> {
+    let endpoint = parse_pool_endpoint(primary_pool_url(pool_url))?;
+    if endpoint.memo_protocol() == MemoProtocol::LonghornAddress {
+        endpoint.memo_protocol().login_address(address, memo)
+    } else {
+        Ok(crate::payout_destination::account_id(address, memo))
+    }
+}
+
+pub fn uses_longhorn_memos(pool_url: &str) -> bool {
+    parse_pool_endpoint(primary_pool_url(pool_url))
+        .is_ok_and(|endpoint| endpoint.memo_protocol() == MemoProtocol::LonghornAddress)
+}
+
 impl PoolEndpoint {
+    fn memo_protocol(&self) -> MemoProtocol {
+        if self.tls
+            && self.port == 3334
+            && ["us.longhornpool.net", "asia.longhornpool.net"]
+                .iter()
+                .any(|host| self.host.eq_ignore_ascii_case(host))
+        {
+            MemoProtocol::LonghornAddress
+        } else {
+            MemoProtocol::AcknowledgedField
+        }
+    }
+
     fn display(&self) -> &str {
         &self.url
     }
@@ -634,7 +694,8 @@ async fn run_pool_client_loop(
                 } else {
                     None
                 };
-                let login_payload = match login_payload_with_memo(
+                let login_payload = match login_payload_for_endpoint(
+                    &endpoint,
                     &address,
                     &worker,
                     login_hint,
@@ -1041,8 +1102,9 @@ async fn run_pool_client_loop(
                                     let abandoned = retry_queue.observe_job(job, decoded_at);
                                     reject_abandoned_submits(&event_tx, abandoned);
                                 }
-                                if let PoolEvent::LoginAccepted(ack) = &event {
-                                    match evaluate_login_ack_for_destination(ack, &address, payout_memo.as_deref()) {
+                                if let PoolEvent::LoginAccepted(ack) = &mut event {
+                                    ack.pool_url = Some(endpoint.url.clone());
+                                    match evaluate_login_ack_for_protocol(ack, &address, payout_memo.as_deref(), endpoint.memo_protocol()) {
                                         Ok(include_claimed_hash) => {
                                             submit_claimed_hash_enabled = include_claimed_hash;
                                             submit_timing_enabled = ack
@@ -1582,6 +1644,27 @@ fn login_payload(address: &str, worker: &str, difficulty_hint: Option<u64>) -> R
     login_payload_with_memo(address, worker, difficulty_hint, None)
 }
 
+fn login_payload_for_endpoint(
+    endpoint: &PoolEndpoint,
+    address: &str,
+    worker: &str,
+    difficulty_hint: Option<u64>,
+    memo: Option<&str>,
+) -> Result<String> {
+    let protocol = endpoint.memo_protocol();
+    let login_address = protocol.login_address(address, memo)?;
+    login_payload_with_memo(
+        &login_address,
+        worker,
+        difficulty_hint,
+        if protocol == MemoProtocol::AcknowledgedField {
+            memo
+        } else {
+            None
+        },
+    )
+}
+
 fn login_payload_with_memo(
     address: &str,
     worker: &str,
@@ -1961,7 +2044,11 @@ fn parse_login_result(result: Option<Value>) -> PoolLoginAck {
 
     PoolLoginAck {
         payout_account: parsed.payout_account,
-        min_payout_atomic: parsed.min_payout_atomic,
+        pool_url: None,
+        min_payout_atomic: parsed
+            .min_payout_atomic
+            .and_then(|value| value.as_u64())
+            .filter(|amount| *amount > 0),
         protocol_version,
         capabilities: normalize_capability_list(parsed.capabilities),
         required_capabilities: normalize_capability_list(parsed.required_capabilities),
@@ -2002,18 +2089,38 @@ fn should_send_claimed_hash(ack: &PoolLoginAck) -> bool {
             .any(|capability| capability == STRATUM_CAPABILITY_SUBMIT_CLAIMED_HASH)
 }
 
+#[cfg(test)]
 fn evaluate_login_ack_for_destination(
     ack: &PoolLoginAck,
     address: &str,
     memo: Option<&str>,
 ) -> std::result::Result<bool, String> {
-    if memo.is_some()
-        && (!ack.supports(crate::payout_destination::CAP_PAYOUT_MEMO)
-            || ack.payout_account.as_deref()
-                != Some(crate::payout_destination::account_id(address, memo).as_str())
-            || ack.min_payout_atomic.is_none_or(|minimum| minimum == 0))
-    {
-        return Err("pool did not acknowledge the payout memo; no shares will be submitted".into());
+    evaluate_login_ack_for_protocol(ack, address, memo, MemoProtocol::AcknowledgedField)
+}
+
+fn evaluate_login_ack_for_protocol(
+    ack: &PoolLoginAck,
+    address: &str,
+    memo: Option<&str>,
+    protocol: MemoProtocol,
+) -> std::result::Result<bool, String> {
+    if memo.is_some() {
+        let accepted = match protocol {
+            MemoProtocol::AcknowledgedField => {
+                ack.supports(crate::payout_destination::CAP_PAYOUT_MEMO)
+                    && ack.payout_account.as_deref()
+                        == Some(crate::payout_destination::account_id(address, memo).as_str())
+            }
+            // These authenticated endpoints validate the memo in the login address.
+            MemoProtocol::LonghornAddress => {
+                ack.protocol_version == 2 && ack.supports(STRATUM_CAPABILITY_SUBMIT_CLAIMED_HASH)
+            }
+        };
+        if !accepted {
+            return Err(
+                "pool did not acknowledge the payout memo; no shares will be submitted".into(),
+            );
+        }
     }
     evaluate_login_ack(ack)
 }
@@ -2583,6 +2690,7 @@ mod tests {
     #[test]
     fn claimed_hash_toggle_respects_negotiation() {
         let legacy = PoolLoginAck {
+            pool_url: None,
             payout_account: None,
             min_payout_atomic: None,
             protocol_version: 1,
@@ -2592,6 +2700,7 @@ mod tests {
         assert!(should_send_claimed_hash(&legacy));
 
         let negotiated_without_claimed_hash = PoolLoginAck {
+            pool_url: None,
             payout_account: None,
             min_payout_atomic: None,
             protocol_version: 2,
@@ -2601,6 +2710,7 @@ mod tests {
         assert!(!should_send_claimed_hash(&negotiated_without_claimed_hash));
 
         let negotiated_with_claimed_hash = PoolLoginAck {
+            pool_url: None,
             payout_account: None,
             min_payout_atomic: None,
             protocol_version: 2,
@@ -2610,6 +2720,7 @@ mod tests {
         assert!(should_send_claimed_hash(&negotiated_with_claimed_hash));
 
         let required_claimed_hash = PoolLoginAck {
+            pool_url: None,
             payout_account: None,
             min_payout_atomic: None,
             protocol_version: 2,
@@ -2760,6 +2871,7 @@ mod tests {
     #[test]
     fn evaluate_login_ack_rejects_unsupported_required_capability() {
         let ack = PoolLoginAck {
+            pool_url: None,
             payout_account: None,
             min_payout_atomic: None,
             protocol_version: 2,
@@ -4088,6 +4200,224 @@ mod tests {
         assert_eq!(ack.retries, 1);
         assert_eq!(submits.len(), 1);
     }
+    #[test]
+    fn payout_minimum_is_optional_metadata() {
+        use crate::payout_destination::{account_id, CAP_PAYOUT_MEMO};
+        for minimum in [
+            Value::Null,
+            Value::from(0),
+            Value::from(-1),
+            Value::from("unknown"),
+            Value::from(1.5),
+        ] {
+            let ack = parse_login_result(Some(serde_json::json!({
+                "protocol_version": 2, "capabilities": [CAP_PAYOUT_MEMO],
+                "payout_account": account_id("address", Some("ID001")), "min_payout_atomic": minimum
+            })));
+            assert_eq!(ack.min_payout_atomic, None);
+            assert!(evaluate_login_ack_for_destination(&ack, "address", Some("ID001")).is_ok());
+            assert!(evaluate_login_ack_for_destination(&ack, "address", Some("ID002")).is_err());
+        }
+        let ack = parse_login_result(Some(
+            serde_json::json!({"protocol_version": 2, "min_payout_atomic": 42}),
+        ));
+        assert_eq!(ack.min_payout_atomic, Some(42));
+        assert!(evaluate_login_ack_for_destination(&ack, "address", Some("ID001")).is_err());
+        assert!(evaluate_login_ack_for_destination(&ack, "address", None).is_ok());
+    }
+
+    #[test]
+    fn longhorn_adapter_is_scoped_to_verified_endpoints_and_preserves_bytes() {
+        let memo = "ID0001%2F?x=a&b=#";
+        let ack = parse_login_result(Some(serde_json::json!({
+            "protocol_version": 2,
+            "capabilities": ["submit_claimed_hash", "difficulty_hint", "same_template_rebind_v1"],
+            "required_capabilities": ["submit_claimed_hash"]
+        })));
+        for url in [
+            "stratum+ssl://us.longhornpool.net:3334",
+            "stratum+tls://ASIA.LONGHORNPOOL.NET:3334",
+        ] {
+            let endpoint = parse_pool_endpoint(url).unwrap();
+            let payload: Value = serde_json::from_str(
+                &login_payload_for_endpoint(&endpoint, "address", "rig", None, Some(memo)).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(payload["params"]["address"], format!("address?memo={memo}"));
+            assert!(payload["params"].get("payout_memo").is_none());
+            assert_eq!(
+                payout_account_for_pool(url, "address", Some(memo)).unwrap(),
+                format!("address?memo={memo}")
+            );
+            assert!(evaluate_login_ack_for_protocol(
+                &ack,
+                "address",
+                Some(memo),
+                endpoint.memo_protocol()
+            )
+            .is_ok());
+            for bad in ["", "space here", "é", &"A".repeat(125)] {
+                assert!(
+                    login_payload_for_endpoint(&endpoint, "address", "rig", None, Some(bad))
+                        .is_err()
+                );
+            }
+        }
+        for url in [
+            "stratum+tcp://us.longhornpool.net:3334",
+            "stratum+ssl://us.longhornpool.net:3333",
+            "stratum+ssl://us.longhornpool.net.example:3334",
+            "stratum+ssl://unknown.longhornpool.net:3334",
+            "stratum+ssl://127.0.0.1:3334",
+            "stratum+tcp://bntpool.com:3333",
+        ] {
+            let endpoint = parse_pool_endpoint(url).unwrap();
+            assert_eq!(endpoint.memo_protocol(), MemoProtocol::AcknowledgedField);
+            let payload: Value = serde_json::from_str(
+                &login_payload_for_endpoint(&endpoint, "address", "rig", None, Some(memo)).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(payload["params"]["address"], "address");
+            assert_eq!(payload["params"]["payout_memo"], memo);
+            assert!(evaluate_login_ack_for_protocol(
+                &ack,
+                "address",
+                Some(memo),
+                endpoint.memo_protocol()
+            )
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn memo_client_accepts_confirmed_account_without_minimum_and_blocks_unconfirmed_jobs() {
+        for valid in [false, true] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let (release_tx, release_rx) = std::sync::mpsc::channel();
+            let server = thread::spawn(move || {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .unwrap();
+                let mut reader = BufReader::new(socket.try_clone().unwrap());
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                let login: Value = serde_json::from_str(&line).unwrap();
+                assert_eq!(login["params"]["payout_memo"], "ID001");
+                let job = serde_json::json!({"method":"job","params":{
+                    "job_id":"early", "header_base":"11".repeat(92), "target":"ff".repeat(32),
+                    "height":1,"seed_hash":"00".repeat(32),"nonce_start":0,"nonce_end":100
+                }});
+                writeln!(socket, "{job}").unwrap();
+                let account = crate::payout_destination::account_id(
+                    "address",
+                    Some(if valid { "ID001" } else { "WRONG" }),
+                );
+                writeln!(socket, "{}", serde_json::json!({"id":1,"status":"ok","result":{
+                    "protocol_version":2,"capabilities":[crate::payout_destination::CAP_PAYOUT_MEMO],"payout_account":account
+                }})).unwrap();
+                if valid {
+                    let mut job = job;
+                    job["params"]["job_id"] = Value::from("confirmed");
+                    writeln!(socket, "{job}").unwrap();
+                }
+                let _ = release_rx.recv_timeout(Duration::from_secs(4));
+            });
+            let shutdown = Arc::new(AtomicBool::new(false));
+            let client = PoolClient::connect_via_with_memo(
+                &address.to_string(),
+                None,
+                "address".into(),
+                "rig".into(),
+                Some("ID001".into()),
+                shutdown.clone(),
+            )
+            .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(3);
+            let mut accepted = false;
+            let mut rejected = false;
+            let mut got_job = false;
+            while Instant::now() < deadline {
+                if let Some(event) = client.recv_event_timeout(Duration::from_millis(100)) {
+                    match event {
+                        PoolEvent::LoginAccepted(ack) => {
+                            accepted = true;
+                            assert!(ack.min_payout_atomic.is_none());
+                            assert!(ack.pool_url.is_some());
+                        }
+                        PoolEvent::LoginRejected(_) => {
+                            rejected = true;
+                            break;
+                        }
+                        PoolEvent::Job(job) => {
+                            assert_eq!(job.job_id, "confirmed");
+                            assert!(accepted);
+                            got_job = true;
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            shutdown.store(true, Ordering::Relaxed);
+            let _ = release_tx.send(());
+            server.join().unwrap();
+            assert_eq!(accepted, valid);
+            assert_eq!(rejected, !valid);
+            assert_eq!(got_job, valid);
+        }
+    }
+
+    #[test]
+    #[ignore = "live TLS handshake only; sends no shares and starts no mining backend"]
+    fn longhorn_live_memo_handshake() {
+        use sha3::{Digest, Sha3_256};
+        let point = hex::decode("e2f2ae0a6abc4e71a884a961c500515f58e30b6aa582dd8db6a65945e08d2d76")
+            .unwrap();
+        let mut raw = point.repeat(2);
+        let mut hash = Sha3_256::new();
+        hash.update(b"blocknet_stealth_address_checksumblocknet_mainnet");
+        hash.update(&raw);
+        raw.extend_from_slice(&hash.finalize()[..4]);
+        let address = bs58::encode(raw).into_string();
+        for host in ["us.longhornpool.net", "asia.longhornpool.net"] {
+            let url = format!("stratum+ssl://{host}:3334");
+            let shutdown = Arc::new(AtomicBool::new(false));
+            let client = PoolClient::connect_via_with_memo(
+                &url,
+                None,
+                address.clone(),
+                "seine-compat-check".into(),
+                Some("DEMO001".into()),
+                shutdown.clone(),
+            )
+            .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(15);
+            let mut accepted = false;
+            let mut got_job = false;
+            while Instant::now() < deadline {
+                if let Some(event) = client.recv_event_timeout(Duration::from_millis(100)) {
+                    match event {
+                        PoolEvent::LoginAccepted(ack) => {
+                            accepted = true;
+                            assert_eq!(ack.pool_url.as_deref(), Some(url.as_str()));
+                        }
+                        PoolEvent::Job(_) => {
+                            got_job = accepted;
+                            break;
+                        }
+                        PoolEvent::LoginRejected(message) => panic!("{host}: {message}"),
+                        _ => {}
+                    }
+                }
+            }
+            shutdown.store(true, Ordering::Relaxed);
+            drop(client);
+            assert!(accepted && got_job, "no accepted memo job from {host}");
+        }
+    }
+
     #[test]
     fn payout_memo_requires_exact_acknowledgement_and_preserves_wire_bytes() {
         use crate::payout_destination::{account_id, CAP_PAYOUT_MEMO};

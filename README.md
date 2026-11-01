@@ -27,8 +27,8 @@ own deposit memo with a pool that supports memo payouts:
 ./seine --address 'EXCHANGE_ADDRESS' --payout-memo 'YOUR_DEPOSIT_MEMO'
 ```
 
-Seine checks pool support before mining and reports the pool's memo payout
-minimum in the TUI. Known shared addresses require a memo; interactive startup
+Seine checks pool support before mining and shows the payout minimum when the
+pool provides it. Known shared addresses require a memo; interactive startup
 prompts for a missing memo, including for saved addresses. Unknown or rotated addresses can use `--payout-memo` too. Personal
 wallets and ordinary Blocknet IDs need no new flag. Memo mining requires the full
 address and is not supported in daemon mode or through Seine farm proxies.
@@ -40,6 +40,12 @@ changing a saved exchange address, explicitly provide the new memo, or use
 separate pool balance. Command-line overrides apply to the current run; edit
 `seine-data/seine.config.json` to change saved settings. On the pool Stats page,
 enter both the address and memo.
+
+Longhorn's US and Asia TLS endpoints (`stratum+ssl://us.longhornpool.net:3334`
+and `stratum+ssl://asia.longhornpool.net:3334`) also support `--payout-memo`.
+Seine sends their address-plus-memo format automatically. Longhorn memos must
+use printable ASCII without spaces; a missing minimum stays hidden in the TUI.
+See [exchange payouts](docs/EXCHANGE_PAYOUTS.md) for pool compatibility.
 
 ## Why seine
 
