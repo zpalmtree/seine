@@ -1408,7 +1408,7 @@ impl Config {
             cpu_autotune_threads,
             cli.disable_cpu_autotune_threads,
             cli.bench,
-        ) && crate::miner::fixed_count_trials_wanted();
+        ) && crate::miner::fixed_count_trials_wanted(resolved_threads);
         if pinned_kernel_trials {
             startup_notices.push(format!(
                 "--threads {resolved_threads} is kept; the CPU kernel is still compared while mining on this CPU"

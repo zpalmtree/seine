@@ -220,6 +220,40 @@ fn cohort_stream_kernel(
 // still get the usual two comparisons against it.
 const STARTUP_STREAM_MIN_WORKERS: usize = 8;
 
+/// Ryzen 3000 and 4000 (17h 71h, 60h), Ryzen 5000 (19h 21h, 50h), Ryzen 7000 (19h
+/// 61h), EPYC 9004 (19h 11h, A0h), Ryzen 9000 (1Ah 44h), Intel 12th Gen to Core Ultra
+/// 200 desktops, and Skylake-SP to Granite Rapids Xeons start on their cohort kernel
+/// at any worker count; EPYC 7002 and 7003 (17h 31h, 19h 01h) from four workers.
+fn startup_stream_min_workers(identity: &crate::runtime_identity::CpuIdentity) -> usize {
+    let any_count = match identity.vendor.as_deref() {
+        Some("AuthenticAMD") => matches!(
+            (identity.family, identity.model),
+            (Some(0x17), Some(0x60 | 0x71))
+                | (Some(0x19), Some(0x11 | 0x21 | 0x50 | 0x61 | 0xa0))
+                | (Some(0x1a), Some(0x44))
+        ),
+        Some("GenuineIntel") => is_intel_model(
+            identity,
+            &[
+                0x97, 0x9a, 0xb7, 0xba, 0xbf, 0xc6, 0x55, 0x6a, 0x6c, 0x8f, 0xcf, 0xad, 0xae,
+            ],
+        ),
+        _ => false,
+    };
+    let from_four = identity.vendor.as_deref() == Some("AuthenticAMD")
+        && matches!(
+            (identity.family, identity.model),
+            (Some(0x17), Some(0x31)) | (Some(0x19), Some(0x01))
+        );
+    if any_count {
+        1
+    } else if from_four {
+        4
+    } else {
+        STARTUP_STREAM_MIN_WORKERS
+    }
+}
+
 fn startup_kernel_for(
     identity: &crate::runtime_identity::CpuIdentity,
     candidates: &[CpuKernel],
@@ -249,22 +283,25 @@ pub(super) fn cohort_kernel() -> Option<CpuKernel> {
 /// comparisons at that count: where no cohort default exists but a streaming
 /// kernel is supported, and where the default is the skipped-store path. Other
 /// hosts with a cohort default run no trials at an explicit count.
-pub(crate) fn fixed_count_trials_wanted() -> bool {
+pub(crate) fn fixed_count_trials_wanted(workers: usize) -> bool {
     fixed_count_trials_wanted_for(
         &crate::runtime_identity::cpu_identity(),
         &supported_kernels(),
+        workers,
     )
 }
 
 /// Also true where the cohort default is the skipped-store path, which is always
-/// compared with the plain path, including at an explicit `--threads` count.
+/// compared with the plain path, including at an explicit `--threads` count, and
+/// at a count too low to start on the cohort default.
 fn fixed_count_trials_wanted_for(
     identity: &crate::runtime_identity::CpuIdentity,
     supported: &[CpuKernel],
+    workers: usize,
 ) -> bool {
     match cohort_stream_kernel(identity, supported) {
         Some(CpuKernel::Avx512StreamSkip) => true,
-        Some(_) => false,
+        Some(_) => workers < startup_stream_min_workers(identity),
         None => candidates_for(identity, supported)
             .iter()
             .any(|kernel| matches!(kernel, CpuKernel::Avx512256Stream | CpuKernel::Avx2Stream)),
@@ -398,7 +435,7 @@ fn static_kernel_for_identity(
     supported: &[CpuKernel],
     workers: usize,
 ) -> Option<CpuKernel> {
-    (workers >= STARTUP_STREAM_MIN_WORKERS)
+    (workers >= startup_stream_min_workers(identity))
         .then(|| startup_kernel_for(identity, &candidates_for(identity, supported)))
         .flatten()
 }
@@ -866,6 +903,7 @@ pub(super) struct Tuner {
     settle_started: u64,
     // Identity-validated starting path for uncached contexts, if any.
     startup: Option<CpuKernel>,
+    startup_min_workers: usize,
     genoa_startup: bool,
     windows_genoa_startup: bool,
     sapphire_startup: bool,
@@ -1111,6 +1149,7 @@ impl Tuner {
             settling: None,
             settle_started: 0,
             startup,
+            startup_min_workers: startup_stream_min_workers(identity),
             genoa_startup,
             windows_genoa_startup,
             sapphire_startup,
@@ -1384,7 +1423,7 @@ impl Tuner {
                             context
                                 .workers
                                 .iter()
-                                .all(|&w| w >= STARTUP_STREAM_MIN_WORKERS)
+                                .all(|&w| w >= self.startup_min_workers)
                         }
                         && !snapshots.iter().all(|s| s.kernel == *k)
                 }) {
@@ -1711,7 +1750,7 @@ mod tests {
             Some(CpuKernel::Avx512StreamSkip)
         );
         assert!(candidates.contains(&CpuKernel::Avx512Stream));
-        assert!(fixed_count_trials_wanted_for(&dense, &all));
+        assert!(fixed_count_trials_wanted_for(&dense, &all, 192));
         assert_eq!(
             static_kernel_for_identity(&dense, &all, 192),
             Some(CpuKernel::Avx512StreamSkip)
@@ -1744,7 +1783,9 @@ mod tests {
             l3_cores: Some(8),
             ..dense.clone()
         };
-        assert!(!fixed_count_trials_wanted_for(&regular, &all));
+        assert!(!fixed_count_trials_wanted_for(&regular, &all, 64));
+        // Below the count that starts on the cohort default, comparisons decide.
+        assert!(fixed_count_trials_wanted_for(&regular, &all, 7));
 
         // Without AVX-512 the skip path is never chosen.
         let no_avx512: Vec<CpuKernel> = all
@@ -2944,8 +2985,12 @@ mod tests {
                 static_kernel_for_identity(identity, &all, 8),
                 Some(CpuKernel::Avx512256Stream)
             );
-            assert_eq!(static_kernel_for_identity(identity, &all, 7), None);
         }
+        assert_eq!(static_kernel_for_identity(&masked_zen5, &all, 7), None);
+        assert_eq!(
+            static_kernel_for_identity(&raphael, &all, 1),
+            Some(CpuKernel::Avx512256Stream)
+        );
         // Zen 3 shares family 19h but has no AVX-512, so no streaming path.
         let milan = CpuIdentity {
             model: Some(0x01),
@@ -2987,6 +3032,76 @@ mod tests {
             ..masked_zen5.clone()
         };
         assert_eq!(static_kernel_for_identity(&intel, &all, 64), None);
+    }
+
+    #[test]
+    fn listed_cpus_start_on_their_cohort_kernel_at_any_count() {
+        use crate::runtime_identity::CpuIdentity;
+        let amd = |family, model| CpuIdentity {
+            vendor: Some("AuthenticAMD".into()),
+            family: Some(family),
+            model: Some(model),
+            ..CpuIdentity::default()
+        };
+        let intel = |model| CpuIdentity {
+            vendor: Some("GenuineIntel".into()),
+            family: Some(6),
+            model: Some(model),
+            ..CpuIdentity::default()
+        };
+        let avx2 = [CpuKernel::Avx2, CpuKernel::Avx2Stream];
+        let avx512 = [
+            CpuKernel::Avx512,
+            CpuKernel::Avx2,
+            CpuKernel::Avx512Stream,
+            CpuKernel::Avx512StreamL2,
+            CpuKernel::Avx512256Stream,
+        ];
+        for (identity, supported, expected) in [
+            (amd(0x17, 0x71), &avx2[..], CpuKernel::Avx2Stream),
+            (amd(0x17, 0x60), &avx2[..], CpuKernel::Avx2Stream),
+            (amd(0x19, 0x21), &avx2[..], CpuKernel::Avx2Stream),
+            (amd(0x19, 0x50), &avx2[..], CpuKernel::Avx2Stream),
+            (amd(0x19, 0x61), &avx512[..], CpuKernel::Avx512StreamL2),
+            (amd(0x19, 0xa0), &avx512[..], CpuKernel::Avx512StreamL2),
+            (amd(0x1a, 0x44), &avx512[..], CpuKernel::Avx512256Stream),
+            (intel(0x97), &avx2[..], CpuKernel::Avx2Stream),
+            (intel(0xc6), &avx2[..], CpuKernel::Avx2Stream),
+            (intel(0xcf), &avx512[..], CpuKernel::Avx512Stream),
+            (intel(0x55), &avx512[..], CpuKernel::Avx512Stream),
+            (intel(0x6a), &avx512[..], CpuKernel::Avx512Stream),
+            (intel(0xad), &avx512[..], CpuKernel::Avx512Stream),
+            (amd(0x19, 0x11), &avx512[..], CpuKernel::Avx512StreamL2),
+        ] {
+            assert_eq!(
+                static_kernel_for_identity(&identity, supported, 2),
+                Some(expected),
+                "{identity:?}"
+            );
+            assert!(!fixed_count_trials_wanted_for(&identity, supported, 2));
+        }
+        // These start on it from four workers; below that a pinned count compares.
+        for identity in [amd(0x19, 0x01), amd(0x17, 0x31)] {
+            assert_eq!(static_kernel_for_identity(&identity, &avx2, 3), None);
+            assert_eq!(
+                static_kernel_for_identity(&identity, &avx2, 4),
+                Some(CpuKernel::Avx2Stream)
+            );
+            assert!(fixed_count_trials_wanted_for(&identity, &avx2, 3));
+            assert!(!fixed_count_trials_wanted_for(&identity, &avx2, 4));
+        }
+        // Neighbouring cohorts keep the gate, and a low pinned count compares
+        // kernels instead of staying on the plain path.
+        let turin = amd(0x1a, 0x02);
+        assert_eq!(static_kernel_for_identity(&turin, &avx512, 7), None);
+        assert!(static_kernel_for_identity(&turin, &avx512, 8).is_some());
+        assert!(fixed_count_trials_wanted_for(&turin, &avx512, 7));
+        assert!(!fixed_count_trials_wanted_for(&turin, &avx512, 8));
+        // An unsupported kernel is never selected, whatever the identity.
+        assert_eq!(
+            static_kernel_for_identity(&amd(0x19, 0x21), &[CpuKernel::Avx2], 2),
+            None
+        );
     }
 
     fn three_path_tuner() -> Tuner {
