@@ -233,6 +233,102 @@ jobs:
             ${{ matrix.name }}.zip
           if-no-files-found: error
 
+  windows-sign:
+    needs: build
+    runs-on: windows-latest
+    environment: windows-signing
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      SIGNING_ENABLED: ${{ vars.SEINE_WINDOWS_SIGNING_ENABLED }}
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      SIGNING_ENDPOINT: ${{ vars.SEINE_SIGNING_ENDPOINT }}
+      SIGNING_ACCOUNT: ${{ vars.SEINE_SIGNING_ACCOUNT }}
+      SIGNING_PROFILE: ${{ vars.SEINE_SIGNING_PROFILE }}
+      SIGNING_PUBLISHER: ${{ vars.SEINE_SIGNING_PUBLISHER }}
+    steps:
+      - name: Check signing configuration
+        shell: pwsh
+        run: |
+          if ($env:SIGNING_ENABLED -eq '' -or $env:SIGNING_ENABLED -eq 'false') {
+            Write-Warning 'Windows publisher signing is not enabled. See docs/windows-signing.md.'
+            'Windows package: Authenticode signing is not enabled.' >> $env:GITHUB_STEP_SUMMARY
+          } elseif ($env:SIGNING_ENABLED -ne 'true') {
+            throw 'SEINE_WINDOWS_SIGNING_ENABLED must be true, false, or unset.'
+          } else {
+            foreach ($name in @('AZURE_CLIENT_ID', 'AZURE_TENANT_ID', 'AZURE_SUBSCRIPTION_ID', 'SIGNING_ENDPOINT', 'SIGNING_ACCOUNT', 'SIGNING_PROFILE', 'SIGNING_PUBLISHER')) {
+              if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
+                throw "Missing signing configuration: $name"
+              }
+            }
+          }
+
+      - uses: actions/checkout@v4
+        if: env.SIGNING_ENABLED == 'true'
+
+      - uses: actions/download-artifact@v4
+        if: env.SIGNING_ENABLED == 'true'
+        with:
+          name: seine-windows-x86_64
+
+      - name: Extract Windows package
+        if: env.SIGNING_ENABLED == 'true'
+        shell: pwsh
+        run: Expand-Archive -LiteralPath seine-windows-x86_64.zip -DestinationPath windows-package
+
+      - name: Sign in to Azure
+        if: env.SIGNING_ENABLED == 'true'
+        uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2.3.1
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign Windows executable
+        if: env.SIGNING_ENABLED == 'true'
+        uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
+        with:
+          endpoint: ${{ env.SIGNING_ENDPOINT }}
+          signing-account-name: ${{ env.SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ env.SIGNING_PROFILE }}
+          files: ${{ github.workspace }}\windows-package\seine.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          description: Seine miner
+          description-url: https://seineminer.com
+          exclude-environment-credential: true
+          exclude-azure-cli-credential: false
+
+      - name: Verify signature and rebuild Windows package
+        if: env.SIGNING_ENABLED == 'true'
+        shell: pwsh
+        run: |
+          ./scripts/check_windows_signature.ps1 -Path windows-package/seine.exe -ExpectedPublisher $env:SIGNING_PUBLISHER
+          # Hash the signed executable; preserve the bundled NVIDIA files unchanged.
+          Get-ChildItem windows-package -File | Where-Object Name -ne 'SHA256SUMS.txt' | Sort-Object Name | ForEach-Object {
+            $hash = (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLowerInvariant()
+            "$hash  $($_.Name)"
+          } | Set-Content -Encoding ascii windows-package/SHA256SUMS.txt
+          Compress-Archive -Path windows-package/* -DestinationPath seine-windows-x86_64.zip -Force
+          Expand-Archive -LiteralPath seine-windows-x86_64.zip -DestinationPath signed-package-check
+          ./scripts/check_windows_signature.ps1 -Path signed-package-check/seine.exe -ExpectedPublisher $env:SIGNING_PUBLISHER
+          python scripts/check_memo_rollout.py --binary signed-package-check/seine.exe --skip-interactive
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          'Windows package: publisher signature and timestamp verified.' >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Replace Windows artifact with signed package
+        if: env.SIGNING_ENABLED == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: seine-windows-x86_64
+          path: seine-windows-x86_64.zip
+          overwrite: true
+          if-no-files-found: error
+
   mining-os:
     needs: build
     runs-on: ubuntu-latest
@@ -262,7 +358,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: [build, mining-os]
+    needs: [build, mining-os, windows-sign]
     runs-on: ubuntu-latest
     environment: release
     permissions:

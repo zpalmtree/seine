@@ -1,0 +1,29 @@
+name: Windows signing checks
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - scripts/check_windows_signature.ps1
+      - scripts/test_windows_signature.ps1
+      - .github/workflows/windows-signing.yml
+      - .github/workflows/release.yml
+  pull_request:
+    paths:
+      - scripts/check_windows_signature.ps1
+      - scripts/test_windows_signature.ps1
+      - .github/workflows/windows-signing.yml
+      - .github/workflows/release.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  signature-checks:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test signature verification
+        shell: pwsh
+        run: ./scripts/test_windows_signature.ps1
