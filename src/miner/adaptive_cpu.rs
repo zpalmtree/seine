@@ -474,14 +474,42 @@ impl PressureBackoff {
         current: usize,
         max: usize,
     ) -> usize {
+        self.cap_on(
+            cfg!(target_os = "macos"),
+            pressure,
+            available,
+            slots,
+            current,
+            max,
+        )
+    }
+
+    /// macOS moves memory in and out of its compressor and counts a changing share of
+    /// it as in use, so free-memory arithmetic can fall below the running count with no
+    /// pressure reported. With `level_decides`, the system's pressure level alone
+    /// decides whether running workers go; the arithmetic still limits growth.
+    fn cap_on(
+        &mut self,
+        level_decides: bool,
+        pressure: bool,
+        available: usize,
+        slots: usize,
+        current: usize,
+        max: usize,
+    ) -> usize {
         // First-touch/reclaim can briefly stall while ample clean cache remains
         // available. Require both sustained stalls and tight arena headroom.
-        self.consecutive = if pressure && available <= current {
+        self.consecutive = if pressure && (level_decides || available <= current) {
             self.consecutive.saturating_add(1)
         } else {
             0
         };
-        let cap = available.min(slots).min(max);
+        let room = if level_decides && !pressure {
+            available.max(current)
+        } else {
+            available
+        };
+        let cap = room.min(slots).min(max);
         if self.consecutive >= PRESSURE_TICKS {
             cap.min(current.saturating_sub(1))
         } else {
@@ -1222,6 +1250,22 @@ mod tests {
         assert_eq!(worker_bounds(&cfg, 16), (3, 4));
         assert_eq!(seed_threads(None, 3, 4, 1, 1, None), 1);
         assert_eq!(seed_threads(None, 3, 4, 4, 4, None), 4);
+    }
+
+    #[test]
+    fn where_the_pressure_level_decides_arithmetic_alone_sheds_nothing() {
+        let mut backoff = PressureBackoff::default();
+        // No pressure: running workers stay, and growth still needs room.
+        assert_eq!(backoff.cap_on(true, false, 10, 16, 11, 16), 11);
+        assert_eq!(backoff.cap_on(true, false, 13, 16, 11, 16), 13);
+        // Sustained pressure sheds even with room by the arithmetic.
+        for _ in 0..PRESSURE_TICKS - 1 {
+            assert_eq!(backoff.cap_on(true, true, 14, 16, 11, 16), 14);
+        }
+        assert_eq!(backoff.cap_on(true, true, 14, 16, 11, 16), 10);
+        // Elsewhere the arithmetic is the limit.
+        let mut backoff = PressureBackoff::default();
+        assert_eq!(backoff.cap_on(false, false, 10, 16, 11, 16), 10);
     }
 
     #[test]

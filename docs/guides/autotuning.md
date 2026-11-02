@@ -70,10 +70,11 @@ Available RAM is checked once per second. Workers finish their current hash befo
 parking and releasing their arenas and reference tables. Linux budgets honor nested
 cgroup limits, including `memory.high`, and credit clean inactive file cache that
 can be reclaimed. Linux pressure checks prefer the miner's own cgroup so unrelated
-host stalls do not cause false reductions. Sustained memory stalls, Windows
-low-memory notifications or macOS memory-pressure warnings reduce the operating
-count when arena headroom is also tight; brief reclaim spikes do not force a
-reduction.
+host stalls do not cause false reductions. Sustained memory stalls or Windows
+low-memory notifications reduce the operating count when arena headroom is also
+tight; brief reclaim spikes do not force a reduction. On macOS, memory-pressure
+warnings alone decide when running workers go, because free memory moves as the
+system compresses it.
 The CPU backend can pause at zero workers when no complete arena fits, then retry
 after 30 seconds of sustained headroom. Released Linux HugeTLB arenas return to the
 reserved hugepage pool; the miner does not resize that OS pool. Parked worker slots
