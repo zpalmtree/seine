@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::collections::VecDeque;
 use std::io::{self, Stdout};
 use std::sync::atomic::Ordering;
@@ -156,6 +157,8 @@ pub struct TuiStateInner {
     pub log_entries: VecDeque<LogEntry>,
     /// Entries scrolled back from the newest; 0 follows new lines.
     pub log_scroll: usize,
+    /// Inner height and width of the log panel at its last draw.
+    log_panel: Cell<(usize, usize)>,
     /// Bumped on every log change so the renderer can redraw promptly.
     pub log_seq: u64,
 
@@ -219,6 +222,7 @@ impl TuiStateInner {
 
             log_entries: VecDeque::new(),
             log_scroll: 0,
+            log_panel: Cell::new((0, 0)),
             log_seq: 0,
             stopping: false,
             before_first_run: false,
@@ -290,13 +294,29 @@ impl TuiStateInner {
         }
     }
 
+    /// The offset of the oldest page: the oldest line on the top row and as many
+    /// newer entries below it as fit whole. 0 when the whole log fits.
+    fn max_log_scroll(&self, inner_height: usize, inner_width: usize) -> usize {
+        let mut rows = 0;
+        for (index, entry) in self.log_entries.iter().enumerate() {
+            rows += log_entry_rows(entry, 0.0, inner_width).len();
+            if rows > inner_height {
+                return self.log_entries.len() - index.max(1);
+            }
+        }
+        0
+    }
+
     fn scroll_log(&mut self, key: KeyCode) -> bool {
-        let oldest = self.log_entries.len().saturating_sub(1);
+        let (inner_height, inner_width) = self.log_panel.get();
+        let oldest = self.max_log_scroll(inner_height, inner_width);
+        // A resize or dropped lines can leave the stored offset past the oldest page.
+        let current = self.log_scroll.min(oldest);
         self.log_scroll = match key {
-            KeyCode::Up => self.log_scroll + 1,
-            KeyCode::Down => self.log_scroll.saturating_sub(1),
-            KeyCode::PageUp => self.log_scroll + LOG_PAGE_ENTRIES,
-            KeyCode::PageDown => self.log_scroll.saturating_sub(LOG_PAGE_ENTRIES),
+            KeyCode::Up => current + 1,
+            KeyCode::Down => current.saturating_sub(1),
+            KeyCode::PageUp => current + LOG_PAGE_ENTRIES,
+            KeyCode::PageDown => current.saturating_sub(LOG_PAGE_ENTRIES),
             KeyCode::Home => oldest,
             KeyCode::End => 0,
             _ => return false,
@@ -1265,7 +1285,13 @@ fn draw_config_wallet_panel(frame: &mut ratatui::Frame, area: Rect, state: &TuiS
 }
 
 fn draw_log(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
-    let title = if state.log_scroll > 0 {
+    let inner_height = area.height.saturating_sub(2) as usize;
+    let inner_width = area.width.saturating_sub(2) as usize;
+    state.log_panel.set((inner_height, inner_width));
+    let scroll = state
+        .log_scroll
+        .min(state.max_log_scroll(inner_height, inner_width));
+    let title = if scroll > 0 {
         " LOG  paused, End to follow "
     } else {
         " LOG "
@@ -1281,12 +1307,10 @@ fn draw_log(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
         .borders(Borders::ALL)
         .border_style(BORDER_STYLE);
 
-    let inner_height = area.height.saturating_sub(2) as usize;
-    let inner_width = area.width.saturating_sub(2) as usize;
     let now_elapsed_secs = state.started_at.elapsed().as_secs_f64();
-    // Walk back from the newest entry and stop as soon as the panel is full.
+    // Walk back from the newest entry shown and stop as soon as the panel is full.
     let mut rows: Vec<Line> = Vec::with_capacity(inner_height);
-    for entry in state.log_entries.iter().rev().skip(state.log_scroll) {
+    for entry in state.log_entries.iter().rev().skip(scroll) {
         rows.extend(
             log_entry_rows(entry, now_elapsed_secs, inner_width)
                 .into_iter()
@@ -1298,6 +1322,13 @@ fn draw_log(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
     }
     rows.truncate(inner_height);
     rows.reverse();
+    // The oldest page can end on an entry that only partly fits.
+    if rows.len() < inner_height {
+        if let Some(entry) = state.log_entries.get(state.log_entries.len() - scroll) {
+            rows.extend(log_entry_rows(entry, now_elapsed_secs, inner_width));
+            rows.truncate(inner_height);
+        }
+    }
 
     frame.render_widget(Paragraph::new(rows).block(log_block), area);
 }
@@ -1924,12 +1955,139 @@ mod tests {
 
         press(&mut state, KeyCode::Home);
         assert!(render_text(&state, 120, 30).contains("line-000"));
+        let oldest_page = state.log_scroll;
         press(&mut state, KeyCode::Up);
-        assert_eq!(state.log_scroll, state.log_entries.len() - 1);
+        assert_eq!(state.log_scroll, oldest_page);
 
         press(&mut state, KeyCode::End);
         assert_eq!(state.log_scroll, 0);
         assert!(render_text(&state, 120, 30).contains("line-new"));
+    }
+
+    /// The rows between the log panel's borders.
+    fn log_panel_rows(state: &TuiStateInner, width: u16, height: u16) -> Vec<String> {
+        let text = render_text(state, width, height);
+        let lines: Vec<&str> = text.lines().collect();
+        let top = lines
+            .iter()
+            .position(|line| line.contains(" LOG "))
+            .unwrap();
+        lines[top + 1..lines.len() - 1]
+            .iter()
+            .map(|line| line.to_string())
+            .collect()
+    }
+
+    fn numbered_log(lines: usize) -> TuiStateInner {
+        let mut state = TuiStateInner::new();
+        for i in 0..lines {
+            state.push_log(test_entry(&format!("line-{i:04}")));
+        }
+        state
+    }
+
+    #[test]
+    fn scrolling_past_the_oldest_line_keeps_the_log_panel_full() {
+        let mut state = numbered_log(100);
+        let height = log_panel_rows(&state, 120, 30).len();
+
+        for _ in 0..30 {
+            press(&mut state, KeyCode::PageUp);
+        }
+        let oldest_page = state.log_scroll;
+        let rows = log_panel_rows(&state, 120, 30);
+        assert!(rows[0].contains("line-0000"), "{rows:#?}");
+        assert!(
+            rows[height - 1].contains(&format!("line-{:04}", height - 1)),
+            "{rows:#?}"
+        );
+
+        press(&mut state, KeyCode::Up);
+        assert_eq!(state.log_scroll, oldest_page);
+        press(&mut state, KeyCode::Home);
+        assert_eq!(state.log_scroll, oldest_page);
+
+        // The first key back down moves the view.
+        press(&mut state, KeyCode::Down);
+        let rows = log_panel_rows(&state, 120, 30);
+        assert!(rows[0].contains("line-0001"), "{rows:#?}");
+        assert!(
+            rows[height - 1].contains(&format!("line-{height:04}")),
+            "{rows:#?}"
+        );
+    }
+
+    #[test]
+    fn oldest_page_starts_on_the_first_row_of_a_wrapped_line() {
+        let wrapped = format!("oldest-start {}oldest-end", "word ".repeat(40));
+        let height = log_panel_rows(&TuiStateInner::new(), 120, 30).len();
+        // Walk the log through fitting exactly, overflowing by one row and beyond.
+        for newer in 0..height + 3 {
+            let mut state = TuiStateInner::new();
+            state.push_log(test_entry(&wrapped));
+            for i in 0..newer {
+                state.push_log(test_entry(&format!("line-{i:04}")));
+            }
+            let total_rows = log_entry_rows(&state.log_entries[0], 0.0, 118).len() + newer;
+            log_panel_rows(&state, 120, 30);
+
+            press(&mut state, KeyCode::Home);
+            let rows = log_panel_rows(&state, 120, 30);
+            assert!(rows[0].contains("oldest-start"), "{newer}: {rows:#?}");
+            assert!(
+                rows[height - 1].trim_matches(['│', ' ']).is_empty() == (total_rows < height),
+                "{newer}: {rows:#?}"
+            );
+
+            press(&mut state, KeyCode::End);
+            if newer > 0 {
+                let rows = log_panel_rows(&state, 120, 30);
+                let newest = format!("line-{:04}", newer - 1);
+                assert!(rows.iter().any(|row| row.contains(&newest)), "{rows:#?}");
+            }
+        }
+    }
+
+    #[test]
+    fn log_that_fits_has_nothing_to_scroll() {
+        let mut state = numbered_log(3);
+        log_panel_rows(&state, 120, 30);
+        for key in [KeyCode::Up, KeyCode::PageUp, KeyCode::Home] {
+            press(&mut state, key);
+            assert_eq!(state.log_scroll, 0);
+        }
+        assert!(!render_text(&state, 120, 30).contains("End to follow"));
+    }
+
+    #[test]
+    fn oldest_page_stays_full_when_the_window_grows_or_old_lines_drop() {
+        let mut state = numbered_log(100);
+        log_panel_rows(&state, 80, 24);
+        press(&mut state, KeyCode::Home);
+
+        let height = log_panel_rows(&state, 140, 45).len();
+        let rows = log_panel_rows(&state, 140, 45);
+        assert!(rows[0].contains("line-0000"), "{rows:#?}");
+        assert!(
+            rows[height - 1].contains(&format!("line-{:04}", height - 1)),
+            "{rows:#?}"
+        );
+        press(&mut state, KeyCode::Down);
+        assert!(log_panel_rows(&state, 140, 45)[0].contains("line-0001"));
+
+        let mut state = numbered_log(LOG_CAPACITY);
+        log_panel_rows(&state, 120, 30);
+        press(&mut state, KeyCode::Home);
+        for i in 0..5 {
+            state.push_log(test_entry(&format!("new-{i}")));
+        }
+        let rows = log_panel_rows(&state, 120, 30);
+        let height = rows.len();
+        assert!(rows[0].contains("line-0005"), "{rows:#?}");
+        assert!(
+            rows[height - 1].contains(&format!("line-{:04}", height + 4)),
+            "{rows:#?}"
+        );
     }
 
     fn log_inner_rows(state: &TuiStateInner, width: u16, height: u16) -> usize {

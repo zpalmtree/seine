@@ -758,8 +758,25 @@ fn export_startup_dashboard_showcase() {
     };
     let steady_counts = [(3, 96), (5, 115)];
     let working = counted("working", steady, &steady_counts);
-    let mut scrolled = counted("working", steady, &steady_counts);
-    scrolled.log_scroll = 3;
+    // Long enough to overflow the log panel at every captured size.
+    let history: Vec<(LogLevel, &str, String, f64)> = (0..40)
+        .map(|i| {
+            (
+                Success,
+                "SHARE",
+                format!("share accepted at height {}", 71_270 + i),
+                (40 - i) as f64 * 60.0,
+            )
+        })
+        .collect();
+    let history: Vec<(LogLevel, &str, &str, f64)> = history
+        .iter()
+        .map(|(level, tag, message, age)| (*level, *tag, message.as_str(), *age))
+        .collect();
+    let mut scrolled = mining_fixture("working", &history);
+    scrolled.log_scroll = 10;
+    let mut scrolled_to_oldest = mining_fixture("working", &history);
+    scrolled_to_oldest.log_scroll = usize::MAX;
     let reconnecting = counted("pool-disconnected", outage, &[(1, 88), (2, 14)]);
     let login_rejected = dashboard_fixture("pool-login-rejected", rejected);
     let advice = mining_fixture("working", notices);
@@ -855,6 +872,11 @@ fn export_startup_dashboard_showcase() {
             "Scrolled back",
             "The view holds still while new lines arrive; End returns to live.",
             &scrolled,
+        ),
+        (
+            "Scrolled to the oldest line",
+            "The view stops with the oldest line on top and the panel still full.",
+            &scrolled_to_oldest,
         ),
         (
             "Reconnecting",
