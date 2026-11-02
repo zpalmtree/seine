@@ -1529,6 +1529,7 @@ impl Search {
                     self.hi = trial.base.threads;
                     self.peak.threads = trial.candidate.threads;
                     self.keep = trial.candidate.threads;
+                    self.reopen_below(gain);
                     self.extend_down();
                 }
                 Verdict::Tie | Verdict::Undecided if fewer_holds(gain, error, self.down_band) => {
@@ -1539,6 +1540,7 @@ impl Search {
                     }
                     self.keep = trial.candidate.threads;
                     self.look_between(now, trial.candidate, trial.base.threads);
+                    self.reopen_below(gain);
                     self.extend_down();
                 }
                 _ => {
@@ -1700,6 +1702,17 @@ impl Search {
         } else {
             now + UNDECIDED_RETRY_SECS
         };
+    }
+
+    /// Fewer threads just won clearly, so the best count is lower than the search
+    /// assumed. A worse reading further down, close by, is more likely noise than a cliff.
+    fn reopen_below(&mut self, gain: f64) {
+        if gain > CLEAR_GAIN {
+            self.step = (self.keep / 4).max(1);
+            self.lo = self.keep.saturating_sub(self.step).max(self.min - 1);
+            self.lo_measured = false;
+            self.worse_at = self.min - 1;
+        }
     }
 
     /// The assumed bottom was never measured: if the count keeps doing as well
@@ -2465,6 +2478,21 @@ mod tests {
         }
         // 7200 logs and holds the next until 50400.
         assert_eq!(tuned(&search), 4);
+    }
+
+    #[test]
+    fn a_clear_win_for_fewer_threads_reopens_the_counts_below_it() {
+        let mut search = Search::new(params(1, 24));
+        search.keep = 11;
+        search.lo = 9;
+        search.lo_measured = true;
+        search.worse_at = 9;
+        search.reopen_below(0.001);
+        assert_eq!((search.lo, search.worse_at), (9, 9));
+        search.reopen_below(0.05);
+        assert_eq!(search.worse_at, 0);
+        assert_eq!(search.lo, 9);
+        assert!(!search.lo_measured);
     }
 
     #[test]
