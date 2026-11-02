@@ -1,37 +1,114 @@
 ---
-title: '配置 seine：保存设置与启动选项'
-description: '找到 seine 配置文件，保存矿池和收款地址，了解启动参数的优先级，并通过正常重启确认 Blocknet 矿工的设置是否保留。'
+title: 'seine 设置：线程、CPU、GPU 和矿池'
+description: '在 seine 中关闭 CPU 或 GPU 挖矿、设置线程数、选择显卡、让设置每次启动都生效，并更改地址或矿池的操作方法。'
 tags: ['挖矿指南', '配置', 'seine']
 faq:
+  - q: '如何在 seine 中关闭 CPU 挖矿？'
+    a: '启动 seine 时把 backend 选项设为你的显卡类型，即 nvidia 或 amd。如果电脑同时有两种显卡，就用逗号分隔，两个都写上。这样 seine 只使用显卡挖矿，把处理器留给其他工作。'
+  - q: '如何在 seine 中关闭 GPU 挖矿？'
+    a: '启动 seine 时把 backend 选项设为 cpu。这样 seine 只使用处理器挖矿，把所有显卡留给游戏和其他应用。去掉该选项后，seine 会再次同时使用处理器和显卡挖矿。'
+  - q: '应该使用多少个 CPU 线程？'
+    a: 'seine 会自动选择线程数，所以只有想给其他工作留出余量时才需要设置。每个线程大约使用 2 GB 内存。在仪表盘中按减号键，直到电脑用起来合适，然后使用这个数字。'
   - q: 'seine 把设置保存在哪里？'
-    a: '默认读取相对于启动时工作目录的 seine-data/seine.config.json。data-dir 可选择其他基础目录。终端、快捷方式和计划任务可能使用不同的工作目录，因此应把完整配置路径与启动命令一起记录。'
-  - q: '命令行覆盖会更新保存的文件吗？'
-    a: '已有配置时，明确指定的连接参数在本次运行中优先，但不会替换保存的地址、矿池 URL 或矿机名称。将参数保留在日常启动方式中，或者停止矿工后修改保存字段，再通过正常启动验证。'
-  - q: '能把所有挖矿选项放进 JSON 吗？'
-    a: '保存文件只有较小的连接设置结构。后端和线程等硬件、运行选项应通过启动参数指定。添加名称相似的 JSON 字段不会设置这些选项。备份数据目录时，也要保留启动命令或脚本。'
-sourceHash: '66e5ad9f2665'
+    a: 'seine 把你的地址、矿池和矿工名保存在启动它的文件夹内的 seine-data/seine.config.json 中。线程和 backend 选项不会保存在那里，所以如果想让它们每次启动都生效，请把它们写进一个小的启动文件。'
+sourceHash: b5ca5a9a16d8
 translation: draft
 ---
 
-让 Blocknet 矿工每次都按预期设置启动。本指南以 seine v0.2.37 为准，说明配置位置、参数优先级和持久修改方法。请从已正常工作的安装开始；替换程序本身见[更新指南](/zh-hans/blog/update-seine-miner/)。
+seine 不需要任何设置就能良好运行。本指南介绍你最可能想做的修改：关闭 CPU 或 GPU 挖矿、使用更少的线程、选择显卡，以及更改地址或矿池。
 
-## seine 如何选择设置？
+## 如何更改 seine 的设置？
 
 <Answer>
-seine 将保存的连接设置与启动参数结合使用。明确指定的连接参数优先于对应的保存值。数据目录决定读取哪个配置文件。硬件和运行选项仍属于启动参数，因此应同时保留配置文件和日常启动命令。
+关闭 seine，在它的文件夹中打开终端，然后在命令中加上设置并重新启动，例如 `./seine --threads 4`。在 Windows 上，请使用 PowerShell 和 `.\seine.exe --threads 4`。seine 会保留你已保存的地址和矿池，所以只需输入想要更改的内容。
 </Answer>
 
-<img src="/assets/blog/configure-seine-miner.svg" alt="保存的配置文件与终端命令共同配置矿工，并在重启后进行验证。" width="1200" height="675" loading="lazy" />
+- **Windows：**在文件资源管理器中打开 seine 文件夹，在地址栏输入 `powershell` 并按 Enter。
+- **macOS 和 Linux：**打开终端，用 `cd` 进入 seine 文件夹。
 
-## 找到启动方式实际使用的配置
+下面的示例使用 `./seine`。在 Windows 上请改为输入 `.\seine.exe`。
 
-默认文件为 `./seine-data/seine.config.json`。此相对路径从进程工作目录开始，未必是可执行文件所在目录。编辑前检查终端目录、快捷方式或服务设置。同一程序的两种启动方式可能使用不同的数据目录。
+## 如何关闭 CPU 或 GPU 挖矿？
 
-`--data-dir` 选择基础目录，文件名仍为 `seine.config.json`。如果从多个位置启动，请使用固定绝对路径。一起记录程序、工作目录、数据路径和完整参数。[Windows 自动启动指南](/zh-hans/blog/start-miner-automatically-windows/)说明如何在任务计划程序中填写这些路径，包括含空格的路径。
+seine 默认使用 CPU 和每一块受支持的显卡挖矿。`--backend` 设置用来选择使用哪些设备：
 
-## 哪些设置属于保存文件？
+| 你想要的效果 | 添加 |
+|---|---|
+| 只用 CPU，关闭 GPU | `--backend cpu` |
+| 只用 NVIDIA GPU，关闭 CPU | `--backend nvidia` |
+| 只用 AMD GPU，关闭 CPU | `--backend amd` |
+| 使用 NVIDIA 和 AMD GPU，关闭 CPU | `--backend nvidia,amd` |
 
-示例展示主要连接字段。请把 `@yourname` 换成自己注册的 Blocknet ID 或完整收款地址。这是文件格式参考，不是运行命令。已有安装应只修改相关字段，不要直接用示例覆盖整个文件。
+例如，要使用 NVIDIA 显卡挖矿并让 CPU 空闲：
+
+```sh
+./seine --backend nvidia
+```
+
+[仪表盘](/zh-hans/blog/seine-dashboard-explained/)中的 Devices 面板会为每个正在挖矿的设备显示一行。
+
+## 如何使用更少的 CPU 线程？
+
+加上 `--threads` 和你想要的数字：
+
+```sh
+./seine --threads 4
+```
+
+每个线程大约使用 2 GB 内存，所以 4 个线程大约使用 8 GB。在你去掉该设置之前，seine 会一直使用这个数字。
+
+要找到合适的数字，请正常启动 seine，在仪表盘中按 `-` 减少一个线程，或按 `+` 增加一个线程。更改需要片刻生效，仪表盘会显示新的线程数。等电脑用起来合适时停下，然后把这个数字用于 `--threads`，因为这些按键只在你关闭 seine 之前有效。
+
+如果想让 seine 自己选择较轻的线程数，请改用：
+
+```sh
+./seine --cpu-profile efficiency
+```
+
+[桌面电脑指南](/zh-hans/blog/mine-while-using-pc/)介绍了更多在使用电脑的同时挖矿的方法。
+
+## 如何只选择一块显卡？
+
+加上显卡的编号。第一块显卡是 `0`：
+
+```sh
+./seine --backend cpu,nvidia --nvidia-devices 0
+```
+
+这会使用 CPU 和第一块 NVIDIA 显卡挖矿。两块显卡请用 `--nvidia-devices 0,1`，要关闭 CPU，就去掉 `cpu,`。AMD 显卡的用法相同：
+
+```sh
+./seine --backend cpu,amd --amd-devices 0
+```
+
+要给其他应用留出显存，请使用 `--nvidia-max-lanes 2` 或 `--amd-max-lanes 2`。每条通道（lane）大约使用 2 GB 显存。除非你自己加上 `--backend amd`，否则集成的 Radeon 显卡保持关闭。
+
+## 如何让设置每次启动都生效？
+
+seine 会自动保存你的地址、矿池和矿工名。`--threads` 和 `--backend` 这类设置只对当次运行有效，所以请把它们写进一个小的启动文件，并运行这个文件，而不是直接运行 seine。
+
+在 Windows 上，打开记事本，输入下面的几行并换成你自己的设置，然后把文件保存到 seine 文件夹中，文件名为 `start-mining.bat`，并把**保存类型**设为**所有文件**：
+
+```bat
+seine.exe --backend cpu --threads 4
+pause
+```
+
+双击 `start-mining.bat` 开始挖矿。`pause` 这一行会在 seine 停止后保持窗口打开，方便你阅读它的最后一条消息。
+
+在 macOS 或 Linux 上，把下面的几行保存到 seine 文件夹中，文件名为 `start-mining.sh`：
+
+```sh
+#!/bin/sh
+cd "$(dirname "$0")"
+./seine --backend cpu --threads 4
+```
+
+运行一次 `chmod +x start-mining.sh`，之后用 `./start-mining.sh` 开始挖矿。自动更新会用同样的设置重启 seine。要在每次登录 Windows 时开始挖矿，请参考[自动启动指南](/zh-hans/blog/start-miner-automatically-windows/)。
+
+## 如何更改地址、矿池或矿工名？
+
+关闭 seine，用文本编辑器打开 `seine-data/seine.config.json`。这个文件夹位于你启动 seine 的文件夹之内。修改需要的值并保存文件：
 
 ```json
 {
@@ -43,34 +120,26 @@ seine 将保存的连接设置与启动参数结合使用。明确指定的连�
 }
 ```
 
-`mode`、`address`、`pool_url` 和 `pool_worker` 分别选择模式、收款目标、矿池和矿机名称。保留 `schema_version` 以及已有的 `dev_fee_pool_worker`。后者是单独生成的标签；自己的矿机使用 `pool_worker`。不要把助记词或私钥写进连接文件。
+其他行保持原样。保留引号和逗号，并且不要把恢复短语或私钥写进这个文件。
 
-## 怎样让修改永久生效？
+如果只想在某一次运行中使用不同的值，请把它加到命令里。已保存的文件不会改变：
 
-停止矿工并备份原文件。用纯文本编辑器保留合法 JSON，字符串使用双引号，保存原文件名且不添加额外扩展名。只修改实际数据目录中的必要字段。检查字段间的逗号，不添加注释或末尾逗号；若编辑器提供 JSON 验证，请使用它。备份可用于精确比较旧值，无须凭记忆重建。
-
-检查启动方式是否明确覆盖同一设置。若命令里还有旧 `--address`，修改保存地址不会生效。更新该参数，或删除它以使用文件值。然后通过平时的快捷方式、脚本或任务重启，核对实际设置。
-
-## 有意识地使用临时覆盖
-
-已有配置时，下面的矿池选项只为本次运行选择矿机名称。下次不带此选项启动，会恢复使用保存的名称。它适合可控修改；若希望每次都这样运行，请把选项写入日常启动方式。
-
-```text
---pool-worker desktop-02
+```sh
+./seine --pool-worker desktop-02
 ```
 
-首次启动且没有配置文件时，seine 会根据初始连接输入创建文件。这与临时覆盖已有文件不同。把命令复制到其他电脑时，应考虑那台电脑可能正在创建首次配置。[配置参考](https://github.com/zpalmtree/seine/blob/v0.2.37/docs/guides/configuration.md)记录了首次提示和支持的启动选项。
+另外两个设置是 `--address` 和 `--pool-url`。[更改地址指南](https://bntpool.com/blog/zh-hans/change-mining-wallet-address/)说明了更改地址后矿池如何计入你的工作量。
 
-## 把调优选项保留在启动命令中
+## 设置不生效怎么办？
 
-`--backend` 和 `--threads` 等选项通过启动参数提供。连接文件结构不是所有参数的通用列表。添加同名或近似名称的 JSON 字段不会设置对应运行选项。将明确的硬件选择保留在启动矿工的脚本、快捷方式或服务中。
+| 你看到的内容 | 该怎么做 |
+|---|---|
+| `--nvidia-devices requires selecting nvidia in --backend` | 在 backend 中加上 `nvidia`：`--backend cpu,nvidia`。`amd` 同理。 |
+| `configured CPU lanes need` 更多内存 | 给 `--threads` 使用更小的数字，大约每 2 GB 可用内存对应一个线程。 |
+| `all GPU backends failed to start` | 为你的显卡安装最新驱动。[AMD 指南](https://github.com/zpalmtree/seine/blob/master/docs/guides/amd.md)列出了 AMD 显卡在 Linux 上需要什么。 |
+| seine 再次询问你的地址 | 从之前的同一个文件夹启动 seine，或用 `--data-dir` 指定文件夹。 |
+| 你的设置恢复成了自动 | 从你的启动文件启动 seine。`-` 和 `+` 键只在你关闭 seine 之前有效。 |
 
-仪表盘的线程控制只修改当前会话，不保存新的默认线程数。自动调优也有自己的缓存文件。修改连接时分别保留这些文件，并让每台电脑针对自身硬件调优。[自动调优指南](/zh-hans/blog/seine-automatic-cpu-tuning/)解释缓存复用及明确指定线程的影响。
+[参数参考](https://github.com/zpalmtree/seine/blob/master/docs/MINER_FLAGS.md)列出了每一项设置。
 
-## 为什么设置看起来重置了？
-
-先把数据路径和启动参数与上次正常运行比较。新解压目录、其他终端目录或旧计划任务参数都可能解释差异。解析失败时，先读报错中的文件名和信息，再恢复备份或修正 JSON，然后从预期入口启动一次。
-
-核对显示的收款目标、矿池、矿机名称和接受的份额。再次正常重启以验证持久性；一次带覆盖参数的运行只证明那条命令有效。用[仪表盘指南](/zh-hans/blog/seine-dashboard-explained/)理解会话，用[地址变更指南](https://bntpool.com/blog/zh-hans/change-mining-wallet-address/)处理未来矿池工作记入哪个地址。将有效启动方式和配置备份一起保存。
-
-<CTA target="seine" title="获取当前 seine 版本" text="使用固定数据目录，并将验证过的启动命令与保存的连接设置一起保管。" />
+<CTA target="seine" title="获取最新版 seine" text="下载 seine，先启动一次，再只添加你想更改的设置。" />

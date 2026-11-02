@@ -2,7 +2,7 @@
 title: How to mine Blocknet on Windows
 description: Mine Blocknet on Windows with seine. Choose the ZIP, extract the files, enter your address, and check accepted shares with CPU and NVIDIA mining together.
 date: 2026-10-25
-updated: 2026-10-28
+updated: 2026-11-02
 tags: [Mining guide, Windows, NVIDIA]
 faq:
   - q: Do I need the CUDA Toolkit to mine Blocknet on Windows?
@@ -24,8 +24,6 @@ Download `seine-windows-x86_64.zip`, extract the whole archive, and open `seine.
 
 Have your public payout address ready before you open the miner. The [wallet guide](/blog/blocknet-wallet-for-mining/) explains how to obtain one. Enter the receiving address only: the miner does not need your wallet seed or spending keys. A registered [Blocknet ID](/blog/blocknet-id-pay-by-name/) also works, so you can use `@name` in place of the long address.
 
-Each CPU mining thread uses a 2 GiB memory block. Seine checks the available RAM and core count, keeps memory headroom, and chooses the initial thread count for you. You can begin with the defaults on a desktop or laptop; there is no need to calculate a thread count or choose a CPU kernel first.
-
 ## Step 1: download the right build
 
 Open the [download section](/#download) and choose Windows x86_64. The archive is named `seine-windows-x86_64.zip`.
@@ -41,8 +39,6 @@ Double-click `seine.exe` from the extracted folder. If you prefer a terminal, op
 ```powershell
 .\seine.exe
 ```
-
-The `./` or `.\` prefix tells the shell to run the executable in the current directory. Running from an extracted folder also gives seine a consistent place to save its settings. Use that same folder on later starts so it can find the address and pool you entered.
 
 ## Step 3: enter your wallet address
 
@@ -66,8 +62,6 @@ Check that seine's dashboard shows a hashrate and accepted shares, then look up 
 
 The [dashboard guide](/blog/seine-dashboard-explained/) explains the hashrate, mining state and pool panels. A running hashrate shows local hashing activity; an accepted share confirms that work has reached the pool. Open [My Stats](https://bntpool.com/stats) and enter the same address or shortname to follow this rig's shares and balance.
 
-Keep accepted shares and payments separate when checking a new setup. Shares contribute to pool rewards; a payout follows the pool's confirmation and balance rules. The [PPLNS guide](https://bntpool.com/blog/how-pplns-payouts-work/) explains that sequence. You can check the connection immediately without waiting for the first payment.
-
 <figure>
   <picture>
     <source media="(max-width: 640px)" srcSet="/assets/blog/setup-accepted-shares-mobile.webp" width="384" height="221" />
@@ -82,11 +76,7 @@ Seine uses the CPU and supported NVIDIA cards together by default. Install a cur
 
 On first launch, seine tunes each GPU and remembers its settings. CPU tuning also runs during mining. The [hardware guide](/blog/blocknet-mining-hardware-hashrate/) explains memory sizing and measured results, while the [NVIDIA guide](https://github.com/zpalmtree/seine/blob/master/docs/guides/nvidia.md) covers multiple cards. To stop cleanly, press `q` in the dashboard or `Ctrl+C` in the terminal.
 
-## Optional: enable Windows large pages
-
-Normal startup already tries large pages and falls back to regular pages. To prepare large pages on Windows Pro, Enterprise or Education, open `secpol.msc`, go to **Local Policies → User Rights Assignment → Lock pages in memory**, and add the account that runs seine. Sign out and back in so the new logon session receives the right.
-
-The [large-pages guide](/blog/huge-pages-blocknet-mining/) covers this optional setup in detail. After signing back in, launch seine normally and check its startup log for the selected page mode. Keep the default automatic mode while establishing your first working setup, then compare measurements on the same PC if you change page settings.
+<MinerSettings os="windows" />
 
 <CTA target="seine" title="Download seine for Windows" text="Extract the ZIP, enter your payout address, and start mining on bntpool.com with automatic CPU and NVIDIA tuning." />
 

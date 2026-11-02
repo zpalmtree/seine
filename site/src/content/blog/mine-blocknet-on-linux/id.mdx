@@ -4,12 +4,12 @@ description: "Linux: Unduh seine, ekstrak, masukkan alamat Blocknet Anda, lalu p
 tags: ['Panduan penambangan', 'Linux', 'NVIDIA']
 faq:
   - q: 'Arsip Linux mana yang harus diunduh?'
-    a: "Buka bagian unduhan. Jalankan uname -m: pilih seine-linux-x86_64.tar.gz untuk x86_64 atau seine-linux-aarch64.tar.gz untuk aarch64. Versi Linux memerlukan glibc 2.39 atau lebih baru. Versi x86_64 mendukung CPU dan NVIDIA; ARM64 mendukung penambangan CPU."
+    a: "Buka bagian unduhan. Jalankan uname -m: pilih seine-linux-x86_64.tar.gz untuk x86_64 atau seine-linux-aarch64.tar.gz untuk aarch64. Versi Linux memerlukan glibc 2.31 atau lebih baru. Versi x86_64 mendukung CPU dan NVIDIA; ARM64 mendukung penambangan CPU."
   - q: 'Apakah seine harus dijalankan dengan sudo?'
     a: 'Jalankan penambang biasa sebagai pengguna Anda sendiri dari folder yang dapat ditulis. Ekstrak arsip, berikan izin eksekusi kepada pemilik bila perlu, lalu mulai dengan ./seine. Menyiapkan huge pages yang dicadangkan merupakan tugas administrasi terpisah; startup biasa bisa memakai halaman memori normal.'
-  - q: 'Mengapa Linux melaporkan pustaka NVRTC hilang?'
-    a: 'Backend NVIDIA di Linux membutuhkan driver yang kompatibel dan pustaka runtime NVRTC, termasuk pustaka builtins yang cocok. Instal melalui distribusi atau paket resmi yang didukung NVIDIA. Arsip Linux tidak menyertakan DLL Windows. Anda dapat memilih backend CPU sambil menyiapkan dukungan GPU.'
-sourceHash: 'fee2c843812c'
+  - q: 'Apakah saya memerlukan CUDA atau NVRTC untuk penambangan NVIDIA di Linux?'
+    a: 'Tidak. Driver NVIDIA sudah cukup. Seine memakai NVRTC jika terpasang dan jika tidak, memuat kernel bawaan seine, yang mencakup kartu GeForce seri GTX 10 dan yang lebih baru. Instal driver, jalankan seine, dan periksa apakah kartu Anda muncul di panel Devices.'
+sourceHash: acdcb56b3c1f
 translation: draft
 ---
 
@@ -21,7 +21,7 @@ Unduh seine, ekstrak, masukkan alamat Blocknet Anda, lalu pastikan share diterim
 
 ## Langkah 1: unduh versi yang tepat
 
-Buka [bagian unduhan](/id/#download). Jalankan `uname -m`: pilih `seine-linux-x86_64.tar.gz` untuk `x86_64` atau `seine-linux-aarch64.tar.gz` untuk `aarch64`. Versi Linux memerlukan glibc 2.39 atau lebih baru. Versi x86_64 mendukung CPU dan NVIDIA; ARM64 mendukung penambangan CPU.
+Buka [bagian unduhan](/id/#download). Jalankan `uname -m`: pilih `seine-linux-x86_64.tar.gz` untuk `x86_64` atau `seine-linux-aarch64.tar.gz` untuk `aarch64`. Versi Linux memerlukan glibc 2.31 atau lebih baru. Versi x86_64 mendukung CPU dan NVIDIA; ARM64 mendukung penambangan CPU.
 
 <img src="/assets/blog/setup-download.webp" alt="Tabel unduhan resmi dengan arsip Linux dan Linux ARM64" loading="lazy" />
 
@@ -64,17 +64,11 @@ Cari hashrate dan penghitung **Accepted** yang bertambah pada [dasbor](/id/blog/
 
 Buka [Statistik Saya](https://bntpool.com/stats?lang=id) dan masukkan alamat atau nama terdaftar yang sama untuk menemukan worker, share, dan saldo Anda.
 
-## Apa yang dibutuhkan untuk menambang dengan NVIDIA di Linux?
+## Apa yang Anda perlukan untuk penambangan GPU di Linux?
 
-Penambangan GPU di Linux x86_64 memerlukan driver NVIDIA dan pustaka runtime NVRTC yang kompatibel. NVRTC mengompilasi kernel GPU saat startup. Instal runtime dan pustaka builtins yang cocok melalui distribusi atau paket NVIDIA sesuai [panduan NVIDIA](/id/blog/mine-blocknet-nvidia-gpu/). Nama paket bergantung pada distribusi dan versi CUDA; ikuti petunjuk untuk sistem Anda.
+Kartu NVIDIA hanya memerlukan driver NVIDIA. Kartu AMD memerlukan driver amdgpu dan runtime ROCm HIP, seperti dijelaskan [panduan AMD](https://github.com/zpalmtree/seine/blob/master/docs/guides/amd.md). Seine menemukan kartu Anda sendiri dan menambang dengannya bersama CPU pada build x86_64. [Panduan NVIDIA](/id/blog/mine-blocknet-nvidia-gpu/) membahas cara memilih kartu dan memeriksa share GPU.
 
-Dengan pustaka tersebut, mode bawaan bisa menambang dengan CPU dan kartu NVIDIA yang didukung secara bersamaan. Untuk mulai menambang dengan CPU sambil menyiapkan runtime GPU, pilih secara eksplisit:
-
-```sh
-./seine --backend cpu
-```
-
-Pilihan ini hanya memakai CPU untuk pemanggilan tersebut. Untuk memilih perangkat GPU dan memeriksa share GPU diterima, lanjutkan ke panduan NVIDIA. Rilis ARM64 yang dibahas memuat backend CPU; memasang CUDA tidak menambahkan backend NVIDIA ke arsip itu.
+<MinerSettings os="linux" />
 
 ## Bagaimana mengatasi kesalahan startup Linux?
 
@@ -83,9 +77,8 @@ Gunakan pesan kesalahan pertama untuk menentukan pemeriksaan berikutnya:
 | Pesan atau gejala | Yang perlu diperiksa |
 |---|---|
 | `Exec format error` | Arsitektur salah: bandingkan `uname -m` dengan nama arsip. |
-| `GLIBC_2.39 not found` | Biner memerlukan glibc lebih baru. Gunakan sistem yang kompatibel atau kompilasi dari sumber; biarkan distribusi mengelola pustaka C sistem. |
+| `GLIBC_... not found` | Biner memerlukan glibc lebih baru. Gunakan sistem yang kompatibel atau kompilasi dari sumber; biarkan distribusi mengelola pustaka C sistem. |
 | `Permission denied` | Periksa izin eksekusi pengguna dan gunakan folder pada sistem berkas yang mengizinkan eksekusi. |
-| `libnvrtc` / `libnvrtc-builtins` | Instal runtime NVIDIA kompatibel dan pustaka builtins yang cocok, atau gunakan `--backend cpu` sambil menyiapkannya. |
 
 Setelah share diterima, [panduan huge pages](/id/blog/huge-pages-blocknet-mining/) membahas pengaturan halaman opsional di Linux. [Panduan server](/id/blog/mine-blocknet-on-servers/) mencakup operasi tanpa antarmuka grafis dan penempatan NUMA. Keduanya tidak diperlukan untuk mengikuti langkah awal ini; lakukan setiap perubahan secara terpisah agar efeknya pada mesin dapat diketahui.
 

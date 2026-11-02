@@ -8,10 +8,10 @@ faq:
   - q: 'Berapa banyak thread penambangan Blocknet yang bisa dijalankan dengan RAM 32 GB?'
     a: 'Sekitar 14. Setiap thread membutuhkan blok memori 2 GiB untuk setiap hash, jadi 32 GB secara teori menampung 16 blok. seine menyisihkan 5% (secara default paling banyak 1 GiB) RAM sebagai cadangan dan menyisakan ruang untuk sistem operasi, sehingga komputer 32 GB menjalankan sekitar 14 thread. seine menghitungnya untuk Anda saat dijalankan.'
   - q: 'Kartu grafis apa yang dipakai seine untuk menambang Blocknet?'
-    a: 'seine menambang dengan kartu grafis NVIDIA pada unduhan Windows dan Linux, memakai setiap kartu yang terdeteksi bersama prosesor. Di Windows, runtime CUDA sudah disertakan, jadi Anda hanya butuh driver NVIDIA. Di Linux, pasang driver dan pustaka NVRTC. Peluncuran pertama menyetel setiap kartu dan mengingat hasilnya.'
+    a: 'Seine menambang di kartu grafis NVIDIA dengan unduhan Windows dan Linux, memakai setiap kartu yang terdeteksi bersama prosesor. Anda hanya memerlukan driver NVIDIA. Start pertama menyetel setiap kartu dan mengingat hasilnya.'
   - q: 'Mengapa bandwidth memori penting untuk menambang Blocknet?'
     a: 'Setiap hash Blocknet menulis satu blok memori 2 GiB penuh dan membaca kembali data dari seluruh bagiannya, jauh lebih banyak dari yang bisa ditampung cache prosesor mana pun. Karena itu hashrate bergantung pada seberapa cepat sistem memori memindahkan data. Komputer dengan bandwidth memori lebih besar dan RAM yang cukup untuk banyak thread menambang paling cepat.'
-sourceHash: '4d5509a6c9e1'
+sourceHash: 9f6e4878e6b1
 translation: draft
 ---
 
@@ -89,7 +89,7 @@ Jika Anda membeli RAM untuk menambang, sesuaikan dengan jumlah thread yang Anda 
 Bisa. Di Windows dan Linux, seine menambang dengan setiap core CPU dan setiap kartu grafis NVIDIA yang terdeteksi secara bersamaan, dan hashrate-nya dijumlahkan. Anda tidak butuh flag untuk ini; ini adalah perilaku default.
 
 - **Windows:** unduhan sudah menyertakan pustaka runtime CUDA, jadi Anda hanya butuh driver NVIDIA terbaru.
-- **Linux:** pasang driver NVIDIA dan pustaka NVRTC dari distribusi Anda atau dari NVIDIA.
+- **Linux:** driver NVIDIA sudah cukup.
 - **Peluncuran pertama:** seine menyetel pengaturan kernel untuk setiap kartu dan menyimpan hasilnya, jadi saat dijalankan berikutnya hanya butuh beberapa detik.
 
 Di [Mac Apple Silicon](/id/blog/mine-blocknet-on-mac/), seine menambang dengan CPU secara default, pengaturan tercepat yang terukur di M4 Max. [Panduan NVIDIA](/id/blog/mine-blocknet-nvidia-gpu/) membahas rig multi-GPU dan persyaratannya.

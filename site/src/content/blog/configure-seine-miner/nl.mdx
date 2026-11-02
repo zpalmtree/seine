@@ -1,37 +1,114 @@
 ---
-title: 'seine instellen: opgeslagen waarden en startopties'
-description: 'Vind het configuratiebestand van seine, bewaar pool en adres, begrijp startopties en controleer de instellingen van je Blocknet-miner na een herstart.'
-tags: ['Mininggids', 'Configuratie', 'seine']
+title: 'seine-instellingen wijzigen: threads, CPU, GPU en pool'
+description: 'Zet CPU- of GPU-mining uit in seine, stel het aantal threads in, kies een videokaart, bewaar je instellingen voor elke start en wijzig je adres of pool.'
+tags: ['Mininghandleiding', 'Configuratie', 'seine']
 faq:
-  - q: 'Waar bewaart seine de configuratie?'
-    a: 'Standaard leest seine seine-data/seine.config.json vanuit de werkmap bij het starten. data-dir kiest een andere basismap. Terminal, snelkoppeling en geplande taak kunnen verschillende werkmappen gebruiken. Noteer daarom het volledige configuratiepad bij je startopdracht.'
-  - q: 'Past een startargument het bestand aan?'
-    a: 'Bij een bestaande configuratie hebben expliciete verbindingsargumenten voor die uitvoering voorrang zonder opgeslagen adres, pool-URL of machinenaam te vervangen. Bewaar het argument in je gebruikelijke startopdracht of stop de miner en wijzig het veld. Controleer daarna een normale start.'
-  - q: 'Kunnen alle opties in het JSON-bestand?'
-    a: 'Het opgeslagen schema bevat enkele verbindingsvelden. Hardware- en uitvoeringsopties zoals backend en threads horen bij de startargumenten. Gelijknamige JSON-velden stellen die opties niet in. Maak daarom ook een reservekopie van je startopdracht naast de gegevensmap.'
-sourceHash: '66e5ad9f2665'
+  - q: 'Hoe zet ik CPU-mining uit in seine?'
+    a: 'Start seine met de optie backend ingesteld op je videokaart, nvidia of amd. Gebruik beide, gescheiden door een komma, als de computer beide soorten kaarten heeft. Seine mint dan alleen op de videokaarten en laat de processor vrij voor ander werk.'
+  - q: 'Hoe zet ik GPU-mining uit in seine?'
+    a: 'Start seine met de optie backend ingesteld op cpu. Seine mint dan alleen op de processor en laat alle videokaarten vrij voor games en andere apps. Haal de optie weg om weer op processor en videokaarten samen te minen.'
+  - q: 'Hoeveel CPU-threads moet ik gebruiken?'
+    a: 'Seine kiest het aantal threads voor je, dus je hoeft het alleen in te stellen als je ruimte wilt laten voor ander werk. Elke thread gebruikt ongeveer 2 GB RAM. Druk in het dashboard op de min-toets tot je computer prettig aanvoelt en gebruik dan dat aantal.'
+  - q: 'Waar bewaart seine zijn instellingen?'
+    a: 'Seine bewaart je adres, pool en workernaam in seine-data/seine.config.json, in de map waaruit je het start. Thread- en backendopties worden daar niet bewaard, zet ze dus in een klein startbestand als je ze bij elke start wilt.'
+sourceHash: b5ca5a9a16d8
 translation: draft
 ---
 
-Start je Blocknet-miner telkens met voorspelbare instellingen. Deze gids voor seine v0.2.37 behandelt opslaglocatie, voorrang van argumenten en blijvende wijzigingen. Begin met een werkende installatie; de [updategids](/nl/blog/update-seine-miner/) behandelt het vervangen van het programma.
+Seine werkt prima zonder instellingen. Deze handleiding behandelt de wijzigingen die je het vaakst wilt: CPU- of GPU-mining uitzetten, minder threads gebruiken, een videokaart kiezen en je adres of pool wijzigen.
 
-## Hoe kiest seine de instellingen?
+## Hoe wijzig je een seine-instelling?
 
 <Answer>
-seine combineert opgeslagen verbindingswaarden met startargumenten. Expliciete verbindingsargumenten hebben voorrang op overeenkomstige opgeslagen waarden. De gegevensmap bepaalt welk bestand wordt gelezen. Hardware- en uitvoeringsopties blijven startargumenten: bewaar zowel het bestand als je normale startopdracht.
+Sluit seine, open een terminal in de map ervan en start het opnieuw met de instelling toegevoegd aan het commando, bijvoorbeeld `./seine --threads 4`. Gebruik op Windows PowerShell en `.\seine.exe --threads 4`. Seine bewaart je opgeslagen adres en pool, dus je typt alleen wat je wilt wijzigen.
 </Answer>
 
-<img src="/assets/blog/configure-seine-miner.svg" alt="Een configuratiebestand en terminalopdracht sturen een miner aan, gevolgd door een controle na herstart." width="1200" height="675" loading="lazy" />
+- **Windows:** open de seine-map in Verkenner, typ `powershell` in de adresbalk en druk op Enter.
+- **macOS en Linux:** open Terminal en ga met `cd` naar de seine-map.
 
-## Vind het bestand dat je startopdracht gebruikt
+De voorbeelden hieronder gebruiken `./seine`. Typ op Windows in plaats daarvan `.\seine.exe`.
 
-Standaard is dit `./seine-data/seine.config.json`, relatief aan de werkmap van het proces. Die kan afwijken van de programmamap. Controleer terminal, snelkoppeling of service voordat je wijzigt. Twee startmethoden kunnen hetzelfde programma met verschillende gegevensmappen openen.
+## Hoe zet je CPU- of GPU-mining uit?
 
-`--data-dir` kiest de basismap; de bestandsnaam blijft `seine.config.json`. Gebruik een vast absoluut pad als je vanuit meerdere plaatsen start. Noteer programma, werkmap, gegevensmap en alle argumenten. De [Windows-startgids](/nl/blog/start-miner-automatically-windows/) toont deze paden in Taakplanner, ook met spaties.
+Standaard mint seine op je CPU en op elke ondersteunde videokaart. De instelling `--backend` kiest welke je gebruikt:
 
-## Welke instellingen horen in het bestand?
+| Wat je wilt | Voeg dit toe |
+|---|---|
+| Alleen CPU, GPU uit | `--backend cpu` |
+| Alleen NVIDIA-GPU, CPU uit | `--backend nvidia` |
+| Alleen AMD-GPU, CPU uit | `--backend amd` |
+| NVIDIA- en AMD-GPU’s, CPU uit | `--backend nvidia,amd` |
 
-Het voorbeeld toont de hoofdvelden. Vervang `@yourname` door je geregistreerde Blocknet ID of volledige ontvangstadres. Het illustreert het formaat en is geen opdracht. Wijzig bij een bestaande installatie alleen de benodigde velden, niet het hele bestand.
+Om bijvoorbeeld op een NVIDIA-kaart te minen en de CPU vrij te laten:
+
+```sh
+./seine --backend nvidia
+```
+
+Het paneel Devices in het [dashboard](/nl/blog/seine-dashboard-explained/) toont een rij voor elk apparaat dat mint.
+
+## Hoe gebruik je minder CPU-threads?
+
+Voeg `--threads` toe met het gewenste aantal:
+
+```sh
+./seine --threads 4
+```
+
+Elke thread gebruikt ongeveer 2 GB RAM, dus 4 threads gebruiken ongeveer 8 GB. Seine blijft op dat aantal tot je de instelling weghaalt.
+
+Om een goed aantal te vinden, start je seine gewoon en druk je in het dashboard op `-` om een thread weg te halen of op `+` om er een toe te voegen. De wijziging duurt even en het dashboard toont het nieuwe aantal. Stop als je computer prettig aanvoelt en gebruik dat aantal met `--threads`, want de toetsen werken alleen tot je seine sluit.
+
+Als je seine zelf een lichter aantal threads wilt laten kiezen, gebruik dan dit:
+
+```sh
+./seine --cpu-profile efficiency
+```
+
+De [desktophandleiding](/nl/blog/mine-while-using-pc/) vertelt meer over minen terwijl je je computer gebruikt.
+
+## Hoe kies je één videokaart?
+
+Voeg het nummer van de kaart toe. De eerste kaart is `0`:
+
+```sh
+./seine --backend cpu,nvidia --nvidia-devices 0
+```
+
+Dit mint op de CPU en de eerste NVIDIA-kaart. Gebruik `--nvidia-devices 0,1` voor twee kaarten en laat `cpu,` weg om de CPU uit te zetten. AMD-kaarten werken op dezelfde manier:
+
+```sh
+./seine --backend cpu,amd --amd-devices 0
+```
+
+Om videogeheugen vrij te laten voor andere apps gebruik je `--nvidia-max-lanes 2` of `--amd-max-lanes 2`. Elke lane gebruikt ongeveer 2 GB videogeheugen. Geïntegreerde Radeon-graphics blijven uit, tenzij je zelf `--backend amd` toevoegt.
+
+## Hoe bewaar je je instellingen voor elke start?
+
+Seine bewaart je adres, pool en workernaam zelf. Instellingen zoals `--threads` en `--backend` gelden alleen voor die ene run, dus zet ze in een klein startbestand en open dat bestand in plaats van seine.
+
+Open op Windows Kladblok, typ deze regels met je eigen instellingen en sla het bestand op in de seine-map als `start-mining.bat`, met **Opslaan als type** ingesteld op **Alle bestanden**:
+
+```bat
+seine.exe --backend cpu --threads 4
+pause
+```
+
+Dubbelklik op `start-mining.bat` om te beginnen met minen. De regel `pause` houdt het venster open als seine stopt, zodat je het laatste bericht kunt lezen.
+
+Sla op macOS of Linux deze regels op in de seine-map als `start-mining.sh`:
+
+```sh
+#!/bin/sh
+cd "$(dirname "$0")"
+./seine --backend cpu --threads 4
+```
+
+Voer eenmalig `chmod +x start-mining.sh` uit en begin dan met minen via `./start-mining.sh`. Automatische updates starten seine opnieuw met dezelfde instellingen. Om te beginnen met minen telkens als je je aanmeldt bij Windows, volg je de [handleiding voor automatisch starten](/nl/blog/start-miner-automatically-windows/).
+
+## Hoe wijzig je je adres, pool of workernaam?
+
+Sluit seine en open `seine-data/seine.config.json` in een teksteditor. De map staat in de map waaruit je seine start. Wijzig de waarde die je nodig hebt en sla het bestand op:
 
 ```json
 {
@@ -43,34 +120,26 @@ Het voorbeeld toont de hoofdvelden. Vervang `@yourname` door je geregistreerde B
 }
 ```
 
-`mode`, `address`, `pool_url` en `pool_worker` bepalen modus, bestemming, pool en machinenaam. Behoud `schema_version` en eventueel `dev_fee_pool_worker`. Dat laatste is een afzonderlijke gegenereerde naam; gebruik `pool_worker` voor je machine. Bewaar hier geen herstelzin of privésleutels.
+Laat de andere regels zoals ze zijn. Houd de aanhalingstekens en komma’s en zet je herstelzin of privésleutels niet in dit bestand.
 
-## Hoe maak je een wijziging blijvend?
+Om voor één run een andere waarde te gebruiken, voeg je die toe aan het commando. Het opgeslagen bestand blijft hetzelfde:
 
-Stop de miner en kopieer het bestand. Gebruik een teksteditor, geldige JSON met dubbele aanhalingstekens en de oorspronkelijke naam zonder extra extensie. Wijzig alleen het benodigde veld in de werkelijk gebruikte map. Controleer komma’s, vermijd commentaar en eindkomma’s en gebruik zo mogelijk JSON-validatie. Met de kopie vergelijk je exacte oude waarden.
-
-Controleer of de startopdracht dezelfde waarde overschrijft. Een oud `--address` gaat vóór het gewijzigde opgeslagen adres. Werk het argument bij of verwijder het om het bestand te gebruiken. Start via de gebruikelijke snelkoppeling, het script of de taak en controleer de werkelijke waarden.
-
-## Gebruik tijdelijke opties bewust
-
-Bij bestaande configuratie kiest de volgende pooloptie de machinenaam voor deze uitvoering. Zonder die optie keert bij de volgende start de opgeslagen naam terug. Handig voor een gecontroleerde wijziging; voeg de optie aan je gewone startopdracht toe voor blijvend gebruik.
-
-```text
---pool-worker desktop-02
+```sh
+./seine --pool-worker desktop-02
 ```
 
-Bij de eerste start zonder bestand maakt seine dit vanuit de eerste verbindingsgegevens. Dat verschilt van een tijdelijke vervanging bij een bestaand bestand. Houd dit in gedachten wanneer je een opdracht naar een andere computer kopieert, die misschien zijn eerste configuratie maakt. De [configuratiereferentie](https://github.com/zpalmtree/seine/blob/v0.2.37/docs/guides/configuration.md) beschrijft vragen en startopties.
+De andere twee instellingen zijn `--address` en `--pool-url`. De [handleiding voor adreswijziging](https://bntpool.com/blog/nl/change-mining-wallet-address/) legt uit hoe de pool je werk bijschrijft nadat je je adres hebt gewijzigd.
 
-## Bewaar afstemming bij de startopdracht
+## Wat als een instelling niet werkt?
 
-`--backend` en `--threads` zijn startargumenten. Het verbindingsschema is geen algemene optielijst. Een vergelijkbaar JSON-veld stelt zo’n uitvoeringsoptie niet in. Bewaar bewuste hardwarekeuzes in het script, de snelkoppeling of service die de miner start.
+| Wat je ziet | Wat je kunt doen |
+|---|---|
+| `--nvidia-devices requires selecting nvidia in --backend` | Voeg `nvidia` toe aan de backend: `--backend cpu,nvidia`. Hetzelfde geldt voor `amd`. |
+| `configured CPU lanes need` meer RAM | Gebruik een lager getal met `--threads`, ongeveer één thread per 2 GB vrij RAM. |
+| `all GPU backends failed to start` | Installeer de huidige driver voor je kaart. De [AMD-handleiding](https://github.com/zpalmtree/seine/blob/master/docs/guides/amd.md) vermeldt wat AMD-kaarten onder Linux nodig hebben. |
+| Seine vraagt weer om je adres | Start seine vanuit dezelfde map als eerder, of stel de map in met `--data-dir`. |
+| Je instellingen zijn weer automatisch | Start seine vanuit je startbestand. De toetsen `-` en `+` werken alleen tot je seine sluit. |
 
-Threadknoppen in het dashboard veranderen de sessie, zonder een nieuwe standaard op te slaan. Automatische afstemming heeft eigen cachebestanden. Bewaar die apart van verbindingswijzigingen en laat iedere machine zichzelf afstemmen. De [autotuninggids](/nl/blog/seine-automatic-cpu-tuning/) legt cachegebruik en expliciete threadaantallen uit.
+De [optiereferentie](https://github.com/zpalmtree/seine/blob/master/docs/MINER_FLAGS.md) somt elke instelling op.
 
-## Waarom lijken instellingen teruggezet?
-
-Vergelijk gegevenspad en argumenten met de laatste werkende start. Een nieuwe uitpakmap, andere terminalmap of oud taakargument kan het verschil verklaren. Lees bij een parseerfout eerst bestandsnaam en melding. Herstel de kopie of corrigeer JSON en start eenmaal via het bedoelde pad.
-
-Controleer bestemming, pool, machinenaam en geaccepteerde shares. Herhaal een normale start om blijvend gedrag te bevestigen; een uitvoering met argumenten bewijst alleen die opdracht. Gebruik de [dashboardgids](/nl/blog/seine-dashboard-explained/) en voor toekomstige beloningen de [adreswisselgids](https://bntpool.com/blog/nl/change-mining-wallet-address/). Bewaar werkende startopdracht en configuratiekopie samen.
-
-<CTA target="seine" title="Download de huidige seine-versie" text="Gebruik een vaste gegevensmap en bewaar je geteste startopdracht met de opgeslagen verbinding." />
+<CTA target="seine" title="Download de huidige seine-versie" text="Download seine, start het één keer en voeg dan alleen de instellingen toe die je wilt wijzigen." />

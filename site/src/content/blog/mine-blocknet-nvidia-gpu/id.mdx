@@ -2,7 +2,7 @@
 title: 'Cara menambang Blocknet dengan GPU NVIDIA'
 description: 'Tambang Blocknet dengan GPU NVIDIA memakai seine. Siapkan Windows atau Linux, gunakan CPU dan GPU, periksa hashrate, dan atasi masalah saat memulai.'
 tags: ['Panduan penambangan', 'NVIDIA', 'GPU']
-sourceHash: '035e97230185'
+sourceHash: bcf2b64687ba
 translation: draft
 faq:
   - q: 'Bisakah seine menggunakan CPU dan GPU NVIDIA bersamaan?'
@@ -15,7 +15,7 @@ faq:
     a: 'Dasbor penambangan menampilkan share yang dikirim, ditolak, dan diterima, sementara log mengidentifikasi backend untuk setiap peristiwa share. Periksa hashrate lokal pada baris perangkat NVIDIA, lalu cari pesan share diterima dari backend tersebut. Gunakan panduan pelacakan pool untuk memeriksa pekerjaan yang dikreditkan.'
 ---
 
-seine menambang Blocknet dengan GPU NVIDIA bersama CPU Anda. Panduan ini membahas penyiapan Windows dan Linux, pemilihan kartu, share yang diterima, serta perbandingan terukur dengan RTX 5090. Perintahnya berlaku untuk seine v0.2.26 dan jaringan Argon2id saat ini per Oktober 2026.
+seine menambang Blocknet dengan GPU NVIDIA bersama CPU Anda. Panduan ini membahas penyiapan Windows dan Linux, pemilihan kartu, share yang diterima, serta perbandingan terukur dengan RTX 5090. Perintahnya berlaku untuk seine v0.3.0 dan jaringan Argon2id saat ini per Oktober 2026.
 
 ## Bagaimana cara mulai menambang Blocknet dengan GPU NVIDIA?
 
@@ -32,7 +32,7 @@ Mulailah dengan pengaturan bawaan. Jangan atur kernel, batas register, jumlah la
 | Platform | Yang perlu disiapkan | Perintah mulai |
 |---|---|---|
 | Windows x86_64 | Driver tampilan NVIDIA; DLL runtime bawaan di samping berkas program | `.\seine.exe` |
-| Linux x86_64 | Driver NVIDIA dan pustaka runtime NVRTC yang kompatibel | `./seine` |
+| Linux x86_64 | driver NVIDIA | `./seine` |
 
 Di Windows, ekstrak seluruh ZIP ke folder yang dapat ditulisi. Simpan `nvrtc64_120_0.dll` dan `nvrtc-builtins64_128.dll` di samping `seine.exe`. Rilis dalam paket menggunakan pustaka bawaan ini; instalasi CUDA Toolkit terpisah tidak diperlukan.
 
@@ -40,7 +40,7 @@ Di Windows, ekstrak seluruh ZIP ke folder yang dapat ditulisi. Simpan `nvrtc64_1
 
 Instal driver untuk kartu dan sistem operasi Anda dari [halaman driver NVIDIA](https://www.nvidia.com/en-us/drivers/). [Panduan penyiapan Windows](/id/blog/mine-blocknet-on-windows/) menjelaskan langkah unduhan, checksum, dan ekstraksi.
 
-Di Linux, instal driver NVIDIA dan paket NVRTC yang kompatibel dengan distribusi Anda. NVRTC mengompilasi kernel CUDA seine saat program berjalan. [Dokumentasi NVRTC](https://docs.nvidia.com/cuda/nvrtc/) NVIDIA menjelaskan kompiler dan pustaka builtins yang sesuai; [persyaratan NVIDIA seine](https://github.com/zpalmtree/seine/blob/master/docs/guides/nvidia.md) mendokumentasikan kebutuhan runtime penambang.
+Di Linux, driver NVIDIA sudah cukup. Seine memakai NVRTC jika terpasang dan jika tidak, memuat kernel bawaan seine, yang mencakup kartu GeForce seri GTX 10 dan yang lebih baru. [Persyaratan NVIDIA seine](https://github.com/zpalmtree/seine/blob/master/docs/guides/nvidia.md) memuat detailnya.
 
 Jalankan berkas biner dari foldernya. Gunakan kembali direktori kerja yang sama agar pengaturan tersimpan tetap berada di `seine-data`. Pada peluncuran pertama, masukkan alamat penerimaan Anda dan terima `stratum+tcp://bntpool.com:3333` sebagai pool.
 
@@ -94,7 +94,7 @@ Diukur pada 31 Oktober 2026: hanya RTX 5090, Windows 11 native, driver 610.88, b
 
 ## Apa yang perlu diperiksa jika baris NVIDIA tidak muncul?
 
-Periksa terlebih dahulu berkas program hasil ekstraksi dan pustaka runtime. Di Windows, simpan DLL NVRTC bawaan di samping `seine.exe`. Di Linux, instal driver dan pustaka NVRTC dalam lingkungan tempat Anda menjalankan penambang.
+Periksa driver terlebih dahulu. Di Windows, simpan juga DLL NVRTC bawaan di samping `seine.exe`. Di Linux, instal driver NVIDIA di lingkungan tempat Anda menjalankan miner.
 
 Kemudian periksa perintah Anda. `--backend cpu` hanya memilih CPU. Gunakan perintah bawaan atau `--backend cpu,nvidia` untuk keduanya. Jika menetapkan `--nvidia-devices`, pastikan indeks tersebut ada di komputer Anda.
 

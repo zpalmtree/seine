@@ -59,7 +59,7 @@ fails the build on most of them.
 - No profit promises, "passive income" or "risk-free". Profitability depends on coin price,
   network difficulty and electricity cost; give the reader the arithmetic and a way to measure.
 - No unannounced Faraday details. Only what blocknetcrypto.com states publicly.
-- No AMD GPU, Windows ARM64 or production Metal support claims.
+- No Windows ARM64 or production Metal support claims. AMD GPU support shipped in v0.3.0; say which cards (RX 6000, RX 7000, RX 9000, Radeon PRO).
 - seine's term is **threads** (the `--threads` flag), never "workers". On the pool, a "worker
   name" is fine because that's what the pool calls it.
 - Don't lead with fees. Mention seine's dev fee (flat 2% on every pool and in solo mode) only where

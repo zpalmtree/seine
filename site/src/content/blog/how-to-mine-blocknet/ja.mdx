@@ -9,7 +9,7 @@ faq:
     a: 'bntpool.com のマイニングプールは 6 時間のウィンドウによる PPLNS で支払います。ブロック報酬はそのブロックの上に 60 ブロックが積まれてから（5 分間隔のブロックで約 5 時間）支払い可能になり、残高が 0.1 BNT に達すると送金されます。最初のシェアが受理されてから数時間後に最初の支払いが届く見込みです。'
   - q: 'CPU と GPU で同時に Blocknet をマイニングできますか？'
     a: 'はい。Windows と Linux では、seine はマシン内のすべての CPU コアとすべての NVIDIA グラフィックカードで同時にマイニングし、両方のハッシュレートが合算されます。実行中にプロセッサーと各カードを個別に調整するので、設定を変えなくてもすべてのハードウェアの性能を最大限に引き出せます。'
-sourceHash: '22eaba1acd1a'
+sourceHash: bff032ea0960
 translation: draft
 ---
 
@@ -26,21 +26,10 @@ Blocknet アドレスまたは Blocknet ID のショートネームを用意し�
 - **Blocknet アドレス。** 公式の Blocknet ウォレット（[コマンドライン版ウォレット](https://github.com/blocknetprivacy/blocknet/releases/latest)または[デスクトップ版ウォレット](https://github.com/blocknetprivacy/blocknet-gui/releases/latest)）をインストールし、アドレスをコピーします。手順は[ウォレットガイド](/ja/blog/blocknet-wallet-for-mining/)で一つずつ説明しています。ウォレットとそのリカバリーフレーズは自分のコンピューターに保管し、共用のマイニングリグには置かないでください。
 - **またはショートネーム。** [blocknet.id](https://blocknet.id) で取得した [Blocknet ID のショートネーム](/ja/blog/blocknet-id-pay-by-name/)があれば、長いアドレスを貼り付ける代わりに `@name` 宛てにマイニングできます。
 - **マイニングスレッド 1 つにつき約 2 GB の RAM。** seine はマシンに合わせて自動で設定を決め、システム用の余裕も残すので、事前に計算する必要はありません。
-- **Windows、macOS、Linux のいずれか。** NVIDIA — Windows: NVIDIAディスプレイドライバー、実行ファイルと同じフォルダーに置く同梱ランタイムDLL; Linux: NVIDIAドライバーと対応するNVRTCランタイムライブラリ.
 
 ## ステップ 1：seine をダウンロード
 
 [ダウンロードセクション](/ja/#download)からお使いのシステム向けのアーカイブを入手します。インストールは不要です。展開すればすぐに使えます。
-
-| システム | アーカイブ | グラフィックカード |
-|---|---|---|
-| Windows（x86_64） | `seine-windows-x86_64.zip` | NVIDIA。CUDA ランタイム同梱 |
-| Linux（x86_64） | `seine-linux-x86_64.tar.gz` | NVIDIAドライバーと対応するNVRTCランタイムライブラリ; glibc ≥ 2.39 |
-| Linux（ARM64） | `seine-linux-aarch64.tar.gz` | CPU（glibc 2.39 以降） |
-| macOS（Apple シリコン） | `seine-macos-aarch64.tar.gz` | CPU |
-| macOS（Intel） | `seine-macos-x86_64.tar.gz` | CPU |
-
-各リリースでは `SHA256SUMS.txt` ファイルも公開しているので、ダウンロードしたファイルがリリースと一致するか確認できます。
 
 ## ステップ 2：実行
 
@@ -55,6 +44,8 @@ Windows では `seine.exe` をダブルクリックします。macOS または L
 seine はまず受け取りアドレスまたは `@shortname` を尋ね、次にプールを尋ねます。Enter キーを押すとデフォルトの `stratum+tcp://bntpool.com:3333` が選ばれます。すぐに[ダッシュボード](/ja/blog/seine-dashboard-explained/)にハッシュレートと最初のシェアが表示されます。
 
 ここから seine はマイニングしながら調整を続けます。実際のマイニング処理でスレッド数と CPU カーネルを比較し、向上が確認できたときだけ切り替え、メモリが逼迫すれば設定を下げ、うまくいった設定を次回の起動のために記憶します。この間プールへの再接続は行わないので、調整によってマイニング時間が失われることはありません。
+
+<MinerSettings os="any" />
 
 ## 支払いを受け取るまでどれくらいかかりますか？
 
@@ -77,15 +68,6 @@ bntpool.com のマイニングプールは PPLNS を採用しています。各�
 これらの測定で最も速い構成はAMD EPYC 9355Pの97.1 H/sです。マイニングスレッド64本、RAM 192 GiBを使い、Linux上でseineのデフォルト設定のまま動作させました。Blocknetのマイニングにはメモリ帯域幅と、1スレッドあたり2 GiBを確保できるRAM容量が役立ちます。NVIDIAカードはCPUにハッシュレートを加算できます。
 
 テストしたすべての CPU の結果は[パフォーマンスページ](https://github.com/zpalmtree/seine/blob/master/docs/PERFORMANCE.md)に掲載しています。RAM とメモリ帯域幅がこれらの数値をどう決めるかは [Blocknet マイニングハードウェアガイド](/ja/blog/blocknet-mining-hardware-hashrate/)で説明しています。
-
-## seine は同じ CPU からどうやってより多くの性能を引き出すのですか？
-
-seine はプロセッサーファミリーごとに複数の Argon2id カーネルを搭載し、マイニングしながらお使いのマシンで測定します。テストしたハードウェアでは、適切なカーネルを選ぶことで大きな差が出ました。
-
-- **AWS Graviton4：** プリフェッチ付きの SHA3 カーネルは、通常の NEON より 56% 高速にマイニングします（13.80 から 21.50 H/s）。
-- **AMD EPYC 9R45（Zen 5）：** ストリーミングカーネルは AVX2 より 30% 高速にマイニングします（24 スレッドで 34.47 から 44.74 H/s）。
-
-これらを自分で選ぶ必要はありません。seine は向上が確認できたときだけカーネルを切り替え、その結果を次回の起動のために記憶します。
 
 ## ハッシュレートをさらに上げるには？
 

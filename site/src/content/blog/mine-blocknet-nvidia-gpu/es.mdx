@@ -2,7 +2,7 @@
 title: 'Cómo minar Blocknet con una GPU NVIDIA'
 description: 'Mina Blocknet con una GPU NVIDIA usando seine. Configura Windows o Linux, combina CPU y GPU, comprueba el hashrate y resuelve problemas al iniciar.'
 tags: ['Guía de minería', 'NVIDIA', 'GPU']
-sourceHash: '035e97230185'
+sourceHash: bcf2b64687ba
 translation: draft
 faq:
   - q: '¿Puede seine usar la CPU y la GPU NVIDIA a la vez?'
@@ -15,7 +15,7 @@ faq:
     a: 'El panel de minería muestra los shares enviados, rechazados y aceptados, y el registro identifica el backend de cada evento. Comprueba el hashrate local en la fila NVIDIA y busca mensajes de shares aceptados de ese backend. Usa la guía de seguimiento del pool para consultar el trabajo acreditado.'
 ---
 
-Seine mina Blocknet con tu GPU NVIDIA junto con la CPU. Esta guía explica la configuración en Windows y Linux, la selección de tarjetas, los shares aceptados y una comparación medida con una RTX 5090. Los comandos corresponden a seine v0.2.26 y a la red Argon2id actual en octubre de 2026.
+Seine mina Blocknet con tu GPU NVIDIA junto con la CPU. Esta guía explica la configuración en Windows y Linux, la selección de tarjetas, los shares aceptados y una comparación medida con una RTX 5090. Los comandos corresponden a seine v0.3.0 y a la red Argon2id actual en octubre de 2026.
 
 ## ¿Cómo empezar a minar Blocknet con una GPU NVIDIA?
 
@@ -32,7 +32,7 @@ Empieza con los valores predeterminados. Deja sin configurar el kernel, el lími
 | Plataforma | Qué preparar | Comando de inicio |
 |---|---|---|
 | Windows x86_64 | Controlador de pantalla NVIDIA; DLL de ejecución incluidas junto al ejecutable | `.\seine.exe` |
-| Linux x86_64 | Controlador NVIDIA y bibliotecas de ejecución NVRTC compatibles | `./seine` |
+| Linux x86_64 | driver de NVIDIA | `./seine` |
 
 En Windows, extrae todo el ZIP en una carpeta con permisos de escritura. Conserva `nvrtc64_120_0.dll` y `nvrtc-builtins64_128.dll` junto a `seine.exe`. La versión empaquetada usa estas bibliotecas incluidas; no requiere instalar CUDA Toolkit por separado.
 
@@ -40,7 +40,7 @@ En Windows, extrae todo el ZIP en una carpeta con permisos de escritura. Conserv
 
 Instala el controlador de tu tarjeta y sistema operativo desde la [página de controladores NVIDIA](https://www.nvidia.com/en-us/drivers/). La [guía de Windows](/es/blog/mine-blocknet-on-windows/) detalla la descarga, la suma de comprobación y la extracción.
 
-En Linux, instala el controlador NVIDIA y los paquetes NVRTC compatibles con tu distribución. NVRTC compila los kernels CUDA de seine durante la ejecución. La [documentación de NVRTC](https://docs.nvidia.com/cuda/nvrtc/) describe el compilador y su biblioteca builtins; los [requisitos NVIDIA de seine](https://github.com/zpalmtree/seine/blob/master/docs/guides/nvidia.md) documentan lo que necesita el minero.
+En Linux, el driver de NVIDIA basta. Seine usa NVRTC cuando está instalado y, si no, carga los kernels incluidos en seine, que cubren las tarjetas GeForce de la serie GTX 10 y posteriores. Los [requisitos de NVIDIA de seine](https://github.com/zpalmtree/seine/blob/master/docs/guides/nvidia.md) dan los detalles.
 
 Ejecuta el binario desde su carpeta. Reutiliza el mismo directorio de trabajo para conservar los ajustes guardados en `seine-data`. En el primer inicio, introduce tu dirección de recepción y acepta `stratum+tcp://bntpool.com:3333` como pool.
 
@@ -94,7 +94,7 @@ Medido el 31 de octubre de 2026: solo RTX 5090, Windows 11 nativo, controlador 6
 
 ## ¿Qué comprobar si falta una fila NVIDIA?
 
-Comprueba primero el ejecutable extraído y las bibliotecas de ejecución. En Windows, conserva las DLL NVRTC incluidas junto a `seine.exe`. En Linux, instala el controlador y las bibliotecas NVRTC en el entorno donde ejecutas el minero.
+Comprueba primero el driver. En Windows, mantén además las DLL de NVRTC incluidas junto a `seine.exe`. En Linux, instala el driver de NVIDIA en el entorno desde el que inicias el minero.
 
 Revisa después el comando. `--backend cpu` selecciona solo la CPU. Usa el comando predeterminado o `--backend cpu,nvidia` para ambos. Si indicas `--nvidia-devices`, verifica que los índices existan en tu equipo.
 

@@ -1,0 +1,66 @@
+---
+// Shared "change what seine mines with" and quick-fix sections for the setup guides.
+// <MinerSettings os="windows" /> renders for one system; os="any" for the cross-platform guide.
+// The copy lives in the interface catalogs, so every guide and language stays in step.
+import { localizePath } from '../../i18n/locales';
+import { useTranslations } from '../../i18n/ui';
+import { localeFromUrl } from '../../lib/locale-from-url';
+
+interface Props { os: 'windows' | 'linux' | 'mac' | 'any' }
+const { os } = Astro.props;
+const locale = localeFromUrl(Astro.url);
+const t = useTranslations(locale);
+const GUIDES = 'https://github.com/zpalmtree/seine/blob/master/docs/guides';
+
+const seine = os === 'windows' ? '.\\seine.exe' : './seine';
+const hasGpu = os !== 'mac';
+const intro = {
+  windows: t('msIntroWindowsHtml'),
+  linux: t('msIntroUnixHtml'),
+  any: t('msIntroAnyHtml'),
+  mac: t('msIntroMacHtml'),
+}[os];
+const rows = hasGpu
+  ? [
+      [t('msRowNvidia'), '--backend nvidia'],
+      [t('msRowAmd'), '--backend amd'],
+      [t('msRowCpu'), '--backend cpu'],
+      [t('msRowThreads'), '--threads 4'],
+      [t('msRowCpuThreads'), '--backend cpu --threads 4'],
+    ]
+  : [[t('msRowThreads'), '--threads 4']];
+
+const statsUrl = `https://bntpool.com/stats${locale === 'en' ? '' : `?lang=${locale}`}`;
+const poolGuide = `https://bntpool.com/blog/${locale === 'en' ? '' : `${locale.toLowerCase()}/`}track-your-miner-on-bntpool/#zero-hashrate`;
+const links = {
+  settings: localizePath('/blog/configure-seine-miner/', locale),
+  nvidia: localizePath('/blog/mine-blocknet-nvidia-gpu/', locale),
+  amd: `${GUIDES}/amd.md`,
+  antivirus: localizePath('/blog/antivirus-flags-crypto-miner/', locale),
+  stats: statsUrl,
+  pool: poolGuide,
+};
+const fixes = [
+  t('msSlowHtml'),
+  t('msLowHtml'),
+  ...(hasGpu ? [t('msGpuHtml', links)] : []),
+  t('msRamHtml'),
+  t('msSavedHtml'),
+  t('msPoolHtml', links),
+  ...(os === 'windows' || os === 'any' ? [t('msBlockedHtml', links)] : []),
+];
+---
+<h2 id="change-settings">{t('msTitle')}</h2>
+<p set:html={intro} />
+<table>
+  <thead><tr><th>{t('msColWant')}</th><th>{t('msColCommand')}</th></tr></thead>
+  <tbody>
+    {rows.map(([want, flags]) => <tr><td>{want}</td><td><code dir="ltr" class="command">{`${seine} ${flags}`.split(' ').map((part, i) => <>{i > 0 && ' '}<span>{part}</span></>)}</code></td></tr>)}
+  </tbody>
+</table>
+<p set:html={t('msThreadsHtml')} />
+<p set:html={t('msMoreHtml', links)} />
+<h2 id="quick-fixes">{t('msHelpTitle')}</h2>
+<ul>
+  {fixes.map((fix) => <li set:html={fix} />)}
+</ul>

@@ -11,7 +11,7 @@ faq:
     a: 'Każdy wątek kopiący przetwarza blok pamięci o rozmiarze 2 GiB, więc licz około 2 GB na wątek. Mac z 16 GB pomieści do siedmiu wątków, Mac z 32 GB do 15, a Mac z 64 GB do 31. seine liczy wolną pamięć i dopasowuje też liczbę wątków do Twoich rdzeni.'
   - q: 'Czy można kopać Blocknet na Macu z procesorem Intel?'
     a: 'Tak. seine publikuje osobne archiwum dla Maców z procesorem Intel, seine-macos-x86_64.tar.gz, a kroki są takie same jak na Apple Silicon. Pobierz je, rozpakuj w Terminalu, uruchom ./seine i wklej swój adres Blocknet lub @name. seine dobiera liczbę wątków do Twojej pamięci i domyślnie zaczyna kopać na bntpool.com.'
-sourceHash: '33a60ad4df0c'
+sourceHash: 10bf5cec430a
 translation: draft
 ---
 
@@ -72,6 +72,8 @@ Wersja dla macOS ma podpis ad hoc. Jeśli macOS zatrzyma pierwsze uruchomienie, 
 xattr -d com.apple.quarantine ./seine
 ./seine
 ```
+
+<MinerSettings os="mac" />
 
 ## Dlaczego Maki z Apple Silicon dobrze kopią Blocknet?
 

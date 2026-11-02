@@ -2,7 +2,7 @@
 title: 'Come minare Blocknet con una GPU NVIDIA'
 description: 'Mina Blocknet con una GPU NVIDIA usando seine. Configura Windows o Linux, usa CPU e GPU, verifica gli hashrate e risolvi i problemi all''avvio del miner.'
 tags: ['Guida al mining', 'NVIDIA', 'GPU']
-sourceHash: '035e97230185'
+sourceHash: bcf2b64687ba
 translation: draft
 faq:
   - q: 'seine può usare insieme CPU e GPU NVIDIA?'
@@ -15,7 +15,7 @@ faq:
     a: 'La dashboard di mining mostra gli share inviati, rifiutati e accettati, e il registro identifica il backend di ogni evento relativo agli share. Controlla l''hashrate locale nella riga NVIDIA, poi cerca i messaggi di share accettati da quel backend. Usa la guida al monitoraggio del pool per verificare il lavoro accreditato.'
 ---
 
-seine mina Blocknet sulla tua GPU NVIDIA insieme alla CPU. Questa guida tratta la configurazione su Windows e Linux, la selezione delle schede, gli share accettati e un confronto misurato con RTX 5090. I comandi si riferiscono a seine v0.2.26 e alla rete Argon2id attuale a ottobre 2026.
+seine mina Blocknet sulla tua GPU NVIDIA insieme alla CPU. Questa guida tratta la configurazione su Windows e Linux, la selezione delle schede, gli share accettati e un confronto misurato con RTX 5090. I comandi si riferiscono a seine v0.3.0 e alla rete Argon2id attuale a ottobre 2026.
 
 ## Come iniziare a minare Blocknet con una GPU NVIDIA?
 
@@ -32,7 +32,7 @@ Parti dalle impostazioni predefinite. Non impostare kernel, limite dei registri,
 | Piattaforma | Cosa preparare | Comando di avvio |
 |---|---|---|
 | Windows x86_64 | Driver grafico NVIDIA; DLL runtime incluse accanto all'eseguibile | `.\seine.exe` |
-| Linux x86_64 | Driver NVIDIA e librerie runtime NVRTC compatibili | `./seine` |
+| Linux x86_64 | driver NVIDIA | `./seine` |
 
 Su Windows, estrai l'intero ZIP in una cartella scrivibile. Lascia `nvrtc64_120_0.dll` e `nvrtc-builtins64_128.dll` accanto a `seine.exe`. La versione distribuita utilizza queste librerie incluse; non serve installare separatamente il CUDA Toolkit.
 
@@ -40,7 +40,7 @@ Su Windows, estrai l'intero ZIP in una cartella scrivibile. Lascia `nvrtc64_120_
 
 Installa il driver per la tua scheda e il tuo sistema operativo dalla [pagina dei driver NVIDIA](https://www.nvidia.com/en-us/drivers/). La [guida per Windows](/it/blog/mine-blocknet-on-windows/) illustra download, checksum ed estrazione.
 
-Su Linux, installa il driver NVIDIA e i pacchetti NVRTC compatibili con la tua distribuzione. NVRTC compila i kernel CUDA di seine durante l'esecuzione. La [documentazione NVRTC](https://docs.nvidia.com/cuda/nvrtc/) di NVIDIA descrive il compilatore e la relativa libreria builtins; i [requisiti NVIDIA di seine](https://github.com/zpalmtree/seine/blob/master/docs/guides/nvidia.md) documentano l'ambiente runtime richiesto dal miner.
+Su Linux basta il driver NVIDIA. Seine usa NVRTC quando è installato e altrimenti carica i kernel integrati in seine, che coprono le schede GeForce della serie GTX 10 e successive. I [requisiti NVIDIA di seine](https://github.com/zpalmtree/seine/blob/master/docs/guides/nvidia.md) riportano i dettagli.
 
 Avvia il binario dalla sua cartella. Riutilizza la stessa directory di lavoro per mantenere le impostazioni salvate in `seine-data`. Al primo avvio, inserisci il tuo indirizzo di ricezione e accetta `stratum+tcp://bntpool.com:3333` come pool.
 
@@ -94,7 +94,7 @@ Misurato il 31 ottobre 2026: solo RTX 5090, Windows 11 nativo, driver 610.88, bu
 
 ## Cosa controllare se manca una riga NVIDIA?
 
-Controlla prima l'eseguibile estratto e le librerie runtime. Su Windows, lascia le DLL NVRTC incluse accanto a `seine.exe`. Su Linux, installa il driver e le librerie NVRTC nell'ambiente in cui avvii il miner.
+Controlla prima il driver. Su Windows, tieni anche le DLL NVRTC incluse accanto a `seine.exe`. Su Linux, installa il driver NVIDIA nell’ambiente da cui avvii il miner.
 
 Poi controlla il comando. `--backend cpu` seleziona solo la CPU. Usa il comando predefinito oppure `--backend cpu,nvidia` per entrambi. Se imposti `--nvidia-devices`, verifica che gli indici esistano sul tuo computer.
 

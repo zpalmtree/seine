@@ -327,11 +327,10 @@ Initial research checked 2026-10-25; release, platform and pool facts rechecked 
   - kernels compile at startup with NVRTC
   - the first launch autotunes and caches the result per GPU
   - Source: `seine@master:docs/guides/nvidia.md:3-4`, `:23-24`, `:37-38` (checked 2026-10-25)
-- **AMD GPU:** experimental HIP backend for RDNA3 (wave32) only:
+- **AMD GPU (historical; superseded by v0.3.0, see §11):** experimental HIP backend for RDNA3 (wave32) only:
   - requires a source build with `--features amd`
   - "never auto-selected"
   - not in any release archive
-  - **Do not claim AMD GPU support.**
   - Source: `seine@master:docs/guides/nvidia.md:50-53`, `Cargo.toml:42-49`, `docs/AMD_BRINGUP.md:8-12`, `release.yml:13-31` (checked 2026-10-25)
 - **Apple Metal:** "experimental and is never auto-selected". On the M4 Max, CPU-only mining beat Metal and CPU+Metal.
   - Source: `seine@master:docs/guides/apple-silicon.md:35-37` (checked 2026-10-25)
@@ -471,7 +470,7 @@ Added by this sheet from the evidence:
   - The tagline "No premine. No dev tax." (`taglines.md:30`) is true of the **protocol** only. Released v0.2.26 charges 1% or 2.5%, depending on the pool; v0.2.36 uses 2%. See §4.
 - Don't write "ASIC-proof" or "botnet-proof". The code claims design intent only ("resist ASICs", "impractical", `pow.rs:1-4`). "Designed to resist ASICs" is the safe wording.
   - Faraday's planned lighter PoW (§0) undercuts memory-hardness messaging after ~Feb 2027.
-- Don't claim AMD GPU support, Windows ARM64 builds, or production Metal support (§4).
+- Don't claim Windows ARM64 builds or production Metal support (§4). AMD GPU support shipped in v0.3.0; see §11.
 - Don't present M4 Max 30.9 H/s as a balanced or default setting. It used 16 threads and swap. The balanced figure is 29.3 H/s.
 - Don't claim multi-socket NUMA results (`PERFORMANCE.md:145`).
 - Don't write "fastest Blocknet miner" as a proven comparison. The README asserts it (`README.md:6`), but the repo has no head-to-head comparison against another miner or the daemon's built-in miner. Treat it as a brand tagline only.
@@ -765,3 +764,15 @@ Released core v0.22.0 (`5a0a5b510c1dce46f4eeb12c33a291052e44e7b3`) validates can
 
 - Generic HTLC examples connect conditional transfers through a shared hash/preimage and different refund deadlines; the claim branch also requires the intended recipient's signature. Refund conditions make a spend eligible, rather than broadcasting a refund automatically. BIP 199 is a closed explanatory proposal, not a Blocknet specification. Sources: https://github.com/bitcoin/bips/blob/master/bip-0199.mediawiki, https://github.com/bitcoin/bips/blob/master/bip-0065.mediawiki and https://arxiv.org/abs/1801.09515. See batch research for claim/sequence boundaries.
 - The official Blocknet overview names VEIL atomic swaps and presents their post-quantum redesign as part of proposed Faraday. This public statement does not establish a currently usable pair, command, service or specific swap protocol. Only the announcement is described; the new general HTLC diagram must not be represented as VEIL's design. Source: https://blocknetcrypto.com/#faraday (checked October 28).
+
+
+## 11. Setup requirements and settings in v0.3.0 (checked November 2, 2026)
+
+Checked against the published v0.3.0 Linux and Windows archives and `seine@v0.3.0`.
+
+- **AMD GPUs:** RX 6000, RX 7000, RX 9000 and Radeon PRO, on Windows x86_64 and Linux x86_64. Discrete cards are selected automatically; integrated Radeon needs `--backend amd`. Windows needs the AMD driver. Linux needs the amdgpu driver and the ROCm HIP runtime. Source: `docs/guides/amd.md`, `CHANGELOG.md`, `seine.exe` from the v0.3.0 ZIP.
+- **Linux NVIDIA:** the driver is enough. NVRTC is used when installed; otherwise seine loads built-in kernels for GeForce GTX 10 series and newer. Source: `docs/guides/nvidia.md`.
+- **Linux glibc:** the v0.3.0 binary needs symbols up to GLIBC_2.30; the README states 2.31 or newer (Ubuntu 20.04, Debian 11). Source: `objdump -T` on the release binary; `README.md`. This supersedes the 2.39 requirement in earlier notes.
+- **Backends:** `--backend` takes `cpu`, `nvidia`, `amd` and `metal`, comma-separated. `--nvidia-devices` needs `nvidia` in `--backend`, or seine stops with an error naming the flag. A `--threads` count larger than memory allows stops with `configured CPU lanes need ~N GiB RAM`. `--backend amd` with no runtime stops with `all GPU backends failed to start`. Source: runs of the v0.3.0 Linux binary against an unreachable pool, November 2, 2026.
+- **Thread keys:** `-` and `+` change the count for the current run only. `--threads` turns thread tuning off. Source: `docs/guides/configuration.md`; v0.3.0 log line `cpu-autotune | disabled; using configured thread count`.
+- **Saved settings:** `seine.config.json` holds the mode, address, pool, worker name and dev fee worker name. Backend and thread flags are not saved. Automatic updates restart with the same arguments. Source: first-run file from the v0.3.0 binary; `docs/guides/configuration.md`.

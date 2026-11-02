@@ -9,7 +9,7 @@ faq:
     a: 'Por padrão, o seine salva o endereço de pagamento, o pool e o nome do rig em seine-data/seine.config.json, dentro da pasta de onde você o executa. Execute-o a partir da mesma pasta extraída para reutilizar essas configurações. A opção data-dir permite escolher outro diretório quando necessário.'
   - q: 'Preciso ativar páginas grandes do Windows antes de começar a minerar?'
     a: 'Não. O seine tenta usar páginas grandes automaticamente e usa páginas normais quando elas não estão disponíveis. Você pode começar a minerar com as configurações padrão. Para a configuração opcional de páginas grandes, conceda à sua conta de mineração o direito Bloquear páginas na memória, depois saia e entre novamente na sessão antes de reiniciar o seine.'
-sourceHash: '66babe3b41fb'
+sourceHash: 1878d05f199d
 translation: draft
 ---
 
@@ -22,8 +22,6 @@ Baixe `seine-windows-x86_64.zip`, extraia todo o arquivo e abra `seine.exe`. Inf
 </Answer>
 
 Tenha seu endereço público de pagamento em mãos antes de abrir o minerador. O [guia da carteira](/pt-br/blog/blocknet-wallet-for-mining/) explica como obter um. Informe apenas o endereço de recebimento: o minerador não precisa da frase de recuperação nem das chaves de gasto da sua carteira. Um [Blocknet ID](/pt-br/blog/blocknet-id-pay-by-name/) registrado também funciona, então você pode usar `@name` no lugar do endereço longo.
-
-Cada thread de mineração da CPU usa um bloco de memória de 2 GiB. O seine verifica a RAM disponível e o número de núcleos, mantém uma folga de memória e escolhe a quantidade inicial de threads para você. É possível começar com as configurações padrão em um desktop ou notebook; não é necessário calcular a quantidade de threads nem escolher um kernel de CPU antes.
 
 ## Passo 1: baixe a versão certa
 
@@ -40,8 +38,6 @@ Clique duas vezes em `seine.exe` na pasta extraída. Se preferir um terminal, ab
 ```powershell
 .\seine.exe
 ```
-
-O prefixo `./` ou `.\` informa ao shell que deve executar o programa no diretório atual. Executar a partir de uma pasta extraída também dá ao seine um local fixo para salvar as configurações. Use essa mesma pasta nas próximas inicializações para que ele encontre o endereço e o pool que você informou.
 
 ## Passo 3: informe o endereço da carteira
 
@@ -65,8 +61,6 @@ Confira se o painel do seine mostra um hashrate e shares aceitas, depois busque 
 
 O [guia do painel](/pt-br/blog/seine-dashboard-explained/) explica o hashrate, o estado da mineração e os painéis do pool. Um hashrate ativo mostra a atividade local de cálculo; uma share aceita confirma que o trabalho chegou ao pool. Abra [My Stats](https://bntpool.com/stats?lang=pt-br) e informe o mesmo endereço ou nome curto para acompanhar as shares e o saldo deste rig.
 
-Diferencie shares aceitas de pagamentos ao verificar uma configuração nova. As shares contribuem para as recompensas do pool; um pagamento segue as regras de confirmação e saldo do pool. O [guia de PPLNS](https://bntpool.com/blog/how-pplns-payouts-work/) explica essa sequência. Você pode verificar a conexão imediatamente, sem esperar pelo primeiro pagamento.
-
 <figure>
   <picture>
     <source media="(max-width: 640px)" srcSet="/assets/blog/setup-accepted-shares-mobile.webp" width="384" height="221" />
@@ -81,11 +75,7 @@ O seine usa a CPU e as placas NVIDIA compatíveis juntas por padrão. Instale um
 
 Na primeira execução, o seine ajusta cada GPU e memoriza as configurações. O ajuste da CPU também acontece durante a mineração. O [guia de hardware](/pt-br/blog/blocknet-mining-hardware-hashrate/) explica o dimensionamento da memória e os resultados medidos, enquanto o [guia de NVIDIA](https://github.com/zpalmtree/seine/blob/master/docs/guides/nvidia.md) aborda o uso de várias placas. Para parar corretamente, pressione `q` no painel ou `Ctrl+C` no terminal.
 
-## Opcional: ative páginas grandes do Windows
-
-A inicialização normal já tenta usar páginas grandes e recorre a páginas normais quando necessário. Para preparar páginas grandes no Windows Pro, Enterprise ou Education, abra `secpol.msc`, acesse **Políticas Locais → Atribuição de Direitos de Usuário → Bloquear páginas na memória** e adicione a conta que executa o seine. Saia e entre novamente na sessão para que a nova sessão receba esse direito.
-
-O [guia de páginas grandes](/pt-br/blog/huge-pages-blocknet-mining/) detalha essa configuração opcional. Depois de entrar novamente, inicie o seine normalmente e confira no log de inicialização o modo de páginas selecionado. Mantenha o modo automático padrão enquanto estabelece sua primeira configuração funcional e depois compare as medições no mesmo PC se alterar as configurações de páginas.
+<MinerSettings os="windows" />
 
 <CTA target="seine" title="Baixe o seine para Windows" text="Extraia o ZIP, informe seu endereço de pagamento e comece a minerar no bntpool.com com ajuste automático de CPU e NVIDIA." />
 

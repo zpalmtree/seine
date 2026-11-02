@@ -2,7 +2,7 @@
 title: 'Comment miner Blocknet avec un GPU NVIDIA'
 description: 'Minez Blocknet avec un GPU NVIDIA et seine. Configurez Windows ou Linux, utilisez CPU et GPU, vérifiez les hashrates et résolvez les problèmes au démarrage.'
 tags: ['Guide de minage', 'NVIDIA', 'GPU']
-sourceHash: '035e97230185'
+sourceHash: bcf2b64687ba
 translation: draft
 faq:
   - q: 'seine peut-il utiliser le CPU et le GPU NVIDIA ensemble ?'
@@ -15,7 +15,7 @@ faq:
     a: 'Le tableau de bord de minage affiche les shares soumis, rejetés et acceptés, et son journal identifie le backend de chaque événement. Vérifiez le hashrate local sur la ligne NVIDIA, puis cherchez les messages de shares acceptés de ce backend. Consultez le guide de suivi du pool pour vérifier le travail crédité.'
 ---
 
-seine mine Blocknet avec votre GPU NVIDIA en parallèle du CPU. Ce guide couvre la configuration sous Windows et Linux, le choix des cartes, les shares acceptés et une comparaison mesurée sur RTX 5090. Les commandes correspondent à seine v0.2.26 et au réseau Argon2id actuel en octobre 2026.
+seine mine Blocknet avec votre GPU NVIDIA en parallèle du CPU. Ce guide couvre la configuration sous Windows et Linux, le choix des cartes, les shares acceptés et une comparaison mesurée sur RTX 5090. Les commandes correspondent à seine v0.3.0 et au réseau Argon2id actuel en octobre 2026.
 
 ## Comment commencer à miner Blocknet avec un GPU NVIDIA ?
 
@@ -32,7 +32,7 @@ Commencez avec les réglages par défaut. Ne définissez pas le kernel, la limit
 | Plateforme | Éléments à préparer | Commande de lancement |
 |---|---|---|
 | Windows x86_64 | Pilote graphique NVIDIA ; DLL d'exécution fournies à côté de l'exécutable | `.\seine.exe` |
-| Linux x86_64 | Pilote NVIDIA et bibliothèques d'exécution NVRTC compatibles | `./seine` |
+| Linux x86_64 | pilote NVIDIA | `./seine` |
 
 Sous Windows, extrayez l'intégralité du ZIP dans un dossier accessible en écriture. Gardez `nvrtc64_120_0.dll` et `nvrtc-builtins64_128.dll` à côté de `seine.exe`. La version distribuée utilise ces bibliothèques fournies ; une installation séparée du CUDA Toolkit n'est pas nécessaire.
 
@@ -40,7 +40,7 @@ Sous Windows, extrayez l'intégralité du ZIP dans un dossier accessible en écr
 
 Installez le pilote adapté à votre carte et à votre système depuis la [page des pilotes NVIDIA](https://www.nvidia.com/en-us/drivers/). Le [guide Windows](/fr/blog/mine-blocknet-on-windows/) détaille le téléchargement, la somme de contrôle et l'extraction.
 
-Sous Linux, installez le pilote NVIDIA et les paquets NVRTC compatibles avec votre distribution. NVRTC compile les kernels CUDA de seine pendant l'exécution. La [documentation NVRTC](https://docs.nvidia.com/cuda/nvrtc/) de NVIDIA décrit le compilateur et la bibliothèque builtins correspondante ; les [prérequis NVIDIA de seine](https://github.com/zpalmtree/seine/blob/master/docs/guides/nvidia.md) documentent l'environnement d'exécution attendu par le mineur.
+Sous Linux, le pilote NVIDIA suffit. Seine utilise NVRTC lorsqu’il est installé et charge sinon les kernels intégrés à seine, qui couvrent les cartes GeForce de la série GTX 10 et plus récentes. Les [prérequis NVIDIA de seine](https://github.com/zpalmtree/seine/blob/master/docs/guides/nvidia.md) donnent les détails.
 
 Lancez le binaire depuis son dossier. Réutilisez le même répertoire de travail pour conserver vos réglages dans `seine-data`. Au premier lancement, saisissez votre adresse de réception et acceptez `stratum+tcp://bntpool.com:3333` comme pool.
 
@@ -94,7 +94,7 @@ Mesuré le 31 octobre 2026 : RTX 5090 seule, Windows 11 natif, pilote 610.88, ve
 
 ## Que vérifier si une ligne NVIDIA est absente ?
 
-Vérifiez d'abord l'exécutable extrait et les bibliothèques d'exécution. Sous Windows, gardez les DLL NVRTC fournies à côté de `seine.exe`. Sous Linux, installez le pilote et les bibliothèques NVRTC dans l'environnement où vous lancez le mineur.
+Vérifiez d’abord le pilote. Sous Windows, gardez aussi les DLL NVRTC fournies à côté de `seine.exe`. Sous Linux, installez le pilote NVIDIA dans l’environnement depuis lequel vous lancez le mineur.
 
 Vérifiez ensuite votre commande. `--backend cpu` sélectionne uniquement le CPU. Utilisez la commande par défaut ou `--backend cpu,nvidia` pour les deux. Si vous définissez `--nvidia-devices`, vérifiez que les indices existent sur votre machine.
 

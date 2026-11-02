@@ -9,7 +9,7 @@ faq:
     a: '預設情況下，seine 將收款地址、礦池和礦機名稱儲存在啟動目錄下的 seine-data/seine.config.json。從同一個解壓縮目錄執行即可沿用這些設定。需要其他目錄時，可以使用 data-dir 選項指定。'
   - q: '開始挖礦前需要啟用 Windows 大型分頁嗎？'
     a: '不需要。seine 會自動嘗試使用大型分頁，無法使用時則採用一般分頁。你可以直接使用預設設定開始挖礦。如需進行選用的大型分頁設定，請為挖礦帳戶授予「鎖定記憶體分頁」權限，然後登出並重新登入，再重新啟動 seine。'
-sourceHash: '66babe3b41fb'
+sourceHash: 1878d05f199d
 translation: draft
 ---
 
@@ -22,8 +22,6 @@ translation: draft
 </Answer>
 
 開啟礦工程式前，請準備好公開收款地址。[錢包指南](/zh-hant/blog/blocknet-wallet-for-mining/)說明了如何取得地址。只需輸入收款地址：礦工程式不需要錢包助記詞或支出金鑰。已註冊的 [Blocknet ID](/zh-hant/blog/blocknet-id-pay-by-name/) 也可以使用，因此你能用 `@name` 代替長地址。
-
-每個 CPU 挖礦執行緒使用一個 2 GiB 的記憶體區塊。seine 會檢查可用 RAM 和核心數，保留記憶體餘裕，並為你選擇初始執行緒數。桌上型電腦或筆記型電腦都可以從預設設定開始，不必預先計算執行緒數或選擇 CPU 運算核心程式。
 
 ## 第 1 步：下載適合的版本
 
@@ -40,8 +38,6 @@ translation: draft
 ```powershell
 .\seine.exe
 ```
-
-`./` 或 `.\` 前置字元會告訴 shell 執行目前目錄中的可執行檔。從解壓縮後的資料夾執行，也能讓 seine 在固定位置儲存設定。之後啟動時使用同一資料夾，程式就能找到你輸入過的地址和礦池。
 
 ## 第 3 步：輸入錢包地址
 
@@ -65,8 +61,6 @@ seine 會自動選擇執行緒並調校。之後從同一資料夾啟動，即�
 
 [儀表板指南](/zh-hant/blog/seine-dashboard-explained/)介紹了雜湊率、挖礦狀態和礦池面板。運作中的雜湊率表示本機正在計算雜湊；已接受的份額則確認工作已送達礦池。開啟 [My Stats](https://bntpool.com/stats?lang=zh-hant)，輸入相同的地址或短名，即可追蹤這台礦機的份額和餘額。
 
-檢查新設定時，請區分已接受的份額與付款。份額參與礦池獎勵分配；付款則遵循礦池的確認與餘額規則。[PPLNS 指南](https://bntpool.com/blog/how-pplns-payouts-work/)解釋了這個流程。不必等待首次付款，就能立即檢查連線。
-
 <figure>
   <picture>
     <source media="(max-width: 640px)" srcSet="/assets/blog/setup-accepted-shares-mobile.webp" width="384" height="221" />
@@ -81,11 +75,7 @@ seine 預設同時使用 CPU 和支援的 NVIDIA 顯示卡。安裝目前版本�
 
 首次啟動時，seine 會調校每張 GPU 並記住設定。CPU 調校也會在挖礦期間進行。[硬體指南](/zh-hant/blog/blocknet-mining-hardware-hashrate/)介紹了記憶體配置和實測結果，[NVIDIA 指南](https://github.com/zpalmtree/seine/blob/master/docs/guides/nvidia.md)則涵蓋多顯示卡使用。若要正常停止，請在儀表板按 `q`，或在終端機按 `Ctrl+C`。
 
-## 選用：啟用 Windows 大型分頁
-
-正常啟動時，程式已經會嘗試大型分頁，並在需要時改用一般分頁。若要在 Windows Pro、Enterprise 或 Education 上準備大型分頁，請開啟 `secpol.msc`，進入**本機原則 → 使用者權限指派 → 鎖定記憶體分頁**，加入執行 seine 的帳戶。登出並重新登入，讓新的登入工作階段取得該權限。
-
-[大型分頁指南](/zh-hant/blog/huge-pages-blocknet-mining/)詳細介紹了這項選用設定。重新登入後，照常啟動 seine，並查看啟動記錄中的分頁模式。建立第一個可正常運作的設定時，保持預設自動模式；之後若修改分頁設定，請在同一台 PC 上比較測量結果。
+<MinerSettings os="windows" />
 
 <CTA target="seine" title="下載 Windows 版 seine" text="解壓縮 ZIP，輸入收款地址，即可在 bntpool.com 開始挖礦，CPU 和 NVIDIA 都會自動調校。" />
 

@@ -2,7 +2,7 @@
 title: '如何使用 NVIDIA GPU 挖掘 Blocknet'
 description: '使用 seine 在 NVIDIA GPU 上挖掘 Blocknet。了解 Windows 或 Linux 的设置方法、CPU 与 GPU 同时挖矿、设备算力检查及启动问题排查。'
 tags: ['挖矿指南', 'NVIDIA', 'GPU']
-sourceHash: '035e97230185'
+sourceHash: bcf2b64687ba
 translation: draft
 faq:
   - q: 'seine 能同时使用 CPU 和 NVIDIA GPU 吗？'
@@ -15,7 +15,7 @@ faq:
     a: '挖矿仪表盘显示已提交、被拒绝和已接受的份额，日志则标明份额事件所属的后端。先查看 NVIDIA 设备行中的本地算力，再查找该后端的份额接受消息。要确认矿池计入的工作量，请参阅矿池追踪指南。'
 ---
 
-seine 可以让 NVIDIA GPU 与 CPU 一起挖掘 Blocknet。本指南介绍 Windows 和 Linux 的设置、显卡选择、已接受的份额，以及 RTX 5090 的实测对比。文中命令适用于 seine v0.2.26，以及截至 2026 年 10 月的现行 Argon2id 网络。
+seine 可以让 NVIDIA GPU 与 CPU 一起挖掘 Blocknet。本指南介绍 Windows 和 Linux 的设置、显卡选择、已接受的份额，以及 RTX 5090 的实测对比。文中命令适用于 seine v0.3.0，以及截至 2026 年 10 月的现行 Argon2id 网络。
 
 ## 如何开始使用 NVIDIA GPU 挖掘 Blocknet？
 
@@ -32,7 +32,7 @@ seine 可以让 NVIDIA GPU 与 CPU 一起挖掘 Blocknet。本指南介绍 Windo
 | 平台 | 需要准备的内容 | 启动命令 |
 |---|---|---|
 | Windows x86_64 | NVIDIA 显示驱动；随包提供的运行时 DLL，放在可执行文件旁边 | `.\seine.exe` |
-| Linux x86_64 | NVIDIA 驱动及兼容的 NVRTC 运行时库 | `./seine` |
+| Linux x86_64 | NVIDIA 驱动 | `./seine` |
 
 在 Windows 上，将整个 ZIP 解压到可写入的文件夹。将 `nvrtc64_120_0.dll` 和 `nvrtc-builtins64_128.dll` 保留在 `seine.exe` 旁边。打包发布的版本使用这些随附库，无须单独安装 CUDA Toolkit。
 
@@ -40,7 +40,7 @@ seine 可以让 NVIDIA GPU 与 CPU 一起挖掘 Blocknet。本指南介绍 Windo
 
 从 [NVIDIA 驱动页面](https://www.nvidia.com/en-us/drivers/)安装适用于显卡和操作系统的驱动。[Windows 设置指南](/zh-hans/blog/mine-blocknet-on-windows/)详细介绍下载、校验和检查及解压步骤。
 
-在 Linux 上，安装适用于发行版的 NVIDIA 驱动和兼容的 NVRTC 软件包。NVRTC 会在运行时编译 seine 的 CUDA 计算内核。NVIDIA 的 [NVRTC 文档](https://docs.nvidia.com/cuda/nvrtc/)介绍编译器及配套的 builtins 库；[seine 的 NVIDIA 要求](https://github.com/zpalmtree/seine/blob/master/docs/guides/nvidia.md)则说明矿工软件所需的运行环境。
+在 Linux 上，有 NVIDIA 驱动就够了。已安装 NVRTC 时 seine 会使用它，否则加载 seine 内置的内核，内置内核覆盖 GeForce GTX 10 series 及更新的显卡。详情见 [seine NVIDIA 要求](https://github.com/zpalmtree/seine/blob/master/docs/guides/nvidia.md)。
 
 从可执行文件所在的文件夹启动程序。继续使用同一个工作目录，以保留 `seine-data` 中保存的设置。首次启动时，输入接收地址，并接受 `stratum+tcp://bntpool.com:3333` 作为矿池地址。
 
@@ -94,7 +94,7 @@ NVIDIA 后端显示为 `nvidia#1`、`nvidia#2` 等，CPU 则有独立的一行�
 
 ## 如果没有 NVIDIA 行，应该检查什么？
 
-首先检查解压后的可执行文件和运行时库。在 Windows 上，将随附的 NVRTC DLL 保留在 `seine.exe` 旁边。在 Linux 上，在启动矿工软件的环境中安装驱动和 NVRTC 库。
+先检查驱动。在 Windows 上，还要把随附的 NVRTC DLL 放在 `seine.exe` 旁边。在 Linux 上，请在你启动挖矿程序的环境中安装 NVIDIA 驱动。
 
 然后检查命令。`--backend cpu` 只选择 CPU。要同时使用两者，请使用默认命令或 `--backend cpu,nvidia`。如果设置了 `--nvidia-devices`，请确认这些索引在你的机器上存在。
 

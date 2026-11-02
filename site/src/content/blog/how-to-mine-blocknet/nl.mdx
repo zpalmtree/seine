@@ -9,7 +9,7 @@ faq:
     a: 'De pool bntpool.com betaalt uit met PPLNS over een venster van zes uur. De beloning van een blok kan pas worden uitbetaald als er 60 blokken op volgen, bij blokken van vijf minuten ongeveer vijf uur, en saldi worden verstuurd zodra ze 0,1 BNT bereiken. Reken op de eerste betaling enkele uren na je eerste geaccepteerde shares.'
   - q: 'Kan ik Blocknet tegelijk met mijn CPU en GPU minen?'
     a: 'Ja. Op Windows en Linux minet seine tegelijk op elke CPU-core en elke NVIDIA-videokaart in de computer, en de twee hashrates tellen op. De processor en elke kaart worden apart afgestemd terwijl het draait, zodat je het meeste uit al je hardware haalt zonder ook maar één instelling te wijzigen.'
-sourceHash: '22eaba1acd1a'
+sourceHash: bff032ea0960
 translation: draft
 ---
 
@@ -26,21 +26,10 @@ Regel een Blocknet-adres of een korte naam van Blocknet ID, download seine voor 
 - **Een Blocknet-adres.** Installeer de officiële Blocknet-wallet, de [commandline-wallet](https://github.com/blocknetprivacy/blocknet/releases/latest) of de [desktopwallet](https://github.com/blocknetprivacy/blocknet-gui/releases/latest), en kopieer je adres. De [walletgids](/nl/blog/blocknet-wallet-for-mining/) laat dat stap voor stap zien. Bewaar de wallet en de herstelzin op je eigen computer en zet ze niet op een gedeelde miningrig.
 - **Of een korte naam.** Als je een [korte naam van Blocknet ID](/nl/blog/blocknet-id-pay-by-name/) hebt via [blocknet.id](https://blocknet.id), kun je naar `@name` minen in plaats van het lange adres te plakken.
 - **Ongeveer 2 GB RAM per miningthread.** seine past zich aan je computer aan en houdt ruimte over voor het systeem, dus je hoeft dit niet vooraf uit te rekenen.
-- **Windows, macOS of Linux.** NVIDIA — Windows: NVIDIA-beeldschermdriver; meegeleverde runtime-DLL's naast het uitvoerbare bestand; Linux: NVIDIA-driver en compatibele NVRTC-runtimebibliotheken.
 
 ## Stap 1: download seine
 
 Haal het archief voor je systeem op in het [downloadgedeelte](/nl/#download). Er valt niets te installeren: uitpakken en je bent klaar.
-
-| Systeem | Archief | Videokaarten |
-|---|---|---|
-| Windows (x86_64) | `seine-windows-x86_64.zip` | NVIDIA; de CUDA-runtime zit erbij |
-| Linux (x86_64) | `seine-linux-x86_64.tar.gz` | NVIDIA-driver en compatibele NVRTC-runtimebibliotheken; glibc ≥ 2.39 |
-| Linux (ARM64) | `seine-linux-aarch64.tar.gz` | CPU (glibc 2.39 of nieuwer) |
-| macOS (Apple Silicon) | `seine-macos-aarch64.tar.gz` | CPU |
-| macOS (Intel) | `seine-macos-x86_64.tar.gz` | CPU |
-
-Bij elke release hoort ook een bestand `SHA256SUMS.txt`, zodat je kunt controleren of je download overeenkomt met de release.
 
 ## Stap 2: start het
 
@@ -55,6 +44,8 @@ Dubbelklik op Windows op `seine.exe`. Open op macOS of Linux een terminal in de 
 seine vraagt om je uitbetalingsadres of `@shortname` en daarna om een pool. Druk op Enter om de standaard te accepteren, `stratum+tcp://bntpool.com:3333`. Binnen enkele ogenblikken toont [het dashboard](/nl/blog/seine-dashboard-explained/) je hashrate en je eerste shares.
 
 Vanaf dan blijft seine afstemmen terwijl het minet. Het vergelijkt aantallen threads en CPU-kernels op echt miningwerk, schakelt pas over na een bevestigde winst, schaalt terug als het geheugen krap wordt en onthoudt wat werkte voor de volgende start. Het maakt daarvoor nooit opnieuw verbinding met de pool, dus het afstemmen kost je geen miningtijd.
+
+<MinerSettings os="any" />
 
 ## Hoe lang duurt het tot je wordt uitbetaald?
 
@@ -77,15 +68,6 @@ De hashrate hangt vooral af van de geheugenbandbreedte en van het aantal threads
 De snelste configuratie in deze metingen is een AMD EPYC 9355P met 97,1 H/s: 64 miningthreads en 192 GiB RAM op Linux met de standaardinstellingen van seine.
 
 Resultaten voor elke geteste CPU staan op de [prestatiepagina](https://github.com/zpalmtree/seine/blob/master/docs/PERFORMANCE.md), en de [hardwaregids voor Blocknet-minen](/nl/blog/blocknet-mining-hardware-hashrate/) legt uit hoe RAM en geheugenbandbreedte deze cijfers bepalen.
-
-## Hoe haalt seine meer uit dezelfde CPU?
-
-seine levert voor elke processorfamilie meerdere Argon2id-kernels mee en meet ze op je computer terwijl het minet. Op de hardware die wij hebben getest, maakte de juiste kernel een groot verschil:
-
-- **AWS Graviton4:** de SHA3-kernel met prefetching minet 56% sneller dan gewone NEON (van 13,80 naar 21,50 H/s).
-- **AMD EPYC 9R45 (Zen 5):** de streaming-kernel minet 30% sneller dan AVX2 (van 34,47 naar 44,74 H/s bij 24 threads).
-
-Je hoeft hier zelf niets voor te kiezen. seine wisselt pas van kernel na een bevestigde winst en onthoudt het resultaat voor de volgende start.
 
 ## Hoe krijg je meer hashrate?
 

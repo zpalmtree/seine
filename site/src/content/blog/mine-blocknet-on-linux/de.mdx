@@ -4,12 +4,12 @@ description: "Linux: Lade seine herunter, entpacke es, gib deine Blocknet-Adress
 tags: ['Mining-Anleitung', 'Linux', 'NVIDIA']
 faq:
   - q: 'Welches Linux-Archiv soll ich herunterladen?'
-    a: "Öffne den Downloadbereich. Führe uname -m aus: Wähle seine-linux-x86_64.tar.gz für x86_64 oder seine-linux-aarch64.tar.gz für aarch64. Die Linux-Versionen benötigen glibc 2.39 oder neuer. Die x86_64-Version unterstützt CPU und NVIDIA, ARM64 unterstützt CPU-Mining."
+    a: "Öffne den Downloadbereich. Führe uname -m aus: Wähle seine-linux-x86_64.tar.gz für x86_64 oder seine-linux-aarch64.tar.gz für aarch64. Die Linux-Versionen benötigen glibc 2.31 oder neuer. Die x86_64-Version unterstützt CPU und NVIDIA, ARM64 unterstützt CPU-Mining."
   - q: 'Muss ich seine mit sudo starten?'
     a: 'Starte den normalen Miner als eigener Benutzer aus einem beschreibbaren Ordner. Entpacke das Archiv, erteile dem Besitzer bei Bedarf Ausführungsrechte und starte mit ./seine. Reservierte Huge Pages einzurichten ist eine separate Verwaltungsaufgabe; für den normalen Start reichen gewöhnliche Speicherseiten.'
-  - q: 'Warum meldet Linux eine fehlende NVRTC-Bibliothek?'
-    a: 'Das NVIDIA-Backend unter Linux benötigt einen kompatiblen Treiber und NVRTC-Laufzeitbibliotheken einschließlich der passenden Builtins-Bibliothek. Installiere sie über deine Distribution oder unterstützte NVIDIA-Pakete. Das Linux-Archiv enthält keine Windows-DLLs. Während du die GPU-Unterstützung vorbereitest, kannst du das CPU-Backend auswählen.'
-sourceHash: 'fee2c843812c'
+  - q: 'Brauche ich CUDA oder NVRTC für NVIDIA-Mining unter Linux?'
+    a: 'Nein. Der NVIDIA-Treiber reicht. Seine nutzt NVRTC, wenn es installiert ist, und lädt sonst die in seine eingebauten Kernels, die GeForce-Karten der GTX-10-Serie und neuer abdecken. Installiere den Treiber, starte seine und prüfe, ob deine Karte im Devices-Panel erscheint.'
+sourceHash: acdcb56b3c1f
 translation: draft
 ---
 
@@ -21,7 +21,7 @@ Lade seine herunter, entpacke es, gib deine Blocknet-Adresse ein und prüfe akze
 
 ## Schritt 1: die passende Version herunterladen
 
-Öffne den [Downloadbereich](/de/#download). Führe `uname -m` aus: Wähle `seine-linux-x86_64.tar.gz` für `x86_64` oder `seine-linux-aarch64.tar.gz` für `aarch64`. Die Linux-Versionen benötigen glibc 2.39 oder neuer. Die x86_64-Version unterstützt CPU und NVIDIA, ARM64 unterstützt CPU-Mining.
+Öffne den [Downloadbereich](/de/#download). Führe `uname -m` aus: Wähle `seine-linux-x86_64.tar.gz` für `x86_64` oder `seine-linux-aarch64.tar.gz` für `aarch64`. Die Linux-Versionen benötigen glibc 2.31 oder neuer. Die x86_64-Version unterstützt CPU und NVIDIA, ARM64 unterstützt CPU-Mining.
 
 <img src="/assets/blog/setup-download.webp" alt="Offizielle Downloadtabelle mit Archiven für Linux und Linux ARM64" loading="lazy" />
 
@@ -64,17 +64,11 @@ Achte im [Dashboard](/de/blog/seine-dashboard-explained/) auf eine Hashrate und 
 
 Öffne [Meine Statistik](https://bntpool.com/stats?lang=de) und gib dieselbe Adresse oder denselben registrierten Namen ein, um deinen Worker, Shares und Kontostand zu sehen.
 
-## Was braucht NVIDIA-Mining unter Linux?
+## Was brauchst du für GPU-Mining unter Linux?
 
-GPU-Mining unter Linux x86_64 benötigt einen NVIDIA-Treiber und kompatible NVRTC-Laufzeitbibliotheken. NVRTC kompiliert beim Start die GPU-Kernels. Installiere Laufzeit und passende Builtins-Bibliothek über deine Distribution oder NVIDIA-Pakete gemäß der [NVIDIA-Anleitung](/de/blog/mine-blocknet-nvidia-gpu/). Paketnamen hängen von Distribution und CUDA-Version ab; nutze die Anweisungen für dein System.
+NVIDIA-Karten brauchen nur den NVIDIA-Treiber. AMD-Karten brauchen den amdgpu-Treiber und die ROCm-HIP-Runtime, wie die [AMD-Anleitung](https://github.com/zpalmtree/seine/blob/master/docs/guides/amd.md) erklärt. Seine findet deine Karten selbst und mint mit ihnen zusammen mit der CPU im x86_64-Build. Die [NVIDIA-Anleitung](/de/blog/mine-blocknet-nvidia-gpu/) erklärt, wie du Karten wählst und GPU-Shares prüfst.
 
-Sind diese Bibliotheken vorhanden, kann der Standardmodus CPU und unterstützte NVIDIA-Karten gemeinsam nutzen. Um während der GPU-Vorbereitung zunächst CPU-Mining einzurichten, wähle es ausdrücklich aus:
-
-```sh
-./seine --backend cpu
-```
-
-Diese Auswahl nutzt bei diesem Aufruf ausschließlich die CPU. Geräteeinstellungen und akzeptierte GPU-Shares behandelt die NVIDIA-Anleitung. Die hier beschriebene ARM64-Veröffentlichung enthält das CPU-Backend; eine CUDA-Installation ergänzt dieses Archiv nicht um ein NVIDIA-Backend.
+<MinerSettings os="linux" />
 
 ## Wie behebt man einen Linux-Startfehler?
 
@@ -83,9 +77,8 @@ Wähle anhand der ersten Fehlermeldung die nächste Prüfung:
 | Meldung oder Symptom | Was prüfen? |
 |---|---|
 | `Exec format error` | Falsche Architektur: Vergleiche `uname -m` mit dem Archivnamen. |
-| `GLIBC_2.39 not found` | Das Programm benötigt eine neuere glibc. Nutze ein kompatibles System oder baue aus dem Quellcode; lass die C-Systembibliothek weiterhin von deiner Distribution verwalten. |
+| `GLIBC_... not found` | Das Programm benötigt eine neuere glibc. Nutze ein kompatibles System oder baue aus dem Quellcode; lass die C-Systembibliothek weiterhin von deiner Distribution verwalten. |
 | `Permission denied` | Prüfe die Ausführungsrechte des Benutzers und verwende einen Ordner auf einem Dateisystem, das Ausführung erlaubt. |
-| `libnvrtc` / `libnvrtc-builtins` | Installiere die kompatible NVIDIA-Laufzeit und passende Builtins-Bibliothek oder verwende während der Vorbereitung `--backend cpu`. |
 
 Sobald Shares akzeptiert werden, erklärt der [Huge-Pages-Leitfaden](/de/blog/huge-pages-blocknet-mining/) die optionale Einrichtung unter Linux. Der [Server-Leitfaden](/de/blog/mine-blocknet-on-servers/) behandelt Betrieb ohne grafische Oberfläche und NUMA-Platzierung. Beides ist für diesen ersten Start nicht erforderlich; führe Änderungen einzeln durch, damit du ihre Auswirkungen auf deinen Rechner erkennst.
 

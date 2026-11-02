@@ -2,7 +2,7 @@
 title: How to mine Blocknet with an NVIDIA GPU
 description: Mine Blocknet with an NVIDIA GPU using seine. Set up Windows or Linux, choose CPU and GPU mining, check device hashrates, and troubleshoot startup.
 date: 2026-10-25
-updated: 2026-11-01
+updated: 2026-11-02
 tags: [Mining guide, NVIDIA, GPU]
 faq:
   - q: Can seine use the CPU and NVIDIA GPU together?
@@ -16,7 +16,7 @@ faq:
 related: [how-to-mine-blocknet, mine-blocknet-on-windows, seine-dashboard-explained, antivirus-flags-crypto-miner]
 ---
 
-Seine mines Blocknet on your NVIDIA GPU alongside the CPU. This guide covers Windows and Linux setup, card selection, accepted shares and a measured RTX 5090 comparison. The commands describe seine v0.2.26 and the current Argon2id network as of October 2026.
+Seine mines Blocknet on your NVIDIA GPU alongside the CPU. This guide covers Windows and Linux setup, card selection, accepted shares and a measured RTX 5090 comparison. The commands describe seine v0.3.0 and the current Argon2id network as of October 2026.
 
 ## How do you start mining Blocknet with an NVIDIA GPU?
 
@@ -33,7 +33,7 @@ Start with the defaults. Leave the kernel, register cap, GPU lane count and CPU 
 | Platform | What to prepare | Start command |
 |---|---|---|
 | Windows x86_64 | NVIDIA display driver; bundled runtime DLLs beside the executable | `.\seine.exe` |
-| Linux x86_64 | NVIDIA driver and compatible NVRTC runtime libraries | `./seine` |
+| Linux x86_64 | NVIDIA driver | `./seine` |
 
 On Windows, extract the complete ZIP into a writable folder. Keep `nvrtc64_120_0.dll` and `nvrtc-builtins64_128.dll` beside `seine.exe`. The packaged release uses these bundled libraries; a separate CUDA Toolkit installation is not required.
 
@@ -41,7 +41,7 @@ On Windows, extract the complete ZIP into a writable folder. Keep `nvrtc64_120_0
 
 Install the driver for your card and operating system from [NVIDIA's driver page](https://www.nvidia.com/en-us/drivers/). The [Windows setup guide](/blog/mine-blocknet-on-windows/) walks through the download, checksum and extraction.
 
-On Linux, install the NVIDIA driver and compatible NVRTC packages for your distribution. NVRTC compiles seine's CUDA kernels at runtime. NVIDIA's [NVRTC documentation](https://docs.nvidia.com/cuda/nvrtc/) describes the compiler and matching builtins library; the [seine NVIDIA requirements](https://github.com/zpalmtree/seine/blob/master/docs/guides/nvidia.md) document the miner's runtime expectations.
+On Linux, the NVIDIA driver is all you need. Seine uses NVRTC when it is installed and otherwise loads the kernels built into seine, which cover GeForce GTX 10 series and newer cards. The [seine NVIDIA requirements](https://github.com/zpalmtree/seine/blob/master/docs/guides/nvidia.md) have the details.
 
 Launch the binary from its folder. Reuse the same working directory to keep your saved settings in `seine-data`. On a first launch, enter your receiving address and accept `stratum+tcp://bntpool.com:3333` for the pool.
 
@@ -95,7 +95,7 @@ Measured on October 31, 2026: RTX 5090 only, native Windows 11, driver 610.88, p
 
 ## What should you check if an NVIDIA row is missing?
 
-Check the extracted executable and runtime libraries first. On Windows, keep the bundled NVRTC DLLs beside `seine.exe`. On Linux, install the driver and NVRTC libraries in the environment where you launch the miner.
+Check the driver first. On Windows, also keep the bundled NVRTC DLLs beside `seine.exe`. On Linux, install the NVIDIA driver in the environment where you launch the miner.
 
 Then check your command. `--backend cpu` selects only the CPU. Use the default command or `--backend cpu,nvidia` for both. If you set `--nvidia-devices`, verify the indices exist on your machine.
 

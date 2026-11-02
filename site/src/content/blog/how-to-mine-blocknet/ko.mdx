@@ -9,7 +9,7 @@ faq:
     a: 'bntpool.com 풀은 6시간 구간의 PPLNS 방식으로 지급합니다. 블록 보상은 해당 블록 위에 60개 블록이 쌓인 뒤(5분 블록 기준 약 5시간)에 지급할 수 있으며, 잔액이 0.1 BNT에 도달하면 전송됩니다. 첫 지급은 첫 셰어가 승인되고 몇 시간 뒤로 예상하면 됩니다.'
   - q: 'CPU와 GPU로 동시에 Blocknet을 채굴할 수 있습니까?'
     a: '네. Windows와 Linux에서 seine는 컴퓨터의 모든 CPU 코어와 모든 NVIDIA 그래픽 카드로 동시에 채굴하며, 두 해시레이트가 합산됩니다. 실행 중에 프로세서와 각 카드를 따로 튜닝하므로 설정을 바꾸지 않아도 모든 하드웨어의 성능을 최대한 끌어냅니다.'
-sourceHash: '22eaba1acd1a'
+sourceHash: bff032ea0960
 translation: draft
 ---
 
@@ -26,21 +26,10 @@ Blocknet 주소나 Blocknet ID 짧은 이름을 준비하고, 사용하는 시�
 - **Blocknet 주소.** 공식 Blocknet 지갑인 [명령줄 지갑](https://github.com/blocknetprivacy/blocknet/releases/latest)이나 [데스크톱 지갑](https://github.com/blocknetprivacy/blocknet-gui/releases/latest)을 설치하고 주소를 복사하세요. [지갑 가이드](/ko/blog/blocknet-wallet-for-mining/)에서 단계별로 안내합니다. 지갑과 복구 문구는 본인 컴퓨터에 보관하고, 여러 사람이 함께 쓰는 채굴 리그에는 두지 마세요.
 - **또는 짧은 이름.** [blocknet.id](https://blocknet.id)에서 받은 [Blocknet ID 짧은 이름](/ko/blog/blocknet-id-pay-by-name/)이 있다면 긴 주소를 붙여 넣는 대신 `@name`으로 채굴할 수 있습니다.
 - **채굴 스레드당 약 2 GB의 RAM.** seine가 컴퓨터에 맞게 스스로 조정하고 시스템용 여유 메모리를 남기므로 미리 계산할 필요가 없습니다.
-- **Windows, macOS 또는 Linux.** NVIDIA — Windows: NVIDIA 디스플레이 드라이버, 실행 파일과 같은 폴더에 둔 동봉 런타임 DLL; Linux: NVIDIA 드라이버와 호환되는 NVRTC 런타임 라이브러리.
 
 ## 1단계: seine 다운로드
 
 [다운로드 섹션](/ko/#download)에서 사용하는 시스템용 압축 파일을 받으세요. 설치할 것은 없습니다. 압축을 풀면 바로 사용할 수 있습니다.
-
-| 시스템 | 압축 파일 | 그래픽 카드 |
-|---|---|---|
-| Windows (x86_64) | `seine-windows-x86_64.zip` | NVIDIA, CUDA 런타임 포함 |
-| Linux (x86_64) | `seine-linux-x86_64.tar.gz` | NVIDIA 드라이버와 호환되는 NVRTC 런타임 라이브러리; glibc ≥ 2.39 |
-| Linux (ARM64) | `seine-linux-aarch64.tar.gz` | CPU (glibc 2.39 이상) |
-| macOS (Apple 실리콘) | `seine-macos-aarch64.tar.gz` | CPU |
-| macOS (Intel) | `seine-macos-x86_64.tar.gz` | CPU |
-
-각 릴리스에는 `SHA256SUMS.txt` 파일도 함께 게시되므로, 내려받은 파일이 릴리스와 일치하는지 확인할 수 있습니다.
 
 ## 2단계: 실행
 
@@ -55,6 +44,8 @@ Windows에서는 `seine.exe`를 더블클릭하세요. macOS나 Linux에서는 �
 seine는 먼저 수령 주소나 `@shortname`을 묻고, 이어서 풀을 묻습니다. Enter 키를 눌러 기본값인 `stratum+tcp://bntpool.com:3333`을 선택하세요. 잠시 후 [대시보드](/ko/blog/seine-dashboard-explained/)에 해시레이트와 첫 셰어가 표시됩니다.
 
 이후에도 seine는 채굴하면서 계속 튜닝합니다. 실제 채굴 작업으로 스레드 수와 CPU 커널을 비교하고, 성능 향상이 확인된 뒤에만 전환하며, 메모리가 빠듯해지면 사용량을 줄이고, 효과가 있었던 설정을 기억해 다음 실행 때 사용합니다. 이 과정에서 풀에 다시 연결하지 않으므로 튜닝 때문에 채굴 시간을 잃지 않습니다.
+
+<MinerSettings os="any" />
 
 ## 지급까지 얼마나 걸립니까?
 
@@ -77,15 +68,6 @@ bntpool.com 풀은 PPLNS 방식을 사용합니다. 각 블록의 보상은 그 
 이 측정에서 가장 빠른 구성은 97.1 H/s를 기록한 AMD EPYC 9355P입니다. Linux에서 seine의 기본 설정으로 채굴 스레드 64개와 RAM 192 GiB를 사용했습니다. Blocknet 채굴은 메모리 대역폭과 스레드당 2 GiB를 제공할 만큼 충분한 RAM의 이점을 얻습니다. NVIDIA 카드는 CPU와 함께 해시레이트를 더할 수 있습니다.
 
 테스트한 모든 CPU의 결과는 [성능 페이지](https://github.com/zpalmtree/seine/blob/master/docs/PERFORMANCE.md)에 있으며, [Blocknet 채굴 하드웨어 가이드](/ko/blog/blocknet-mining-hardware-hashrate/)에서 RAM과 메모리 대역폭이 이 수치를 어떻게 결정하는지 설명합니다.
-
-## seine는 같은 CPU에서 어떻게 더 많은 성능을 끌어냅니까?
-
-seine는 프로세서 제품군마다 여러 개의 Argon2id 커널을 제공하고, 채굴하는 동안 사용자의 컴퓨터에서 직접 측정합니다. 저희가 테스트한 하드웨어에서는 알맞은 커널을 고르는 것만으로 큰 차이가 났습니다.
-
-- **AWS Graviton4:** 프리페치를 적용한 SHA3 커널이 일반 NEON보다 56% 빠르게 채굴합니다(13.80 H/s → 21.50 H/s).
-- **AMD EPYC 9R45 (Zen 5):** 스트리밍 커널이 AVX2보다 30% 빠르게 채굴합니다(24 스레드 기준 34.47 H/s → 44.74 H/s).
-
-이 중 어느 것도 직접 고를 필요가 없습니다. seine는 성능 향상이 확인된 뒤에만 커널을 전환하고, 그 결과를 기억해 다음 실행 때 사용합니다.
 
 ## 해시레이트를 더 높이려면 어떻게 합니까?
 

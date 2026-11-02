@@ -9,7 +9,7 @@ faq:
     a: 'bntpool.com havuzu altı saatlik bir pencereyle PPLNS yöntemiyle ödeme yapar. Bir bloğun ödülü ancak blok 60 blok derinliğe ulaştıktan sonra, yani beş dakikalık bloklarla yaklaşık beş saat sonra ödenebilir ve bakiyeler 0,1 BNT''ye ulaştığında gönderilir. İlk ödemeyi, ilk kabul edilen share''lerinizden birkaç saat sonra bekleyin.'
   - q: 'Blocknet madenciliğini CPU ve GPU ile aynı anda yapabilir miyim?'
     a: 'Evet. Windows ve Linux''ta seine, bilgisayardaki her CPU çekirdeğinde ve her NVIDIA ekran kartında aynı anda madencilik yapar ve iki hashrate toplanır. Çalışırken işlemciyi ve her kartı ayrı ayrı ayarlar, böylece hiçbir ayarı değiştirmeden tüm donanımınızdan en yüksek verimi alırsınız.'
-sourceHash: '22eaba1acd1a'
+sourceHash: bff032ea0960
 translation: draft
 ---
 
@@ -26,21 +26,10 @@ Bir Blocknet adresi veya Blocknet ID kısa adı edinin, sisteminize uygun seine'
 - **Bir Blocknet adresi.** Resmi Blocknet cüzdanını, yani [komut satırı cüzdanını](https://github.com/blocknetprivacy/blocknet/releases/latest) veya [masaüstü cüzdanını](https://github.com/blocknetprivacy/blocknet-gui/releases/latest) kurun ve adresinizi kopyalayın. [Cüzdan rehberi](/tr/blog/blocknet-wallet-for-mining/) bunu adım adım anlatır. Cüzdanı ve kurtarma ifadesini kendi bilgisayarınızda tutun; ortak kullanılan bir madencilik rig'ine koymayın.
 - **Ya da bir kısa ad.** [blocknet.id](https://blocknet.id) üzerinden alınmış bir [Blocknet ID kısa adınız](/tr/blog/blocknet-id-pay-by-name/) varsa, uzun adresi yapıştırmak yerine `@name` adına madencilik yapabilirsiniz.
 - **Madencilik iş parçacığı başına yaklaşık 2 GB RAM.** seine kendini bilgisayarınıza göre boyutlandırır ve sisteme pay bırakır, bu yüzden bunu önceden hesaplamanız gerekmez.
-- **Windows, macOS veya Linux.** NVIDIA — Windows: NVIDIA ekran sürücüsü; çalıştırılabilir dosyanın yanında paketle gelen çalışma zamanı DLL'leri; Linux: NVIDIA sürücüsü ve uyumlu NVRTC çalışma zamanı kütüphaneleri.
 
 ## 1. adım: seine'i indirin
 
 Sisteminize uygun arşivi [indirme bölümünden](/tr/#download) alın. Kurulacak bir şey yok: arşivi çıkarın ve hazırsınız.
-
-| Sistem | Arşiv | Ekran kartları |
-|---|---|---|
-| Windows (x86_64) | `seine-windows-x86_64.zip` | NVIDIA; CUDA çalışma zamanı dahildir |
-| Linux (x86_64) | `seine-linux-x86_64.tar.gz` | NVIDIA sürücüsü ve uyumlu NVRTC çalışma zamanı kütüphaneleri; glibc ≥ 2.39 |
-| Linux (ARM64) | `seine-linux-aarch64.tar.gz` | CPU (glibc 2.39 veya daha yeni) |
-| macOS (Apple Silicon) | `seine-macos-aarch64.tar.gz` | CPU |
-| macOS (Intel) | `seine-macos-x86_64.tar.gz` | CPU |
-
-Her sürümde ayrıca bir `SHA256SUMS.txt` dosyası yayımlanır; böylece indirdiğiniz dosyanın sürümle eşleştiğini kontrol edebilirsiniz.
 
 ## 2. adım: çalıştırın
 
@@ -55,6 +44,8 @@ Windows'ta `seine.exe` dosyasına çift tıklayın. macOS veya Linux'ta, arşivd
 seine önce ödeme adresinizi veya `@shortname` adınızı, ardından bir havuz sorar. Varsayılanı, yani `stratum+tcp://bntpool.com:3333` adresini kabul etmek için Enter'a basın. Birkaç saniye içinde [panel](/tr/blog/seine-dashboard-explained/) hashrate'inizi ve ilk share'lerinizi gösterir.
 
 Bundan sonra seine madencilik yaparken ayar yapmaya devam eder. Gerçek madencilik işi üzerinde iş parçacığı sayılarını ve CPU kernel'lerini karşılaştırır, yalnızca doğrulanmış bir kazançtan sonra geçiş yapar, bellek daralırsa geri çekilir ve işe yarayanı bir sonraki başlatma için hatırlar. Bunun için havuza asla yeniden bağlanmaz, bu yüzden ayar yapmak size madencilik süresi kaybettirmez.
+
+<MinerSettings os="any" />
 
 ## Ödeme almak ne kadar sürer?
 
@@ -77,15 +68,6 @@ Hashrate büyük ölçüde bellek bant genişliğine ve RAM'inizin izin verdiği
 Bu ölçümlerdeki en hızlı yapılandırma, 97,1 H/s ile AMD EPYC 9355P’dir: Linux’ta seine’in varsayılan ayarlarıyla 64 madencilik iş parçacığı ve 192 GiB RAM.
 
 Test edilen her CPU'nun sonuçları [performans sayfasında](https://github.com/zpalmtree/seine/blob/master/docs/PERFORMANCE.md) yer alır; [Blocknet madencilik donanımı rehberi](/tr/blog/blocknet-mining-hardware-hashrate/) ise RAM'in ve bellek bant genişliğinin bu sayıları nasıl belirlediğini açıklar.
-
-## seine aynı CPU'dan nasıl daha fazlasını alır?
-
-seine her işlemci ailesi için birkaç Argon2id kernel'i ile gelir ve madencilik yaparken bunları bilgisayarınızda ölçer. Test ettiğimiz donanımlarda doğru kernel büyük bir fark yarattı:
-
-- **AWS Graviton4:** önceden getirme (prefetching) kullanan SHA3 kernel'i, düz NEON'dan %56 daha hızlı madencilik yapar (13,80'den 21,50 H/s'ye).
-- **AMD EPYC 9R45 (Zen 5):** streaming kernel'i, AVX2'den %30 daha hızlı madencilik yapar (24 iş parçacığında 34,47'den 44,74 H/s'ye).
-
-Bunların hiçbirini sizin seçmeniz gerekmez. seine kernel'i yalnızca doğrulanmış bir kazançtan sonra değiştirir ve sonucu bir sonraki başlatma için hatırlar.
 
 ## Daha fazla hashrate nasıl elde edilir?
 

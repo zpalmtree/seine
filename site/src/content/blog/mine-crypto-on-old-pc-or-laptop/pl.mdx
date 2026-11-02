@@ -11,7 +11,7 @@ faq:
     a: 'Tak. Wersje seine dla x86 zawierają przenośne jądro obliczeniowe, które działa na każdym 64-bitowym procesorze x86, obok jąder AVX2 i AVX-512 dla układów, które je obsługują. seine sprawdza, jakie zestawy instrukcji obsługuje Twój procesor, i wybiera pasujące jądro, a na układach z AVX2 i AVX-512 porównuje jądra podczas kopania.'
   - q: 'Ile prądu zużywa kopanie na starym komputerze?'
     a: 'To zależy od maszyny. Zmierz to watomierzem podłączonym do gniazdka, gdy działa seine, a potem pomnóż liczbę watów przez 24 i podziel przez 1000, aby otrzymać kilowatogodziny na dobę. Pomnóż wynik przez stawkę za prąd, aby poznać dzienny koszt, i porównaj go z oczekiwaną liczbą monet na dobę.'
-sourceHash: d83513917be0
+sourceHash: 024eb1ee2b56
 translation: draft
 ---
 
@@ -68,7 +68,7 @@ Są wersje dla większości maszyn, które można znaleźć w szafie:
 |---|---|
 | Windows (x86_64) | `seine-windows-x86_64.zip` |
 | Linux (x86_64) | `seine-linux-x86_64.tar.gz` |
-| Linux (ARM64) | `seine-linux-aarch64.tar.gz` (glibc 2.39 lub nowszy) |
+| Linux (ARM64) | `seine-linux-aarch64.tar.gz` (glibc 2.31 lub nowszy) |
 | macOS (Intel) | `seine-macos-x86_64.tar.gz` |
 | macOS (Apple Silicon) | `seine-macos-aarch64.tar.gz` |
 

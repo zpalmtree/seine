@@ -2,7 +2,7 @@
 title: 'Blocknet mit einer NVIDIA-GPU minen'
 description: 'Mine Blocknet mit einer NVIDIA-GPU und seine. Richte Windows oder Linux ein, nutze CPU und GPU, prüfe Hashraten und behebe Probleme beim Start des Miners.'
 tags: ['Mining-Anleitung', 'NVIDIA', 'GPU']
-sourceHash: '035e97230185'
+sourceHash: bcf2b64687ba
 translation: draft
 faq:
   - q: 'Kann seine CPU und NVIDIA-GPU gleichzeitig nutzen?'
@@ -15,7 +15,7 @@ faq:
     a: 'Das Mining-Dashboard zeigt eingereichte, abgelehnte und angenommene Shares. Im Protokoll steht bei Share-Ereignissen das jeweilige Backend. Prüfe die lokale Hashrate in der NVIDIA-Gerätezeile und suche nach Meldungen über angenommene Shares dieses Backends. Mit der Pool-Tracking-Anleitung prüfst du die angerechnete Arbeit.'
 ---
 
-seine mint Blocknet auf deiner NVIDIA-GPU zusammen mit der CPU. Diese Anleitung behandelt die Einrichtung unter Windows und Linux, die Kartenauswahl, angenommene Shares und einen gemessenen Vergleich mit der RTX 5090. Die Befehle beziehen sich auf seine v0.2.26 und das aktuelle Argon2id-Netzwerk, Stand Oktober 2026.
+seine mint Blocknet auf deiner NVIDIA-GPU zusammen mit der CPU. Diese Anleitung behandelt die Einrichtung unter Windows und Linux, die Kartenauswahl, angenommene Shares und einen gemessenen Vergleich mit der RTX 5090. Die Befehle beziehen sich auf seine v0.3.0 und das aktuelle Argon2id-Netzwerk, Stand Oktober 2026.
 
 ## Wie beginnst du mit dem Blocknet-Mining auf einer NVIDIA-GPU?
 
@@ -32,7 +32,7 @@ Beginne mit den Standardeinstellungen. Lass Kernel, Registerlimit, GPU-Lane-Anza
 | Plattform | Was du vorbereiten musst | Startbefehl |
 |---|---|---|
 | Windows x86_64 | NVIDIA-Grafiktreiber; mitgelieferte Laufzeit-DLLs neben der ausführbaren Datei | `.\seine.exe` |
-| Linux x86_64 | NVIDIA-Treiber und kompatible NVRTC-Laufzeitbibliotheken | `./seine` |
+| Linux x86_64 | NVIDIA-Treiber | `./seine` |
 
 Entpacke unter Windows die vollständige ZIP-Datei in einen beschreibbaren Ordner. Lass `nvrtc64_120_0.dll` und `nvrtc-builtins64_128.dll` neben `seine.exe`. Die fertige Version verwendet diese mitgelieferten Bibliotheken; eine separate Installation des CUDA Toolkit ist nicht erforderlich.
 
@@ -40,7 +40,7 @@ Entpacke unter Windows die vollständige ZIP-Datei in einen beschreibbaren Ordne
 
 Installiere den passenden Treiber für deine Karte und dein Betriebssystem von der [NVIDIA-Treiberseite](https://www.nvidia.com/en-us/drivers/). Die [Windows-Anleitung](/de/blog/mine-blocknet-on-windows/) führt dich durch Download, Prüfsumme und Entpacken.
 
-Installiere unter Linux den NVIDIA-Treiber und kompatible NVRTC-Pakete für deine Distribution. NVRTC kompiliert die CUDA-Kernel von seine zur Laufzeit. Die [NVRTC-Dokumentation](https://docs.nvidia.com/cuda/nvrtc/) von NVIDIA beschreibt den Compiler und die passende Builtins-Bibliothek; die [NVIDIA-Anforderungen von seine](https://github.com/zpalmtree/seine/blob/master/docs/guides/nvidia.md) dokumentieren die Laufzeitvoraussetzungen des Miners.
+Unter Linux reicht der NVIDIA-Treiber. Seine nutzt NVRTC, wenn es installiert ist, und lädt sonst die in seine eingebauten Kernels, die GeForce-Karten der GTX-10-Serie und neuer abdecken. Die [seine-NVIDIA-Voraussetzungen](https://github.com/zpalmtree/seine/blob/master/docs/guides/nvidia.md) nennen die Details.
 
 Starte die ausführbare Datei aus ihrem Ordner. Verwende dasselbe Arbeitsverzeichnis erneut, damit deine Einstellungen in `seine-data` erhalten bleiben. Gib beim ersten Start deine Empfangsadresse ein und bestätige `stratum+tcp://bntpool.com:3333` als Pool.
 
@@ -94,7 +94,7 @@ Gemessen am 31. Oktober 2026: nur RTX 5090, natives Windows 11, Treiber 610.88, 
 
 ## Was solltest du prüfen, wenn eine NVIDIA-Zeile fehlt?
 
-Prüfe zuerst die entpackte ausführbare Datei und die Laufzeitbibliotheken. Lass unter Windows die mitgelieferten NVRTC-DLLs neben `seine.exe`. Installiere unter Linux den Treiber und die NVRTC-Bibliotheken in der Umgebung, in der du den Miner startest.
+Prüfe zuerst den Treiber. Unter Windows lässt du außerdem die mitgelieferten NVRTC-DLLs neben `seine.exe` liegen. Unter Linux installierst du den NVIDIA-Treiber in der Umgebung, in der du den Miner startest.
 
 Prüfe dann deinen Befehl. `--backend cpu` wählt nur die CPU aus. Verwende den Standardbefehl oder `--backend cpu,nvidia` für beide. Wenn du `--nvidia-devices` angibst, stelle sicher, dass die Indizes auf deinem Rechner existieren.
 

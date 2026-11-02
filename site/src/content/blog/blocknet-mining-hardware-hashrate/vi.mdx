@@ -8,10 +8,10 @@ faq:
   - q: '32 GB RAM chạy được bao nhiêu luồng đào Blocknet?'
     a: 'Khoảng 14. Mỗi luồng cần một khối bộ nhớ 2 GiB cho mỗi lần băm, nên trên lý thuyết 32 GB chứa được 16 khối. seine giữ lại 5% (mặc định tối đa 1 GiB) RAM dự phòng và chừa chỗ cho hệ điều hành, nên một máy 32 GB chạy được khoảng 14 luồng. Nó tự tính toán việc này cho bạn khi khởi động.'
   - q: 'seine dùng card đồ họa nào để đào Blocknet?'
-    a: 'seine đào trên card đồ họa NVIDIA với bản tải cho Windows và Linux, dùng mọi card nó phát hiện được cùng với bộ xử lý. Trên Windows, CUDA runtime đã được kèm sẵn, nên bạn chỉ cần driver NVIDIA. Trên Linux, hãy cài driver và các thư viện NVRTC. Lần chạy đầu tiên tinh chỉnh từng card và ghi nhớ kết quả.'
+    a: 'Seine đào trên card đồ họa NVIDIA với bản tải cho Windows và Linux, dùng mọi card nó phát hiện được cùng với bộ xử lý. Bạn chỉ cần trình điều khiển NVIDIA. Lần khởi động đầu tiên tinh chỉnh từng card và ghi nhớ kết quả.'
   - q: 'Vì sao băng thông bộ nhớ quan trọng khi đào Blocknet?'
     a: 'Mỗi lần băm Blocknet ghi trọn một khối bộ nhớ 2 GiB và đọc lại dữ liệu từ khắp khối đó, lớn hơn rất nhiều so với dung lượng cache của bất kỳ bộ xử lý nào. Vì thế hashrate phụ thuộc vào tốc độ hệ thống bộ nhớ chuyển dữ liệu. Những máy có băng thông bộ nhớ cao hơn và đủ RAM cho nhiều luồng sẽ đào nhanh nhất.'
-sourceHash: '4d5509a6c9e1'
+sourceHash: 9f6e4878e6b1
 translation: draft
 ---
 
@@ -89,7 +89,7 @@ Nếu bạn mua RAM để đào, hãy chọn theo số luồng bạn muốn: kho
 Có. Trên Windows và Linux, seine đào trên mọi nhân CPU và mọi card đồ họa NVIDIA mà nó phát hiện cùng một lúc, và hashrate được cộng dồn. Bạn không cần flag nào cho việc này; đây là mặc định.
 
 - **Windows:** bản tải đã kèm các thư viện CUDA runtime, nên bạn chỉ cần driver NVIDIA mới nhất.
-- **Linux:** cài driver NVIDIA và các thư viện NVRTC từ bản phân phối của bạn hoặc từ NVIDIA.
+- **Linux:** trình điều khiển NVIDIA là đủ.
 - **Lần chạy đầu tiên:** seine tinh chỉnh thiết lập kernel cho từng card và lưu kết quả vào bộ nhớ đệm, nên những lần khởi động sau chỉ mất vài giây.
 
 Trên [máy Mac Apple Silicon](/vi/blog/mine-blocknet-on-mac/), seine đào bằng CPU theo mặc định, cấu hình nhanh nhất đo được trên M4 Max. [Hướng dẫn NVIDIA](/vi/blog/mine-blocknet-nvidia-gpu/) trình bày về dàn máy đào nhiều GPU và các yêu cầu.

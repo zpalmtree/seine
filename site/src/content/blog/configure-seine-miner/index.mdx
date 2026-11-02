@@ -1,38 +1,116 @@
 ---
-title: 'Configure seine: saved settings and launch options'
-description: 'Find your seine configuration file, save pool and wallet settings, understand command-line overrides, and verify your Blocknet miner after restarting it.'
+title: 'Change seine settings: threads, CPU, GPU and pool'
+description: 'Turn CPU or GPU mining off in seine, set the thread count, choose a graphics card, keep your settings for every start, and change your address or pool.'
 date: 2026-10-26
+updated: 2026-11-02
 tags: ['Mining guide', 'Configuration', 'seine']
 faq:
-  - q: 'Where does seine save its configuration?'
-    a: 'By default, seine reads seine-data/seine.config.json relative to the working directory used to launch it. The data-dir option selects another base directory. A shortcut, terminal or scheduled task can choose a different working directory, so record the full configuration path alongside your startup command.'
-  - q: 'Does a command-line override update the saved file?'
-    a: 'For an existing configuration, explicit connection options take precedence for that run without replacing the saved address, pool URL or rig name. Keep the option in your regular launcher, or stop the miner and edit the corresponding saved field. Then verify the next normal launch.'
-  - q: 'Can I put every mining option in the JSON file?'
-    a: 'The saved configuration has a small connection-settings schema. Hardware and runtime options such as backend and thread selection belong in launch arguments. Adding similarly named JSON fields does not configure those options. Preserve your launcher as well as the data folder when backing up the setup.'
-related: [miner-keeps-stopping, update-seine-miner, start-miner-automatically-windows, seine-automatic-cpu-tuning]
+  - q: 'How do I turn off CPU mining in seine?'
+    a: 'Start seine with the backend option set to your graphics card, either nvidia or amd. Use both, separated by a comma, if the machine has both kinds of card. Seine then mines on the graphics cards only and leaves the processor free for other work.'
+  - q: 'How do I turn off GPU mining in seine?'
+    a: 'Start seine with the backend option set to cpu. Seine then mines on the processor only and leaves every graphics card free for games and other apps. Remove the option to mine on the processor and the graphics cards together again.'
+  - q: 'How many CPU threads should I use?'
+    a: 'Seine picks the thread count for you, so you only need to set it when you want to leave room for other work. Each thread uses about 2 GB of RAM. Press the minus key in the dashboard until your computer feels right, then use that number.'
+  - q: 'Where does seine save its settings?'
+    a: 'Seine saves your address, pool and worker name in seine-data/seine.config.json, inside the folder you start it from. Thread and backend options are not saved there, so put them in a small start file if you want them on every start.'
+related: [mine-while-using-pc, seine-automatic-cpu-tuning, start-miner-automatically-windows, how-to-mine-blocknet]
 image: /assets/blog/configure-seine-miner.svg
 ---
 
-Make your Blocknet miner start with predictable settings every time. This guide follows seine v0.2.37 and explains where connection settings live, which launch arguments take precedence, and how to make an intentional change persist. Start with an already working installation; the [update guide](/blog/update-seine-miner/) covers replacing the application itself.
+Seine runs well with no settings at all. This guide covers the changes you are most likely to want: turning CPU or GPU mining off, using fewer threads, choosing a graphics card, and changing your address or pool.
 
-## How does seine choose its settings?
+## How do you change a seine setting?
 
 <Answer>
-seine combines saved connection settings with the arguments supplied at startup. Explicit connection arguments take precedence over the corresponding saved values. The data directory decides which configuration file is read. Hardware and runtime flags remain launch options, so preserve both the saved file and your regular startup command.
+Close seine, open a terminal in its folder, and start it again with the setting added to the command, for example `./seine --threads 4`. On Windows, use PowerShell and `.\seine.exe --threads 4`. Seine keeps your saved address and pool, so you only type what you want to change.
 </Answer>
 
-<img src="/assets/blog/configure-seine-miner.svg" alt="A saved configuration file and a terminal command feed one miner, followed by a restart verification check." width="1200" height="675" loading="lazy" />
+- **Windows:** open the seine folder in File Explorer, type `powershell` in the address bar and press Enter.
+- **macOS and Linux:** open Terminal and go to the seine folder with `cd`.
 
-## Find the configuration used by your launcher
+The examples below use `./seine`. On Windows, type `.\seine.exe` instead.
 
-The default file is `./seine-data/seine.config.json`. That relative path starts at the process working directory, which can differ from the folder containing the executable. Check the terminal folder, shortcut working directory or service settings before editing anything. Two launchers can run the same executable while reading different data folders.
+## How do you turn CPU or GPU mining off?
 
-The `--data-dir` option selects the base directory; the filename remains `seine.config.json`. Use a stable absolute directory when launching from several places. Record the executable, working directory, data directory and complete arguments together. The [Windows startup guide](/blog/start-miner-automatically-windows/) shows how those paths fit into Task Scheduler, including paths containing spaces.
+Seine mines on your CPU and every supported graphics card by default. The `--backend` setting chooses which ones to use:
 
-## Which settings belong in the saved file?
+| What you want | Add this |
+|---|---|
+| CPU only, GPU off | `--backend cpu` |
+| NVIDIA GPU only, CPU off | `--backend nvidia` |
+| AMD GPU only, CPU off | `--backend amd` |
+| NVIDIA and AMD GPUs, CPU off | `--backend nvidia,amd` |
 
-The example below shows the main connection fields. Replace `@yourname` with your own registered Blocknet ID or full receiving address. It is a reference for the file shape, not a command to run. When editing an existing installation, change its relevant fields rather than replacing the whole file with this example.
+For example, to mine on an NVIDIA card and leave the CPU free:
+
+```sh
+./seine --backend nvidia
+```
+
+The Devices panel in the [dashboard](/blog/seine-dashboard-explained/) shows a row for each device that is mining.
+
+## How do you use fewer CPU threads?
+
+Add `--threads` with the number you want:
+
+```sh
+./seine --threads 4
+```
+
+Each thread uses about 2 GB of RAM, so 4 threads use about 8 GB. Seine stays on that number until you remove the setting.
+
+To find a good number, start seine normally and press `-` in the dashboard to remove a thread, or `+` to add one. The change takes a moment, and the dashboard shows the new count. Stop when your computer feels right, then use that number with `--threads`, because the keys only last until you close seine.
+
+To let seine choose a lighter thread count itself, use this instead:
+
+```sh
+./seine --cpu-profile efficiency
+```
+
+The [desktop guide](/blog/mine-while-using-pc/) has more on mining while you use your computer.
+
+## How do you choose one graphics card?
+
+Add the card's number. The first card is `0`:
+
+```sh
+./seine --backend cpu,nvidia --nvidia-devices 0
+```
+
+This mines on the CPU and the first NVIDIA card. Use `--nvidia-devices 0,1` for two cards, and leave out `cpu,` to turn the CPU off. AMD cards work the same way:
+
+```sh
+./seine --backend cpu,amd --amd-devices 0
+```
+
+To leave video memory free for other apps, use `--nvidia-max-lanes 2` or `--amd-max-lanes 2`. Each lane uses about 2 GB of video memory. Integrated Radeon graphics stay off unless you add `--backend amd` yourself.
+
+## How do you keep your settings for every start?
+
+Seine saves your address, pool and worker name by itself. Settings such as `--threads` and `--backend` last only for that run, so put them in a small start file and open that file instead of seine.
+
+On Windows, open Notepad, type these lines with your own settings, and save the file in the seine folder as `start-mining.bat`, with **Save as type** set to **All files**:
+
+```bat
+seine.exe --backend cpu --threads 4
+pause
+```
+
+Double-click `start-mining.bat` to start mining. The `pause` line keeps the window open if seine stops, so you can read its last message.
+
+On macOS or Linux, save these lines in the seine folder as `start-mining.sh`:
+
+```sh
+#!/bin/sh
+cd "$(dirname "$0")"
+./seine --backend cpu --threads 4
+```
+
+Run `chmod +x start-mining.sh` once, then start mining with `./start-mining.sh`. Automatic updates restart seine with the same settings. To start mining whenever you sign in to Windows, follow the [automatic start guide](/blog/start-miner-automatically-windows/).
+
+## How do you change your address, pool or worker name?
+
+Close seine and open `seine-data/seine.config.json` in a text editor. The folder is inside the one you start seine from. Change the value you need and save the file:
 
 ```json
 {
@@ -44,34 +122,26 @@ The example below shows the main connection fields. Replace `@yourname` with you
 }
 ```
 
-The fields `mode`, `address`, `pool_url` and `pool_worker` select mining mode, receiving destination, pool endpoint and rig label. Preserve `schema_version` and any existing `dev_fee_pool_worker` field. The latter is a separate generated label; use `pool_worker` for your own rig. Keep wallet recovery phrases and private keys out of this connection file.
+Leave the other lines as they are. Keep the quotes and commas, and don't add your recovery phrase or private keys to this file.
 
-## How do you make a change permanent?
+To use a different value for one run, add it to the command. The saved file stays the same:
 
-Stop the miner before editing and keep a backup of the existing file. Use a plain-text editor, retain valid JSON with double-quoted strings, and save the original filename without an extra text-file extension. Change only the field needed for the task. Save the file in the data directory your regular launcher actually selects. Check commas between fields and avoid comments or trailing commas. If your editor offers JSON validation, use it before restarting. A backup lets you compare the exact previous values instead of reconstructing them from memory.
-
-Inspect that launcher for an explicit override of the same setting. A saved address edit will not take effect while an old `--address` remains in the command. Either update the launch argument deliberately or remove it so the saved value applies. Restart through the same shortcut, script or task you normally use, then verify the effective settings.
-
-## Use temporary overrides deliberately
-
-On an installation with an existing configuration, the following pool rig option selects that rig name for the current run. The saved rig label remains available for the next launch without the override. This is useful for a controlled change, but record the flag in the regular launcher if you want that behavior every time.
-
-```text
---pool-worker desktop-02
+```sh
+./seine --pool-worker desktop-02
 ```
 
-On first startup without a configuration file, seine creates one from the initial connection inputs. That bootstrap step differs from overriding an existing file. Keep this distinction in mind when copying a command to another computer: the new machine may be creating its first configuration. The [configuration reference](https://github.com/zpalmtree/seine/blob/v0.2.37/docs/guides/configuration.md) documents the first-run prompts and supported launch options.
+The other two settings are `--address` and `--pool-url`. The [address change guide](https://bntpool.com/blog/change-mining-wallet-address/) explains how the pool credits your work after you change address.
 
-## Keep tuning options with the startup command
+## What if a setting doesn't work?
 
-Options such as `--backend` and `--threads` are supplied as launch arguments. The saved connection schema is not a general list of every flag. Adding a JSON field with a similar name does not set that runtime option. Keep deliberate hardware choices in the script, shortcut or service that starts the miner.
+| What you see | What to do |
+|---|---|
+| `--nvidia-devices requires selecting nvidia in --backend` | Add `nvidia` to the backend: `--backend cpu,nvidia`. The same applies to `amd`. |
+| `configured CPU lanes need` more RAM | Use a lower number with `--threads`, about one thread for every 2 GB of free RAM. |
+| `all GPU backends failed to start` | Install the current driver for your card. The [AMD guide](https://github.com/zpalmtree/seine/blob/master/docs/guides/amd.md) lists what AMD cards need on Linux. |
+| Seine asks for your address again | Start seine from the same folder as before, or set the folder with `--data-dir`. |
+| Your settings are back to automatic | Start seine from your start file. The `-` and `+` keys last only until you close seine. |
 
-The thread controls in the dashboard change the running session; they do not write a new saved thread default. Automatic tuning also has its own cache files. Preserve those separately from connection edits and let each machine tune for its own hardware. The [automatic tuning guide](/blog/seine-automatic-cpu-tuning/) explains cache reuse and the effect of explicit thread choices.
+The [flag reference](https://github.com/zpalmtree/seine/blob/master/docs/MINER_FLAGS.md) lists every setting.
 
-## Why do settings seem to reset?
-
-First compare the data path and launch arguments with the last working run. A new extraction directory, another terminal folder or an old scheduled-task argument can explain different settings. If parsing fails, read the filename and message before changing anything else. Restore the backup or correct the JSON syntax, then launch once through the intended entry point.
-
-Confirm the displayed destination, pool and rig name, then look for accepted shares. Repeat a normal restart to check persistence; a single override run only proves that command worked. Use the [dashboard guide](/blog/seine-dashboard-explained/) to read the session and the [address-change guide](https://bntpool.com/blog/change-mining-wallet-address/) when changing where future pool work is credited. Keep the working launcher and configuration backup together.
-
-<CTA target="seine" title="Get the current seine release" text="Use a stable data directory and keep your tested startup command with the saved connection settings." />
+<CTA target="seine" title="Get the current seine release" text="Download seine, start it once, then add only the settings you want to change." />

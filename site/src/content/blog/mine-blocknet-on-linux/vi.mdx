@@ -4,12 +4,12 @@ description: "Linux: Tải seine, giải nén, nhập địa chỉ Blocknet và 
 tags: ['Hướng dẫn đào coin', 'Linux', 'NVIDIA']
 faq:
   - q: 'Tôi nên tải tệp Linux nào?'
-    a: "Mở mục tải xuống. Chạy uname -m: chọn seine-linux-x86_64.tar.gz cho x86_64 hoặc seine-linux-aarch64.tar.gz cho aarch64. Các bản Linux yêu cầu glibc 2.39 trở lên. Bản x86_64 hỗ trợ CPU và NVIDIA; ARM64 hỗ trợ đào bằng CPU."
+    a: "Mở mục tải xuống. Chạy uname -m: chọn seine-linux-x86_64.tar.gz cho x86_64 hoặc seine-linux-aarch64.tar.gz cho aarch64. Các bản Linux yêu cầu glibc 2.31 trở lên. Bản x86_64 hỗ trợ CPU và NVIDIA; ARM64 hỗ trợ đào bằng CPU."
   - q: 'Có cần chạy seine bằng sudo không?'
     a: 'Chạy phần mềm đào bình thường bằng tài khoản của bạn từ thư mục có quyền ghi. Giải nén, cấp quyền thực thi cho chủ sở hữu nếu cần, rồi chạy ./seine. Dành trước huge pages là thao tác quản trị riêng; khởi động thông thường có thể dùng trang bộ nhớ thường.'
-  - q: 'Vì sao Linux báo thiếu thư viện NVRTC?'
-    a: 'Backend NVIDIA trên Linux cần trình điều khiển tương thích và các thư viện chạy NVRTC, gồm thư viện builtins khớp phiên bản. Cài chúng qua bản phân phối hoặc các gói được NVIDIA hỗ trợ. Tệp nén Linux không kèm DLL Windows. Bạn có thể chọn CPU trong khi chuẩn bị GPU.'
-sourceHash: 'fee2c843812c'
+  - q: 'Tôi có cần CUDA hoặc NVRTC để đào bằng NVIDIA trên Linux không?'
+    a: 'Không. Trình điều khiển NVIDIA là đủ. Seine dùng NVRTC khi nó được cài, và nếu không thì nạp các kernel tích hợp sẵn trong seine, hỗ trợ card GeForce dòng GTX 10 trở lên. Hãy cài trình điều khiển, khởi động seine và kiểm tra card của bạn có hiện trong bảng Devices.'
+sourceHash: acdcb56b3c1f
 translation: draft
 ---
 
@@ -21,7 +21,7 @@ Tải seine, giải nén, nhập địa chỉ Blocknet và xác nhận share đ�
 
 ## Bước 1: tải đúng phiên bản
 
-Mở [mục tải xuống](/vi/#download). Chạy `uname -m`: chọn `seine-linux-x86_64.tar.gz` cho `x86_64` hoặc `seine-linux-aarch64.tar.gz` cho `aarch64`. Các bản Linux yêu cầu glibc 2.39 trở lên. Bản x86_64 hỗ trợ CPU và NVIDIA; ARM64 hỗ trợ đào bằng CPU.
+Mở [mục tải xuống](/vi/#download). Chạy `uname -m`: chọn `seine-linux-x86_64.tar.gz` cho `x86_64` hoặc `seine-linux-aarch64.tar.gz` cho `aarch64`. Các bản Linux yêu cầu glibc 2.31 trở lên. Bản x86_64 hỗ trợ CPU và NVIDIA; ARM64 hỗ trợ đào bằng CPU.
 
 <img src="/assets/blog/setup-download.webp" alt="Bảng tải xuống chính thức với các tệp Linux và Linux ARM64" loading="lazy" />
 
@@ -64,17 +64,11 @@ Tìm hashrate và bộ đếm **Accepted** tăng dần trên [bảng điều khi
 
 Mở [Thống kê của tôi](https://bntpool.com/stats?lang=vi) và nhập cùng địa chỉ hoặc tên đã đăng ký để tìm worker, share và số dư.
 
-## Cần gì để đào bằng NVIDIA trên Linux?
+## Bạn cần gì để đào bằng GPU trên Linux?
 
-Đào GPU trên Linux x86_64 cần trình điều khiển NVIDIA và thư viện chạy NVRTC tương thích. NVRTC biên dịch kernel GPU lúc khởi động. Cài môi trường chạy và thư viện builtins tương ứng qua bản phân phối hoặc gói NVIDIA theo [hướng dẫn NVIDIA](/vi/blog/mine-blocknet-nvidia-gpu/). Tên gói phụ thuộc bản phân phối và phiên bản CUDA; dùng hướng dẫn cho hệ thống của bạn.
+Card NVIDIA chỉ cần trình điều khiển NVIDIA. Card AMD cần trình điều khiển amdgpu và runtime ROCm HIP, như [hướng dẫn AMD](https://github.com/zpalmtree/seine/blob/master/docs/guides/amd.md) giải thích. Seine tự tìm card của bạn và đào bằng chúng cùng với CPU trên bản x86_64. [Hướng dẫn NVIDIA](/vi/blog/mine-blocknet-nvidia-gpu/) nói về cách chọn card và kiểm tra share của GPU.
 
-Khi có các thư viện này, chế độ mặc định có thể đào đồng thời trên CPU và card NVIDIA được hỗ trợ. Để bắt đầu đào CPU trong khi chuẩn bị môi trường GPU, chọn rõ backend:
-
-```sh
-./seine --backend cpu
-```
-
-Lựa chọn này chỉ dùng CPU cho lần chạy đó. Để chọn thiết bị GPU và kiểm tra share GPU được chấp nhận, đọc tiếp hướng dẫn NVIDIA. Bản ARM64 được mô tả ở đây chứa backend CPU; cài CUDA không thêm backend NVIDIA vào tệp nén đó.
+<MinerSettings os="linux" />
 
 ## Cách xử lý lỗi khởi động trên Linux?
 
@@ -83,9 +77,8 @@ Dựa vào thông báo lỗi đầu tiên để chọn bước kiểm tra tiếp
 | Thông báo hoặc biểu hiện | Điều cần kiểm tra |
 |---|---|
 | `Exec format error` | Sai kiến trúc: đối chiếu `uname -m` với tên tệp nén. |
-| `GLIBC_2.39 not found` | Chương trình yêu cầu glibc mới hơn. Dùng hệ thống tương thích hoặc biên dịch từ nguồn; để bản phân phối quản lý thư viện C hệ thống. |
+| `GLIBC_... not found` | Chương trình yêu cầu glibc mới hơn. Dùng hệ thống tương thích hoặc biên dịch từ nguồn; để bản phân phối quản lý thư viện C hệ thống. |
 | `Permission denied` | Kiểm tra quyền thực thi của người dùng và dùng thư mục trên hệ thống tệp cho phép thực thi. |
-| `libnvrtc` / `libnvrtc-builtins` | Cài môi trường NVIDIA tương thích và thư viện builtins khớp phiên bản, hoặc dùng `--backend cpu` trong lúc chuẩn bị. |
 
 Khi share đã được chấp nhận, [hướng dẫn huge pages](/vi/blog/huge-pages-blocknet-mining/) trình bày thiết lập trang bộ nhớ tùy chọn trên Linux. [Hướng dẫn máy chủ](/vi/blog/mine-blocknet-on-servers/) nói về chạy không giao diện đồ họa và bố trí NUMA. Cả hai đều không bắt buộc cho lần chạy đầu này; thay đổi từng phần để nhận biết tác động trên máy của bạn.
 

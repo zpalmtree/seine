@@ -4,12 +4,12 @@ description: "Linux: Téléchargez seine, extrayez les fichiers, saisissez votre
 tags: ['Guide de minage', 'Linux', 'NVIDIA']
 faq:
   - q: 'Quelle archive Linux télécharger ?'
-    a: "Ouvrez la section téléchargement. Exécutez uname -m : choisissez seine-linux-x86_64.tar.gz pour x86_64, ou seine-linux-aarch64.tar.gz pour aarch64. Les versions Linux nécessitent glibc 2.39 ou une version ultérieure. La version x86_64 prend en charge le CPU et NVIDIA ; ARM64 prend en charge le minage CPU."
+    a: "Ouvrez la section téléchargement. Exécutez uname -m : choisissez seine-linux-x86_64.tar.gz pour x86_64, ou seine-linux-aarch64.tar.gz pour aarch64. Les versions Linux nécessitent glibc 2.31 ou une version ultérieure. La version x86_64 prend en charge le CPU et NVIDIA ; ARM64 prend en charge le minage CPU."
   - q: 'Faut-il lancer seine avec sudo ?'
     a: 'Exécutez le mineur normalement avec votre propre compte depuis un dossier accessible en écriture. Extrayez l’archive, accordez au propriétaire le droit d’exécution si nécessaire, puis lancez ./seine. La réservation de huge pages est une opération d’administration distincte ; le démarrage ordinaire peut utiliser des pages normales.'
-  - q: 'Pourquoi Linux signale-t-il une bibliothèque NVRTC manquante ?'
-    a: 'Le backend NVIDIA sous Linux nécessite un pilote compatible et les bibliothèques d’exécution NVRTC, dont la bibliothèque builtins correspondante. Installez-les via votre distribution ou les paquets pris en charge par NVIDIA. L’archive Linux ne contient pas les DLL Windows. Vous pouvez choisir le CPU pendant la préparation du GPU.'
-sourceHash: 'fee2c843812c'
+  - q: 'Ai-je besoin de CUDA ou de NVRTC pour miner avec NVIDIA sous Linux ?'
+    a: 'Non. Le pilote NVIDIA suffit. Seine utilise NVRTC lorsqu’il est installé et charge sinon les kernels intégrés à seine, qui couvrent les cartes GeForce de la série GTX 10 et plus récentes. Installez le pilote, lancez seine et vérifiez que votre carte apparaît dans le panneau Devices.'
+sourceHash: acdcb56b3c1f
 translation: draft
 ---
 
@@ -21,7 +21,7 @@ Téléchargez seine, extrayez les fichiers, saisissez votre adresse Blocknet et 
 
 ## Étape 1 : télécharger la bonne version
 
-Ouvrez la [section téléchargement](/fr/#download). Exécutez `uname -m` : choisissez `seine-linux-x86_64.tar.gz` pour `x86_64`, ou `seine-linux-aarch64.tar.gz` pour `aarch64`. Les versions Linux nécessitent glibc 2.39 ou une version ultérieure. La version x86_64 prend en charge le CPU et NVIDIA ; ARM64 prend en charge le minage CPU.
+Ouvrez la [section téléchargement](/fr/#download). Exécutez `uname -m` : choisissez `seine-linux-x86_64.tar.gz` pour `x86_64`, ou `seine-linux-aarch64.tar.gz` pour `aarch64`. Les versions Linux nécessitent glibc 2.31 ou une version ultérieure. La version x86_64 prend en charge le CPU et NVIDIA ; ARM64 prend en charge le minage CPU.
 
 <img src="/assets/blog/setup-download.webp" alt="Tableau officiel des téléchargements avec les archives Linux et Linux ARM64" loading="lazy" />
 
@@ -64,17 +64,11 @@ Dans le [tableau de bord](/fr/blog/seine-dashboard-explained/), cherchez un hash
 
 Ouvrez [Mes statistiques](https://bntpool.com/stats?lang=fr) et saisissez la même adresse ou le même nom enregistré pour retrouver votre worker, vos shares et votre solde.
 
-## Que faut-il pour miner avec NVIDIA sous Linux ?
+## De quoi avez-vous besoin pour le minage GPU sous Linux ?
 
-Le minage GPU sous Linux x86_64 nécessite un pilote NVIDIA et des bibliothèques NVRTC compatibles. NVRTC compile les kernels GPU au démarrage. Installez l’environnement d’exécution et sa bibliothèque builtins correspondante via votre distribution ou les paquets NVIDIA, en suivant le [guide NVIDIA](/fr/blog/mine-blocknet-nvidia-gpu/). Les noms des paquets dépendent de la distribution et de CUDA ; suivez les instructions adaptées à votre système.
+Les cartes NVIDIA n’ont besoin que du pilote NVIDIA. Les cartes AMD ont besoin du pilote amdgpu et du runtime ROCm HIP, comme l’explique le [guide AMD](https://github.com/zpalmtree/seine/blob/master/docs/guides/amd.md). Seine trouve vos cartes tout seul et mine avec elles en plus du CPU dans la version x86_64. Le [guide NVIDIA](/fr/blog/mine-blocknet-nvidia-gpu/) explique comment choisir les cartes et vérifier les shares GPU.
 
-Avec ces bibliothèques, le mode par défaut peut miner simultanément sur le CPU et les cartes NVIDIA compatibles. Pour démarrer sur CPU pendant la préparation du GPU, sélectionnez-le explicitement :
-
-```sh
-./seine --backend cpu
-```
-
-Ce choix utilise uniquement le CPU pour cette exécution. Pour sélectionner les GPU et vérifier leurs shares acceptées, poursuivez avec le guide NVIDIA. La version ARM64 décrite ici contient le backend CPU ; installer CUDA n’ajoute pas de backend NVIDIA à cette archive.
+<MinerSettings os="linux" />
 
 ## Comment résoudre une erreur de démarrage sous Linux ?
 
@@ -83,9 +77,8 @@ Utilisez le premier message d’erreur pour choisir la vérification suivante :
 | Message ou symptôme | Vérification à effectuer |
 |---|---|
 | `Exec format error` | Mauvaise architecture : comparez `uname -m` au nom de l’archive. |
-| `GLIBC_2.39 not found` | Le binaire nécessite une glibc plus récente. Utilisez un système compatible ou compilez les sources ; laissez votre distribution gérer la bibliothèque C du système. |
+| `GLIBC_... not found` | Le binaire nécessite une glibc plus récente. Utilisez un système compatible ou compilez les sources ; laissez votre distribution gérer la bibliothèque C du système. |
 | `Permission denied` | Vérifiez le droit d’exécution du compte et utilisez un dossier sur un système de fichiers autorisant l’exécution. |
-| `libnvrtc` / `libnvrtc-builtins` | Installez l’environnement NVIDIA compatible et la bibliothèque builtins correspondante, ou utilisez `--backend cpu` pendant sa préparation. |
 
 Une fois les shares acceptées, le [guide des huge pages](/fr/blog/huge-pages-blocknet-mining/) décrit leur configuration facultative sous Linux. Le [guide des serveurs](/fr/blog/mine-blocknet-on-servers/) couvre l’utilisation sans interface graphique et le placement NUMA. Ces préparations ne sont pas nécessaires pour ce premier lancement ; séparez les changements pour identifier leur effet sur votre machine.
 

@@ -164,9 +164,9 @@ Windows setup owns installation; server setup owns Linux systemd; updating owns 
 
 | Primary keyword cluster | URL | Search job |
 |---|---|---|
-| seine configuration file; saved mining settings; launch overrides | `/blog/configure-seine-miner/` | Choose the configuration file, edit persistent connection fields and distinguish them from runtime launch arguments |
+| seine settings; disable CPU or GPU mining; change seine threads; seine configuration file | `/blog/configure-seine-miner/` | Make the common changes to seine: turn CPU or GPU mining off, set threads, choose a card, keep settings for every start, change address or pool |
 
-Updating owns binary replacement, Windows startup owns Task Scheduler, tuning owns performance decisions. This article owns configuration precedence and persistence. The pool guide owns address-transition accounting. No URL is retargeted.
+Updating owns binary replacement, Windows startup owns Task Scheduler, tuning owns performance decisions. This article owns the common settings and how they persist. The pool guide owns address-transition accounting. Retargeted November 2, 2026 from configuration file mechanics to the wider settings job, same URL; the setup guides carry a short shared settings section and link here. `mine-while-using-pc` keeps the desktop-sharing decision.
 
 ## Miner stops and wallet receipt (October 26, 2026)
 

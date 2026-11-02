@@ -1,37 +1,114 @@
 ---
-title: 'Konfiguracja seine: zapisane ustawienia i start'
-description: 'Znajdź konfigurację seine, zapisz pulę i adres, poznaj pierwszeństwo argumentów oraz sprawdź ustawienia programu do kopania Blocknet po ponownym uruchomieniu.'
+title: 'Zmiana ustawień seine: wątki, CPU, GPU i pula'
+description: 'Wyłącz kopanie na CPU lub GPU w seine, ustaw liczbę wątków, wybierz kartę graficzną, zachowaj ustawienia przy każdym uruchomieniu i zmień adres lub pulę.'
 tags: ['Poradnik kopania', 'Konfiguracja', 'seine']
 faq:
-  - q: 'Gdzie seine zapisuje konfigurację?'
-    a: 'Domyślnie czyta seine-data/seine.config.json względem katalogu roboczego przy uruchomieniu. data-dir wybiera inny katalog bazowy. Terminal, skrót i zadanie harmonogramu mogą mieć różne katalogi robocze. Zapisz pełną ścieżkę konfiguracji razem z poleceniem uruchamiającym.'
-  - q: 'Czy argument zmienia zapisany plik?'
-    a: 'Przy istniejącej konfiguracji jawne argumenty połączenia mają pierwszeństwo w danym uruchomieniu, bez zastępowania zapisanego adresu, URL puli czy nazwy maszyny. Zachowaj argument w zwykłym poleceniu albo zatrzymaj program i zmień pole w pliku. Sprawdź potem normalny start.'
-  - q: 'Czy wszystkie opcje można umieścić w JSON?'
-    a: 'Plik ma niewielki schemat ustawień połączenia. Opcje sprzętu i działania, np. backend i wątki, należą do argumentów startowych. Podobnie nazwane pola JSON ich nie ustawiają. Wraz z katalogiem danych zachowaj kopię sposobu uruchamiania.'
-sourceHash: '66e5ad9f2665'
+  - q: 'Jak wyłączyć kopanie na CPU w seine?'
+    a: 'Uruchom seine z opcją backend ustawioną na swoją kartę graficzną: nvidia lub amd. Podaj obie, rozdzielone przecinkiem, jeśli komputer ma oba rodzaje kart. Seine kopie wtedy tylko na kartach graficznych, a procesor zostaje wolny do innej pracy.'
+  - q: 'Jak wyłączyć kopanie na GPU w seine?'
+    a: 'Uruchom seine z opcją backend ustawioną na cpu. Seine kopie wtedy tylko na procesorze, a wszystkie karty graficzne zostają wolne dla gier i innych aplikacji. Usuń opcję, aby znów kopać jednocześnie na procesorze i kartach graficznych.'
+  - q: 'Ile wątków CPU powinienem użyć?'
+    a: 'Seine wybiera liczbę wątków za Ciebie, więc ustawiasz ją tylko wtedy, gdy chcesz zostawić miejsce na inną pracę. Każdy wątek zajmuje około 2 GB RAM. Naciskaj klawisz minus w panelu, aż komputer będzie działał komfortowo, i użyj tej liczby.'
+  - q: 'Gdzie seine zapisuje swoje ustawienia?'
+    a: 'Seine zapisuje Twój adres, pulę i nazwę workera w seine-data/seine.config.json, wewnątrz folderu, z którego go uruchamiasz. Opcje wątków i backendu nie są tam zapisywane, więc umieść je w małym pliku startowym, jeśli chcesz je mieć przy każdym uruchomieniu.'
+sourceHash: b5ca5a9a16d8
 translation: draft
 ---
 
-Uruchamiaj koparkę Blocknet z przewidywalnymi ustawieniami. Poradnik dla seine v0.2.37 wyjaśnia położenie danych, pierwszeństwo argumentów i trwałe zmiany. Zacznij od działającej instalacji; [poradnik aktualizacji](/pl/blog/update-seine-miner/) opisuje wymianę programu.
+Seine działa dobrze bez żadnych ustawień. Ten poradnik opisuje zmiany, których najczęściej możesz chcieć: wyłączenie kopania na CPU lub GPU, użycie mniejszej liczby wątków, wybór karty graficznej oraz zmianę adresu lub puli.
 
-## Jak seine wybiera ustawienia?
+## Jak zmienić ustawienie seine?
 
 <Answer>
-seine łączy zapisane wartości połączenia z argumentami startowymi. Jawne argumenty mają pierwszeństwo przed odpowiednimi wartościami pliku. Katalog danych wybiera czytany plik. Opcje sprzętowe i wykonania pozostają argumentami startowymi, więc zachowaj zarówno konfigurację, jak i zwykłe polecenie.
+Zamknij seine, otwórz terminal w jego folderze i uruchom go ponownie z ustawieniem dodanym do polecenia, na przykład `./seine --threads 4`. W Windows użyj PowerShell i `.\seine.exe --threads 4`. Seine zachowuje zapisany adres i pulę, więc wpisujesz tylko to, co chcesz zmienić.
 </Answer>
 
-<img src="/assets/blog/configure-seine-miner.svg" alt="Zapisany plik i polecenie terminala prowadzą do koparki, a potem do kontroli po ponownym uruchomieniu." width="1200" height="675" loading="lazy" />
+- **Windows:** otwórz folder seine w Eksploratorze plików, wpisz `powershell` w pasku adresu i naciśnij Enter.
+- **macOS i Linux:** otwórz Terminal i przejdź do folderu seine poleceniem `cd`.
 
-## Znajdź rzeczywiście używany plik
+Poniższe przykłady używają `./seine`. W Windows wpisz zamiast tego `.\seine.exe`.
 
-Domyślnie jest to `./seine-data/seine.config.json`, względem katalogu roboczego procesu, niekoniecznie folderu programu. Przed edycją sprawdź terminal, skrót lub usługę. Dwa sposoby uruchomienia mogą korzystać z tego samego programu i różnych danych.
+## Jak wyłączyć kopanie na CPU lub GPU?
 
-`--data-dir` wybiera katalog bazowy; plik nadal nazywa się `seine.config.json`. Przy uruchamianiu z różnych miejsc używaj stałej ścieżki bezwzględnej. Zapisz program, katalog roboczy, dane i wszystkie argumenty. [Poradnik startu Windows](/pl/blog/start-miner-automatically-windows/) pokazuje te ścieżki, również ze spacjami, w Harmonogramie zadań.
+Domyślnie seine kopie na Twoim CPU i na każdej obsługiwanej karcie graficznej. Ustawienie `--backend` wybiera, których użyć:
 
-## Jakie ustawienia należą do pliku?
+| Czego chcesz | Dodaj to |
+|---|---|
+| Tylko CPU, GPU wyłączone | `--backend cpu` |
+| Tylko GPU NVIDIA, CPU wyłączone | `--backend nvidia` |
+| Tylko GPU AMD, CPU wyłączone | `--backend amd` |
+| GPU NVIDIA i AMD, CPU wyłączone | `--backend nvidia,amd` |
 
-Przykład pokazuje główne pola połączenia. Zastąp `@yourname` swoim zarejestrowanym Blocknet ID lub pełnym adresem odbiorczym. To wzór formatu, nie polecenie. W istniejącej instalacji edytuj potrzebne pola zamiast zastępować cały plik.
+Na przykład, aby kopać na karcie NVIDIA i zostawić CPU wolne:
+
+```sh
+./seine --backend nvidia
+```
+
+Panel Devices w [panelu seine](/pl/blog/seine-dashboard-explained/) pokazuje wiersz dla każdego urządzenia, które kopie.
+
+## Jak użyć mniejszej liczby wątków CPU?
+
+Dodaj `--threads` z liczbą, której chcesz:
+
+```sh
+./seine --threads 4
+```
+
+Każdy wątek zajmuje około 2 GB RAM, więc 4 wątki zajmują około 8 GB. Seine zostaje przy tej liczbie, dopóki nie usuniesz ustawienia.
+
+Aby znaleźć dobrą liczbę, uruchom seine normalnie i naciśnij `-` w panelu, by usunąć wątek, lub `+`, by dodać jeden. Zmiana zajmuje chwilę, a panel pokazuje nową liczbę. Zatrzymaj się, gdy komputer będzie działał komfortowo, i użyj tej liczby z `--threads`, bo klawisze działają tylko do zamknięcia seine.
+
+Aby seine sam wybrał lżejszą liczbę wątków, użyj zamiast tego:
+
+```sh
+./seine --cpu-profile efficiency
+```
+
+[Poradnik dla komputera stacjonarnego](/pl/blog/mine-while-using-pc/) mówi więcej o kopaniu podczas korzystania z komputera.
+
+## Jak wybrać jedną kartę graficzną?
+
+Dodaj numer karty. Pierwsza karta to `0`:
+
+```sh
+./seine --backend cpu,nvidia --nvidia-devices 0
+```
+
+To kopie na CPU i pierwszej karcie NVIDIA. Użyj `--nvidia-devices 0,1` dla dwóch kart i pomiń `cpu,`, aby wyłączyć CPU. Karty AMD działają tak samo:
+
+```sh
+./seine --backend cpu,amd --amd-devices 0
+```
+
+Aby zostawić pamięć wideo dla innych aplikacji, użyj `--nvidia-max-lanes 2` lub `--amd-max-lanes 2`. Każdy lane zajmuje około 2 GB pamięci wideo. Zintegrowana grafika Radeon pozostaje wyłączona, dopóki sam nie dodasz `--backend amd`.
+
+## Jak zachować ustawienia przy każdym uruchomieniu?
+
+Seine sam zapisuje Twój adres, pulę i nazwę workera. Ustawienia takie jak `--threads` i `--backend` obowiązują tylko podczas jednego uruchomienia, więc umieść je w małym pliku startowym i otwieraj ten plik zamiast seine.
+
+W Windows otwórz Notatnik, wpisz te wiersze ze swoimi ustawieniami i zapisz plik w folderze seine jako `start-mining.bat`, ustawiając **Zapisz jako typ** na **Wszystkie pliki**:
+
+```bat
+seine.exe --backend cpu --threads 4
+pause
+```
+
+Kliknij dwukrotnie `start-mining.bat`, aby zacząć kopać. Wiersz `pause` zostawia okno otwarte, gdy seine się zatrzyma, więc możesz przeczytać jego ostatni komunikat.
+
+W macOS lub Linux zapisz te wiersze w folderze seine jako `start-mining.sh`:
+
+```sh
+#!/bin/sh
+cd "$(dirname "$0")"
+./seine --backend cpu --threads 4
+```
+
+Wykonaj raz `chmod +x start-mining.sh`, a potem zacznij kopać poleceniem `./start-mining.sh`. Automatyczne aktualizacje uruchamiają seine ponownie z tymi samymi ustawieniami. Aby zaczynać kopanie przy każdym logowaniu do Windows, skorzystaj z [poradnika automatycznego uruchamiania](/pl/blog/start-miner-automatically-windows/).
+
+## Jak zmienić adres, pulę lub nazwę workera?
+
+Zamknij seine i otwórz `seine-data/seine.config.json` w edytorze tekstu. Ten folder znajduje się wewnątrz folderu, z którego uruchamiasz seine. Zmień potrzebną wartość i zapisz plik:
 
 ```json
 {
@@ -43,34 +120,26 @@ Przykład pokazuje główne pola połączenia. Zastąp `@yourname` swoim zarejes
 }
 ```
 
-`mode`, `address`, `pool_url` i `pool_worker` wybierają tryb, odbiorcę, pulę i nazwę maszyny. Zachowaj `schema_version` oraz istniejące `dev_fee_pool_worker`. Ostatnie pole jest oddzielnym generowanym identyfikatorem; dla swojej maszyny używaj `pool_worker`. Nie wpisuj tu frazy odzyskiwania ani kluczy prywatnych.
+Pozostałe wiersze zostaw bez zmian. Zachowaj cudzysłowy i przecinki, a do tego pliku nie dodawaj frazy odzyskiwania ani kluczy prywatnych.
 
-## Jak zachować zmianę na stałe?
+Aby użyć innej wartości tylko podczas jednego uruchomienia, dodaj ją do polecenia. Zapisany plik pozostaje bez zmian:
 
-Zatrzymaj program i skopiuj plik. Używaj edytora tekstu, poprawnego JSON z podwójnymi cudzysłowami i oryginalnej nazwy bez dodatkowego rozszerzenia. Zmień tylko potrzebne pole we właściwym katalogu. Sprawdź przecinki, unikaj komentarzy i końcowych przecinków, a jeśli dostępne, użyj walidacji JSON. Kopia pozwala dokładnie porównać stare wartości.
-
-Sprawdź argumenty nadpisujące tę samą wartość. Stare `--address` ma pierwszeństwo przed nowym adresem w pliku. Zaktualizuj argument lub usuń go, by użyć zapisu. Uruchom zwykłym skrótem, skryptem lub zadaniem i sprawdź efektywne wartości.
-
-## Świadomie używaj opcji tymczasowych
-
-Przy istniejącej konfiguracji poniższa opcja puli wybiera nazwę maszyny na to uruchomienie. Przy następnym starcie bez niej wraca zapisana nazwa. Pomaga to kontrolować zmianę; dla stałego działania dodaj opcję do zwykłego uruchamiania.
-
-```text
---pool-worker desktop-02
+```sh
+./seine --pool-worker desktop-02
 ```
 
-Przy pierwszym starcie bez pliku seine tworzy go z początkowych danych połączenia. To inny przypadek niż tymczasowe zastąpienie istniejących wartości. Pamiętaj o tym, kopiując polecenie na komputer, który dopiero tworzy konfigurację. [Dokumentacja konfiguracji](https://github.com/zpalmtree/seine/blob/v0.2.37/docs/guides/configuration.md) opisuje pytania początkowe i obsługiwane opcje.
+Pozostałe dwa ustawienia to `--address` i `--pool-url`. [Poradnik zmiany adresu](https://bntpool.com/blog/pl/change-mining-wallet-address/) wyjaśnia, jak pula zalicza Twoją pracę po zmianie adresu.
 
-## Opcje sprzętowe zachowaj w poleceniu
+## Co zrobić, gdy ustawienie nie działa?
 
-`--backend` i `--threads` są argumentami startowymi. Schemat połączenia nie jest listą wszystkich opcji. Podobne pole JSON nie ustawi takiej opcji działania. Zachowaj wybory sprzętu w skrypcie, skrócie lub usłudze uruchamiającej program.
+| Co widzisz | Co zrobić |
+|---|---|
+| `--nvidia-devices requires selecting nvidia in --backend` | Dodaj `nvidia` do backendu: `--backend cpu,nvidia`. To samo dotyczy `amd`. |
+| `configured CPU lanes need` więcej RAM | Użyj mniejszej liczby w `--threads`, około jednego wątku na każde 2 GB wolnej pamięci RAM. |
+| `all GPU backends failed to start` | Zainstaluj aktualny sterownik swojej karty. [Poradnik AMD](https://github.com/zpalmtree/seine/blob/master/docs/guides/amd.md) wymienia, czego karty AMD potrzebują w Linuksie. |
+| Seine znowu pyta o adres | Uruchom seine z tego samego folderu co wcześniej lub ustaw folder za pomocą `--data-dir`. |
+| Ustawienia wróciły do automatycznych | Uruchamiaj seine z pliku startowego. Klawisze `-` i `+` działają tylko do zamknięcia seine. |
 
-Przyciski wątków w panelu zmieniają sesję bez zapisywania nowej wartości domyślnej. Automatyczne strojenie ma własne pamięci podręczne. Zachowaj je niezależnie od edycji połączenia i pozwól każdej maszynie dostroić się do sprzętu. [Poradnik strojenia](/pl/blog/seine-automatic-cpu-tuning/) wyjaśnia użycie cache i jawne liczby wątków.
+[Opis opcji](https://github.com/zpalmtree/seine/blob/master/docs/MINER_FLAGS.md) zawiera listę wszystkich ustawień.
 
-## Dlaczego ustawienia wyglądają na zresetowane?
-
-Porównaj ścieżkę danych i argumenty z ostatnim poprawnym startem. Nowy folder rozpakowania, inny terminal lub stare argumenty zadania mogą wyjaśnić różnicę. Przy błędzie parsowania przeczytaj nazwę pliku i komunikat. Przywróć kopię lub popraw JSON, potem uruchom raz właściwą metodą.
-
-Sprawdź odbiorcę, pulę, nazwę i zaakceptowane udziały. Powtórz zwykły start, by potwierdzić trwałość; jedno uruchomienie z argumentami sprawdza tylko to polecenie. Skorzystaj z [poradnika panelu](/pl/blog/seine-dashboard-explained/) i [zmiany adresu](https://bntpool.com/blog/pl/change-mining-wallet-address/) dla przyszłych nagród. Zachowaj razem działający sposób uruchamiania i kopię konfiguracji.
-
-<CTA target="seine" title="Pobierz aktualne seine" text="Używaj stałego katalogu danych i przechowuj sprawdzone polecenie wraz z zapisaną konfiguracją." />
+<CTA target="seine" title="Pobierz aktualne wydanie seine" text="Pobierz seine, uruchom go raz, a potem dodaj tylko ustawienia, które chcesz zmienić." />

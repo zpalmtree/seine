@@ -29,6 +29,7 @@
 .prose strong { color: var(--ink); }
 .prose a { color: var(--ink); text-underline-offset: 3px; text-decoration-thickness: 1px; }
 .prose a:hover { color: var(--accent); }
+.prose code.command span { white-space: nowrap; }
 .prose code { background: var(--paper-2); border: 1px solid var(--rule); padding: 1px 5px; border-radius: 4px; }
 .prose :not(pre) > code { display: inline-block; max-width: 100%; overflow-wrap: anywhere; }
 .prose pre { direction: ltr; text-align: left; background: var(--ink) !important; color: #E9EEED; border-radius: var(--radius); padding: 16px 18px; overflow-x: auto; font-size: 0.9rem; }

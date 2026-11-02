@@ -8,10 +8,10 @@ faq:
   - q: 'Ile wątków kopiących Blocknet uruchomi 32 GB RAM?'
     a: 'Około 14. Każdy wątek potrzebuje do każdego hasha bloku pamięci 2 GiB, więc 32 GB teoretycznie mieści 16 takich bloków. seine zostawia 5% (domyślnie najwyżej 1 GiB) RAM w rezerwie i miejsce dla systemu operacyjnego, co daje na komputerze z 32 GB około 14 wątków. Oblicza to za Ciebie przy starcie.'
   - q: 'Których kart graficznych używa seine do kopania Blocknet?'
-    a: 'W wersjach dla systemów Windows i Linux seine kopie na kartach graficznych NVIDIA, używając każdej wykrytej karty razem z procesorem. W systemie Windows środowisko uruchomieniowe CUDA jest dołączone, więc potrzebujesz tylko sterownika NVIDIA. W systemie Linux zainstaluj sterownik i biblioteki NVRTC. Przy pierwszym uruchomieniu seine dostraja każdą kartę i zapamiętuje wynik.'
+    a: 'Seine kopie na kartach graficznych NVIDIA w wersjach dla Windows i Linuksa, używając każdej wykrytej karty obok procesora. Potrzebujesz tylko sterownika NVIDIA. Pierwsze uruchomienie dostraja każdą kartę i zapamiętuje wynik.'
   - q: 'Dlaczego przepustowość pamięci ma znaczenie przy kopaniu Blocknet?'
     a: 'Każdy hash Blocknet zapisuje pełny blok pamięci 2 GiB i odczytuje dane z całego tego obszaru, znacznie więcej, niż mieści jakakolwiek pamięć podręczna procesora. Hashrate zależy więc od tego, jak szybko system pamięci przesyła dane. Najszybciej kopią komputery z większą przepustowością pamięci i wystarczającą ilością RAM na wiele wątków.'
-sourceHash: '4d5509a6c9e1'
+sourceHash: 9f6e4878e6b1
 translation: draft
 ---
 
@@ -89,7 +89,7 @@ Jeśli kupujesz RAM do kopania, dopasuj go do liczby wątków, którą chcesz ur
 Tak. W systemach Windows i Linux seine kopie jednocześnie na każdym rdzeniu CPU i na każdej wykrytej karcie graficznej NVIDIA, a hashrate się sumuje. Nie potrzebujesz do tego żadnej flagi; to ustawienie domyślne.
 
 - **Windows:** pobrane archiwum zawiera biblioteki środowiska uruchomieniowego CUDA, więc potrzebujesz tylko aktualnego sterownika NVIDIA.
-- **Linux:** zainstaluj sterownik NVIDIA i biblioteki NVRTC z repozytoriów swojej dystrybucji albo od NVIDIA.
+- **Linux:** wystarczy sterownik NVIDIA.
 - **Pierwsze uruchomienie:** seine dostraja ustawienia swoich jąder dla każdej karty i zapamiętuje wynik, więc kolejne starty trwają sekundy.
 
 Na [Macach z Apple Silicon](/pl/blog/mine-blocknet-on-mac/) seine domyślnie kopie na CPU, co w pomiarach na M4 Max jest najszybszą konfiguracją. [Poradnik NVIDIA](/pl/blog/mine-blocknet-nvidia-gpu/) opisuje koparki z wieloma GPU i wymagania.

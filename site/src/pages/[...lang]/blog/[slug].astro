@@ -3,6 +3,7 @@ import { render } from 'astro:content';
 import '../../../styles/blog.css';
 import Answer from '../../../components/mdx/Answer.astro';
 import CTA from '../../../components/mdx/CTA.astro';
+import MinerSettings from '../../../components/mdx/MinerSettings.astro';
 import Note from '../../../components/mdx/Note.astro';
 import Warning from '../../../components/mdx/Warning.astro';
 import { LOCALES, langParam, localeDef, localizePath } from '../../../i18n/locales';
@@ -75,7 +76,7 @@ if (post.faq.length) {
       <strong>{t('perfTitle')}</strong>
       <ul>{benchmarkSections.map(heading => <li><a href={`#${heading.slug}`}>{heading.text}</a></li>)}</ul>
     </nav>}
-    <Content components={{ Answer, CTA, Note, Warning }} />
+    <Content components={{ Answer, CTA, MinerSettings, Note, Warning }} />
     {post.faq.length > 0 && (
       <section class="faq" id="faq" aria-labelledby="faq-title">
         <h2 id="faq-title">{t('postFaq')}</h2>

@@ -8,10 +8,10 @@ faq:
   - q: '32 GB 内存能运行多少个 Blocknet 挖矿线程？'
     a: '约 14 个。每个线程每次哈希都需要一块 2 GiB 的内存，所以 32 GB 理论上能容纳 16 块。seine 会预留 5% (默认最多 1 GiB) 的内存，并为操作系统留出空间，因此 32 GB 的机器约能运行 14 个线程。seine 启动时会自动算好这些。'
   - q: 'seine 挖 Blocknet 时会使用哪些显卡？'
-    a: 'seine 的 Windows 和 Linux 版本使用 NVIDIA 显卡挖矿，会在处理器之外同时使用检测到的每一张显卡。在 Windows 上已内置 CUDA 运行库，只需安装 NVIDIA 驱动。在 Linux 上需安装驱动和 NVRTC 库。首次启动时会为每张显卡调优并记住结果。'
+    a: 'seine 通过 Windows 和 Linux 下载版使用 NVIDIA 显卡挖矿，并把检测到的每块显卡与处理器一起使用。你只需要 NVIDIA 驱动。首次启动会为每块显卡调优并记住结果。'
   - q: '为什么内存带宽对挖 Blocknet 很重要？'
     a: '每次 Blocknet 哈希都要写满一整块 2 GiB 的内存，并从其中各处读回数据，远远超出任何处理器缓存的容量。因此算力取决于内存系统搬运数据的速度。内存带宽更高、内存足够运行更多线程的机器挖得最快。'
-sourceHash: '4d5509a6c9e1'
+sourceHash: 9f6e4878e6b1
 translation: draft
 ---
 
@@ -89,7 +89,7 @@ seine 还会把线程数限制在处理器的逻辑核心数以内，所以实�
 可以。在 Windows 和 Linux 上，seine 会同时使用每个 CPU 核心和检测到的每张 NVIDIA 显卡挖矿，算力会叠加。这无需任何参数，是默认行为。
 
 - **Windows：** 下载包已内置 CUDA 运行库，只需安装较新的 NVIDIA 驱动。
-- **Linux：** 从发行版或 NVIDIA 安装 NVIDIA 驱动和 NVRTC 库。
+- **Linux:** 有 NVIDIA 驱动就够了。
 - **首次启动：** seine 会为每张显卡调优计算内核参数并缓存结果，之后几秒内即可启动。
 
 在 [Apple 芯片的 Mac](/zh-hans/blog/mine-blocknet-on-mac/) 上，seine 默认使用 CPU 挖矿，这是在 M4 Max 上实测最快的方式。[NVIDIA 指南](/zh-hans/blog/mine-blocknet-nvidia-gpu/)介绍了多显卡矿机和相关要求。

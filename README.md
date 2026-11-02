@@ -65,7 +65,7 @@ See [exchange payouts](docs/EXCHANGE_PAYOUTS.md) for pool compatibility.
 
 | Platform | Archive | GPU |
 |---|---|---|
-| Windows x86_64 | `seine-windows-x86_64.zip` | NVIDIA (drivers only, CUDA runtime bundled) |
+| Windows x86_64 | `seine-windows-x86_64.zip` | NVIDIA (drivers only, CUDA runtime bundled), AMD Radeon RDNA (AMD driver) |
 | Linux x86_64 | `seine-linux-x86_64.tar.gz` | NVIDIA (driver only), AMD Radeon RDNA (ROCm HIP runtime) |
 | Linux ARM64 | `seine-linux-aarch64.tar.gz` | CPU only |
 | macOS Apple Silicon | `seine-macos-aarch64.tar.gz` | CPU; Metal GPU for BLAKE2b blocks |

@@ -8,10 +8,10 @@ faq:
   - q: '32 GB RAM kaç Blocknet madencilik iş parçacığı çalıştırır?'
     a: 'Yaklaşık 14. Her iş parçacığı her hash için 2 GiB''lık bir bellek bloğuna ihtiyaç duyar, bu yüzden 32 GB kağıt üzerinde bunlardan 16 tane tutar. seine RAM''in %5''ini (varsayılan olarak en fazla 1 GiB) yedekte tutar ve işletim sistemine yer bırakır; bu da 32 GB''lık bir makineyi yaklaşık 14 iş parçacığına getirir. seine bunu başlarken sizin için hesaplar.'
   - q: 'seine Blocknet madenciliği için hangi ekran kartlarını kullanır?'
-    a: 'seine, Windows ve Linux indirmeleriyle NVIDIA ekran kartlarında madencilik yapar ve algıladığı her kartı işlemciyle birlikte kullanır. Windows''ta CUDA çalışma zamanı dahildir, bu yüzden yalnızca NVIDIA sürücüsüne ihtiyacınız olur. Linux''ta sürücüyü ve NVRTC kütüphanelerini kurun. İlk açılışta her kart ayarlanır ve sonuç hatırlanır.'
+    a: 'seine, Windows ve Linux indirmeleriyle NVIDIA ekran kartlarında kazar ve algıladığı her kartı işlemciyle birlikte kullanır. Yalnızca NVIDIA sürücüsüne ihtiyacınız var. İlk başlatma her kartı ayarlar ve sonucu hatırlar.'
   - q: 'Blocknet madenciliğinde bellek bant genişliği neden önemlidir?'
     a: 'Her Blocknet hash''i 2 GiB''lık bir bellek bloğunun tamamını yazar ve bloğun her yerinden veri geri okur; bu, herhangi bir işlemci önbelleğinin tutabileceğinden çok daha fazladır. Bu yüzden hashrate, bellek sisteminin veriyi ne kadar hızlı taşıdığına bağlıdır. Bellek bant genişliği yüksek ve çok sayıda iş parçacığına yetecek RAM''e sahip makineler en hızlı madencilik yapar.'
-sourceHash: '4d5509a6c9e1'
+sourceHash: 9f6e4878e6b1
 translation: draft
 ---
 
@@ -89,7 +89,7 @@ Madencilik için RAM alıyorsanız, onu istediğiniz iş parçacığı sayısın
 Evet. Windows ve Linux'ta seine, algıladığı her CPU çekirdeğinde ve her NVIDIA ekran kartında aynı anda madencilik yapar ve hashrate'ler toplanır. Bunun için ek bir parametre gerekmez; varsayılan budur.
 
 - **Windows:** indirme CUDA çalışma zamanı kütüphanelerini içerir, bu yüzden yalnızca güncel bir NVIDIA sürücüsüne ihtiyacınız vardır.
-- **Linux:** NVIDIA sürücüsünü ve NVRTC kütüphanelerini dağıtımınızdan veya NVIDIA'dan kurun.
+- **Linux:** NVIDIA sürücüsü yeterlidir.
 - **İlk açılış:** seine her kart için kernel ayarlarını yapar ve sonucu önbelleğe alır, bu yüzden sonraki başlatmalar saniyeler sürer.
 
 [Apple Silicon Mac'lerde](/tr/blog/mine-blocknet-on-mac/) seine varsayılan olarak CPU'da madencilik yapar; M4 Max'te ölçülen en hızlı kurulum budur. [NVIDIA rehberi](/tr/blog/mine-blocknet-nvidia-gpu/) çoklu GPU'lu rig'leri ve gereksinimleri anlatır.

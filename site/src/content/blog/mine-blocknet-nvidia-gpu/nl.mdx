@@ -2,7 +2,7 @@
 title: 'Blocknet minen met een NVIDIA-GPU'
 description: 'Mine Blocknet met een NVIDIA-GPU en seine. Stel Windows of Linux in, gebruik CPU en GPU, controleer hashrates en verhelp problemen bij het opstarten.'
 tags: ['Mininghandleiding', 'NVIDIA', 'GPU']
-sourceHash: '035e97230185'
+sourceHash: bcf2b64687ba
 translation: draft
 faq:
   - q: 'Kan seine de CPU en NVIDIA-GPU tegelijk gebruiken?'
@@ -15,7 +15,7 @@ faq:
     a: 'Het miningdashboard toont ingediende, geweigerde en geaccepteerde shares, en het log vermeldt de backend bij sharegebeurtenissen. Controleer de lokale hashrate in de NVIDIA-apparaatrij en zoek vervolgens naar meldingen over geaccepteerde shares van die backend. Gebruik de handleiding voor pooltracking om het bijgeschreven werk te bekijken.'
 ---
 
-seine minet Blocknet op je NVIDIA-GPU samen met de CPU. Deze handleiding behandelt de installatie op Windows en Linux, kaartselectie, geaccepteerde shares en een gemeten vergelijking met de RTX 5090. De opdrachten gelden voor seine v0.2.26 en het huidige Argon2id-netwerk in oktober 2026.
+seine minet Blocknet op je NVIDIA-GPU samen met de CPU. Deze handleiding behandelt de installatie op Windows en Linux, kaartselectie, geaccepteerde shares en een gemeten vergelijking met de RTX 5090. De opdrachten gelden voor seine v0.3.0 en het huidige Argon2id-netwerk in oktober 2026.
 
 ## Hoe begin je Blocknet te minen met een NVIDIA-GPU?
 
@@ -32,7 +32,7 @@ Begin met de standaardinstellingen. Laat de kernel, het registermaximum, het aan
 | Platform | Wat je moet voorbereiden | Startopdracht |
 |---|---|---|
 | Windows x86_64 | NVIDIA-beeldschermdriver; meegeleverde runtime-DLL's naast het uitvoerbare bestand | `.\seine.exe` |
-| Linux x86_64 | NVIDIA-driver en compatibele NVRTC-runtimebibliotheken | `./seine` |
+| Linux x86_64 | NVIDIA-driver | `./seine` |
 
 Pak op Windows de volledige ZIP uit in een beschrijfbare map. Houd `nvrtc64_120_0.dll` en `nvrtc-builtins64_128.dll` naast `seine.exe`. De verpakte versie gebruikt deze meegeleverde bibliotheken; een aparte installatie van de CUDA Toolkit is niet nodig.
 
@@ -40,7 +40,7 @@ Pak op Windows de volledige ZIP uit in een beschrijfbare map. Houd `nvrtc64_120_
 
 Installeer de driver voor je kaart en besturingssysteem via de [NVIDIA-driverpagina](https://www.nvidia.com/en-us/drivers/). De [Windows-handleiding](/nl/blog/mine-blocknet-on-windows/) behandelt het downloaden, de controlesom en het uitpakken.
 
-Installeer op Linux de NVIDIA-driver en compatibele NVRTC-pakketten voor je distributie. NVRTC compileert de CUDA-kernels van seine tijdens het uitvoeren. De [NVRTC-documentatie](https://docs.nvidia.com/cuda/nvrtc/) van NVIDIA beschrijft de compiler en bijbehorende builtins-bibliotheek; de [NVIDIA-vereisten van seine](https://github.com/zpalmtree/seine/blob/master/docs/guides/nvidia.md) beschrijven de runtimevereisten van de miner.
+Op Linux is de NVIDIA-driver genoeg. Seine gebruikt NVRTC als het is geïnstalleerd en laadt anders de kernels die in seine zijn ingebouwd en die GeForce-kaarten uit de GTX 10-serie en nieuwer dekken. De [NVIDIA-vereisten van seine](https://github.com/zpalmtree/seine/blob/master/docs/guides/nvidia.md) geven de details.
 
 Start het uitvoerbare bestand vanuit zijn map. Gebruik steeds dezelfde werkmap om je opgeslagen instellingen in `seine-data` te behouden. Voer bij de eerste start je ontvangstadres in en accepteer `stratum+tcp://bntpool.com:3333` als pool.
 
@@ -94,7 +94,7 @@ Gemeten op 31 oktober 2026: alleen RTX 5090, native Windows 11, driver 610.88, o
 
 ## Wat moet je controleren als een NVIDIA-rij ontbreekt?
 
-Controleer eerst het uitgepakte programma en de runtimebibliotheken. Houd op Windows de meegeleverde NVRTC-DLL's naast `seine.exe`. Installeer op Linux de driver en NVRTC-bibliotheken in de omgeving waarin je de miner start.
+Controleer eerst de driver. Houd op Windows ook de meegeleverde NVRTC-DLL’s naast `seine.exe`. Installeer op Linux de NVIDIA-driver in de omgeving waarin je de miner start.
 
 Controleer daarna je opdracht. `--backend cpu` selecteert alleen de CPU. Gebruik de standaardopdracht of `--backend cpu,nvidia` voor beide. Als je `--nvidia-devices` instelt, controleer dan of de indices op je computer bestaan.
 

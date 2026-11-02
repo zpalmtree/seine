@@ -8,10 +8,10 @@ faq:
   - q: 'Wie viele Blocknet-Mining-Threads schaffen 32 GB RAM?'
     a: 'Etwa 14. Jeder Thread braucht für jeden Hash einen 2-GiB-Speicherblock, auf dem Papier passen in 32 GB also 16 davon. seine hält 5 % (standardmäßig höchstens 1 GiB) des RAM in Reserve und lässt Platz für das Betriebssystem, womit ein Rechner mit 32 GB auf etwa 14 Threads kommt. seine rechnet das beim Start für dich aus.'
   - q: 'Welche Grafikkarten nutzt seine für Blocknet-Mining?'
-    a: 'seine mint mit den Downloads für Windows und Linux auf NVIDIA-Grafikkarten und nutzt jede erkannte Karte zusätzlich zum Prozessor. Unter Windows ist die CUDA-Runtime enthalten, du brauchst also nur den NVIDIA-Treiber. Unter Linux installierst du den Treiber und die NVRTC-Bibliotheken. Der erste Start optimiert jede Karte und merkt sich das Ergebnis.'
+    a: 'Seine mint mit den Windows- und Linux-Downloads auf NVIDIA-Grafikkarten und nutzt jede erkannte Karte zusätzlich zum Prozessor. Du brauchst nur den NVIDIA-Treiber. Der erste Start stimmt jede Karte ab und merkt sich das Ergebnis.'
   - q: 'Warum ist die Speicherbandbreite beim Blocknet-Mining wichtig?'
     a: 'Jeder Blocknet-Hash schreibt einen kompletten 2-GiB-Speicherblock und liest Daten von überall daraus zurück, weit mehr, als irgendein Prozessor-Cache fasst. Die Hashrate hängt daher davon ab, wie schnell das Speichersystem Daten bewegt. Am schnellsten minen Rechner mit hoher Speicherbandbreite und genug RAM für viele Threads.'
-sourceHash: '4d5509a6c9e1'
+sourceHash: 9f6e4878e6b1
 translation: draft
 ---
 
@@ -89,7 +89,7 @@ Wenn du RAM fürs Mining kaufst, richte ihn nach den gewünschten Threads: etwa 
 Ja. seine mint unter Windows und Linux gleichzeitig auf jedem CPU-Kern und jeder erkannten NVIDIA-Grafikkarte, und die Hashraten addieren sich. Dafür brauchst du kein Flag; das ist der Standard.
 
 - **Windows:** Der Download enthält die CUDA-Runtime-Bibliotheken, du brauchst also nur einen aktuellen NVIDIA-Treiber.
-- **Linux:** Installiere den NVIDIA-Treiber und die NVRTC-Bibliotheken aus deiner Distribution oder von NVIDIA.
+- **Linux:** der NVIDIA-Treiber reicht.
 - **Erster Start:** seine optimiert die Kernel-Einstellungen für jede Karte und speichert das Ergebnis, spätere Starts dauern also nur Sekunden.
 
 Auf [Macs mit Apple Silicon](/de/blog/mine-blocknet-on-mac/) mint seine standardmäßig auf der CPU, dem schnellsten auf dem M4 Max gemessenen Setup. Die [NVIDIA-Anleitung](/de/blog/mine-blocknet-nvidia-gpu/) behandelt Multi-GPU-Rigs und Voraussetzungen.

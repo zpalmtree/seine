@@ -2,15 +2,15 @@
 title: 'How to mine Blocknet on Linux'
 description: "Mine Blocknet on Linux with seine. Download the x86_64 or ARM64 build, extract it, enter your wallet address, and find your accepted shares on bntpool.com."
 date: 2026-10-26
-updated: 2026-10-28
+updated: 2026-11-02
 tags: ['Mining guide', 'Linux', 'NVIDIA']
 faq:
   - q: 'Which Linux archive should I download?'
-    a: "Open the download section. Run uname -m: choose seine-linux-x86_64.tar.gz for x86_64, or seine-linux-aarch64.tar.gz for aarch64. The Linux builds require glibc 2.39 or newer. The x86_64 build supports CPU and NVIDIA; ARM64 supports CPU mining."
+    a: "Open the download section. Run uname -m: choose seine-linux-x86_64.tar.gz for x86_64, or seine-linux-aarch64.tar.gz for aarch64. The Linux builds require glibc 2.31 or newer. The x86_64 build supports CPU and NVIDIA; ARM64 supports CPU mining."
   - q: 'Do I need to run seine with sudo?'
     a: 'Run the normal miner as your own user from a writable folder. Extract the archive, give the executable user execute permission if needed, and start it with ./seine. Preparing reserved huge pages is a separate administrative task; ordinary startup can use regular pages.'
-  - q: 'Why does Linux report a missing NVRTC library?'
-    a: 'The Linux NVIDIA backend needs a compatible driver and NVRTC runtime libraries, including the matching builtins library. Install them through your distribution or NVIDIA''s supported packages. The Linux archive does not bundle the Windows DLLs. You can select the CPU backend while preparing GPU support.'
+  - q: 'Do I need CUDA or NVRTC for NVIDIA mining on Linux?'
+    a: 'No. The NVIDIA driver is enough. Seine uses NVRTC when it is installed and otherwise loads the kernels built into seine, which cover GeForce GTX 10 series and newer cards. Install the driver, start seine, and check that your card appears in the Devices panel.'
 related: [how-to-mine-blocknet, mine-blocknet-nvidia-gpu, huge-pages-blocknet-mining, update-seine-miner]
 image: /assets/blog/setup-download.webp
 ---
@@ -23,7 +23,7 @@ Download seine, extract it, enter your Blocknet address, and confirm accepted sh
 
 ## Step 1: download the right build
 
-Open the [download section](/#download). Run `uname -m`: choose `seine-linux-x86_64.tar.gz` for `x86_64`, or `seine-linux-aarch64.tar.gz` for `aarch64`. The Linux builds require glibc 2.39 or newer. The x86_64 build supports CPU and NVIDIA; ARM64 supports CPU mining.
+Open the [download section](/#download). Run `uname -m`: choose `seine-linux-x86_64.tar.gz` for `x86_64`, or `seine-linux-aarch64.tar.gz` for `aarch64`. The Linux builds require glibc 2.31 or newer. The x86_64 build supports CPU and NVIDIA; ARM64 supports CPU mining.
 
 <img src="/assets/blog/setup-download.webp" alt="The official download table with Linux and Linux ARM64 archives" loading="lazy" />
 
@@ -66,17 +66,11 @@ Look for a hashrate and an increasing **Accepted** counter in the [dashboard](/b
 
 Open [My Stats](https://bntpool.com/stats) and enter the same address or registered name to find your worker, shares, and balance.
 
-## What do you need for NVIDIA mining on Linux?
+## What do you need for GPU mining on Linux?
 
-Linux x86_64 GPU mining needs an NVIDIA driver and compatible NVRTC runtime libraries. NVRTC compiles the GPU kernels at startup. Install the runtime and its matching builtins library through your distribution or NVIDIA's packages, following the [NVIDIA setup guide](/blog/mine-blocknet-nvidia-gpu/). Package names depend on the distribution and CUDA version, so use the instructions for your system.
+NVIDIA cards need only the NVIDIA driver. AMD cards need the amdgpu driver and the ROCm HIP runtime, as the [AMD guide](https://github.com/zpalmtree/seine/blob/master/docs/guides/amd.md) explains. Seine finds your cards by itself and mines on them alongside the CPU on the x86_64 build. The [NVIDIA guide](/blog/mine-blocknet-nvidia-gpu/) covers choosing cards and checking GPU shares.
 
-With those libraries available, the default mode can mine on the CPU and supported NVIDIA cards together. To establish CPU mining while preparing the GPU runtime, select it explicitly:
-
-```sh
-./seine --backend cpu
-```
-
-This is a CPU-only choice for that invocation. For GPU device selection and accepted GPU shares, continue with the NVIDIA guide. The ARM64 release described here contains the CPU backend; installing CUDA does not add an NVIDIA backend to that archive.
+<MinerSettings os="linux" />
 
 ## How do you resolve a Linux startup error?
 
@@ -85,9 +79,8 @@ Use the first error message to choose the next check:
 | Message or symptom | What to check |
 |---|---|
 | `Exec format error` | Wrong architecture: compare `uname -m` with the archive filename. |
-| `GLIBC_2.39 not found` | The binary requires a newer glibc. Use a compatible system or build from source; keep the system C library managed by your distribution. |
+| `GLIBC_... not found` | The binary requires a newer glibc. Use a compatible system or build from source; keep the system C library managed by your distribution. |
 | `Permission denied` | Check user execute permission and use a folder on a filesystem that permits execution. |
-| `libnvrtc` / `libnvrtc-builtins` | Install the compatible NVIDIA runtime and matching builtins library, or use `--backend cpu` while preparing it. |
 
 Once shares are accepted, the [huge-pages guide](/blog/huge-pages-blocknet-mining/) covers optional Linux page setup. The [server guide](/blog/mine-blocknet-on-servers/) covers headless operation and NUMA placement. Neither preparation is required to follow this first-run walkthrough; keep each change separate so you can tell what changed on your machine.
 

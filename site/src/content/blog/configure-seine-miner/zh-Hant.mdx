@@ -1,37 +1,114 @@
 ---
-title: '設定 seine：儲存設定與啟動選項'
-description: '找到 seine 設定檔，儲存礦池與收款位址，了解啟動參數的優先順序，並透過正常重新啟動確認 Blocknet 礦工的設定是否保留。'
+title: 'seine 設定：執行緒、CPU、GPU 和礦池'
+description: '在 seine 中關閉 CPU 或 GPU 挖礦、設定執行緒數量、選擇顯示卡、讓設定每次啟動都生效，並變更地址或礦池的操作方法。'
 tags: ['挖礦指南', '設定', 'seine']
 faq:
-  - q: 'seine 將設定儲存在哪裡？'
-    a: '預設讀取相對於啟動時工作目錄的 seine-data/seine.config.json。data-dir 可選擇其他基礎目錄。終端機、捷徑和排程工作可能使用不同的工作目錄，因此應將完整設定路徑與啟動指令一起記錄。'
-  - q: '命令列覆寫會更新儲存的檔案嗎？'
-    a: '已有設定時，明確指定的連線參數在本次執行中優先，但不會取代儲存的位址、礦池 URL 或礦機名稱。將參數保留在日常啟動方式中，或停止礦工後修改儲存欄位，再透過正常啟動驗證。'
-  - q: '能將所有挖礦選項放進 JSON 嗎？'
-    a: '設定檔只有較小的連線設定結構。後端與執行緒等硬體、執行選項應透過啟動參數指定。加入名稱相似的 JSON 欄位不會設定這些選項。備份資料目錄時，也要保留啟動指令或指令碼。'
-sourceHash: '66e5ad9f2665'
+  - q: '如何在 seine 中關閉 CPU 挖礦？'
+    a: '啟動 seine 時把 backend 選項設為你的顯示卡類型，即 nvidia 或 amd。如果電腦同時有兩種顯示卡，就用逗號分隔，兩個都寫上。這樣 seine 只使用顯示卡挖礦，把處理器留給其他工作。'
+  - q: '如何在 seine 中關閉 GPU 挖礦？'
+    a: '啟動 seine 時把 backend 選項設為 cpu。這樣 seine 只使用處理器挖礦，把所有顯示卡留給遊戲和其他應用程式。移除該選項後，seine 會再次同時使用處理器和顯示卡挖礦。'
+  - q: '應該使用多少個 CPU 執行緒？'
+    a: 'seine 會自動選擇執行緒數量，所以只有想為其他工作留出餘裕時才需要設定。每個執行緒大約使用 2 GB 記憶體。在儀表板中按減號鍵，直到電腦用起來合適，然後使用這個數字。'
+  - q: 'seine 把設定儲存在哪裡？'
+    a: 'seine 把你的地址、礦池和礦工名稱儲存在啟動它的資料夾內的 seine-data/seine.config.json 中。執行緒和 backend 選項不會儲存在那裡，所以如果想讓它們每次啟動都生效，請把它們寫進一個小的啟動檔。'
+sourceHash: b5ca5a9a16d8
 translation: draft
 ---
 
-讓 Blocknet 礦工每次都按預期設定啟動。本指南以 seine v0.2.37 為準，說明設定位置、參數優先順序與持續保留修改的方法。請從已正常運作的安裝開始；替換程式本身請見[更新指南](/zh-hant/blog/update-seine-miner/)。
+seine 不需要任何設定就能良好運作。本指南介紹你最可能想做的變更：關閉 CPU 或 GPU 挖礦、使用較少的執行緒、選擇顯示卡，以及變更地址或礦池。
 
-## seine 如何選擇設定？
+## 如何變更 seine 的設定？
 
 <Answer>
-seine 將儲存的連線設定與啟動參數結合使用。明確指定的連線參數優先於對應的儲存值。資料目錄決定讀取哪個設定檔。硬體和執行選項仍屬於啟動參數，因此應同時保留設定檔與日常啟動指令。
+關閉 seine，在它的資料夾中開啟終端機，然後在指令中加上設定並重新啟動，例如 `./seine --threads 4`。在 Windows 上，請使用 PowerShell 和 `.\seine.exe --threads 4`。seine 會保留你已儲存的地址和礦池，所以只需輸入想要變更的內容。
 </Answer>
 
-<img src="/assets/blog/configure-seine-miner.svg" alt="儲存的設定檔與終端機指令共同設定礦工，並在重新啟動後驗證。" width="1200" height="675" loading="lazy" />
+- **Windows：**在檔案總管中開啟 seine 資料夾，在網址列輸入 `powershell` 並按 Enter。
+- **macOS 和 Linux：**開啟終端機，用 `cd` 進入 seine 資料夾。
 
-## 找到啟動方式實際使用的設定
+下面的範例使用 `./seine`。在 Windows 上請改為輸入 `.\seine.exe`。
 
-預設檔案為 `./seine-data/seine.config.json`。此相對路徑從程序工作目錄開始，未必是執行檔所在目錄。編輯前檢查終端機目錄、捷徑或服務設定。同一程式的兩種啟動方式可能使用不同的資料目錄。
+## 如何關閉 CPU 或 GPU 挖礦？
 
-`--data-dir` 選擇基礎目錄，檔名仍為 `seine.config.json`。若從多個位置啟動，請使用固定絕對路徑。一起記錄程式、工作目錄、資料路徑與完整參數。[Windows 自動啟動指南](/zh-hant/blog/start-miner-automatically-windows/)說明如何在工作排程器填寫這些路徑，包括含空格的路徑。
+seine 預設使用 CPU 和每一張受支援的顯示卡挖礦。`--backend` 設定用來選擇使用哪些裝置：
 
-## 哪些設定屬於儲存檔案？
+| 你想要的效果 | 加上 |
+|---|---|
+| 只用 CPU，關閉 GPU | `--backend cpu` |
+| 只用 NVIDIA GPU，關閉 CPU | `--backend nvidia` |
+| 只用 AMD GPU，關閉 CPU | `--backend amd` |
+| 使用 NVIDIA 和 AMD GPU，關閉 CPU | `--backend nvidia,amd` |
 
-範例展示主要連線欄位。請將 `@yourname` 換成自己註冊的 Blocknet ID 或完整收款位址。這是檔案格式參考，不是執行指令。已有安裝應只修改相關欄位，不要直接用範例覆蓋整個檔案。
+例如，要使用 NVIDIA 顯示卡挖礦並讓 CPU 閒置：
+
+```sh
+./seine --backend nvidia
+```
+
+[儀表板](/zh-hant/blog/seine-dashboard-explained/)中的 Devices 面板會為每個正在挖礦的裝置顯示一列。
+
+## 如何使用較少的 CPU 執行緒？
+
+加上 `--threads` 和你想要的數字：
+
+```sh
+./seine --threads 4
+```
+
+每個執行緒大約使用 2 GB 記憶體，所以 4 個執行緒大約使用 8 GB。在你移除該設定之前，seine 會一直使用這個數字。
+
+要找到合適的數字，請正常啟動 seine，在儀表板中按 `-` 減少一個執行緒，或按 `+` 增加一個執行緒。變更需要片刻生效，儀表板會顯示新的執行緒數量。等電腦用起來合適時停下，然後把這個數字用於 `--threads`，因為這些按鍵只在你關閉 seine 之前有效。
+
+如果想讓 seine 自己選擇較輕的執行緒數量，請改用：
+
+```sh
+./seine --cpu-profile efficiency
+```
+
+[桌上型電腦指南](/zh-hant/blog/mine-while-using-pc/)說明了更多在使用電腦的同時挖礦的方法。
+
+## 如何只選擇一張顯示卡？
+
+加上顯示卡的編號。第一張顯示卡是 `0`：
+
+```sh
+./seine --backend cpu,nvidia --nvidia-devices 0
+```
+
+這會使用 CPU 和第一張 NVIDIA 顯示卡挖礦。兩張顯示卡請用 `--nvidia-devices 0,1`，要關閉 CPU，就移除 `cpu,`。AMD 顯示卡的用法相同：
+
+```sh
+./seine --backend cpu,amd --amd-devices 0
+```
+
+要為其他應用程式留出顯示記憶體，請使用 `--nvidia-max-lanes 2` 或 `--amd-max-lanes 2`。每條通道（lane）大約使用 2 GB 顯示記憶體。除非你自己加上 `--backend amd`，否則內建的 Radeon 顯示卡保持關閉。
+
+## 如何讓設定每次啟動都生效？
+
+seine 會自動儲存你的地址、礦池和礦工名稱。`--threads` 和 `--backend` 這類設定只對當次執行有效，所以請把它們寫進一個小的啟動檔，並執行這個檔案，而不是直接執行 seine。
+
+在 Windows 上，開啟記事本，輸入下面的幾行並換成你自己的設定，然後把檔案儲存到 seine 資料夾中，檔名為 `start-mining.bat`，並把**存檔類型**設為**所有檔案**：
+
+```bat
+seine.exe --backend cpu --threads 4
+pause
+```
+
+按兩下 `start-mining.bat` 開始挖礦。`pause` 這一行會在 seine 停止後保持視窗開啟，方便你閱讀它的最後一則訊息。
+
+在 macOS 或 Linux 上，把下面的幾行儲存到 seine 資料夾中，檔名為 `start-mining.sh`：
+
+```sh
+#!/bin/sh
+cd "$(dirname "$0")"
+./seine --backend cpu --threads 4
+```
+
+執行一次 `chmod +x start-mining.sh`，之後用 `./start-mining.sh` 開始挖礦。自動更新會用同樣的設定重新啟動 seine。要在每次登入 Windows 時開始挖礦，請參考[自動啟動指南](/zh-hant/blog/start-miner-automatically-windows/)。
+
+## 如何變更地址、礦池或礦工名稱？
+
+關閉 seine，用文字編輯器開啟 `seine-data/seine.config.json`。這個資料夾位於你啟動 seine 的資料夾之內。修改需要的值並儲存檔案：
 
 ```json
 {
@@ -43,34 +120,26 @@ seine 將儲存的連線設定與啟動參數結合使用。明確指定的連�
 }
 ```
 
-`mode`、`address`、`pool_url` 與 `pool_worker` 分別選擇模式、收款目標、礦池和礦機名稱。保留 `schema_version` 以及已有的 `dev_fee_pool_worker`。後者是單獨產生的標籤；自己的礦機使用 `pool_worker`。不要將助記詞或私鑰寫進連線設定檔。
+其他行保持原樣。保留引號和逗號，並且不要把復原詞或私密金鑰寫進這個檔案。
 
-## 怎樣讓修改永久生效？
+如果只想在某一次執行中使用不同的值，請把它加到指令裡。已儲存的檔案不會改變：
 
-停止礦工並備份原檔案。使用純文字編輯器保留合法 JSON，字串使用雙引號，儲存原檔名且不加入額外副檔名。只修改實際資料目錄中的必要欄位。檢查欄位間的逗號，不加入註解或末尾逗號；若編輯器提供 JSON 驗證，請使用它。備份可精確比較舊值，無須憑記憶重建。
-
-檢查啟動方式是否明確覆寫同一設定。若指令裡還有舊 `--address`，修改儲存位址不會生效。更新該參數，或移除它以使用檔案值。接著透過平時的捷徑、指令碼或工作重新啟動，核對實際設定。
-
-## 有意識地使用暫時覆寫
-
-已有設定時，下方礦池選項只為本次執行選擇礦機名稱。下次不帶此選項啟動，會恢復使用儲存的名稱。它適合受控修改；若希望每次都如此執行，請將選項寫入日常啟動方式。
-
-```text
---pool-worker desktop-02
+```sh
+./seine --pool-worker desktop-02
 ```
 
-首次啟動且沒有設定檔時，seine 會根據初始連線輸入建立檔案。這與暫時覆寫已有檔案不同。將指令複製到其他電腦時，應考慮該電腦可能正在建立首次設定。[設定參考](https://github.com/zpalmtree/seine/blob/v0.2.37/docs/guides/configuration.md)記錄首次提示與支援的啟動選項。
+另外兩個設定是 `--address` 和 `--pool-url`。[變更地址指南](https://bntpool.com/blog/zh-hant/change-mining-wallet-address/)說明了變更地址後礦池如何計入你的工作量。
 
-## 將調校選項保留在啟動指令中
+## 設定沒有生效怎麼辦？
 
-`--backend` 與 `--threads` 等選項透過啟動參數提供。連線檔案結構不是所有參數的通用清單。加入同名或近似名稱的 JSON 欄位不會設定對應執行選項。將明確的硬體選擇保留在啟動礦工的指令碼、捷徑或服務中。
+| 你看到的內容 | 該怎麼做 |
+|---|---|
+| `--nvidia-devices requires selecting nvidia in --backend` | 在 backend 中加上 `nvidia`：`--backend cpu,nvidia`。`amd` 同理。 |
+| `configured CPU lanes need` 更多記憶體 | 給 `--threads` 使用較小的數字，大約每 2 GB 可用記憶體對應一個執行緒。 |
+| `all GPU backends failed to start` | 為你的顯示卡安裝最新驅動程式。[AMD 指南](https://github.com/zpalmtree/seine/blob/master/docs/guides/amd.md)列出了 AMD 顯示卡在 Linux 上需要什麼。 |
+| seine 再次詢問你的地址 | 從之前的同一個資料夾啟動 seine，或用 `--data-dir` 指定資料夾。 |
+| 你的設定恢復成了自動 | 從你的啟動檔啟動 seine。`-` 和 `+` 鍵只在你關閉 seine 之前有效。 |
 
-儀表板的執行緒控制只修改目前工作階段，不儲存新的預設執行緒數。自動調校也有自己的快取檔案。修改連線時分別保留這些檔案，並讓各電腦依自身硬體調校。[自動調校指南](/zh-hant/blog/seine-automatic-cpu-tuning/)說明快取重用及明確指定執行緒的影響。
+[參數參考](https://github.com/zpalmtree/seine/blob/master/docs/MINER_FLAGS.md)列出了每一項設定。
 
-## 為什麼設定看起來重設了？
-
-先將資料路徑與啟動參數和上次正常執行比較。新解壓目錄、其他終端機目錄或舊排程工作參數都可能解釋差異。剖析失敗時，先讀錯誤中的檔名與訊息，再還原備份或修正 JSON，然後從預期入口啟動一次。
-
-核對顯示的收款目標、礦池、礦機名稱與接受的份額。再次正常重新啟動以驗證持續性；一次帶覆寫參數的執行只證明那條指令有效。用[儀表板指南](/zh-hant/blog/seine-dashboard-explained/)理解工作階段，用[位址變更指南](https://bntpool.com/blog/zh-hant/change-mining-wallet-address/)處理未來礦池工作記入哪個位址。將有效啟動方式與設定備份一起儲存。
-
-<CTA target="seine" title="取得目前 seine 版本" text="使用固定資料目錄，並將驗證過的啟動指令與儲存的連線設定一起保管。" />
+<CTA target="seine" title="取得最新版 seine" text="下載 seine，先啟動一次，再只加入你想變更的設定。" />

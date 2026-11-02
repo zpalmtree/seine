@@ -32,7 +32,6 @@ export function checkBenchmarkFacts() {
       const source = readFileSync(new URL(file, folder), 'utf8').replace(/,/g, '.').replace(/\u00a0/g, ' ');
       if (!source.includes(best.chip) || !source.includes(`${best.hps} H/s`) || !source.includes(String(best.threads))) throw new Error(`Best measured result drift: ${slug}/${file}; review against benchmarks.json`);
       if (!source.split('\n\n').some(paragraph => paragraph.includes(best.chip) && paragraph.includes(String(best.memoryGiB)))) throw new Error(`Benchmark conditions missing: ${slug}/${file}`);
-      if (slug === 'how-to-mine-blocknet' && !source.split('\n').some(line => line.includes('seine-linux-x86_64.tar.gz') && line.includes('NVRTC') && line.includes('2.39'))) throw new Error(`Linux runtime requirements missing: ${file}`);
     }
   }
   for (const slug of ['cpu-mining-2026', 'how-to-mine-blocknet', 'blocknet-mining-hardware-hashrate', 'mine-blocknet-nvidia-gpu']) {

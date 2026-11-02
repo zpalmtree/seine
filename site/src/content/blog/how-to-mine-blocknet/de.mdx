@@ -9,7 +9,7 @@ faq:
     a: 'Der Pool bntpool.com zahlt per PPLNS über ein Sechs-Stunden-Fenster aus. Die Belohnung eines Blocks kann erst ausgezahlt werden, wenn 60 weitere Blöcke darauf folgen, bei Fünf-Minuten-Blöcken also nach etwa fünf Stunden, und Guthaben werden ab 0,1 BNT überwiesen. Rechne mit der ersten Zahlung einige Stunden nach deinen ersten akzeptierten Shares.'
   - q: 'Kann ich Blocknet gleichzeitig mit CPU und GPU minen?'
     a: 'Ja. seine mint unter Windows und Linux auf jedem CPU-Kern und jeder NVIDIA-Grafikkarte im Rechner gleichzeitig, und die beiden Hashraten addieren sich. Prozessor und jede Karte werden während des Betriebs getrennt optimiert, sodass du ohne eine einzige Einstellung das Maximum aus deiner gesamten Hardware holst.'
-sourceHash: '22eaba1acd1a'
+sourceHash: bff032ea0960
 translation: draft
 ---
 
@@ -26,21 +26,10 @@ Besorge dir eine Blocknet-Adresse oder einen Blocknet-ID-Kurznamen, lade seine f
 - **Eine Blocknet-Adresse.** Installiere die offizielle Blocknet-Wallet, entweder die [Kommandozeilen-Wallet](https://github.com/blocknetprivacy/blocknet/releases/latest) oder die [Desktop-Wallet](https://github.com/blocknetprivacy/blocknet-gui/releases/latest), und kopiere deine Adresse. Die [Wallet-Anleitung](/de/blog/blocknet-wallet-for-mining/) zeigt dir das Schritt für Schritt. Bewahre die Wallet und ihre Wiederherstellungsphrase auf deinem eigenen Computer auf, nicht auf einem gemeinsam genutzten Mining-Rig.
 - **Oder einen Kurznamen.** Wenn du einen [Blocknet-ID-Kurznamen](/de/blog/blocknet-id-pay-by-name/) von [blocknet.id](https://blocknet.id) hast, kannst du auf `@name` minen, statt die lange Adresse einzufügen.
 - **Etwa 2 GB RAM pro Mining-Thread.** seine passt sich an deinen Rechner an und lässt Reserve für das System, du musst das also nicht vorher ausrechnen.
-- **Windows, macOS oder Linux.** NVIDIA — Windows: NVIDIA-Grafiktreiber; mitgelieferte Laufzeit-DLLs neben der ausführbaren Datei; Linux: NVIDIA-Treiber und kompatible NVRTC-Laufzeitbibliotheken.
 
 ## Schritt 1: seine herunterladen
 
 Lade das Archiv für dein System im [Download-Bereich](/de/#download) herunter. Es gibt nichts zu installieren: entpacken, und du bist startklar.
-
-| System | Archiv | Grafikkarten |
-|---|---|---|
-| Windows (x86_64) | `seine-windows-x86_64.zip` | NVIDIA; die CUDA-Runtime ist enthalten |
-| Linux (x86_64) | `seine-linux-x86_64.tar.gz` | NVIDIA-Treiber und kompatible NVRTC-Laufzeitbibliotheken; glibc ≥ 2.39 |
-| Linux (ARM64) | `seine-linux-aarch64.tar.gz` | CPU (glibc 2.39 oder neuer) |
-| macOS (Apple Silicon) | `seine-macos-aarch64.tar.gz` | CPU |
-| macOS (Intel) | `seine-macos-x86_64.tar.gz` | CPU |
-
-Zu jedem Release gibt es außerdem eine Datei `SHA256SUMS.txt`, mit der du prüfen kannst, ob dein Download zum Release passt.
 
 ## Schritt 2: starten
 
@@ -55,6 +44,8 @@ Unter Windows doppelklickst du auf `seine.exe`. Unter macOS oder Linux öffnest 
 seine fragt nach deiner Auszahlungsadresse oder deinem `@shortname` und dann nach einem Pool. Drücke Enter, um den Standard `stratum+tcp://bntpool.com:3333` zu übernehmen. Wenige Augenblicke später zeigt [das Dashboard](/de/blog/seine-dashboard-explained/) deine Hashrate und deine ersten Shares.
 
 Ab jetzt optimiert seine weiter, während es mint. Es vergleicht Thread-Anzahlen und CPU-Kernel an echter Mining-Arbeit, wechselt nur nach einem bestätigten Gewinn, nimmt sich zurück, wenn der Arbeitsspeicher knapp wird, und merkt sich für den nächsten Start, was funktioniert hat. Dafür verbindet es sich nie neu mit dem Pool, das Tuning kostet dich also keine Mining-Zeit.
+
+<MinerSettings os="any" />
 
 ## Wie lange dauert es bis zur Auszahlung?
 
@@ -77,15 +68,6 @@ Die Hashrate hängt vor allem von der Speicherbandbreite ab und davon, wie viele
 Die schnellste hier gemessene Konfiguration ist ein AMD EPYC 9355P mit 97,1 H/s: 64 Mining-Threads und 192 GiB RAM unter Linux mit den Standardeinstellungen von seine.
 
 Ergebnisse für alle getesteten CPUs stehen auf der [Leistungsseite](https://github.com/zpalmtree/seine/blob/master/docs/PERFORMANCE.md), und der [Hardware-Leitfaden für Blocknet-Mining](/de/blog/blocknet-mining-hardware-hashrate/) erklärt, wie RAM und Speicherbandbreite diese Zahlen bestimmen.
-
-## Wie holt seine mehr aus derselben CPU heraus?
-
-seine bringt für jede Prozessorfamilie mehrere Argon2id-Kernel mit und misst sie auf deinem Rechner, während es mint. Auf der von uns getesteten Hardware hat der richtige Kernel viel ausgemacht:
-
-- **AWS Graviton4:** Der SHA3-Kernel mit Prefetching mint 56 % schneller als reines NEON (13,80 auf 21,50 H/s).
-- **AMD EPYC 9R45 (Zen 5):** Der Streaming-Kernel mint 30 % schneller als AVX2 (34,47 auf 44,74 H/s bei 24 Threads).
-
-Nichts davon musst du selbst auswählen. seine wechselt den Kernel nur nach einem bestätigten Gewinn und merkt sich das Ergebnis für den nächsten Start.
 
 ## Wie bekommst du mehr Hashrate?
 

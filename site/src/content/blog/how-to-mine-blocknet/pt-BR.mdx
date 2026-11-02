@@ -9,7 +9,7 @@ faq:
     a: 'O pool bntpool.com paga por PPLNS com uma janela de seis horas. A recompensa de um bloco só pode ser paga depois que ele tem 60 blocos de profundidade, cerca de cinco horas com blocos de cinco minutos, e os saldos são enviados quando chegam a 0,1 BNT. Conte com o primeiro pagamento algumas horas depois dos seus primeiros shares aceitos.'
   - q: 'Posso minerar Blocknet com a CPU e a GPU ao mesmo tempo?'
     a: 'Sim. No Windows e no Linux, o seine minera com todos os núcleos da CPU e todas as placas de vídeo NVIDIA da máquina ao mesmo tempo, e os dois hashrates se somam. Ele ajusta o processador e cada placa separadamente enquanto roda, então você aproveita ao máximo todo o seu hardware sem mudar nenhuma configuração.'
-sourceHash: '22eaba1acd1a'
+sourceHash: bff032ea0960
 translation: draft
 ---
 
@@ -26,21 +26,10 @@ Crie um endereço Blocknet ou um shortname do Blocknet ID, baixe o seine para o 
 - **Um endereço Blocknet.** Instale a carteira oficial do Blocknet, seja a [carteira de linha de comando](https://github.com/blocknetprivacy/blocknet/releases/latest) ou a [carteira para desktop](https://github.com/blocknetprivacy/blocknet-gui/releases/latest), e copie seu endereço. O [guia da carteira](/pt-br/blog/blocknet-wallet-for-mining/) mostra o passo a passo. Mantenha a carteira e a frase de recuperação no seu próprio computador; não as coloque em um rig de mineração compartilhado.
 - **Ou um shortname.** Se você tem um [shortname do Blocknet ID](/pt-br/blog/blocknet-id-pay-by-name/) registrado no [blocknet.id](https://blocknet.id), pode minerar para `@name` em vez de colar o endereço longo.
 - **Cerca de 2 GB de RAM por thread de mineração.** O seine se dimensiona de acordo com a sua máquina e deixa folga para o sistema, então você não precisa calcular isso antes.
-- **Windows, macOS ou Linux.** NVIDIA — Windows: Driver de vídeo NVIDIA; DLLs de execução incluídas ao lado do executável; Linux: Driver NVIDIA e bibliotecas de execução NVRTC compatíveis.
 
 ## Passo 1: baixe o seine
 
 Baixe o arquivo do seu sistema na [seção de download](/pt-br/#download). Não há nada para instalar: descompacte e pronto.
-
-| Sistema | Arquivo | Placas de vídeo |
-|---|---|---|
-| Windows (x86_64) | `seine-windows-x86_64.zip` | NVIDIA; o runtime CUDA está incluído |
-| Linux (x86_64) | `seine-linux-x86_64.tar.gz` | Driver NVIDIA e bibliotecas de execução NVRTC compatíveis; glibc ≥ 2.39 |
-| Linux (ARM64) | `seine-linux-aarch64.tar.gz` | CPU (glibc 2.39 ou mais recente) |
-| macOS (Apple Silicon) | `seine-macos-aarch64.tar.gz` | CPU |
-| macOS (Intel) | `seine-macos-x86_64.tar.gz` | CPU |
-
-Cada versão também publica um arquivo `SHA256SUMS.txt`, para você conferir se o seu download corresponde à versão publicada.
 
 ## Passo 2: execute
 
@@ -55,6 +44,8 @@ No Windows, clique duas vezes em `seine.exe`. No macOS ou Linux, abra um termina
 O seine pede seu endereço de pagamento ou `@shortname` e depois um pool. Pressione Enter para aceitar o padrão, `stratum+tcp://bntpool.com:3333`. Em instantes, [o painel](/pt-br/blog/seine-dashboard-explained/) mostra seu hashrate e seus primeiros shares.
 
 A partir daí, o seine continua se ajustando enquanto minera. Ele compara números de threads e kernels de CPU em trabalho real de mineração, só troca depois de um ganho confirmado, recua se a memória ficar apertada e lembra o que funcionou para a próxima inicialização. Ele nunca se reconecta ao pool para fazer isso, então o ajuste não custa tempo de mineração.
+
+<MinerSettings os="any" />
 
 ## Quanto tempo até você receber?
 
@@ -77,15 +68,6 @@ O hashrate depende principalmente da largura de banda da memória e do número d
 A configuração mais rápida nestas medições é um AMD EPYC 9355P a 97,1 H/s: 64 threads de mineração e 192 GiB de RAM no Linux com as configurações padrão do seine.
 
 Os resultados de todas as CPUs testadas estão na [página de desempenho](https://github.com/zpalmtree/seine/blob/master/docs/PERFORMANCE.md), e o [guia de hardware para minerar Blocknet](/pt-br/blog/blocknet-mining-hardware-hashrate/) explica como a RAM e a largura de banda da memória definem esses números.
-
-## Como o seine tira mais da mesma CPU?
-
-O seine traz vários kernels Argon2id para cada família de processadores e os mede na sua máquina enquanto minera. No hardware que testamos, o kernel certo fez uma grande diferença:
-
-- **AWS Graviton4:** o kernel SHA3 com prefetch minera 56% mais rápido que o NEON simples (de 13,80 para 21,50 H/s).
-- **AMD EPYC 9R45 (Zen 5):** o kernel de streaming minera 30% mais rápido que o AVX2 (de 34,47 para 44,74 H/s com 24 threads).
-
-Você não precisa escolher nada disso. O seine só troca de kernel depois de um ganho confirmado e lembra o resultado para a próxima inicialização.
 
 ## Como conseguir mais hashrate?
 

@@ -9,7 +9,7 @@ faq:
     a: 'Standardmäßig speichert seine die Auszahlungsadresse, den Pool und den Rig-Namen in seine-data/seine.config.json unterhalb des Ordners, aus dem du es startest. Starte es aus demselben entpackten Ordner, um diese Einstellungen wiederzuverwenden. Mit der Option data-dir kannst du bei Bedarf ein anderes Verzeichnis auswählen.'
   - q: 'Brauche ich Windows Large Pages, bevor ich mit dem Mining beginne?'
     a: 'Nein. seine versucht automatisch, Large Pages zu verwenden, und nutzt normale Speicherseiten, wenn sie nicht verfügbar sind. Du kannst mit den Standardeinstellungen minen. Für die optionale Einrichtung von Large Pages gewähre deinem Mining-Konto das Recht Sperren von Seiten im Speicher. Melde dich dann ab und wieder an, bevor du seine neu startest.'
-sourceHash: '66babe3b41fb'
+sourceHash: 1878d05f199d
 translation: draft
 ---
 
@@ -22,8 +22,6 @@ Lade `seine-windows-x86_64.zip` herunter, entpacke das gesamte Archiv und öffne
 </Answer>
 
 Halte deine öffentliche Auszahlungsadresse bereit, bevor du den Miner öffnest. Die [Wallet-Anleitung](/de/blog/blocknet-wallet-for-mining/) erklärt, wie du eine erhältst. Gib nur die Empfangsadresse ein: Der Miner benötigt weder die Seed-Phrase noch die Ausgabeschlüssel deiner Wallet. Eine registrierte [Blocknet ID](/de/blog/blocknet-id-pay-by-name/) funktioniert ebenfalls. Du kannst also `@name` anstelle der langen Adresse verwenden.
-
-Jeder CPU-Mining-Thread verwendet einen 2 GiB großen Speicherblock. seine prüft den verfügbaren RAM und die Anzahl der Kerne, hält Speicherreserven frei und wählt die anfängliche Thread-Anzahl für dich aus. Auf einem Desktop oder Laptop kannst du mit den Standardeinstellungen beginnen; du musst weder eine Thread-Anzahl berechnen noch zuerst einen CPU-Kernel auswählen.
 
 ## Schritt 1: die passende Version herunterladen
 
@@ -40,8 +38,6 @@ Doppelklicke im entpackten Ordner auf `seine.exe`. Wenn du ein Terminal bevorzug
 ```powershell
 .\seine.exe
 ```
-
-Das Präfix `./` oder `.\` weist die Shell an, die ausführbare Datei im aktuellen Verzeichnis zu starten. Der Start aus einem entpackten Ordner gibt seine außerdem einen festen Speicherort für seine Einstellungen. Verwende bei späteren Starts denselben Ordner, damit es die eingegebene Adresse und den Pool wiederfindet.
 
 ## Schritt 3: deine Wallet-Adresse eingeben
 
@@ -65,8 +61,6 @@ Prüfe, ob das Dashboard von seine eine Hashrate und akzeptierte Shares anzeigt,
 
 Die [Dashboard-Anleitung](/de/blog/seine-dashboard-explained/) erklärt die Hashrate, den Mining-Status und die Pool-Anzeigen. Eine laufende Hashrate zeigt die lokale Hashing-Aktivität; ein akzeptierter Share bestätigt, dass Arbeit beim Pool angekommen ist. Öffne [My Stats](https://bntpool.com/stats?lang=de) und gib dieselbe Adresse oder denselben Kurznamen ein, um die Shares und das Guthaben dieses Rigs zu verfolgen.
 
-Unterscheide beim Prüfen einer neuen Einrichtung zwischen akzeptierten Shares und Auszahlungen. Shares tragen zu den Pool-Belohnungen bei; eine Auszahlung richtet sich nach den Bestätigungs- und Guthabenregeln des Pools. Die [PPLNS-Anleitung](https://bntpool.com/blog/how-pplns-payouts-work/) erklärt diesen Ablauf. Du kannst die Verbindung sofort prüfen, ohne auf die erste Auszahlung zu warten.
-
 <figure>
   <picture>
     <source media="(max-width: 640px)" srcSet="/assets/blog/setup-accepted-shares-mobile.webp" width="384" height="221" />
@@ -81,11 +75,7 @@ seine verwendet standardmäßig die CPU und unterstützte NVIDIA-Karten zusammen
 
 Beim ersten Start stimmt seine jede GPU ab und merkt sich ihre Einstellungen. Auch die CPU-Abstimmung läuft während des Minings. Die [Hardware-Anleitung](/de/blog/blocknet-mining-hardware-hashrate/) erklärt die Speicherdimensionierung und Messergebnisse, während die [NVIDIA-Anleitung](https://github.com/zpalmtree/seine/blob/master/docs/guides/nvidia.md) mehrere Karten behandelt. Zum sauberen Beenden drücke `q` im Dashboard oder `Ctrl+C` im Terminal.
 
-## Optional: Windows Large Pages aktivieren
-
-Beim normalen Start versucht das Programm bereits, Large Pages zu verwenden, und fällt auf normale Speicherseiten zurück. Um Large Pages unter Windows Pro, Enterprise oder Education vorzubereiten, öffne `secpol.msc`, gehe zu **Lokale Richtlinien → Zuweisen von Benutzerrechten → Sperren von Seiten im Speicher** und füge das Konto hinzu, mit dem seine läuft. Melde dich ab und wieder an, damit die neue Sitzung das Recht erhält.
-
-Die [Large-Pages-Anleitung](/de/blog/huge-pages-blocknet-mining/) beschreibt diese optionale Einrichtung ausführlich. Starte seine nach der erneuten Anmeldung normal und prüfe im Startprotokoll den ausgewählten Seitenmodus. Behalte den automatischen Standardmodus bei, während du deine erste funktionierende Einrichtung herstellst. Vergleiche anschließend Messungen auf demselben PC, wenn du Seiteneinstellungen änderst.
+<MinerSettings os="windows" />
 
 <CTA target="seine" title="seine für Windows herunterladen" text="Entpacke das ZIP, gib deine Auszahlungsadresse ein und mine auf bntpool.com mit automatischer CPU- und NVIDIA-Abstimmung." />
 

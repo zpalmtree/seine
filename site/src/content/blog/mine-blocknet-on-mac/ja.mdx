@@ -11,7 +11,7 @@ faq:
     a: '各マイニングスレッドは 2 GiB のメモリブロックを使って処理するので、1 スレッドあたり約 2 GB を見込んでください。16 GB の Mac なら最大 7 スレッド、32 GB なら最大 15 スレッド、64 GB なら最大 31 スレッドです。seine は空きメモリを数え、スレッド数をコア数にも合わせます。'
   - q: 'Intel Mac で Blocknet をマイニングできますか？'
     a: 'はい。seine は Intel Mac 向けに別のアーカイブ seine-macos-x86_64.tar.gz を公開しており、手順は Apple シリコンと同じです。ダウンロードしてターミナルで展開し、./seine を実行して Blocknet アドレスまたは @name を貼り付けます。seine はメモリに合わせてスレッド数を決め、デフォルトで bntpool.com でマイニングを始めます。'
-sourceHash: '33a60ad4df0c'
+sourceHash: 10bf5cec430a
 translation: draft
 ---
 
@@ -72,6 +72,8 @@ macOS 版はアドホック署名されています。初回起動時に macOS �
 xattr -d com.apple.quarantine ./seine
 ./seine
 ```
+
+<MinerSettings os="mac" />
 
 ## Apple シリコン搭載 Mac が Blocknet のマイニングに向いているのはなぜですか？
 

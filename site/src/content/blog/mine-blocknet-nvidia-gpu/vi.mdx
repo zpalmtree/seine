@@ -2,7 +2,7 @@
 title: 'Cách đào Blocknet bằng GPU NVIDIA'
 description: 'Đào Blocknet bằng GPU NVIDIA với seine. Thiết lập Windows hoặc Linux, dùng cả CPU và GPU, kiểm tra tốc độ băm và xử lý các sự cố khi khởi động phần mềm.'
 tags: ['Hướng dẫn đào coin', 'NVIDIA', 'GPU']
-sourceHash: '035e97230185'
+sourceHash: bcf2b64687ba
 translation: draft
 faq:
   - q: 'seine có thể dùng CPU và GPU NVIDIA cùng lúc không?'
@@ -15,7 +15,7 @@ faq:
     a: 'Bảng điều khiển đào coin hiển thị các share đã gửi, bị từ chối và được chấp nhận; nhật ký xác định backend của từng sự kiện share. Kiểm tra tốc độ băm cục bộ trên dòng thiết bị NVIDIA, rồi tìm thông báo share được chấp nhận từ backend đó. Dùng hướng dẫn theo dõi trên pool để kiểm tra công việc đã được ghi nhận.'
 ---
 
-seine đào Blocknet trên GPU NVIDIA cùng với CPU của bạn. Hướng dẫn này trình bày cách thiết lập Windows và Linux, chọn card, kiểm tra share được chấp nhận và kết quả so sánh đo trên RTX 5090. Các lệnh áp dụng cho seine v0.2.26 và mạng Argon2id hiện tại tính đến tháng 10 năm 2026.
+seine đào Blocknet trên GPU NVIDIA cùng với CPU của bạn. Hướng dẫn này trình bày cách thiết lập Windows và Linux, chọn card, kiểm tra share được chấp nhận và kết quả so sánh đo trên RTX 5090. Các lệnh áp dụng cho seine v0.3.0 và mạng Argon2id hiện tại tính đến tháng 10 năm 2026.
 
 ## Bắt đầu đào Blocknet bằng GPU NVIDIA như thế nào?
 
@@ -32,7 +32,7 @@ Bắt đầu với thiết lập mặc định. Không đặt kernel, giới h�
 | Nền tảng | Cần chuẩn bị | Lệnh khởi chạy |
 |---|---|---|
 | Windows x86_64 | Trình điều khiển đồ họa NVIDIA; các DLL thời gian chạy đi kèm đặt cạnh tệp thực thi | `.\seine.exe` |
-| Linux x86_64 | Trình điều khiển NVIDIA và thư viện thời gian chạy NVRTC tương thích | `./seine` |
+| Linux x86_64 | Trình điều khiển NVIDIA | `./seine` |
 
 Trên Windows, giải nén toàn bộ ZIP vào một thư mục có quyền ghi. Giữ `nvrtc64_120_0.dll` và `nvrtc-builtins64_128.dll` cạnh `seine.exe`. Bản phát hành đóng gói dùng các thư viện đi kèm này; không cần cài riêng CUDA Toolkit.
 
@@ -40,7 +40,7 @@ Trên Windows, giải nén toàn bộ ZIP vào một thư mục có quyền ghi.
 
 Cài trình điều khiển cho card và hệ điều hành của bạn từ [trang trình điều khiển NVIDIA](https://www.nvidia.com/en-us/drivers/). [Hướng dẫn thiết lập Windows](/vi/blog/mine-blocknet-on-windows/) trình bày các bước tải xuống, kiểm tra tổng kiểm và giải nén.
 
-Trên Linux, cài trình điều khiển NVIDIA và các gói NVRTC tương thích với bản phân phối của bạn. NVRTC biên dịch kernel CUDA của seine khi chương trình chạy. [Tài liệu NVRTC](https://docs.nvidia.com/cuda/nvrtc/) của NVIDIA mô tả trình biên dịch và thư viện builtins tương ứng; [yêu cầu NVIDIA của seine](https://github.com/zpalmtree/seine/blob/master/docs/guides/nvidia.md) ghi rõ môi trường thời gian chạy mà phần mềm đào cần.
+Trên Linux, trình điều khiển NVIDIA là đủ. Seine dùng NVRTC khi nó được cài, và nếu không thì nạp các kernel tích hợp sẵn trong seine, hỗ trợ card GeForce dòng GTX 10 trở lên. [Yêu cầu NVIDIA của seine](https://github.com/zpalmtree/seine/blob/master/docs/guides/nvidia.md) có chi tiết.
 
 Khởi chạy tệp thực thi từ thư mục chứa nó. Dùng lại cùng thư mục làm việc để giữ thiết lập đã lưu trong `seine-data`. Ở lần chạy đầu tiên, nhập địa chỉ nhận của bạn và chấp nhận `stratum+tcp://bntpool.com:3333` làm pool.
 
@@ -94,7 +94,7 @@ Lần khởi chạy đầu tiên chuẩn bị và tinh chỉnh kernel GPU. seine
 
 ## Cần kiểm tra gì nếu không có dòng NVIDIA?
 
-Trước tiên, kiểm tra tệp thực thi đã giải nén và các thư viện thời gian chạy. Trên Windows, giữ các DLL NVRTC đi kèm cạnh `seine.exe`. Trên Linux, cài trình điều khiển và thư viện NVRTC trong môi trường nơi bạn khởi chạy phần mềm đào.
+Hãy kiểm tra trình điều khiển trước. Trên Windows, hãy giữ cả các DLL NVRTC đi kèm bên cạnh `seine.exe`. Trên Linux, cài trình điều khiển NVIDIA trong môi trường bạn dùng để khởi chạy trình đào.
 
 Sau đó kiểm tra lệnh. `--backend cpu` chỉ chọn CPU. Dùng lệnh mặc định hoặc `--backend cpu,nvidia` để chọn cả hai. Nếu đặt `--nvidia-devices`, hãy xác minh các chỉ số đó tồn tại trên máy.
 

@@ -9,7 +9,7 @@ faq:
     a: 'Standaard bewaart seine het uitbetalingsadres, de pool en de naam van de rig in seine-data/seine.config.json onder de map waaruit je het programma start. Start het vanuit dezelfde uitgepakte map om die instellingen opnieuw te gebruiken. Met de optie data-dir kun je zo nodig een andere map kiezen.'
   - q: 'Heb ik grote geheugenpagina’s in Windows nodig voordat ik begin met minen?'
     a: 'Nee. seine probeert automatisch grote geheugenpagina’s te gebruiken en gebruikt gewone pagina’s als die niet beschikbaar zijn. Je kunt met de standaardinstellingen beginnen met minen. Voor de optionele instelling van grote pagina’s geef je je miningaccount het recht Pagina’s in het geheugen vergrendelen. Meld je daarna af en weer aan voordat je seine opnieuw start.'
-sourceHash: '66babe3b41fb'
+sourceHash: 1878d05f199d
 translation: draft
 ---
 
@@ -22,8 +22,6 @@ Download `seine-windows-x86_64.zip`, pak het hele archief uit en open `seine.exe
 </Answer>
 
 Houd je openbare uitbetalingsadres bij de hand voordat je de miner opent. De [wallethandleiding](/nl/blog/blocknet-wallet-for-mining/) legt uit hoe je er een krijgt. Voer alleen het ontvangstadres in: de miner heeft je herstelzin of uitgavesleutels van je wallet niet nodig. Een geregistreerde [Blocknet ID](/nl/blog/blocknet-id-pay-by-name/) werkt ook, dus je kunt `@name` gebruiken in plaats van het lange adres.
-
-Elke CPU-miningthread gebruikt een geheugenblok van 2 GiB. seine controleert het beschikbare RAM en het aantal cores, houdt geheugenruimte vrij en kiest het aanvankelijke aantal threads voor je. Op een desktop of laptop kun je met de standaardinstellingen beginnen; je hoeft niet eerst een aantal threads te berekenen of een CPU-kernel te kiezen.
 
 ## Stap 1: download de juiste versie
 
@@ -40,8 +38,6 @@ Dubbelklik op `seine.exe` vanuit de uitgepakte map. Als je liever een terminal g
 ```powershell
 .\seine.exe
 ```
-
-Het voorvoegsel `./` of `.\` vertelt de shell om het uitvoerbare bestand in de huidige map te starten. Starten vanuit een uitgepakte map geeft seine ook een vaste plek om de instellingen op te slaan. Gebruik bij latere starts dezelfde map, zodat het programma het ingevoerde adres en de pool terugvindt.
 
 ## Stap 3: voer je walletadres in
 
@@ -65,8 +61,6 @@ Controleer of het dashboard van seine een hashrate en geaccepteerde shares toont
 
 De [dashboardhandleiding](/nl/blog/seine-dashboard-explained/) legt de hashrate, miningstatus en poolpanelen uit. Een actieve hashrate toont lokale hashingactiviteit; een geaccepteerde share bevestigt dat het werk de pool heeft bereikt. Open [My Stats](https://bntpool.com/stats?lang=nl) en voer hetzelfde adres of dezelfde korte naam in om de shares en het saldo van deze rig te volgen.
 
-Maak bij het controleren van een nieuwe installatie onderscheid tussen geaccepteerde shares en uitbetalingen. Shares dragen bij aan poolbeloningen; een uitbetaling volgt de bevestigings- en saldoregels van de pool. De [PPLNS-handleiding](https://bntpool.com/blog/how-pplns-payouts-work/) legt die volgorde uit. Je kunt de verbinding meteen controleren zonder op de eerste uitbetaling te wachten.
-
 <figure>
   <picture>
     <source media="(max-width: 640px)" srcSet="/assets/blog/setup-accepted-shares-mobile.webp" width="384" height="221" />
@@ -81,11 +75,7 @@ seine gebruikt standaard de CPU en ondersteunde NVIDIA-kaarten samen. Installeer
 
 Bij de eerste start stemt seine elke GPU af en onthoudt de instellingen. Ook de CPU-afstemming draait tijdens het minen. De [hardwarehandleiding](/nl/blog/blocknet-mining-hardware-hashrate/) legt de benodigde geheugencapaciteit en gemeten resultaten uit, terwijl de [NVIDIA-handleiding](https://github.com/zpalmtree/seine/blob/master/docs/guides/nvidia.md) meerdere kaarten behandelt. Druk op `q` in het dashboard of `Ctrl+C` in de terminal om het programma netjes te stoppen.
 
-## Optioneel: schakel grote geheugenpagina’s in Windows in
-
-Bij het normale opstarten probeert het programma al grote geheugenpagina’s te gebruiken en valt het terug op gewone pagina’s. Om grote pagina’s op Windows Pro, Enterprise of Education in te stellen, open je `secpol.msc`, ga je naar **Lokaal beleid → Toewijzing van gebruikersrechten → Pagina’s in het geheugen vergrendelen** en voeg je het account toe dat seine uitvoert. Meld je af en weer aan, zodat de nieuwe aanmeldsessie dat recht krijgt.
-
-De [handleiding voor grote geheugenpagina’s](/nl/blog/huge-pages-blocknet-mining/) behandelt deze optionele instelling in detail. Start seine na het opnieuw aanmelden normaal en controleer in het opstartlogboek welke paginamodus is geselecteerd. Behoud de standaard automatische modus terwijl je je eerste werkende installatie opzet en vergelijk daarna metingen op dezelfde pc als je de pagina-instellingen wijzigt.
+<MinerSettings os="windows" />
 
 <CTA target="seine" title="Download seine voor Windows" text="Pak de ZIP uit, voer je uitbetalingsadres in en begin met minen op bntpool.com met automatische afstemming van CPU en NVIDIA." />
 

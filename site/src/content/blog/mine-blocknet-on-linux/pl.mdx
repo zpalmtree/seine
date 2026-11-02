@@ -4,12 +4,12 @@ description: "Linux: Pobierz seine, rozpakuj go, wpisz swój adres Blocknet i sp
 tags: ['Poradnik kopania', 'Linux', 'NVIDIA']
 faq:
   - q: 'Które archiwum dla Linuksa pobrać?'
-    a: "Otwórz sekcję pobierania. Uruchom uname -m: wybierz seine-linux-x86_64.tar.gz dla x86_64 lub seine-linux-aarch64.tar.gz dla aarch64. Wersje dla Linuksa wymagają glibc 2.39 lub nowszej. Wersja x86_64 obsługuje CPU i NVIDIA, a ARM64 — kopanie na CPU."
+    a: "Otwórz sekcję pobierania. Uruchom uname -m: wybierz seine-linux-x86_64.tar.gz dla x86_64 lub seine-linux-aarch64.tar.gz dla aarch64. Wersje dla Linuksa wymagają glibc 2.31 lub nowszej. Wersja x86_64 obsługuje CPU i NVIDIA, a ARM64 — kopanie na CPU."
   - q: 'Czy seine trzeba uruchamiać przez sudo?'
     a: 'Uruchamiaj zwykły miner na własnym koncie z katalogu z prawem zapisu. Rozpakuj archiwum, w razie potrzeby nadaj właścicielowi prawo wykonywania i uruchom ./seine. Rezerwowanie huge pages to osobne zadanie administracyjne; zwykły start może korzystać ze standardowych stron pamięci.'
-  - q: 'Dlaczego Linux zgłasza brak biblioteki NVRTC?'
-    a: 'Backend NVIDIA w Linuksie wymaga zgodnego sterownika oraz bibliotek uruchomieniowych NVRTC, w tym pasującej biblioteki builtins. Zainstaluj je z pakietów dystrybucji lub obsługiwanych pakietów NVIDIA. Archiwum Linuksa nie zawiera bibliotek DLL Windows. Podczas przygotowywania GPU możesz wybrać backend CPU.'
-sourceHash: 'fee2c843812c'
+  - q: 'Czy potrzebuję CUDA lub NVRTC do kopania na NVIDIA w Linuksie?'
+    a: 'Nie. Wystarczy sterownik NVIDIA. Seine używa NVRTC, gdy jest zainstalowany, a w przeciwnym razie ładuje kernele wbudowane w seine, które obejmują karty GeForce z serii GTX 10 i nowsze. Zainstaluj sterownik, uruchom seine i sprawdź, czy Twoja karta pojawia się w panelu Devices.'
+sourceHash: acdcb56b3c1f
 translation: draft
 ---
 
@@ -21,7 +21,7 @@ Pobierz seine, rozpakuj go, wpisz swój adres Blocknet i sprawdź zaakceptowane 
 
 ## Krok 1: pobierz właściwą wersję
 
-Otwórz [sekcję pobierania](/pl/#download). Uruchom `uname -m`: wybierz `seine-linux-x86_64.tar.gz` dla `x86_64` lub `seine-linux-aarch64.tar.gz` dla `aarch64`. Wersje dla Linuksa wymagają glibc 2.39 lub nowszej. Wersja x86_64 obsługuje CPU i NVIDIA, a ARM64 — kopanie na CPU.
+Otwórz [sekcję pobierania](/pl/#download). Uruchom `uname -m`: wybierz `seine-linux-x86_64.tar.gz` dla `x86_64` lub `seine-linux-aarch64.tar.gz` dla `aarch64`. Wersje dla Linuksa wymagają glibc 2.31 lub nowszej. Wersja x86_64 obsługuje CPU i NVIDIA, a ARM64 — kopanie na CPU.
 
 <img src="/assets/blog/setup-download.webp" alt="Oficjalna tabela pobierania z archiwami Linux i Linux ARM64" loading="lazy" />
 
@@ -64,17 +64,11 @@ W [panelu](/pl/blog/seine-dashboard-explained/) sprawdź hashrate i rosnący lic
 
 Otwórz [Moje statystyki](https://bntpool.com/stats?lang=pl) i wpisz ten sam adres lub zarejestrowaną nazwę, aby znaleźć swojego workera, udziały i saldo.
 
-## Czego wymaga kopanie na NVIDIA w Linuksie?
+## Czego potrzebujesz do kopania na GPU w Linuksie?
 
-Kopanie GPU w Linuksie x86_64 wymaga sterownika NVIDIA i zgodnych bibliotek uruchomieniowych NVRTC. NVRTC kompiluje kernele GPU podczas startu. Zainstaluj środowisko i pasującą bibliotekę builtins z dystrybucji lub pakietów NVIDIA według [poradnika NVIDIA](/pl/blog/mine-blocknet-nvidia-gpu/). Nazwy pakietów zależą od dystrybucji i wersji CUDA; stosuj instrukcje dla własnego systemu.
+Karty NVIDIA potrzebują tylko sterownika NVIDIA. Karty AMD potrzebują sterownika amdgpu i środowiska ROCm HIP, jak wyjaśnia [poradnik AMD](https://github.com/zpalmtree/seine/blob/master/docs/guides/amd.md). Seine sam znajduje Twoje karty i kopie na nich razem z CPU w wersji x86_64. [Poradnik NVIDIA](/pl/blog/mine-blocknet-nvidia-gpu/) opisuje wybór kart i sprawdzanie udziałów GPU.
 
-Z tymi bibliotekami tryb domyślny może kopać jednocześnie na CPU i obsługiwanych kartach NVIDIA. Aby rozpocząć na CPU podczas przygotowywania GPU, wybierz go jawnie:
-
-```sh
-./seine --backend cpu
-```
-
-Ten wybór dotyczy wyłącznie CPU w danym uruchomieniu. Wybór urządzeń GPU i sprawdzanie ich udziałów opisuje poradnik NVIDIA. Opisane tu wydanie ARM64 zawiera backend CPU; instalacja CUDA nie dodaje backendu NVIDIA do tego archiwum.
+<MinerSettings os="linux" />
 
 ## Jak rozwiązać błąd uruchamiania w Linuksie?
 
@@ -83,9 +77,8 @@ Wybierz kolejną kontrolę na podstawie pierwszego komunikatu o błędzie:
 | Komunikat lub objaw | Co sprawdzić |
 |---|---|
 | `Exec format error` | Niewłaściwa architektura: porównaj `uname -m` z nazwą archiwum. |
-| `GLIBC_2.39 not found` | Program wymaga nowszej glibc. Użyj zgodnego systemu lub skompiluj źródła; pozostaw zarządzanie systemową biblioteką C dystrybucji. |
+| `GLIBC_... not found` | Program wymaga nowszej glibc. Użyj zgodnego systemu lub skompiluj źródła; pozostaw zarządzanie systemową biblioteką C dystrybucji. |
 | `Permission denied` | Sprawdź prawo wykonywania użytkownika i użyj folderu na systemie plików zezwalającym na wykonywanie. |
-| `libnvrtc` / `libnvrtc-builtins` | Zainstaluj zgodne środowisko NVIDIA i pasującą bibliotekę builtins albo używaj `--backend cpu` podczas przygotowań. |
 
 Po zaakceptowaniu udziałów [poradnik huge pages](/pl/blog/huge-pages-blocknet-mining/) opisuje opcjonalną konfigurację stron w Linuksie. [Poradnik serwerów](/pl/blog/mine-blocknet-on-servers/) obejmuje pracę bez interfejsu graficznego i rozmieszczenie NUMA. Żadne z tych przygotowań nie jest potrzebne do pierwszego uruchomienia; wprowadzaj zmiany oddzielnie, aby rozpoznać ich wpływ na komputer.
 

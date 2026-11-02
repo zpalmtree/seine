@@ -11,7 +11,7 @@ faq:
     a: '每個挖礦執行緒都要處理一塊 2 GiB 的記憶體，所以每個執行緒大約以 2 GB 計算。16 GB 的 Mac 最多可容納七個執行緒，32 GB 最多 15 個，64 GB 最多 31 個。seine 會計算空閒記憶體，並讓執行緒數與你的核心數相符。'
   - q: '可以在 Intel Mac 上挖 Blocknet 嗎？'
     a: '可以。seine 為 Intel Mac 另外發布了一個壓縮檔 seine-macos-x86_64.tar.gz，步驟與 Apple 晶片相同。下載後在終端機中解壓縮，執行 ./seine，並貼上你的 Blocknet 地址或 @name。seine 會依記憶體決定執行緒數，並預設在 bntpool.com 上開始挖礦。'
-sourceHash: '33a60ad4df0c'
+sourceHash: 10bf5cec430a
 translation: draft
 ---
 
@@ -72,6 +72,8 @@ macOS 版本採用臨時（ad-hoc）簽署。如果 macOS 阻擋了第一次啟�
 xattr -d com.apple.quarantine ./seine
 ./seine
 ```
+
+<MinerSettings os="mac" />
 
 ## 為什麼 Apple 晶片 Mac 挖 Blocknet 表現出色？
 

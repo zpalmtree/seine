@@ -11,7 +11,7 @@ faq:
     a: 'Ogni thread di mining lavora su un blocco di memoria da 2 GiB, quindi calcola circa 2 GB per thread. Un Mac da 16 GB regge fino a sette thread, uno da 32 GB fino a 15 e uno da 64 GB fino a 31. seine conta la memoria libera e adatta anche i thread ai tuoi core.'
   - q: 'Si può minare Blocknet su un Mac Intel?'
     a: 'Sì. seine pubblica un archivio separato per i Mac Intel, seine-macos-x86_64.tar.gz, e i passaggi sono gli stessi di Apple Silicon. Scaricalo, estrailo nel Terminale, esegui ./seine e incolla il tuo indirizzo Blocknet o il tuo @name. seine dimensiona i thread in base alla memoria e per impostazione predefinita inizia a minare su bntpool.com.'
-sourceHash: '33a60ad4df0c'
+sourceHash: 10bf5cec430a
 translation: draft
 ---
 
@@ -72,6 +72,8 @@ La build per macOS ha una firma ad-hoc. Se macOS blocca il primo avvio, apri Imp
 xattr -d com.apple.quarantine ./seine
 ./seine
 ```
+
+<MinerSettings os="mac" />
 
 ## Perché i Mac con Apple Silicon minano bene Blocknet?
 

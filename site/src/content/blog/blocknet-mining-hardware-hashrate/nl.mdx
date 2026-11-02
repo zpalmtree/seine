@@ -8,10 +8,10 @@ faq:
   - q: 'Hoeveel Blocknet-miningthreads draait 32 GB RAM?'
     a: 'Ongeveer 14. Elke thread heeft voor elke hash een geheugenblok van 2 GiB nodig, dus 32 GB biedt er op papier ruimte voor 16. seine houdt 5% (standaard maximaal 1 GiB) van het RAM in reserve en laat ruimte voor het besturingssysteem, waardoor een computer met 32 GB op ongeveer 14 threads uitkomt. Dat rekent seine bij het opstarten voor je uit.'
   - q: 'Welke videokaarten gebruikt seine voor Blocknet-minen?'
-    a: 'seine minet op NVIDIA-videokaarten met de downloads voor Windows en Linux, en gebruikt elke kaart die het vindt naast de processor. Op Windows zit de CUDA-runtime erbij, dus je hebt alleen de NVIDIA-driver nodig. Installeer op Linux de driver en de NVRTC-bibliotheken. De eerste start stemt elke kaart af en onthoudt het resultaat.'
+    a: 'Seine mint op NVIDIA-videokaarten met de Windows- en Linux-downloads en gebruikt elke gedetecteerde kaart naast de processor. Je hebt alleen de NVIDIA-driver nodig. De eerste start stemt elke kaart af en onthoudt het resultaat.'
   - q: 'Waarom is geheugenbandbreedte belangrijk voor Blocknet-minen?'
     a: 'Elke Blocknet-hash schrijft een volledig geheugenblok van 2 GiB en leest gegevens terug van overal in dat blok, veel meer dan een processorcache kan bevatten. De hashrate hangt daarom af van hoe snel het geheugensysteem gegevens verplaatst. Computers met meer geheugenbandbreedte en genoeg RAM voor veel threads minen het snelst.'
-sourceHash: '4d5509a6c9e1'
+sourceHash: 9f6e4878e6b1
 translation: draft
 ---
 
@@ -89,7 +89,7 @@ Koop je RAM om te minen, stem het dan af op het aantal threads dat je wilt: onge
 Ja. Op Windows en Linux minet seine tegelijk op elke CPU-core en elke NVIDIA-videokaart die het vindt, en de hashrates tellen op. Je hebt hiervoor geen flag nodig; het is de standaard.
 
 - **Windows:** de download bevat de CUDA-runtimebibliotheken, dus je hebt alleen een actuele NVIDIA-driver nodig.
-- **Linux:** installeer de NVIDIA-driver en de NVRTC-bibliotheken van je distributie of van NVIDIA.
+- **Linux:** de NVIDIA-driver is genoeg.
 - **Eerste start:** seine stemt zijn kernelinstellingen af voor elke kaart en slaat het resultaat op, dus latere starts duren maar een paar seconden.
 
 Op [Macs met Apple Silicon](/nl/blog/mine-blocknet-on-mac/) minet seine standaard op de CPU, de snelste opzet die op de M4 Max is gemeten. De [NVIDIA-gids](/nl/blog/mine-blocknet-nvidia-gpu/) behandelt rigs met meerdere GPU's en de vereisten.

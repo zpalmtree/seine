@@ -1,37 +1,114 @@
 ---
-title: 'Configurare seine: impostazioni e opzioni di avvio'
-description: 'Trova la configurazione di seine, salva pool e indirizzo, comprendi la priorità degli argomenti e verifica le impostazioni del miner Blocknet dopo il riavvio.'
+title: 'Cambia le impostazioni di seine: thread, CPU, GPU e pool'
+description: 'Disattiva il mining con CPU o GPU in seine, imposta il numero di thread, scegli una scheda video, mantieni le impostazioni a ogni avvio e cambia indirizzo o pool.'
 tags: ['Guida al mining', 'Configurazione', 'seine']
 faq:
-  - q: 'Dove salva la configurazione seine?'
-    a: 'Per impostazione predefinita legge seine-data/seine.config.json rispetto alla directory di lavoro all’avvio. data-dir sceglie un’altra directory di base. Terminale, collegamento e attività pianificata possono usare directory diverse: annota il percorso completo insieme al comando di avvio.'
-  - q: 'Un argomento modifica il file salvato?'
-    a: 'Con una configurazione esistente, gli argomenti espliciti di connessione prevalgono per quella esecuzione senza sostituire indirizzo, URL del pool o nome della macchina salvati. Mantieni l’argomento nel comando abituale oppure arresta il miner e modifica il campo. Verifica poi un avvio normale.'
-  - q: 'Posso mettere tutte le opzioni nel JSON?'
-    a: 'Il file usa un piccolo schema per la connessione. Le opzioni hardware e operative, come backend e thread, appartengono agli argomenti di avvio. Campi JSON con nomi simili non impostano tali opzioni. Salva anche il comando di avvio insieme alla cartella dati.'
-sourceHash: '66e5ad9f2665'
+  - q: 'Come disattivo il mining con CPU in seine?'
+    a: 'Avvia seine con l’opzione backend impostata sulla tua scheda video, nvidia oppure amd. Usale entrambe, separate da una virgola, se il computer ha tutti e due i tipi di scheda. Seine mina allora solo con le schede video e lascia il processore libero per altro lavoro.'
+  - q: 'Come disattivo il mining con GPU in seine?'
+    a: 'Avvia seine con l’opzione backend impostata su cpu. Seine mina allora solo con il processore e lascia tutte le schede video libere per giochi e altre app. Togli l’opzione per minare di nuovo con processore e schede video insieme.'
+  - q: 'Quanti thread CPU devo usare?'
+    a: 'Seine sceglie il numero di thread per te, quindi devi impostarlo solo quando vuoi lasciare spazio ad altro lavoro. Ogni thread usa circa 2 GB di RAM. Premi il tasto meno nella dashboard finché il computer non ti sembra a posto, poi usa quel numero.'
+  - q: 'Dove salva seine le sue impostazioni?'
+    a: 'Seine salva il tuo indirizzo, il pool e il nome del worker in seine-data/seine.config.json, dentro la cartella da cui lo avvii. Le opzioni dei thread e del backend non vengono salvate lì, quindi mettile in un piccolo file di avvio se le vuoi a ogni avvio.'
+sourceHash: b5ca5a9a16d8
 translation: draft
 ---
 
-Avvia il miner Blocknet con impostazioni prevedibili. Questa guida per seine v0.2.37 spiega posizione dei dati, priorità degli argomenti e modifiche persistenti. Parti da un’installazione funzionante; la [guida all’aggiornamento](/it/blog/update-seine-miner/) riguarda la sostituzione dell’applicazione.
+Seine funziona bene senza alcuna impostazione. Questa guida copre i cambiamenti che più probabilmente vorrai fare: disattivare il mining con CPU o GPU, usare meno thread, scegliere una scheda video e cambiare indirizzo o pool.
 
-## Come sceglie le impostazioni seine?
+## Come si cambia un’impostazione di seine?
 
 <Answer>
-seine combina la connessione salvata con gli argomenti di avvio. Gli argomenti espliciti prevalgono sui valori corrispondenti del file. La directory dati determina quale file viene letto. Le opzioni hardware e operative restano argomenti: conserva sia la configurazione sia il comando abituale.
+Chiudi seine, apri un terminale nella sua cartella e avvialo di nuovo con l’impostazione aggiunta al comando, per esempio `./seine --threads 4`. Su Windows usa PowerShell e `.\seine.exe --threads 4`. Seine mantiene il tuo indirizzo e il tuo pool salvati, quindi scrivi solo ciò che vuoi cambiare.
 </Answer>
 
-<img src="/assets/blog/configure-seine-miner.svg" alt="Un file salvato e un comando alimentano il miner, seguito da una verifica dopo il riavvio." width="1200" height="675" loading="lazy" />
+- **Windows:** apri la cartella di seine in Esplora file, scrivi `powershell` nella barra degli indirizzi e premi Invio.
+- **macOS e Linux:** apri il Terminale e vai nella cartella di seine con `cd`.
 
-## Trova il file usato dal tuo avvio abituale
+Gli esempi qui sotto usano `./seine`. Su Windows scrivi invece `.\seine.exe`.
 
-Il percorso predefinito è `./seine-data/seine.config.json`, relativo alla directory di lavoro del processo, che può differire dalla cartella dell’eseguibile. Controlla terminale, collegamento o servizio prima di modificare. Due modalità di avvio possono usare lo stesso programma con dati diversi.
+## Come si disattiva il mining con CPU o GPU?
 
-`--data-dir` seleziona la directory base; il nome resta `seine.config.json`. Usa un percorso assoluto stabile se avvii da più posizioni. Annota eseguibile, directory di lavoro, dati e argomenti completi. La [guida all’avvio Windows](/it/blog/start-miner-automatically-windows/) mostra questi percorsi nell’Utilità di pianificazione, anche con spazi.
+Per impostazione predefinita, seine mina con la tua CPU e con ogni scheda video supportata. L’impostazione `--backend` sceglie quali usare:
 
-## Quali impostazioni appartengono al file?
+| Cosa vuoi | Aggiungi questo |
+|---|---|
+| Solo CPU, GPU disattivata | `--backend cpu` |
+| Solo GPU NVIDIA, CPU disattivata | `--backend nvidia` |
+| Solo GPU AMD, CPU disattivata | `--backend amd` |
+| GPU NVIDIA e AMD, CPU disattivata | `--backend nvidia,amd` |
 
-L’esempio mostra i campi principali. Sostituisci `@yourname` con il tuo Blocknet ID registrato o indirizzo completo. È un riferimento del formato, non un comando. In un’installazione esistente modifica i campi necessari invece di sostituire tutto il file.
+Per esempio, per minare con una scheda NVIDIA e lasciare libera la CPU:
+
+```sh
+./seine --backend nvidia
+```
+
+Il pannello Devices della [dashboard](/it/blog/seine-dashboard-explained/) mostra una riga per ogni dispositivo che sta minando.
+
+## Come si usano meno thread CPU?
+
+Aggiungi `--threads` con il numero che vuoi:
+
+```sh
+./seine --threads 4
+```
+
+Ogni thread usa circa 2 GB di RAM, quindi 4 thread ne usano circa 8 GB. Seine resta su quel numero finché non togli l’impostazione.
+
+Per trovare un buon numero, avvia seine normalmente e premi `-` nella dashboard per togliere un thread, oppure `+` per aggiungerne uno. La modifica richiede un momento e la dashboard mostra il nuovo numero. Fermati quando il computer ti sembra a posto, poi usa quel numero con `--threads`, perché i tasti valgono solo finché non chiudi seine.
+
+Per far scegliere a seine un numero di thread più leggero, usa invece questo:
+
+```sh
+./seine --cpu-profile efficiency
+```
+
+La [guida per il desktop](/it/blog/mine-while-using-pc/) dice di più su come minare mentre usi il computer.
+
+## Come si sceglie una sola scheda video?
+
+Aggiungi il numero della scheda. La prima scheda è `0`:
+
+```sh
+./seine --backend cpu,nvidia --nvidia-devices 0
+```
+
+Questo mina con la CPU e con la prima scheda NVIDIA. Usa `--nvidia-devices 0,1` per due schede e togli `cpu,` per disattivare la CPU. Le schede AMD funzionano allo stesso modo:
+
+```sh
+./seine --backend cpu,amd --amd-devices 0
+```
+
+Per lasciare libera la memoria video per altre app, usa `--nvidia-max-lanes 2` oppure `--amd-max-lanes 2`. Ogni lane usa circa 2 GB di memoria video. La grafica Radeon integrata resta disattivata se non aggiungi tu `--backend amd`.
+
+## Come si mantengono le impostazioni a ogni avvio?
+
+Seine salva da solo indirizzo, pool e nome del worker. Impostazioni come `--threads` e `--backend` valgono solo per quell’esecuzione, quindi mettile in un piccolo file di avvio e apri quel file al posto di seine.
+
+Su Windows, apri il Blocco note, scrivi queste righe con le tue impostazioni e salva il file nella cartella di seine come `start-mining.bat`, con **Salva come** impostato su **Tutti i file**:
+
+```bat
+seine.exe --backend cpu --threads 4
+pause
+```
+
+Fai doppio clic su `start-mining.bat` per iniziare a minare. La riga `pause` tiene aperta la finestra se seine si ferma, così puoi leggere l’ultimo messaggio.
+
+Su macOS o Linux, salva queste righe nella cartella di seine come `start-mining.sh`:
+
+```sh
+#!/bin/sh
+cd "$(dirname "$0")"
+./seine --backend cpu --threads 4
+```
+
+Esegui `chmod +x start-mining.sh` una volta, poi inizia a minare con `./start-mining.sh`. Gli aggiornamenti automatici riavviano seine con le stesse impostazioni. Per iniziare a minare a ogni accesso a Windows, segui la [guida all’avvio automatico](/it/blog/start-miner-automatically-windows/).
+
+## Come si cambiano indirizzo, pool o nome del worker?
+
+Chiudi seine e apri `seine-data/seine.config.json` in un editor di testo. La cartella si trova dentro quella da cui avvii seine. Cambia il valore che ti serve e salva il file:
 
 ```json
 {
@@ -43,34 +120,26 @@ L’esempio mostra i campi principali. Sostituisci `@yourname` con il tuo Blockn
 }
 ```
 
-`mode`, `address`, `pool_url` e `pool_worker` scelgono modalità, destinazione, pool e nome macchina. Conserva `schema_version` e l’eventuale `dev_fee_pool_worker`: quest’ultimo è un identificatore generato separato; per la tua macchina usa `pool_worker`. Non inserire frasi di recupero o chiavi private.
+Lascia le altre righe come sono. Mantieni le virgolette e le virgole, e non aggiungere a questo file la tua frase di recupero né le chiavi private.
 
-## Come rendere permanente una modifica?
+Per usare un valore diverso per una sola esecuzione, aggiungilo al comando. Il file salvato resta uguale:
 
-Arresta il miner e copia il file. Usa un editor di testo e JSON valido con stringhe fra virgolette doppie; conserva il nome senza estensioni aggiuntive. Modifica solo il campo necessario nella directory effettivamente usata. Controlla le virgole, evita commenti e virgole finali e usa la validazione JSON dell’editor se disponibile. La copia permette confronti esatti.
-
-Controlla eventuali argomenti contrari nel comando. Un vecchio `--address` prevale sull’indirizzo appena salvato: aggiornalo o rimuovilo per usare il file. Riavvia dal collegamento, script o attività abituale e verifica i valori effettivi.
-
-## Usa consapevolmente le opzioni temporanee
-
-Con una configurazione esistente, la seguente opzione del pool sceglie il nome macchina per questa esecuzione. Al prossimo avvio senza argomento torna il nome salvato. È utile per modifiche controllate; per mantenerla sempre, inseriscila nell’avvio abituale.
-
-```text
---pool-worker desktop-02
+```sh
+./seine --pool-worker desktop-02
 ```
 
-Al primo avvio senza file, seine lo crea dai dati iniziali di connessione. È diverso dal sovrascrivere temporaneamente una configurazione esistente. Ricordalo copiando un comando su un altro computer, che potrebbe creare il suo primo file. La [documentazione](https://github.com/zpalmtree/seine/blob/v0.2.37/docs/guides/configuration.md) descrive domande iniziali e opzioni supportate.
+Le altre due impostazioni sono `--address` e `--pool-url`. La [guida al cambio di indirizzo](https://bntpool.com/blog/it/change-mining-wallet-address/) spiega come il pool accredita il tuo lavoro dopo che cambi indirizzo.
 
-## Conserva le opzioni hardware nel comando
+## E se un’impostazione non funziona?
 
-`--backend` e `--threads` sono argomenti di avvio. Lo schema di connessione non elenca tutte le opzioni. Aggiungere un campo JSON simile non imposta quella funzione. Mantieni le scelte hardware nello script, collegamento o servizio che avvia il miner.
+| Cosa vedi | Cosa fare |
+|---|---|
+| `--nvidia-devices requires selecting nvidia in --backend` | Aggiungi `nvidia` al backend: `--backend cpu,nvidia`. Lo stesso vale per `amd`. |
+| `configured CPU lanes need` più RAM | Usa un numero più basso con `--threads`, circa un thread ogni 2 GB di RAM libera. |
+| `all GPU backends failed to start` | Installa il driver attuale per la tua scheda. La [guida AMD](https://github.com/zpalmtree/seine/blob/master/docs/guides/amd.md) elenca ciò di cui hanno bisogno le schede AMD su Linux. |
+| Seine ti chiede di nuovo l’indirizzo | Avvia seine dalla stessa cartella di prima, oppure imposta la cartella con `--data-dir`. |
+| Le tue impostazioni sono tornate automatiche | Avvia seine dal tuo file di avvio. I tasti `-` e `+` valgono solo finché non chiudi seine. |
 
-I controlli dei thread nel pannello modificano la sessione, senza salvare un nuovo valore predefinito. L’autotuning ha cache proprie: preservale separatamente dalle modifiche alla connessione e lascia che ogni macchina si adatti al suo hardware. La [guida all’autotuning](/it/blog/seine-automatic-cpu-tuning/) spiega cache e scelte esplicite dei thread.
+Il [riferimento delle opzioni](https://github.com/zpalmtree/seine/blob/master/docs/MINER_FLAGS.md) elenca ogni impostazione.
 
-## Perché le impostazioni sembrano azzerate?
-
-Confronta percorso dati e argomenti con l’ultima esecuzione corretta. Nuova cartella di estrazione, terminale diverso o vecchi argomenti pianificati possono spiegare il cambiamento. In caso di errore di parsing, leggi file e messaggio. Ripristina la copia o correggi il JSON, poi avvia una volta dal punto previsto.
-
-Verifica destinazione, pool, nome e share accettate. Ripeti un avvio normale per controllare la persistenza; un’esecuzione con argomenti prova solo quel comando. Usa la [guida al pannello](/it/blog/seine-dashboard-explained/) e, per cambiare destinazione dei futuri accrediti, la [guida all’indirizzo](https://bntpool.com/blog/it/change-mining-wallet-address/). Conserva insieme avvio funzionante e backup.
-
-<CTA target="seine" title="Scarica la versione attuale di seine" text="Usa una directory stabile e conserva il comando verificato insieme alla connessione salvata." />
+<CTA target="seine" title="Scarica la versione attuale di seine" text="Scarica seine, avvialo una volta, poi aggiungi solo le impostazioni che vuoi cambiare." />

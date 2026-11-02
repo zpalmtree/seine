@@ -9,7 +9,7 @@ faq:
     a: 'Pool bntpool.com membayar dengan PPLNS dalam jendela enam jam. Imbalan sebuah blok baru bisa dibayarkan setelah blok itu tertimbun 60 blok, sekitar lima jam dengan waktu blok lima menit, dan saldo dikirim setelah mencapai 0,1 BNT. Pembayaran pertama biasanya masuk beberapa jam setelah share pertama Anda diterima.'
   - q: 'Bisakah saya menambang Blocknet dengan CPU dan GPU sekaligus?'
     a: 'Bisa. Di Windows dan Linux, seine menambang dengan setiap core CPU dan setiap kartu grafis NVIDIA di komputer secara bersamaan, dan kedua hashrate-nya dijumlahkan. seine menyetel prosesor dan setiap kartu secara terpisah selama berjalan, sehingga Anda mendapatkan hasil maksimal dari seluruh perangkat keras tanpa mengubah satu pengaturan pun.'
-sourceHash: '22eaba1acd1a'
+sourceHash: bff032ea0960
 translation: draft
 ---
 
@@ -26,21 +26,10 @@ Siapkan alamat Blocknet atau nama pendek Blocknet ID, unduh seine untuk sistem A
 - **Alamat Blocknet.** Pasang wallet Blocknet resmi, yaitu [wallet baris perintah](https://github.com/blocknetprivacy/blocknet/releases/latest) atau [wallet desktop](https://github.com/blocknetprivacy/blocknet-gui/releases/latest), lalu salin alamat Anda. [Panduan wallet](/id/blog/blocknet-wallet-for-mining/) menjelaskannya langkah demi langkah. Simpan wallet dan frasa pemulihannya di komputer Anda sendiri; jangan taruh di rig penambangan yang dipakai bersama.
 - **Atau nama pendek.** Jika Anda punya [nama pendek Blocknet ID](/id/blog/blocknet-id-pay-by-name/) dari [blocknet.id](https://blocknet.id), Anda bisa menambang ke `@name` alih-alih menempelkan alamat yang panjang.
 - **Sekitar 2 GB RAM per thread penambangan.** seine menyesuaikan diri dengan komputer Anda dan menyisakan ruang untuk sistem, jadi Anda tidak perlu menghitungnya lebih dulu.
-- **Windows, macOS, atau Linux.** NVIDIA — Windows: Driver tampilan NVIDIA; DLL runtime bawaan di samping berkas program; Linux: Driver NVIDIA dan pustaka runtime NVRTC yang kompatibel.
 
 ## Langkah 1: unduh seine
 
 Ambil arsip untuk sistem Anda dari [bagian unduhan](/id/#download). Tidak ada yang perlu dipasang: ekstrak arsipnya dan seine siap dipakai.
-
-| Sistem | Arsip | Kartu grafis |
-|---|---|---|
-| Windows (x86_64) | `seine-windows-x86_64.zip` | NVIDIA; runtime CUDA sudah disertakan |
-| Linux (x86_64) | `seine-linux-x86_64.tar.gz` | Driver NVIDIA dan pustaka runtime NVRTC yang kompatibel; glibc ≥ 2.39 |
-| Linux (ARM64) | `seine-linux-aarch64.tar.gz` | CPU (glibc 2.39 atau lebih baru) |
-| macOS (Apple Silicon) | `seine-macos-aarch64.tar.gz` | CPU |
-| macOS (Intel) | `seine-macos-x86_64.tar.gz` | CPU |
-
-Setiap rilis juga menyertakan file `SHA256SUMS.txt`, sehingga Anda bisa memeriksa bahwa unduhan Anda cocok dengan rilisnya.
 
 ## Langkah 2: jalankan
 
@@ -55,6 +44,8 @@ Di Windows, klik dua kali `seine.exe`. Di macOS atau Linux, buka terminal di fol
 seine meminta alamat pembayaran atau `@shortname` Anda, lalu pool. Tekan Enter untuk menerima pool bawaan, `stratum+tcp://bntpool.com:3333`. Dalam sekejap [dasbor](/id/blog/seine-dashboard-explained/) menampilkan hashrate dan share pertama Anda.
 
 Sejak itu seine terus menyetel dirinya sambil menambang. seine membandingkan jumlah thread dan kernel CPU pada pekerjaan penambangan sungguhan, hanya beralih setelah peningkatan terkonfirmasi, mundur jika memori mulai sesak, dan mengingat pengaturan yang berhasil untuk start berikutnya. Semua itu dilakukan tanpa pernah menyambung ulang ke pool, jadi penyetelan tidak memakan waktu menambang Anda.
+
+<MinerSettings os="any" />
 
 ## Berapa lama sampai Anda dibayar?
 
@@ -77,15 +68,6 @@ Hashrate terutama bergantung pada bandwidth memori dan jumlah thread yang muat d
 Konfigurasi tercepat dalam pengukuran ini adalah AMD EPYC 9355P pada 97,1 H/s: 64 thread penambangan dan RAM 192 GiB di Linux dengan pengaturan default seine.
 
 Hasil untuk setiap CPU yang diuji ada di [halaman performa](https://github.com/zpalmtree/seine/blob/master/docs/PERFORMANCE.md), dan [panduan perangkat keras penambangan Blocknet](/id/blog/blocknet-mining-hardware-hashrate/) menjelaskan bagaimana RAM dan bandwidth memori menentukan angka-angka ini.
-
-## Bagaimana seine mendapatkan lebih banyak dari CPU yang sama?
-
-seine membawa beberapa kernel Argon2id untuk setiap keluarga prosesor dan mengukurnya di komputer Anda sambil menambang. Di perangkat keras yang kami uji, kernel yang tepat membuat perbedaan besar:
-
-- **AWS Graviton4:** kernel SHA3 dengan prefetching menambang 56% lebih cepat daripada NEON biasa (dari 13,80 menjadi 21,50 H/s).
-- **AMD EPYC 9R45 (Zen 5):** kernel streaming menambang 30% lebih cepat daripada AVX2 (dari 34,47 menjadi 44,74 H/s dengan 24 thread).
-
-Anda tidak perlu memilih semua ini. seine hanya berganti kernel setelah peningkatan terkonfirmasi dan mengingat hasilnya untuk start berikutnya.
 
 ## Bagaimana cara mendapatkan hashrate lebih tinggi?
 

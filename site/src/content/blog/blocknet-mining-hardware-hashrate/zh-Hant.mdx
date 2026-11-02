@@ -8,10 +8,10 @@ faq:
   - q: '32 GB 記憶體能執行多少個 Blocknet 挖礦執行緒？'
     a: '約 14 個。每個執行緒每次雜湊都需要一塊 2 GiB 的記憶體，所以 32 GB 理論上能容納 16 塊。seine 會預留 5% (預設最多 1 GiB) 的記憶體，並為作業系統留出空間，因此 32 GB 的電腦約能執行 14 個執行緒。seine 啟動時會自動算好這些。'
   - q: 'seine 挖 Blocknet 時會使用哪些顯示卡？'
-    a: 'seine 的 Windows 與 Linux 版本使用 NVIDIA 顯示卡挖礦，會在處理器之外同時使用偵測到的每一張顯示卡。在 Windows 上已內建 CUDA 執行環境，只需安裝 NVIDIA 驅動程式。在 Linux 上需安裝驅動程式與 NVRTC 函式庫。首次啟動時會為每張顯示卡調校並記住結果。'
+    a: 'seine 透過 Windows 和 Linux 下載版使用 NVIDIA 顯示卡挖礦，並把偵測到的每張顯示卡與處理器一起使用。你只需要 NVIDIA 驅動程式。首次啟動會為每張顯示卡調校並記住結果。'
   - q: '為什麼記憶體頻寬對挖 Blocknet 很重要？'
     a: '每次 Blocknet 雜湊都要寫滿一整塊 2 GiB 的記憶體，並從其中各處讀回資料，遠遠超出任何處理器快取的容量。因此算力取決於記憶體系統搬運資料的速度。記憶體頻寬較高、記憶體足以執行更多執行緒的電腦挖得最快。'
-sourceHash: '4d5509a6c9e1'
+sourceHash: 9f6e4878e6b1
 translation: draft
 ---
 
@@ -89,7 +89,7 @@ seine 也會把執行緒數限制在處理器的邏輯核心數以內，所以�
 可以。在 Windows 與 Linux 上，seine 會同時使用每個 CPU 核心與偵測到的每張 NVIDIA 顯示卡挖礦，算力會相加。這不需要任何參數，是預設行為。
 
 - **Windows：** 下載的壓縮檔已內建 CUDA 執行環境，只需安裝較新的 NVIDIA 驅動程式。
-- **Linux：** 從發行版或 NVIDIA 安裝 NVIDIA 驅動程式與 NVRTC 函式庫。
+- **Linux:** 有 NVIDIA 驅動程式就夠了。
 - **首次啟動：** seine 會為每張顯示卡調校運算核心程式參數並快取結果，之後幾秒內即可啟動。
 
 在[搭載 Apple 晶片的 Mac](/zh-hant/blog/mine-blocknet-on-mac/) 上，seine 預設使用 CPU 挖礦，這是在 M4 Max 上實測最快的方式。[NVIDIA 指南](/zh-hant/blog/mine-blocknet-nvidia-gpu/)介紹了多顯示卡礦機與相關需求。

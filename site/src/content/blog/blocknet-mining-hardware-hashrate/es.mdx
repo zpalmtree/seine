@@ -8,10 +8,10 @@ faq:
   - q: '¿Cuántos hilos de minería de Blocknet admiten 32 GB de RAM?'
     a: 'Unos 14. Cada hilo necesita un bloque de memoria de 2 GiB para cada hash, así que en teoría caben 16 en 32 GB. seine deja un 5% (como máximo 1 GiB por defecto) de la RAM en reserva y espacio para el sistema operativo, lo que deja un equipo de 32 GB en unos 14 hilos. Lo calcula por ti al arrancar.'
   - q: '¿Qué tarjetas gráficas usa seine para minar Blocknet?'
-    a: 'seine mina con tarjetas gráficas NVIDIA en las descargas para Windows y Linux, y usa todas las tarjetas que detecta junto con el procesador. En Windows se incluye el runtime de CUDA, así que solo necesitas el controlador de NVIDIA. En Linux, instala el controlador y las bibliotecas NVRTC. El primer inicio ajusta cada tarjeta y recuerda el resultado.'
+    a: 'Seine mina en tarjetas gráficas NVIDIA con las descargas para Windows y Linux, y usa todas las tarjetas que detecta junto con el procesador. Solo necesitas el driver de NVIDIA. El primer inicio ajusta cada tarjeta y recuerda el resultado.'
   - q: '¿Por qué importa el ancho de banda de memoria para minar Blocknet?'
     a: 'Cada hash de Blocknet escribe un bloque de memoria completo de 2 GiB y vuelve a leer datos de todo él, mucho más de lo que cabe en cualquier caché de procesador. Por eso la tasa de hash depende de lo rápido que el sistema de memoria mueve los datos. Los equipos con más ancho de banda de memoria y RAM suficiente para muchos hilos son los que más rápido minan.'
-sourceHash: '4d5509a6c9e1'
+sourceHash: 9f6e4878e6b1
 translation: draft
 ---
 
@@ -89,7 +89,7 @@ Si vas a comprar RAM para minar, ajústala a los hilos que quieres: unos 2 GB po
 Sí. En Windows y Linux, seine mina a la vez con todos los núcleos de la CPU y todas las tarjetas gráficas NVIDIA que detecta, y las tasas de hash se suman. No necesitas ninguna opción para ello: es el comportamiento predeterminado.
 
 - **Windows:** la descarga incluye las bibliotecas del runtime de CUDA, así que solo necesitas un controlador de NVIDIA actualizado.
-- **Linux:** instala el controlador de NVIDIA y las bibliotecas NVRTC desde tu distribución o desde NVIDIA.
+- **Linux:** el driver de NVIDIA basta.
 - **Primer inicio:** seine ajusta la configuración de sus kernels para cada tarjeta y guarda el resultado, así que los siguientes arranques tardan segundos.
 
 En los [Mac con Apple Silicon](/es/blog/mine-blocknet-on-mac/), seine mina con la CPU por defecto, la configuración más rápida medida en el M4 Max. La [guía de NVIDIA](/es/blog/mine-blocknet-nvidia-gpu/) explica los rigs con varias GPU y los requisitos.

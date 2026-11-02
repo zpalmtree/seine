@@ -9,7 +9,7 @@ faq:
     a: 'Pula bntpool.com wypłaca w systemie PPLNS z sześciogodzinnym oknem. Nagrodę za blok można wypłacić dopiero, gdy nad blokiem jest już 60 kolejnych bloków, czyli po około pięciu godzinach przy pięciominutowych blokach, a salda są wysyłane, gdy osiągną 0,1 BNT. Pierwszej wypłaty spodziewaj się kilka godzin po pierwszych zaakceptowanych udziałach.'
   - q: 'Czy mogę kopać Blocknet jednocześnie na CPU i GPU?'
     a: 'Tak. W systemach Windows i Linux seine kopie jednocześnie na każdym rdzeniu CPU i na każdej karcie graficznej NVIDIA w komputerze, a oba hashrate się sumują. Procesor i każdą kartę dostraja osobno podczas pracy, więc wyciskasz maksimum z całego sprzętu bez zmieniania żadnego ustawienia.'
-sourceHash: '22eaba1acd1a'
+sourceHash: bff032ea0960
 translation: draft
 ---
 
@@ -26,21 +26,10 @@ Zdobądź adres Blocknet albo krótką nazwę Blocknet ID, pobierz seine dla swo
 - **Adresu Blocknet.** Zainstaluj oficjalny portfel Blocknet, [portfel wiersza poleceń](https://github.com/blocknetprivacy/blocknet/releases/latest) albo [portfel desktopowy](https://github.com/blocknetprivacy/blocknet-gui/releases/latest), i skopiuj swój adres. [Poradnik o portfelu](/pl/blog/blocknet-wallet-for-mining/) przeprowadzi Cię przez to krok po kroku. Trzymaj portfel i jego frazę odzyskiwania na własnym komputerze; nie umieszczaj ich na współdzielonej koparce.
 - **Albo krótkiej nazwy.** Jeśli masz [krótką nazwę Blocknet ID](/pl/blog/blocknet-id-pay-by-name/) z [blocknet.id](https://blocknet.id), możesz kopać na `@name` zamiast wklejać długi adres.
 - **Około 2 GB RAM na każdy wątek kopiący.** seine sam dopasowuje się do Twojego komputera i zostawia zapas dla systemu, więc nie musisz tego wcześniej liczyć.
-- **Systemu Windows, macOS lub Linux.** NVIDIA — Windows: Sterownik graficzny NVIDIA; dołączone biblioteki DLL obok pliku wykonywalnego; Linux: Sterownik NVIDIA i zgodne biblioteki wykonawcze NVRTC.
 
 ## Krok 1: pobierz seine
 
 Pobierz archiwum dla swojego systemu z [sekcji pobierania](/pl/#download). Nie trzeba niczego instalować: rozpakuj je i gotowe.
-
-| System | Archiwum | Karty graficzne |
-|---|---|---|
-| Windows (x86_64) | `seine-windows-x86_64.zip` | NVIDIA; środowisko uruchomieniowe CUDA jest dołączone |
-| Linux (x86_64) | `seine-linux-x86_64.tar.gz` | Sterownik NVIDIA i zgodne biblioteki wykonawcze NVRTC; glibc ≥ 2.39 |
-| Linux (ARM64) | `seine-linux-aarch64.tar.gz` | CPU (glibc 2.39 lub nowszy) |
-| macOS (Apple Silicon) | `seine-macos-aarch64.tar.gz` | CPU |
-| macOS (Intel) | `seine-macos-x86_64.tar.gz` | CPU |
-
-Każde wydanie zawiera też plik `SHA256SUMS.txt`, więc możesz sprawdzić, czy pobrany plik zgadza się z wydaniem.
 
 ## Krok 2: uruchom go
 
@@ -55,6 +44,8 @@ W systemie Windows kliknij dwukrotnie `seine.exe`. W systemie macOS lub Linux ot
 seine pyta o adres wypłat lub `@shortname`, a potem o pulę. Naciśnij Enter, aby zaakceptować domyślną, `stratum+tcp://bntpool.com:3333`. Po chwili [panel](/pl/blog/seine-dashboard-explained/) pokaże Twój hashrate i pierwsze udziały.
 
 Od tej chwili seine dostraja się w trakcie kopania. Porównuje różne liczby wątków i jądra obliczeniowe CPU na prawdziwej pracy kopania, przełącza się dopiero po potwierdzonym zysku, wycofuje się, gdy zaczyna brakować pamięci, i zapamiętuje, co zadziałało, na kolejny start. Nigdy nie łączy się przy tym ponownie z pulą, więc dostrajanie nie kosztuje Cię czasu kopania.
+
+<MinerSettings os="any" />
 
 ## Kiedy dostaniesz wypłatę?
 
@@ -77,15 +68,6 @@ Hashrate zależy głównie od przepustowości pamięci i liczby wątków, na kt�
 Najszybsza konfiguracja w tych pomiarach to AMD EPYC 9355P osiągający 97,1 H/s: 64 wątki kopania i 192 GiB RAM w Linuksie przy domyślnych ustawieniach seine.
 
 Wyniki dla każdego testowanego CPU są na [stronie wydajności](https://github.com/zpalmtree/seine/blob/master/docs/PERFORMANCE.md), a [poradnik o sprzęcie do kopania Blocknet](/pl/blog/blocknet-mining-hardware-hashrate/) wyjaśnia, jak RAM i przepustowość pamięci wpływają na te liczby.
-
-## Jak seine wyciska więcej z tego samego CPU?
-
-seine ma kilka jąder obliczeniowych Argon2id dla każdej rodziny procesorów i mierzy je na Twoim komputerze podczas kopania. Na testowanym przez nas sprzęcie odpowiednie jądro robiło dużą różnicę:
-
-- **AWS Graviton4:** jądro SHA3 z prefetchingiem kopie o 56% szybciej niż zwykły NEON (z 13,80 do 21,50 H/s).
-- **AMD EPYC 9R45 (Zen 5):** jądro strumieniowe kopie o 30% szybciej niż AVX2 (z 34,47 do 44,74 H/s przy 24 wątkach).
-
-Nie musisz niczego z tego wybierać. seine przełącza jądra dopiero po potwierdzonym zysku i zapamiętuje wynik na kolejny start.
 
 ## Jak uzyskać większy hashrate?
 

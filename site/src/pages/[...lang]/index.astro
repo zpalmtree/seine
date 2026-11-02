@@ -20,7 +20,7 @@ const guides = (slugs: string[]) => slugs.map((slug) => {
     return post;
 });
 const downloadGuides = guides(['mine-blocknet-nvidia-gpu']);
-const setupGuides = guides(['how-to-mine-blocknet', 'blocknet-wallet-for-mining']);
+const setupGuides = guides(['how-to-mine-blocknet', 'blocknet-wallet-for-mining', 'configure-seine-miner']);
 const performanceGuides = guides(['blocknet-mining-hardware-hashrate', 'huge-pages-blocknet-mining']);
 const RELEASE = `${REPO}/releases/latest/download/`;
 const poolStatsUrl = `https://bntpool.com/stats${locale === 'en' ? '' : `?lang=${locale}`}`;

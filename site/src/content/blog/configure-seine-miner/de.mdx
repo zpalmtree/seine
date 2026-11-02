@@ -1,37 +1,114 @@
 ---
-title: 'seine konfigurieren: gespeicherte Werte und Startoptionen'
-description: 'Finde die seine-Konfiguration, speichere Pool und Wallet-Adresse, verstehe Startoptionen und prüfe nach dem Neustart die Einstellungen deines Blocknet-Miners.'
+title: 'seine-Einstellungen ändern: Threads, CPU, GPU und Pool'
+description: 'Schalte CPU- oder GPU-Mining in seine ab, lege die Thread-Zahl fest, wähle eine Grafikkarte, behalte deine Einstellungen bei jedem Start und ändere Adresse oder Pool.'
 tags: ['Mining-Anleitung', 'Konfiguration', 'seine']
 faq:
-  - q: 'Wo speichert seine die Konfiguration?'
-    a: 'Standardmäßig liest seine seine-data/seine.config.json relativ zum Arbeitsverzeichnis beim Start. data-dir wählt ein anderes Basisverzeichnis. Terminal, Verknüpfung und geplante Aufgabe können unterschiedliche Arbeitsverzeichnisse verwenden. Notiere deshalb den vollständigen Konfigurationspfad zusammen mit dem Startbefehl.'
-  - q: 'Ändert ein Kommandozeilenargument die Datei?'
-    a: 'Bei vorhandener Konfiguration haben explizite Verbindungsargumente für diesen Lauf Vorrang, ohne gespeicherte Adresse, Pool-URL oder Rig-Namen zu ersetzen. Behalte das Argument im regulären Startbefehl oder stoppe den Miner und ändere das gespeicherte Feld. Prüfe danach den normalen Start.'
-  - q: 'Gehören alle Mining-Optionen in die JSON-Datei?'
-    a: 'Das gespeicherte Schema enthält wenige Verbindungsfelder. Hardware- und Laufzeitoptionen wie Backend und Threads gehören in die Startargumente. Ähnlich benannte JSON-Felder setzen diese Optionen nicht. Sichere deshalb neben dem Datenordner auch den Startbefehl beziehungsweise das Startskript.'
-sourceHash: '66e5ad9f2665'
+  - q: 'Wie schalte ich CPU-Mining in seine aus?'
+    a: 'Starte seine mit der Option backend auf deine Grafikkarte, also nvidia oder amd. Nimm beide, durch ein Komma getrennt, wenn der Rechner beide Kartenarten hat. Seine mint dann nur mit den Grafikkarten und lässt den Prozessor für andere Arbeit frei.'
+  - q: 'Wie schalte ich GPU-Mining in seine aus?'
+    a: 'Starte seine mit der Option backend auf cpu. Seine mint dann nur mit dem Prozessor und lässt alle Grafikkarten für Spiele und andere Apps frei. Entferne die Option, um wieder mit Prozessor und Grafikkarten zusammen zu minen.'
+  - q: 'Wie viele CPU-Threads sollte ich nutzen?'
+    a: 'Seine wählt die Thread-Zahl für dich, du musst sie also nur festlegen, wenn du Platz für andere Arbeit lassen willst. Jeder Thread braucht etwa 2 GB RAM. Drücke im Dashboard die Minustaste, bis sich dein Computer gut anfühlt, und nutze dann diese Zahl.'
+  - q: 'Wo speichert seine seine Einstellungen?'
+    a: 'Seine speichert deine Adresse, den Pool und den Worker-Namen in seine-data/seine.config.json, im Ordner, aus dem du es startest. Thread- und Backend-Optionen werden dort nicht gespeichert, lege sie also in eine kleine Startdatei, wenn du sie bei jedem Start willst.'
+sourceHash: b5ca5a9a16d8
 translation: draft
 ---
 
-Starte deinen Blocknet-Miner jedes Mal mit nachvollziehbaren Einstellungen. Diese Anleitung für seine v0.2.37 erklärt Speicherort, Vorrang der Startargumente und dauerhafte Änderungen. Voraussetzung ist eine funktionierende Installation; der [Update-Leitfaden](/de/blog/update-seine-miner/) behandelt den Austausch der Anwendung.
+Seine läuft gut ganz ohne Einstellungen. Diese Anleitung behandelt die Änderungen, die du am ehesten willst: CPU- oder GPU-Mining abschalten, weniger Threads nutzen, eine Grafikkarte wählen und Adresse oder Pool ändern.
 
-## Wie wählt seine die Einstellungen?
+## Wie änderst du eine seine-Einstellung?
 
 <Answer>
-seine kombiniert gespeicherte Verbindungswerte mit Startargumenten. Explizite Verbindungsargumente haben Vorrang vor den entsprechenden gespeicherten Werten. Das Datenverzeichnis bestimmt die gelesene Datei. Hardware- und Laufzeitoptionen bleiben Startargumente. Bewahre deshalb sowohl die Konfigurationsdatei als auch den normalen Startbefehl auf.
+Schließe seine, öffne ein Terminal in seinem Ordner und starte es erneut mit der Einstellung im Befehl, zum Beispiel `./seine --threads 4`. Unter Windows nutzt du PowerShell und `.\seine.exe --threads 4`. Seine behält deine gespeicherte Adresse und deinen Pool, du tippst also nur, was du ändern willst.
 </Answer>
 
-<img src="/assets/blog/configure-seine-miner.svg" alt="Konfigurationsdatei und Terminalbefehl führen zum Miner; nach dem Neustart folgt eine Prüfung." width="1200" height="675" loading="lazy" />
+- **Windows:** Öffne den seine-Ordner im Datei-Explorer, tippe `powershell` in die Adressleiste und drücke die Eingabetaste.
+- **macOS und Linux:** Öffne das Terminal und wechsle mit `cd` in den seine-Ordner.
 
-## Finde die tatsächlich verwendete Konfiguration
+Die Beispiele unten nutzen `./seine`. Unter Windows tippst du stattdessen `.\seine.exe`.
 
-Standard ist `./seine-data/seine.config.json`, relativ zum Arbeitsverzeichnis des Prozesses. Dieses kann vom Programmordner abweichen. Prüfe Terminalordner, Verknüpfung oder Dienst vor dem Bearbeiten. Zwei Startwege können dasselbe Programm mit verschiedenen Datenordnern öffnen.
+## Wie schaltest du CPU- oder GPU-Mining ab?
 
-`--data-dir` wählt das Basisverzeichnis; der Dateiname bleibt `seine.config.json`. Verwende bei mehreren Startorten einen festen absoluten Pfad. Notiere Programm, Arbeitsverzeichnis, Datenpfad und alle Argumente. Die [Windows-Startanleitung](/de/blog/start-miner-automatically-windows/) zeigt diese Angaben einschließlich Leerzeichen in der Aufgabenplanung.
+Standardmäßig mint seine mit deiner CPU und jeder unterstützten Grafikkarte. Die Einstellung `--backend` wählt, welche genutzt werden:
 
-## Welche Werte gehören in die Datei?
+| Was du willst | Füge das hinzu |
+|---|---|
+| Nur CPU, GPU aus | `--backend cpu` |
+| Nur NVIDIA-GPU, CPU aus | `--backend nvidia` |
+| Nur AMD-GPU, CPU aus | `--backend amd` |
+| NVIDIA- und AMD-GPUs, CPU aus | `--backend nvidia,amd` |
 
-Das Beispiel zeigt die wichtigsten Verbindungsfelder. Ersetze `@yourname` durch deine registrierte Blocknet ID oder vollständige Empfangsadresse. Es beschreibt das Dateiformat und ist kein Befehl. Ändere in einer bestehenden Installation nur die betreffenden Felder, statt die gesamte Datei zu ersetzen.
+Um zum Beispiel mit einer NVIDIA-Karte zu minen und die CPU frei zu lassen:
+
+```sh
+./seine --backend nvidia
+```
+
+Das Devices-Panel im [Dashboard](/de/blog/seine-dashboard-explained/) zeigt eine Zeile für jedes Gerät, das minet.
+
+## Wie nutzt du weniger CPU-Threads?
+
+Füge `--threads` mit der gewünschten Zahl hinzu:
+
+```sh
+./seine --threads 4
+```
+
+Jeder Thread braucht etwa 2 GB RAM, 4 Threads also etwa 8 GB. Seine bleibt bei dieser Zahl, bis du die Einstellung entfernst.
+
+Um eine gute Zahl zu finden, starte seine normal und drücke im Dashboard `-`, um einen Thread zu entfernen, oder `+`, um einen hinzuzufügen. Die Änderung dauert einen Moment, und das Dashboard zeigt die neue Anzahl. Hör auf, wenn sich dein Computer gut anfühlt, und nutze diese Zahl mit `--threads`, denn die Tasten gelten nur, bis du seine schließt.
+
+Damit seine selbst eine leichtere Thread-Zahl wählt, nutze stattdessen das hier:
+
+```sh
+./seine --cpu-profile efficiency
+```
+
+Die [Desktop-Anleitung](/de/blog/mine-while-using-pc/) sagt mehr dazu, wie du minst, während du deinen Computer nutzt.
+
+## Wie wählst du eine einzelne Grafikkarte?
+
+Füge die Nummer der Karte hinzu. Die erste Karte ist `0`:
+
+```sh
+./seine --backend cpu,nvidia --nvidia-devices 0
+```
+
+Das mint mit der CPU und der ersten NVIDIA-Karte. Nutze `--nvidia-devices 0,1` für zwei Karten und lass `cpu,` weg, um die CPU abzuschalten. AMD-Karten funktionieren genauso:
+
+```sh
+./seine --backend cpu,amd --amd-devices 0
+```
+
+Um Videospeicher für andere Apps freizulassen, nutze `--nvidia-max-lanes 2` oder `--amd-max-lanes 2`. Jede Lane braucht etwa 2 GB Videospeicher. Integrierte Radeon-Grafik bleibt aus, solange du nicht selbst `--backend amd` hinzufügst.
+
+## Wie behältst du deine Einstellungen bei jedem Start?
+
+Seine speichert Adresse, Pool und Worker-Namen selbst. Einstellungen wie `--threads` und `--backend` gelten nur für diesen Lauf. Lege sie daher in eine kleine Startdatei und öffne diese Datei statt seine.
+
+Öffne unter Windows den Editor, tippe diese Zeilen mit deinen eigenen Einstellungen und speichere die Datei im seine-Ordner als `start-mining.bat`, wobei **Dateityp** auf **Alle Dateien** steht:
+
+```bat
+seine.exe --backend cpu --threads 4
+pause
+```
+
+Doppelklicke auf `start-mining.bat`, um das Mining zu starten. Die Zeile `pause` hält das Fenster offen, falls seine stoppt, damit du die letzte Meldung lesen kannst.
+
+Speichere unter macOS oder Linux diese Zeilen im seine-Ordner als `start-mining.sh`:
+
+```sh
+#!/bin/sh
+cd "$(dirname "$0")"
+./seine --backend cpu --threads 4
+```
+
+Führe einmal `chmod +x start-mining.sh` aus und starte das Mining dann mit `./start-mining.sh`. Automatische Updates starten seine mit denselben Einstellungen neu. Damit das Mining bei jeder Windows-Anmeldung startet, folge der [Anleitung zum automatischen Start](/de/blog/start-miner-automatically-windows/).
+
+## Wie änderst du Adresse, Pool oder Worker-Namen?
+
+Schließe seine und öffne `seine-data/seine.config.json` in einem Texteditor. Der Ordner liegt in dem Ordner, aus dem du seine startest. Ändere den gewünschten Wert und speichere die Datei:
 
 ```json
 {
@@ -43,34 +120,26 @@ Das Beispiel zeigt die wichtigsten Verbindungsfelder. Ersetze `@yourname` durch 
 }
 ```
 
-`mode`, `address`, `pool_url` und `pool_worker` wählen Modus, Ziel, Pool und Rig-Namen. Erhalte `schema_version` und ein vorhandenes `dev_fee_pool_worker`. Letzteres ist eine separat erzeugte Kennung; dein Rig nutzt `pool_worker`. Wiederherstellungsphrase und private Schlüssel gehören nicht in diese Verbindungsdatei.
+Lass die anderen Zeilen, wie sie sind. Behalte die Anführungszeichen und Kommas, und füge dieser Datei weder deine Wiederherstellungsphrase noch private Schlüssel hinzu.
 
-## Wie bleibt eine Änderung erhalten?
+Um für einen Lauf einen anderen Wert zu nutzen, füge ihn dem Befehl hinzu. Die gespeicherte Datei bleibt unverändert:
 
-Stoppe den Miner und sichere die Datei. Bearbeite sie als Klartext mit gültigem JSON und doppelten Anführungszeichen; behalte den Dateinamen ohne zusätzliche Endung. Ändere nur das benötigte Feld im tatsächlich verwendeten Datenordner. Prüfe Kommas, vermeide Kommentare und abschließende Kommas und nutze gegebenenfalls die JSON-Prüfung des Editors. Das Backup ermöglicht einen exakten Vergleich.
-
-Prüfe den Startweg auf explizite Gegenwerte. Eine neue gespeicherte Adresse wirkt nicht, solange ein altes `--address` im Befehl steht. Aktualisiere das Argument oder entferne es zugunsten der Datei. Starte über die gewöhnliche Verknüpfung, das Skript oder die Aufgabe und kontrolliere die wirksamen Werte.
-
-## Temporäre Optionen bewusst verwenden
-
-Bei vorhandener Konfiguration setzt folgende Pool-Option den Rig-Namen für diesen Lauf. Ohne das Argument gilt beim nächsten Start wieder der gespeicherte Name. Das eignet sich für kontrollierte Änderungen; für jeden Start gehört das Argument in den regulären Startbefehl.
-
-```text
---pool-worker desktop-02
+```sh
+./seine --pool-worker desktop-02
 ```
 
-Fehlt die Datei beim ersten Start, erstellt seine sie aus den anfänglichen Verbindungsangaben. Das unterscheidet sich vom Übersteuern einer vorhandenen Datei. Beachte dies beim Kopieren eines Befehls auf einen anderen Computer, der möglicherweise erstmals konfiguriert wird. Die [Konfigurationsreferenz](https://github.com/zpalmtree/seine/blob/v0.2.37/docs/guides/configuration.md) dokumentiert Startabfragen und Optionen.
+Die beiden anderen Einstellungen sind `--address` und `--pool-url`. Die [Anleitung zur Adressänderung](https://bntpool.com/blog/de/change-mining-wallet-address/) erklärt, wie der Pool deine Arbeit nach einer Adressänderung gutschreibt.
 
-## Tuning-Optionen beim Startbefehl aufbewahren
+## Was tun, wenn eine Einstellung nicht funktioniert?
 
-`--backend` und `--threads` werden als Startargumente übergeben. Das Verbindungsschema ist keine allgemeine Optionsliste. Ein ähnlich benanntes JSON-Feld setzt keine solche Laufzeitoption. Bewahre bewusste Hardware-Einstellungen im Skript, in der Verknüpfung oder im Dienst auf.
+| Was du siehst | Was du tun kannst |
+|---|---|
+| `--nvidia-devices requires selecting nvidia in --backend` | Füge `nvidia` zum Backend hinzu: `--backend cpu,nvidia`. Dasselbe gilt für `amd`. |
+| `configured CPU lanes need` mehr RAM | Nutze mit `--threads` eine kleinere Zahl, etwa einen Thread pro 2 GB freiem RAM. |
+| `all GPU backends failed to start` | Installiere den aktuellen Treiber für deine Karte. Die [AMD-Anleitung](https://github.com/zpalmtree/seine/blob/master/docs/guides/amd.md) nennt, was AMD-Karten unter Linux brauchen. |
+| Seine fragt erneut nach deiner Adresse | Starte seine aus demselben Ordner wie zuvor oder lege den Ordner mit `--data-dir` fest. |
+| Deine Einstellungen sind wieder automatisch | Starte seine über deine Startdatei. Die Tasten `-` und `+` gelten nur, bis du seine schließt. |
 
-Thread-Tasten im Dashboard ändern die aktuelle Sitzung, nicht einen gespeicherten Standard. Automatisches Tuning besitzt eigene Cache-Dateien. Erhalte sie getrennt von Verbindungsänderungen und lasse jeden Rechner seine Hardware abstimmen. Die [Autotuning-Anleitung](/de/blog/seine-automatic-cpu-tuning/) erklärt Cache-Nutzung und explizite Thread-Zahlen.
+Die [Optionsreferenz](https://github.com/zpalmtree/seine/blob/master/docs/MINER_FLAGS.md) listet jede Einstellung auf.
 
-## Warum scheinen Einstellungen zurückgesetzt?
-
-Vergleiche Datenpfad und Argumente mit dem letzten funktionierenden Lauf. Neuer Entpackordner, anderer Terminalordner oder alte Aufgabenargumente erklären oft den Unterschied. Lies bei einem Parserfehler zuerst Dateiname und Meldung. Stelle das Backup wieder her oder korrigiere JSON und starte einmal über den vorgesehenen Weg.
-
-Prüfe Zieladresse, Pool, Rig-Namen und akzeptierte Shares. Wiederhole einen normalen Start, um Dauerhaftigkeit zu prüfen; ein einzelner Lauf mit Argumenten bestätigt nur diesen Befehl. Nutze die [Dashboard-Anleitung](/de/blog/seine-dashboard-explained/) und bei neuem Gutschriftziel die [Adresswechsel-Anleitung](https://bntpool.com/blog/de/change-mining-wallet-address/). Bewahre funktionierenden Startbefehl und Konfigurationsbackup zusammen auf.
-
-<CTA target="seine" title="Aktuelle seine-Version herunterladen" text="Nutze einen festen Datenordner und bewahre den geprüften Startbefehl mit den Verbindungswerten auf." />
+<CTA target="seine" title="Hol dir die aktuelle seine-Version" text="Lade seine herunter, starte es einmal und füge dann nur die Einstellungen hinzu, die du ändern willst." />

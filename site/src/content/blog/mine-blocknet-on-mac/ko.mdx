@@ -11,7 +11,7 @@ faq:
     a: '채굴 스레드 하나는 2 GiB 메모리 블록을 처리하므로 스레드당 약 2 GB로 계획하십시오. 16 GB Mac은 최대 7개, 32 GB Mac은 최대 15개, 64 GB Mac은 최대 31개의 스레드를 실행할 수 있습니다. seine는 남은 메모리를 계산하고 코어 수에도 스레드 수를 맞춥니다.'
   - q: 'Intel Mac에서 Blocknet을 채굴할 수 있습니까?'
     a: '네. seine는 Intel Mac용으로 별도의 아카이브인 seine-macos-x86_64.tar.gz를 제공하며, 과정은 Apple 실리콘과 같습니다. 다운로드하고 터미널에서 압축을 푼 뒤 ./seine를 실행하고 Blocknet 주소나 @name을 붙여넣으십시오. seine가 메모리에 맞게 스레드 수를 정하고 기본값인 bntpool.com에서 채굴을 시작합니다.'
-sourceHash: '33a60ad4df0c'
+sourceHash: 10bf5cec430a
 translation: draft
 ---
 
@@ -72,6 +72,8 @@ macOS 빌드는 ad-hoc 서명되어 있습니다. macOS가 첫 실행을 막으�
 xattr -d com.apple.quarantine ./seine
 ./seine
 ```
+
+<MinerSettings os="mac" />
 
 ## Apple 실리콘 Mac은 왜 Blocknet 채굴을 잘합니까?
 

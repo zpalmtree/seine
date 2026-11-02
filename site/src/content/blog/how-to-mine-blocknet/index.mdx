@@ -2,7 +2,7 @@
 title: How to mine Blocknet
 description: Start mining Blocknet on Windows, macOS or Linux in a few minutes. Get an address, download seine, and mine on bntpool.com with your CPU and NVIDIA GPU.
 date: 2026-10-25
-updated: 2026-11-01
+updated: 2026-11-02
 tags: [Mining guide, Blocknet, Argon2id, bntpool]
 faq:
   - q: How much RAM do I need to mine Blocknet?
@@ -27,21 +27,10 @@ Get a Blocknet address or a Blocknet ID shortname, download seine for your syste
 - **A Blocknet address.** Install the official Blocknet wallet, either the [command-line wallet](https://github.com/blocknetprivacy/blocknet/releases/latest) or the [desktop wallet](https://github.com/blocknetprivacy/blocknet-gui/releases/latest), and copy your address. The [wallet guide](/blog/blocknet-wallet-for-mining/) walks through it step by step. Keep the wallet and its recovery phrase on your own computer; don't put them on a shared mining rig.
 - **Or a shortname.** If you have a [Blocknet ID shortname](/blog/blocknet-id-pay-by-name/) from [blocknet.id](https://blocknet.id), you can mine to `@name` instead of pasting the long address.
 - **About 2 GB of RAM per mining thread.** Seine sizes itself to your machine and leaves headroom for the system, so you don't need to work this out first.
-- **Windows, macOS or Linux.** NVIDIA — Windows: NVIDIA display driver; bundled runtime DLLs beside the executable; Linux: NVIDIA driver and compatible NVRTC runtime libraries.
 
 ## Step 1: download seine
 
 Get the archive for your system from the [download section](/#download). There is nothing to install: unzip it and you're ready.
-
-| System | Archive | Graphics cards |
-|---|---|---|
-| Windows (x86_64) | `seine-windows-x86_64.zip` | NVIDIA; the CUDA runtime is included |
-| Linux (x86_64) | `seine-linux-x86_64.tar.gz` | NVIDIA driver and compatible NVRTC runtime libraries; glibc ≥ 2.39 |
-| Linux (ARM64) | `seine-linux-aarch64.tar.gz` | CPU (glibc 2.39 or newer) |
-| macOS (Apple Silicon) | `seine-macos-aarch64.tar.gz` | CPU |
-| macOS (Intel) | `seine-macos-x86_64.tar.gz` | CPU |
-
-Each release also publishes a `SHA256SUMS.txt` file, so you can check that your download matches the release.
 
 ## Step 2: run it
 
@@ -56,6 +45,8 @@ On Windows, double-click `seine.exe`. On macOS or Linux, open a terminal in the 
 Seine asks for your payout address or `@shortname`, then for a pool. Press Enter to accept the default, `stratum+tcp://bntpool.com:3333`. Within moments [the dashboard](/blog/seine-dashboard-explained/) shows your hashrate and your first shares.
 
 From here seine keeps tuning while it mines. It compares thread counts and CPU kernels on real mining work, switches only after a confirmed gain, backs off if memory gets tight, and remembers what worked for the next start. It never reconnects to the pool to do this, so tuning costs you no mining time.
+
+<MinerSettings os="any" />
 
 ## How long until you get paid?
 
@@ -78,15 +69,6 @@ Hashrate depends mostly on memory bandwidth and the number of threads your RAM a
 The fastest configuration in these measurements is an AMD EPYC 9355P at 97.1 H/s: 64 mining threads and 192 GiB of RAM on Linux with seine's default settings.
 
 Results for every CPU tested are on the [performance page](https://github.com/zpalmtree/seine/blob/master/docs/PERFORMANCE.md), and the [Blocknet mining hardware guide](/blog/blocknet-mining-hardware-hashrate/) explains how RAM and memory bandwidth set these numbers.
-
-## How does seine get more from the same CPU?
-
-Seine ships several Argon2id kernels for each processor family and measures them on your machine while it mines. On the hardware we tested, the right kernel made a large difference:
-
-- **AWS Graviton4:** the SHA3 kernel with prefetching mines 56% faster than plain NEON (13.80 to 21.50 H/s).
-- **AMD EPYC 9R45 (Zen 5):** the streaming kernel mines 30% faster than AVX2 (34.47 to 44.74 H/s at 24 threads).
-
-You don't have to choose any of this. Seine switches kernels only after a confirmed gain and remembers the result for the next start.
 
 ## How can you get more hashrate?
 

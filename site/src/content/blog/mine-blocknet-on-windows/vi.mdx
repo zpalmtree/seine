@@ -9,7 +9,7 @@ faq:
     a: 'Theo mặc định, seine lưu địa chỉ nhận thưởng, pool và tên máy đào trong seine-data/seine.config.json, bên dưới thư mục bạn dùng để khởi chạy. Hãy chạy từ cùng thư mục đã giải nén để dùng lại các thiết lập đó. Tùy chọn data-dir cho phép chọn thư mục khác khi cần.'
   - q: 'Tôi có cần bật large pages của Windows trước khi bắt đầu đào không?'
     a: 'Không. seine tự động thử dùng large pages và dùng trang thông thường khi không khả dụng. Bạn có thể bắt đầu đào với thiết lập mặc định. Để tùy chọn thiết lập large pages, hãy cấp quyền Lock pages in memory cho tài khoản đào, rồi đăng xuất và đăng nhập lại trước khi khởi động lại seine.'
-sourceHash: '66babe3b41fb'
+sourceHash: 1878d05f199d
 translation: draft
 ---
 
@@ -22,8 +22,6 @@ Tải `seine-windows-x86_64.zip`, giải nén toàn bộ rồi mở `seine.exe`.
 </Answer>
 
 Chuẩn bị sẵn địa chỉ nhận thưởng công khai trước khi mở phần mềm đào. [Hướng dẫn ví](/vi/blog/blocknet-wallet-for-mining/) giải thích cách lấy địa chỉ. Chỉ nhập địa chỉ nhận: phần mềm đào không cần cụm từ khôi phục hay khóa chi tiêu của ví. [Blocknet ID](/vi/blog/blocknet-id-pay-by-name/) đã đăng ký cũng dùng được, nên bạn có thể dùng `@name` thay cho địa chỉ dài.
-
-Mỗi luồng đào CPU dùng một khối bộ nhớ 2 GiB. seine kiểm tra RAM khả dụng và số lõi, chừa bộ nhớ dự phòng rồi chọn số luồng ban đầu cho bạn. Bạn có thể bắt đầu với thiết lập mặc định trên máy bàn hoặc laptop; không cần tính số luồng hay chọn kernel CPU trước.
 
 ## Bước 1: tải đúng phiên bản
 
@@ -40,8 +38,6 @@ Nhấp đúp `seine.exe` trong thư mục đã giải nén. Nếu thích termina
 ```powershell
 .\seine.exe
 ```
-
-Tiền tố `./` hoặc `.\` yêu cầu shell chạy tệp thực thi trong thư mục hiện tại. Chạy từ thư mục đã giải nén cũng giúp seine có vị trí cố định để lưu thiết lập. Dùng lại thư mục đó ở các lần khởi chạy sau để phần mềm tìm được địa chỉ và pool bạn đã nhập.
 
 ## Bước 3: nhập địa chỉ ví
 
@@ -65,8 +61,6 @@ Kiểm tra bảng điều khiển seine có hiển thị tốc độ băm và sh
 
 [Hướng dẫn bảng điều khiển](/vi/blog/seine-dashboard-explained/) giải thích tốc độ băm, trạng thái đào và các bảng thông tin pool. Tốc độ băm đang chạy thể hiện hoạt động băm cục bộ; share được chấp nhận xác nhận công việc đã đến pool. Mở [My Stats](https://bntpool.com/stats?lang=vi), nhập cùng địa chỉ hoặc tên ngắn để theo dõi share và số dư của máy đào này.
 
-Khi kiểm tra thiết lập mới, hãy phân biệt share được chấp nhận với khoản thanh toán. Share đóng góp vào phần thưởng pool; khoản thanh toán tuân theo quy tắc xác nhận và số dư của pool. [Hướng dẫn PPLNS](https://bntpool.com/blog/how-pplns-payouts-work/) giải thích trình tự đó. Bạn có thể kiểm tra kết nối ngay mà không chờ khoản thanh toán đầu tiên.
-
 <figure>
   <picture>
     <source media="(max-width: 640px)" srcSet="/assets/blog/setup-accepted-shares-mobile.webp" width="384" height="221" />
@@ -81,11 +75,7 @@ Theo mặc định, seine dùng đồng thời CPU và các card NVIDIA được
 
 Ở lần khởi chạy đầu, seine tinh chỉnh từng GPU và ghi nhớ thiết lập. CPU cũng được tinh chỉnh trong lúc đào. [Hướng dẫn phần cứng](/vi/blog/blocknet-mining-hardware-hashrate/) giải thích cách chọn dung lượng bộ nhớ và các kết quả đo, còn [hướng dẫn NVIDIA](https://github.com/zpalmtree/seine/blob/master/docs/guides/nvidia.md) đề cập việc dùng nhiều card. Để dừng đúng cách, nhấn `q` trong bảng điều khiển hoặc `Ctrl+C` trong terminal.
 
-## Tùy chọn: bật large pages trên Windows
-
-Khi khởi chạy bình thường, phần mềm đã thử dùng large pages và chuyển sang trang thông thường nếu cần. Để chuẩn bị large pages trên Windows Pro, Enterprise hoặc Education, mở `secpol.msc`, vào **Local Policies → User Rights Assignment → Lock pages in memory** và thêm tài khoản chạy seine. Đăng xuất rồi đăng nhập lại để phiên đăng nhập mới nhận quyền này.
-
-[Hướng dẫn large pages](/vi/blog/huge-pages-blocknet-mining/) trình bày chi tiết thiết lập tùy chọn này. Sau khi đăng nhập lại, chạy seine như thường và xem nhật ký khởi động để biết chế độ trang được chọn. Giữ chế độ tự động mặc định khi thiết lập lần đầu cho hoạt động, rồi so sánh số đo trên cùng PC nếu bạn đổi thiết lập trang.
+<MinerSettings os="windows" />
 
 <CTA target="seine" title="Tải seine cho Windows" text="Giải nén ZIP, nhập địa chỉ nhận thưởng và bắt đầu đào trên bntpool.com với CPU và NVIDIA được tự động tinh chỉnh." />
 

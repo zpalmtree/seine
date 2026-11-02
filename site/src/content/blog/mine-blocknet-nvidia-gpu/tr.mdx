@@ -2,7 +2,7 @@
 title: 'NVIDIA GPU ile Blocknet madenciliği nasıl yapılır?'
 description: 'seine ile NVIDIA GPU''da Blocknet kazın. Windows veya Linux''u kurun, CPU ve GPU kullanın, cihaz hash hızlarını kontrol edin ve başlangıç sorunlarını çözün.'
 tags: ['Madencilik rehberi', 'NVIDIA', 'GPU']
-sourceHash: '035e97230185'
+sourceHash: bcf2b64687ba
 translation: draft
 faq:
   - q: 'seine CPU ve NVIDIA GPU''yu birlikte kullanabilir mi?'
@@ -15,7 +15,7 @@ faq:
     a: 'Madencilik paneli gönderilen, reddedilen ve kabul edilen payları gösterir; günlükte her pay olayının backend''i belirtilir. NVIDIA cihaz satırındaki yerel hash hızını kontrol edin, ardından o backend''den kabul edilen pay mesajlarını arayın. Hesaba yazılan işi kontrol etmek için havuz takip rehberini kullanın.'
 ---
 
-seine, CPU ile birlikte NVIDIA GPU'nuzda Blocknet kazımı yapar. Bu rehber Windows ve Linux kurulumunu, kart seçimini, kabul edilen payları ve RTX 5090 üzerinde ölçülmüş bir karşılaştırmayı kapsar. Komutlar seine v0.2.26 ve Ekim 2026 itibarıyla mevcut Argon2id ağı için geçerlidir.
+seine, CPU ile birlikte NVIDIA GPU'nuzda Blocknet kazımı yapar. Bu rehber Windows ve Linux kurulumunu, kart seçimini, kabul edilen payları ve RTX 5090 üzerinde ölçülmüş bir karşılaştırmayı kapsar. Komutlar seine v0.3.0 ve Ekim 2026 itibarıyla mevcut Argon2id ağı için geçerlidir.
 
 ## NVIDIA GPU ile Blocknet madenciliğine nasıl başlanır?
 
@@ -32,7 +32,7 @@ Varsayılan ayarlarla başlayın. seine'in yapılandırmayı seçebilmesi için 
 | Platform | Hazırlanacaklar | Başlatma komutu |
 |---|---|---|
 | Windows x86_64 | NVIDIA ekran sürücüsü; çalıştırılabilir dosyanın yanında paketle gelen çalışma zamanı DLL'leri | `.\seine.exe` |
-| Linux x86_64 | NVIDIA sürücüsü ve uyumlu NVRTC çalışma zamanı kütüphaneleri | `./seine` |
+| Linux x86_64 | NVIDIA sürücüsü | `./seine` |
 
 Windows'ta ZIP'in tamamını yazılabilir bir klasöre çıkarın. `nvrtc64_120_0.dll` ve `nvrtc-builtins64_128.dll` dosyalarını `seine.exe` yanında tutun. Paketlenmiş sürüm, beraberinde gelen bu kütüphaneleri kullanır; ayrı bir CUDA Toolkit kurulumu gerekmez.
 
@@ -40,7 +40,7 @@ Windows'ta ZIP'in tamamını yazılabilir bir klasöre çıkarın. `nvrtc64_120_
 
 Kartınız ve işletim sisteminiz için sürücüyü [NVIDIA sürücü sayfasından](https://www.nvidia.com/en-us/drivers/) kurun. [Windows kurulum rehberi](/tr/blog/mine-blocknet-on-windows/) indirme, sağlama toplamı ve arşivden çıkarma adımlarını açıklar.
 
-Linux'ta dağıtımınız için NVIDIA sürücüsünü ve uyumlu NVRTC paketlerini kurun. NVRTC, seine'in CUDA kernel'lerini çalışma sırasında derler. NVIDIA'nın [NVRTC belgeleri](https://docs.nvidia.com/cuda/nvrtc/), derleyiciyi ve eşleşen builtins kütüphanesini açıklar; [seine NVIDIA gereksinimleri](https://github.com/zpalmtree/seine/blob/master/docs/guides/nvidia.md), madencinin beklediği çalışma ortamını belgeler.
+Linux’ta NVIDIA sürücüsü yeterlidir. seine, NVRTC kuruluysa onu kullanır; değilse seine içine gömülü, GeForce GTX 10 serisi ve daha yeni kartları kapsayan kernel’ları yükler. [seine NVIDIA gereksinimleri](https://github.com/zpalmtree/seine/blob/master/docs/guides/nvidia.md) ayrıntıları verir.
 
 Programı bulunduğu klasörden başlatın. `seine-data` içindeki kayıtlı ayarlarınızı korumak için aynı çalışma dizinini yeniden kullanın. İlk başlatmada alıcı adresinizi girin ve havuz olarak `stratum+tcp://bntpool.com:3333` adresini kabul edin.
 
@@ -94,7 +94,7 @@ Bu görüntü, RTX 5090 ile gerçek bir havuz oturumunu gösterir. Aşağıdaki 
 
 ## Bir NVIDIA satırı eksikse neyi kontrol etmelisiniz?
 
-Önce arşivden çıkarılan programı ve çalışma zamanı kütüphanelerini kontrol edin. Windows'ta paketle gelen NVRTC DLL'lerini `seine.exe` yanında tutun. Linux'ta sürücüyü ve NVRTC kütüphanelerini madenciyi başlattığınız ortama kurun.
+Önce sürücüyü kontrol edin. Windows’ta ayrıca birlikte gelen NVRTC DLL’lerini `seine.exe` yanında tutun. Linux’ta NVIDIA sürücüsünü madenciyi başlattığınız ortama yükleyin.
 
 Ardından komutunuzu kontrol edin. `--backend cpu` yalnızca CPU'yu seçer. İkisi için varsayılan komutu veya `--backend cpu,nvidia` kullanın. `--nvidia-devices` ayarladıysanız indekslerin makinenizde bulunduğunu doğrulayın.
 

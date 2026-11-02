@@ -4,12 +4,12 @@ description: "Linux: Baixe o seine, extraia os arquivos, informe seu endereço B
 tags: ['Guia de mineração', 'Linux', 'NVIDIA']
 faq:
   - q: 'Qual arquivo do Linux devo baixar?'
-    a: "Abra a seção de downloads. Execute uname -m: escolha seine-linux-x86_64.tar.gz para x86_64 ou seine-linux-aarch64.tar.gz para aarch64. As versões Linux exigem glibc 2.39 ou mais recente. A versão x86_64 aceita CPU e NVIDIA; ARM64 aceita mineração com CPU."
+    a: "Abra a seção de downloads. Execute uname -m: escolha seine-linux-x86_64.tar.gz para x86_64 ou seine-linux-aarch64.tar.gz para aarch64. As versões Linux exigem glibc 2.31 ou mais recente. A versão x86_64 aceita CPU e NVIDIA; ARM64 aceita mineração com CPU."
   - q: 'Preciso executar seine com sudo?'
     a: 'Execute o minerador normalmente com seu próprio usuário em uma pasta gravável. Extraia o arquivo, conceda permissão de execução ao proprietário se necessário e inicie com ./seine. Reservar huge pages é uma tarefa administrativa separada; o início normal pode usar páginas comuns.'
-  - q: 'Por que o Linux informa que falta uma biblioteca NVRTC?'
-    a: 'O backend NVIDIA no Linux precisa de um driver compatível e das bibliotecas de execução NVRTC, incluindo a biblioteca builtins correspondente. Instale-as pelos pacotes da distribuição ou pelos pacotes suportados pela NVIDIA. O arquivo Linux não inclui DLLs do Windows. Você pode usar CPU enquanto prepara a GPU.'
-sourceHash: 'fee2c843812c'
+  - q: 'Preciso de CUDA ou NVRTC para minerar com NVIDIA no Linux?'
+    a: 'Não. O driver da NVIDIA basta. O seine usa o NVRTC quando ele está instalado e, caso contrário, carrega os kernels embutidos no seine, que cobrem placas GeForce da série GTX 10 e mais novas. Instale o driver, inicie o seine e confira se a sua placa aparece no painel Devices.'
+sourceHash: acdcb56b3c1f
 translation: draft
 ---
 
@@ -21,7 +21,7 @@ Baixe o seine, extraia os arquivos, informe seu endereço Blocknet e confirme as
 
 ## Passo 1: baixe a versão certa
 
-Abra a [seção de downloads](/pt-br/#download). Execute `uname -m`: escolha `seine-linux-x86_64.tar.gz` para `x86_64` ou `seine-linux-aarch64.tar.gz` para `aarch64`. As versões Linux exigem glibc 2.39 ou mais recente. A versão x86_64 aceita CPU e NVIDIA; ARM64 aceita mineração com CPU.
+Abra a [seção de downloads](/pt-br/#download). Execute `uname -m`: escolha `seine-linux-x86_64.tar.gz` para `x86_64` ou `seine-linux-aarch64.tar.gz` para `aarch64`. As versões Linux exigem glibc 2.31 ou mais recente. A versão x86_64 aceita CPU e NVIDIA; ARM64 aceita mineração com CPU.
 
 <img src="/assets/blog/setup-download.webp" alt="Tabela oficial de downloads com arquivos Linux e Linux ARM64" loading="lazy" />
 
@@ -64,17 +64,11 @@ Procure uma taxa de hash e um contador **Accepted** aumentando no [painel](/pt-b
 
 Abra [Minhas estatísticas](https://bntpool.com/stats?lang=pt-br) e informe o mesmo endereço ou nome registrado para encontrar seu worker, shares e saldo.
 
-## O que é necessário para minerar com NVIDIA no Linux?
+## O que você precisa para minerar com GPU no Linux?
 
-A mineração GPU no Linux x86_64 precisa de um driver NVIDIA e bibliotecas NVRTC compatíveis. NVRTC compila os kernels GPU na inicialização. Instale o ambiente de execução e a biblioteca builtins correspondente pela distribuição ou pelos pacotes NVIDIA, seguindo o [guia NVIDIA](/pt-br/blog/mine-blocknet-nvidia-gpu/). Os nomes dos pacotes variam com a distribuição e a versão CUDA; use as instruções do seu sistema.
+As placas NVIDIA precisam apenas do driver da NVIDIA. As placas AMD precisam do driver amdgpu e do runtime ROCm HIP, como explica o [guia da AMD](https://github.com/zpalmtree/seine/blob/master/docs/guides/amd.md). O seine encontra suas placas sozinho e minera nelas junto com a CPU na versão x86_64. O [guia da NVIDIA](/pt-br/blog/mine-blocknet-nvidia-gpu/) explica como escolher placas e conferir as shares da GPU.
 
-Com essas bibliotecas, o modo padrão pode minerar na CPU e nas placas NVIDIA compatíveis ao mesmo tempo. Para começar na CPU enquanto prepara a GPU, selecione-a explicitamente:
-
-```sh
-./seine --backend cpu
-```
-
-Essa opção usa somente CPU nessa execução. Para selecionar dispositivos GPU e conferir suas shares aceitas, continue no guia NVIDIA. A versão ARM64 descrita aqui contém o backend CPU; instalar CUDA não adiciona um backend NVIDIA a esse arquivo.
+<MinerSettings os="linux" />
 
 ## Como resolver um erro de inicialização no Linux?
 
@@ -83,9 +77,8 @@ Use a primeira mensagem de erro para escolher a próxima verificação:
 | Mensagem ou sintoma | O que conferir |
 |---|---|
 | `Exec format error` | Arquitetura incorreta: compare `uname -m` com o nome do arquivo. |
-| `GLIBC_2.39 not found` | O binário exige uma glibc mais recente. Use um sistema compatível ou compile o código-fonte; mantenha a biblioteca C do sistema sob a gestão da distribuição. |
+| `GLIBC_... not found` | O binário exige uma glibc mais recente. Use um sistema compatível ou compile o código-fonte; mantenha a biblioteca C do sistema sob a gestão da distribuição. |
 | `Permission denied` | Confira a permissão de execução do usuário e use uma pasta em um sistema de arquivos que permita executar. |
-| `libnvrtc` / `libnvrtc-builtins` | Instale o ambiente NVIDIA compatível e a biblioteca builtins correspondente ou use `--backend cpu` enquanto o prepara. |
 
 Depois de receber shares aceitas, consulte o [guia de huge pages](/pt-br/blog/huge-pages-blocknet-mining/) para a configuração opcional no Linux. O [guia de servidores](/pt-br/blog/mine-blocknet-on-servers/) cobre operação sem interface gráfica e posicionamento NUMA. Nenhuma dessas preparações é exigida neste primeiro início; faça cada mudança separadamente para identificar seu efeito na máquina.
 

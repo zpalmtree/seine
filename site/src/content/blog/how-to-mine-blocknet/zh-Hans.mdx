@@ -9,7 +9,7 @@ faq:
     a: 'bntpool.com 按六小时窗口的 PPLNS 方式支付。区块奖励要等该区块获得 60 个确认（按五分钟出块约五小时）后才能支付，余额达到 0.1 BNT 后发送。首笔收益预计在第一批份额被接受几小时后到账。'
   - q: '可以同时用 CPU 和显卡挖 Blocknet 吗？'
     a: '可以。在 Windows 和 Linux 上，seine 会同时使用机器上的每个 CPU 核心和每张 NVIDIA 显卡挖矿，两者的算力会叠加。它在运行中分别为处理器和每张显卡调优，无需修改任何设置，就能让你的全部硬件发挥出最大算力。'
-sourceHash: '22eaba1acd1a'
+sourceHash: bff032ea0960
 translation: draft
 ---
 
@@ -26,21 +26,10 @@ translation: draft
 - **一个 Blocknet 地址。** 安装官方 Blocknet 钱包，即[命令行钱包](https://github.com/blocknetprivacy/blocknet/releases/latest)或[桌面钱包](https://github.com/blocknetprivacy/blocknet-gui/releases/latest)，然后复制你的地址。[钱包指南](/zh-hans/blog/blocknet-wallet-for-mining/)会一步步带你完成。请把钱包和助记词保存在你自己的电脑上，不要放在与他人共用的矿机上。
 - **或者一个短名称。** 如果你在 [blocknet.id](https://blocknet.id) 注册了 [Blocknet ID 短名称](/zh-hans/blog/blocknet-id-pay-by-name/)，就可以直接挖到 `@name`，不必粘贴很长的地址。
 - **每个挖矿线程约 2 GB 内存。** seine 会根据你的机器自动确定线程数，并为系统预留余量，所以无需事先计算。
-- **Windows、macOS 或 Linux。** NVIDIA — Windows: NVIDIA 显示驱动；随包提供的运行时 DLL，放在可执行文件旁边; Linux: NVIDIA 驱动及兼容的 NVRTC 运行时库.
 
 ## 第 1 步：下载 seine
 
 在[下载区](/zh-hans/#download)获取适合你系统的压缩包。无需安装：解压即可使用。
-
-| 系统 | 压缩包 | 显卡 |
-|---|---|---|
-| Windows（x86_64） | `seine-windows-x86_64.zip` | NVIDIA；已内置 CUDA 运行库 |
-| Linux（x86_64） | `seine-linux-x86_64.tar.gz` | NVIDIA 驱动及兼容的 NVRTC 运行时库; glibc ≥ 2.39 |
-| Linux（ARM64） | `seine-linux-aarch64.tar.gz` | CPU（glibc 2.39 或更新版本） |
-| macOS（Apple 芯片） | `seine-macos-aarch64.tar.gz` | CPU |
-| macOS（Intel） | `seine-macos-x86_64.tar.gz` | CPU |
-
-每个版本还会发布一个 `SHA256SUMS.txt` 文件，你可以用它核对下载的文件是否与发布版本一致。
 
 ## 第 2 步：运行
 
@@ -55,6 +44,8 @@ translation: draft
 seine 会先询问你的收款地址或 `@shortname`，然后询问矿池。按回车接受默认矿池 `stratum+tcp://bntpool.com:3333`。片刻之后，[仪表盘](/zh-hans/blog/seine-dashboard-explained/)上就会显示你的算力和第一批份额。
 
 此后 seine 会边挖边调优。它用真实的挖矿任务比较不同的线程数和 CPU 计算内核，只有在确认有提升后才会切换；内存紧张时会自动回退，并记住有效的设置供下次启动使用。整个过程不会重新连接矿池，因此调优不会浪费挖矿时间。
+
+<MinerSettings os="any" />
 
 ## 多久能收到收益？
 
@@ -77,15 +68,6 @@ bntpool.com 采用 PPLNS：每个区块的奖励在其被找到前六小时内�
 这些测量中最快的配置是达到 97.1 H/s 的 AMD EPYC 9355P：64 个挖矿线程、192 GiB RAM，在 Linux 上使用 seine 的默认设置。
 
 所有已测 CPU 的结果见[性能页面](https://github.com/zpalmtree/seine/blob/master/docs/PERFORMANCE.md)，[Blocknet 挖矿硬件指南](/zh-hans/blog/blocknet-mining-hardware-hashrate/)则解释了内存容量和内存带宽如何决定这些数字。
-
-## seine 如何让同一颗 CPU 挖得更快？
-
-seine 为每个处理器系列提供多个 Argon2id 计算内核，并在挖矿过程中在你的机器上实测比较。在我们测试的硬件上，选对计算内核带来了很大提升：
-
-- **AWS Graviton4：** 带预取的 SHA3 计算内核比普通 NEON 快 56%（从 13.80 提升到 21.50 H/s）。
-- **AMD EPYC 9R45（Zen 5）：** 流式（streaming）计算内核比 AVX2 快 30%（24 线程下从 34.47 提升到 44.74 H/s）。
-
-这些都无需你手动选择。seine 只在确认有提升后才切换计算内核，并记住结果供下次启动使用。
 
 ## 如何获得更高的算力？
 

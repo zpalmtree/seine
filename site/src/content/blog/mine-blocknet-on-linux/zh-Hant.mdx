@@ -4,12 +4,12 @@ description: "Linux: 下載並解壓縮 seine，輸入 Blocknet 地址，然後�
 tags: ['挖礦指南', 'Linux', 'NVIDIA']
 faq:
   - q: '應該下載哪個 Linux 壓縮檔？'
-    a: "開啟下載區。執行 uname -m：結果為 x86_64 時選擇 seine-linux-x86_64.tar.gz，為 aarch64 時選擇 seine-linux-aarch64.tar.gz。Linux 版本需要 glibc 2.39 或更新版本。x86_64 版本支援 CPU 和 NVIDIA，ARM64 版本支援 CPU 挖礦。"
+    a: "開啟下載區。執行 uname -m：結果為 x86_64 時選擇 seine-linux-x86_64.tar.gz，為 aarch64 時選擇 seine-linux-aarch64.tar.gz。Linux 版本需要 glibc 2.31 或更新版本。x86_64 版本支援 CPU 和 NVIDIA，ARM64 版本支援 CPU 挖礦。"
   - q: '需要透過 sudo 執行 seine 嗎？'
     a: '一般使用礦工程式時，以自己的使用者身分從可寫入的資料夾執行即可。解壓縮後，視需要為檔案擁有者新增執行權限，再以 ./seine 啟動。預留巨型記憶體分頁屬於另外的管理工作；一般啟動可使用標準記憶體分頁。'
-  - q: '為什麼 Linux 提示缺少 NVRTC 程式庫？'
-    a: 'Linux 的 NVIDIA 後端需要相容的驅動程式與 NVRTC 執行階段程式庫，包括相符的 builtins 程式庫。請透過發行版或 NVIDIA 支援的套件安裝。Linux 壓縮檔不包含 Windows DLL。準備 GPU 支援期間，可以選擇 CPU 後端。'
-sourceHash: 'fee2c843812c'
+  - q: '在 Linux 上用 NVIDIA 挖礦需要 CUDA 或 NVRTC 嗎？'
+    a: '不需要，有 NVIDIA 驅動程式就夠了。已安裝 NVRTC 時 seine 會使用它，否則載入 seine 內建的核心程式，內建核心程式涵蓋 GeForce GTX 10 series 及更新的顯示卡。安裝驅動程式，啟動 seine，然後確認你的顯示卡出現在 Devices 面板中。'
+sourceHash: acdcb56b3c1f
 translation: draft
 ---
 
@@ -21,7 +21,7 @@ translation: draft
 
 ## 第 1 步：下載適合的版本
 
-開啟[下載區](/zh-hant/#download)。執行 `uname -m`：結果為 `x86_64` 時選擇 `seine-linux-x86_64.tar.gz`，為 `aarch64` 時選擇 `seine-linux-aarch64.tar.gz`。Linux 版本需要 glibc 2.39 或更新版本。x86_64 版本支援 CPU 和 NVIDIA，ARM64 版本支援 CPU 挖礦。
+開啟[下載區](/zh-hant/#download)。執行 `uname -m`：結果為 `x86_64` 時選擇 `seine-linux-x86_64.tar.gz`，為 `aarch64` 時選擇 `seine-linux-aarch64.tar.gz`。Linux 版本需要 glibc 2.31 或更新版本。x86_64 版本支援 CPU 和 NVIDIA，ARM64 版本支援 CPU 挖礦。
 
 <img src="/assets/blog/setup-download.webp" alt="列出 Linux 與 Linux ARM64 壓縮檔的官方下載表" loading="lazy" />
 
@@ -64,17 +64,11 @@ seine 會自動選擇執行緒並調校。之後從同一資料夾啟動，即�
 
 開啟[我的統計](https://bntpool.com/stats?lang=zh-hant)，輸入相同的地址或已註冊名稱，即可查看礦機、份額和餘額。
 
-## 在 Linux 上使用 NVIDIA 挖礦需要什麼？
+## 在 Linux 上用 GPU 挖礦需要什麼？
 
-Linux x86_64 上的 GPU 挖礦需要 NVIDIA 驅動程式與相容的 NVRTC 執行階段程式庫。NVRTC 會在啟動時編譯 GPU 運算核心程式。依照 [NVIDIA 設定指南](/zh-hant/blog/mine-blocknet-nvidia-gpu/)，透過發行版或 NVIDIA 套件安裝執行階段及相符的 builtins 程式庫。套件名稱取決於發行版與 CUDA 版本，因此請使用適合自己系統的說明。
+NVIDIA 顯示卡只需要 NVIDIA 驅動程式。AMD 顯示卡需要 amdgpu 驅動程式和 ROCm HIP 執行環境，詳見 [AMD 指南](https://github.com/zpalmtree/seine/blob/master/docs/guides/amd.md)。seine 會自動找到你的顯示卡，並在 x86_64 版本中與 CPU 一起用它們挖礦。[NVIDIA 指南](/zh-hant/blog/mine-blocknet-nvidia-gpu/)說明如何選擇顯示卡和檢查 GPU 份額。
 
-這些程式庫就緒後，預設模式可以同時使用 CPU 與支援的 NVIDIA 顯示卡挖礦。若想在準備 GPU 執行階段時先設定好 CPU 挖礦，請明確選擇 CPU：
-
-```sh
-./seine --backend cpu
-```
-
-這表示本次啟動僅使用 CPU。關於 GPU 裝置選擇與 GPU 份額接受情況，請繼續閱讀 NVIDIA 指南。此處介紹的 ARM64 版本包含 CPU 後端；安裝 CUDA 不會為這個壓縮檔新增 NVIDIA 後端。
+<MinerSettings os="linux" />
 
 ## 如何解決 Linux 啟動錯誤？
 
@@ -83,9 +77,8 @@ Linux x86_64 上的 GPU 挖礦需要 NVIDIA 驅動程式與相容的 NVRTC 執�
 | 訊息或症狀 | 檢查項目 |
 |---|---|
 | `Exec format error` | 架構不符：將 `uname -m` 與壓縮檔檔名比較。 |
-| `GLIBC_2.39 not found` | 二進位程式需要更新的 glibc。請使用相容系統或從原始碼建置；系統 C 程式庫應繼續由發行版管理。 |
+| `GLIBC_... not found` | 二進位程式需要更新的 glibc。請使用相容系統或從原始碼建置；系統 C 程式庫應繼續由發行版管理。 |
 | `Permission denied` | 檢查使用者執行權限，並使用允許執行程式之檔案系統上的資料夾。 |
-| `libnvrtc` / `libnvrtc-builtins` | 安裝相容的 NVIDIA 執行階段及相符的 builtins 程式庫，或在準備期間使用 `--backend cpu`。 |
 
 份額開始獲接受後，可參閱[巨型記憶體分頁指南](/zh-hant/blog/huge-pages-blocknet-mining/)進行選用的 Linux 分頁設定。[伺服器指南](/zh-hant/blog/mine-blocknet-on-servers/)介紹無頭執行與 NUMA 配置。這兩項準備都不是完成本首次執行教學的必要條件；請分別進行每項變更，以便判斷電腦上具體改變了什麼。
 

@@ -2,7 +2,7 @@
 title: Best hardware for Blocknet mining
 description: "Compare Blocknet mining hardware with measured results: EPYC 9355P reaches 97.1 H/s with default settings. See exact RAM, threads and the benchmark evidence."
 date: 2026-10-25
-updated: 2026-11-01
+updated: 2026-11-02
 tags: [Hardware, Hashrate, Mining guide, Argon2id, NVIDIA]
 faq:
   - q: Can a gaming PC mine Blocknet?
@@ -10,7 +10,7 @@ faq:
   - q: How many Blocknet mining threads will 32 GB of RAM run?
     a: About 14. Each thread needs a 2 GiB block of memory for every hash, so 32 GB holds 16 of them on paper. Seine keeps 5% (at most 1 GiB by default) of RAM in reserve and leaves room for the operating system, which brings a 32 GB machine to about 14 threads. It works this out for you when it starts.
   - q: Which graphics cards does seine use for Blocknet mining?
-    a: Seine mines on NVIDIA graphics cards with the Windows and Linux downloads, using every card it detects alongside the processor. On Windows, the CUDA runtime is included, so you only need the NVIDIA driver. On Linux, install the driver and the NVRTC libraries. The first launch tunes each card and remembers the result.
+    a: 'Seine mines on NVIDIA graphics cards with the Windows and Linux downloads, using every card it detects alongside the processor. You only need the NVIDIA driver. The first launch tunes each card and remembers the result.'
   - q: Why does memory bandwidth matter for Blocknet mining?
     a: Every Blocknet hash writes a full 2 GiB block of memory and reads data back from across it, far more than any processor cache holds. Hashrate therefore depends on how fast the memory system moves data. Machines with more memory bandwidth and enough RAM for many threads mine fastest.
 related: [mine-blocknet-on-mac, argon2id-proof-of-work-explained, mine-blocknet-nvidia-gpu, benchmark-seine-miner]
@@ -90,7 +90,7 @@ If you're buying RAM for mining, match it to the threads you want: about 2 GB pe
 Yes. On Windows and Linux, seine mines on every CPU core and every NVIDIA graphics card it detects at the same time, and the hashrates add up. You don't need a flag for this; it is the default.
 
 - **Windows:** the download includes the CUDA runtime libraries, so you only need an up-to-date NVIDIA driver.
-- **Linux:** install the NVIDIA driver and the NVRTC libraries from your distribution or from NVIDIA.
+- **Linux:** the NVIDIA driver is all you need.
 - **First launch:** seine tunes its kernel settings for each card and caches the result, so later starts take seconds.
 
 On [Apple Silicon Macs](/blog/mine-blocknet-on-mac/), seine mines on the CPU by default, the fastest setup measured on the M4 Max. The [NVIDIA guide](/blog/mine-blocknet-nvidia-gpu/) covers multi-GPU rigs and requirements.

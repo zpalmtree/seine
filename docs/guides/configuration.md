@@ -9,7 +9,7 @@ On first startup Seine:
 
 - asks for your Blocknet payout address or Blocknet ID shortname (`@name` or `$name`)
 - asks for a pool URL (default `stratum+tcp://bntpool.com:3333`) and worker name
-- enables every available backend (CPU, plus NVIDIA GPUs when present)
+- enables every available backend (CPU, plus NVIDIA and discrete AMD GPUs when present)
 - sizes CPU threads from your cores and RAM, then keeps tuning while it mines
 
 1. Enter your payout address or registered shortname:
@@ -44,6 +44,7 @@ All flags are documented in the [flag reference](../MINER_FLAGS.md).
 # Choose backends (auto-detected by default)
 ./seine --backend cpu
 ./seine --backend nvidia
+./seine --backend amd
 ./seine --backend cpu,nvidia
 
 # Plain log output instead of the dashboard

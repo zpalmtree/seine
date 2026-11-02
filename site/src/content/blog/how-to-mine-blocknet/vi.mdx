@@ -9,7 +9,7 @@ faq:
     a: 'Pool bntpool.com trả theo PPLNS với cửa sổ sáu giờ. Phần thưởng của một khối chỉ được trả khi khối đó đã sâu 60 khối, khoảng năm giờ với thời gian khối năm phút, và số dư được gửi khi đạt 0,1 BNT. Khoản thanh toán đầu tiên thường đến vài giờ sau khi những share đầu tiên của bạn được chấp nhận.'
   - q: 'Có thể đào Blocknet bằng CPU và GPU cùng lúc không?'
     a: 'Có. Trên Windows và Linux, seine đào trên mọi nhân CPU và mọi card đồ họa NVIDIA trong máy cùng một lúc, và hashrate của hai bên được cộng dồn. Nó tinh chỉnh bộ xử lý và từng card riêng biệt trong khi chạy, nên bạn khai thác tối đa toàn bộ phần cứng mà không phải thay đổi thiết lập nào.'
-sourceHash: '22eaba1acd1a'
+sourceHash: bff032ea0960
 translation: draft
 ---
 
@@ -26,21 +26,10 @@ Chuẩn bị một địa chỉ Blocknet hoặc một tên ngắn Blocknet ID, t
 - **Một địa chỉ Blocknet.** Cài ví Blocknet chính thức, gồm [ví dòng lệnh](https://github.com/blocknetprivacy/blocknet/releases/latest) hoặc [ví desktop](https://github.com/blocknetprivacy/blocknet-gui/releases/latest), rồi sao chép địa chỉ của bạn. [Hướng dẫn về ví](/vi/blog/blocknet-wallet-for-mining/) hướng dẫn từng bước. Hãy giữ ví và cụm từ khôi phục trên máy tính của riêng bạn; đừng để chúng trên một dàn máy đào dùng chung.
 - **Hoặc một tên ngắn.** Nếu bạn có [tên ngắn Blocknet ID](/vi/blog/blocknet-id-pay-by-name/) từ [blocknet.id](https://blocknet.id), bạn có thể đào về `@name` thay vì dán địa chỉ dài.
 - **Khoảng 2 GB RAM cho mỗi luồng đào.** seine tự điều chỉnh theo máy của bạn và chừa khoảng trống cho hệ thống, nên bạn không cần tính trước.
-- **Windows, macOS hoặc Linux.** NVIDIA — Windows: Trình điều khiển đồ họa NVIDIA; các DLL thời gian chạy đi kèm đặt cạnh tệp thực thi; Linux: Trình điều khiển NVIDIA và thư viện thời gian chạy NVRTC tương thích.
 
 ## Bước 1: tải seine
 
 Tải gói nén cho hệ thống của bạn từ [mục tải xuống](/vi/#download). Không cần cài đặt gì: giải nén là dùng được.
-
-| Hệ thống | Gói nén | Card đồ họa |
-|---|---|---|
-| Windows (x86_64) | `seine-windows-x86_64.zip` | NVIDIA; đã kèm CUDA runtime |
-| Linux (x86_64) | `seine-linux-x86_64.tar.gz` | Trình điều khiển NVIDIA và thư viện thời gian chạy NVRTC tương thích; glibc ≥ 2.39 |
-| Linux (ARM64) | `seine-linux-aarch64.tar.gz` | CPU (glibc 2.39 trở lên) |
-| macOS (Apple Silicon) | `seine-macos-aarch64.tar.gz` | CPU |
-| macOS (Intel) | `seine-macos-x86_64.tar.gz` | CPU |
-
-Mỗi bản phát hành cũng có tệp `SHA256SUMS.txt`, để bạn kiểm tra tệp đã tải có khớp với bản phát hành hay không.
 
 ## Bước 2: chạy chương trình
 
@@ -55,6 +44,8 @@ Trên Windows, nhấp đúp vào `seine.exe`. Trên macOS hoặc Linux, mở ter
 seine hỏi địa chỉ nhận thanh toán hoặc `@shortname` của bạn, sau đó hỏi pool. Nhấn Enter để chấp nhận mặc định, `stratum+tcp://bntpool.com:3333`. Chỉ trong giây lát, [bảng điều khiển](/vi/blog/seine-dashboard-explained/) sẽ hiển thị hashrate và những share đầu tiên của bạn.
 
 Từ đây seine tiếp tục tinh chỉnh trong khi đào. Nó so sánh các số luồng và kernel CPU trên công việc đào thực tế, chỉ chuyển đổi sau khi đã xác nhận có cải thiện, giảm bớt nếu bộ nhớ bị chật, và ghi nhớ thiết lập hiệu quả cho lần khởi động sau. Nó không bao giờ phải kết nối lại pool để làm việc này, nên việc tinh chỉnh không làm bạn mất thời gian đào.
+
+<MinerSettings os="any" />
 
 ## Bao lâu thì bạn nhận được thanh toán?
 
@@ -77,15 +68,6 @@ Hashrate phụ thuộc chủ yếu vào băng thông bộ nhớ và số luồng
 Cấu hình nhanh nhất trong các phép đo này là AMD EPYC 9355P đạt 97,1 H/s: 64 luồng đào và 192 GiB RAM trên Linux với thiết lập mặc định của seine.
 
 Kết quả của mọi CPU đã thử nghiệm có trên [trang hiệu năng](https://github.com/zpalmtree/seine/blob/master/docs/PERFORMANCE.md), và [hướng dẫn phần cứng đào Blocknet](/vi/blog/blocknet-mining-hardware-hashrate/) giải thích cách RAM và băng thông bộ nhớ quyết định những con số này.
-
-## seine làm thế nào để khai thác nhiều hơn từ cùng một CPU?
-
-seine đi kèm nhiều kernel Argon2id cho mỗi dòng bộ xử lý và đo chúng trên máy của bạn trong khi đào. Trên phần cứng chúng tôi đã thử, chọn đúng kernel tạo ra khác biệt lớn:
-
-- **AWS Graviton4:** kernel SHA3 có prefetch đào nhanh hơn 56% so với NEON thông thường (từ 13,80 lên 21,50 H/s).
-- **AMD EPYC 9R45 (Zen 5):** kernel streaming đào nhanh hơn 30% so với AVX2 (từ 34,47 lên 44,74 H/s ở 24 luồng).
-
-Bạn không phải chọn bất kỳ điều gì trong số này. seine chỉ chuyển kernel sau khi đã xác nhận có cải thiện và ghi nhớ kết quả cho lần khởi động sau.
 
 ## Làm sao để tăng hashrate?
 

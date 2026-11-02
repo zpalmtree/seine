@@ -9,7 +9,7 @@ faq:
     a: 'seine varsayılan olarak ödeme adresini, havuzu ve rig adını, programı başlattığınız klasörün altındaki seine-data/seine.config.json dosyasına kaydeder. Bu ayarları yeniden kullanmak için aynı çıkarılmış klasörden çalıştırın. Gerektiğinde data-dir seçeneğiyle farklı bir dizin seçebilirsiniz.'
   - q: 'Madenciliğe başlamadan önce Windows büyük bellek sayfaları gerekli mi?'
     a: 'Hayır. seine büyük sayfaları otomatik olarak dener ve bunlar kullanılamıyorsa normal sayfaları kullanır. Varsayılan ayarlarla madenciliğe başlayabilirsiniz. İsteğe bağlı büyük sayfa kurulumu için madencilik hesabınıza Bellekteki sayfaları kilitle hakkını verin, ardından seine’ı yeniden başlatmadan önce oturumu kapatıp tekrar açın.'
-sourceHash: '66babe3b41fb'
+sourceHash: 1878d05f199d
 translation: draft
 ---
 
@@ -22,8 +22,6 @@ Bu rehber, Windows ZIP dosyasını indirmekten bntpool.com üzerinde kabul edile
 </Answer>
 
 Madenciyi açmadan önce herkese açık ödeme adresinizi hazır bulundurun. [Cüzdan rehberi](/tr/blog/blocknet-wallet-for-mining/) bu adresi nasıl edineceğinizi açıklar. Yalnızca alıcı adresini girin: madenci, cüzdanınızın kurtarma ifadesine veya harcama anahtarlarına ihtiyaç duymaz. Kayıtlı bir [Blocknet ID](/tr/blog/blocknet-id-pay-by-name/) de kullanılabilir; böylece uzun adres yerine `@name` yazabilirsiniz.
-
-Her CPU madencilik iş parçacığı 2 GiB boyutunda bir bellek bloğu kullanır. seine, kullanılabilir RAM’i ve çekirdek sayısını kontrol eder, bellekte boşluk bırakır ve başlangıçtaki iş parçacığı sayısını sizin için seçer. Masaüstü veya dizüstü bilgisayarda varsayılan ayarlarla başlayabilirsiniz; önceden iş parçacığı sayısını hesaplamanız veya bir CPU kernel’i seçmeniz gerekmez.
 
 ## 1. adım: doğru sürümü indirin
 
@@ -40,8 +38,6 @@ Dosya Gezgini’nde indirdiğiniz ZIP’e sağ tıklayın ve **Tümünü Ayıkla
 ```powershell
 .\seine.exe
 ```
-
-`./` veya `.\` öneki, kabuğa geçerli dizindeki çalıştırılabilir dosyayı başlatmasını söyler. Çıkarılmış bir klasörden çalıştırmak, seine’a ayarlarını kaydetmek için sabit bir konum da sağlar. Daha sonraki başlatmalarda aynı klasörü kullanın; böylece girdiğiniz adresi ve havuzu bulabilir.
 
 ## 3. adım: cüzdan adresinizi girin
 
@@ -65,8 +61,6 @@ seine panelinde bir hash gücü ve kabul edilen paylar göründüğünü kontrol
 
 [Panel rehberi](/tr/blog/seine-dashboard-explained/), hash gücünü, madencilik durumunu ve havuz panellerini açıklar. Etkin bir hash gücü, yerel hash hesaplama faaliyeti olduğunu gösterir; kabul edilen bir pay, çalışmanın havuza ulaştığını doğrular. Bu rig’in paylarını ve bakiyesini takip etmek için [My Stats](https://bntpool.com/stats?lang=tr) sayfasını açın ve aynı adresi veya kısa adı girin.
 
-Yeni bir kurulumu kontrol ederken kabul edilen payları ve ödemeleri ayrı değerlendirin. Paylar havuz ödüllerine katkıda bulunur; ödeme ise havuzun onay ve bakiye kurallarına göre yapılır. [PPLNS rehberi](https://bntpool.com/blog/how-pplns-payouts-work/) bu sırayı açıklar. İlk ödemeyi beklemeden bağlantıyı hemen kontrol edebilirsiniz.
-
 <figure>
   <picture>
     <source media="(max-width: 640px)" srcSet="/assets/blog/setup-accepted-shares-mobile.webp" width="384" height="221" />
@@ -81,11 +75,7 @@ seine varsayılan olarak CPU’yu ve desteklenen NVIDIA kartlarını birlikte ku
 
 İlk başlatmada seine her GPU’yu ayarlar ve ayarlarını hatırlar. CPU ayarlaması da madencilik sırasında devam eder. [Donanım rehberi](/tr/blog/blocknet-mining-hardware-hashrate/), bellek boyutlandırmasını ve ölçülen sonuçları açıklar; [NVIDIA rehberi](https://github.com/zpalmtree/seine/blob/master/docs/guides/nvidia.md) ise birden fazla kartı ele alır. Düzgün biçimde durdurmak için panelde `q` veya terminalde `Ctrl+C` tuşlarına basın.
 
-## İsteğe bağlı: Windows büyük bellek sayfalarını etkinleştirin
-
-Normal başlatma zaten büyük sayfaları dener ve gerekirse normal sayfalara döner. Windows Pro, Enterprise veya Education’da büyük sayfaları hazırlamak için `secpol.msc` dosyasını açın, **Yerel İlkeler → Kullanıcı Hakları Ataması → Bellekteki sayfaları kilitle** yoluna gidin ve seine’ı çalıştıran hesabı ekleyin. Yeni oturumun bu hakkı alması için oturumu kapatıp tekrar açın.
-
-[Büyük bellek sayfaları rehberi](/tr/blog/huge-pages-blocknet-mining/) bu isteğe bağlı kurulumu ayrıntılı olarak açıklar. Tekrar oturum açtıktan sonra seine’ı normal biçimde başlatın ve seçilen sayfa modu için başlangıç günlüğünü kontrol edin. İlk çalışan kurulumunuzu oluştururken varsayılan otomatik modu koruyun; ardından sayfa ayarlarını değiştirirseniz aynı bilgisayardaki ölçümleri karşılaştırın.
+<MinerSettings os="windows" />
 
 <CTA target="seine" title="Windows için seine’ı indirin" text="ZIP’i çıkarın, ödeme adresinizi girin ve otomatik CPU ve NVIDIA ayarlamasıyla bntpool.com üzerinde madenciliğe başlayın." />
 

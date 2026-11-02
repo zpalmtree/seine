@@ -4,12 +4,12 @@ description: "Linux: Seine’ı indirin, arşivi çıkarın, Blocknet adresinizi
 tags: ['Madencilik rehberi', 'Linux', 'NVIDIA']
 faq:
   - q: 'Hangi Linux arşivini indirmeliyim?'
-    a: "İndirme bölümünü açın. uname -m komutunu çalıştırın: x86_64 için seine-linux-x86_64.tar.gz, aarch64 için seine-linux-aarch64.tar.gz seçin. Linux sürümleri glibc 2.39 veya yenisini gerektirir. x86_64 sürümü CPU ve NVIDIA’yı, ARM64 ise CPU madenciliğini destekler."
+    a: "İndirme bölümünü açın. uname -m komutunu çalıştırın: x86_64 için seine-linux-x86_64.tar.gz, aarch64 için seine-linux-aarch64.tar.gz seçin. Linux sürümleri glibc 2.31 veya yenisini gerektirir. x86_64 sürümü CPU ve NVIDIA’yı, ARM64 ise CPU madenciliğini destekler."
   - q: 'seine’i sudo ile mi çalıştırmalıyım?'
     a: 'Normal madenciyi yazılabilir bir klasörden kendi kullanıcınızla çalıştırın. Arşivi açın, gerekirse dosya sahibine çalıştırma izni verin ve ./seine ile başlatın. Ayrılmış huge pages hazırlamak ayrı bir yönetim işidir; normal başlatma sıradan bellek sayfalarını kullanabilir.'
-  - q: 'Linux neden NVRTC kitaplığının eksik olduğunu söylüyor?'
-    a: 'Linux NVIDIA arka ucu uyumlu bir sürücü ve eşleşen builtins kitaplığı dahil NVRTC çalışma zamanı kitaplıkları gerektirir. Bunları dağıtımınızın veya NVIDIA’nın desteklenen paketleriyle yükleyin. Linux arşivi Windows DLL’lerini içermez. GPU desteğini hazırlarken CPU arka ucunu seçebilirsiniz.'
-sourceHash: 'fee2c843812c'
+  - q: 'Linux’ta NVIDIA ile madencilik için CUDA veya NVRTC gerekir mi?'
+    a: 'Hayır. NVIDIA sürücüsü yeterlidir. seine, NVRTC kuruluysa onu kullanır; değilse seine içine gömülü, GeForce GTX 10 serisi ve daha yeni kartları kapsayan kernel’ları yükler. Sürücüyü yükleyin, seine’ı başlatın ve kartınızın Devices panelinde göründüğünü kontrol edin.'
+sourceHash: acdcb56b3c1f
 translation: draft
 ---
 
@@ -21,7 +21,7 @@ Seine’ı indirin, arşivi çıkarın, Blocknet adresinizi girin ve bntpool.com
 
 ## 1. adım: doğru sürümü indirin
 
-[İndirme bölümünü](/tr/#download) açın. `uname -m` komutunu çalıştırın: `x86_64` için `seine-linux-x86_64.tar.gz`, `aarch64` için `seine-linux-aarch64.tar.gz` seçin. Linux sürümleri glibc 2.39 veya yenisini gerektirir. x86_64 sürümü CPU ve NVIDIA’yı, ARM64 ise CPU madenciliğini destekler.
+[İndirme bölümünü](/tr/#download) açın. `uname -m` komutunu çalıştırın: `x86_64` için `seine-linux-x86_64.tar.gz`, `aarch64` için `seine-linux-aarch64.tar.gz` seçin. Linux sürümleri glibc 2.31 veya yenisini gerektirir. x86_64 sürümü CPU ve NVIDIA’yı, ARM64 ise CPU madenciliğini destekler.
 
 <img src="/assets/blog/setup-download.webp" alt="Linux ve Linux ARM64 arşivlerini gösteren resmi indirme tablosu" loading="lazy" />
 
@@ -64,17 +64,11 @@ Seine iş parçacıklarını seçer ve otomatik ayar yapar. Sonraki açılışla
 
 [İstatistiklerim](https://bntpool.com/stats?lang=tr) sayfasını açıp aynı adresi veya kayıtlı adı girerek işçinizi, paylarınızı ve bakiyenizi bulun.
 
-## Linux’ta NVIDIA madenciliği için ne gerekir?
+## Linux’ta GPU madenciliği için neye ihtiyacınız var?
 
-Linux x86_64 üzerinde GPU madenciliği NVIDIA sürücüsü ve uyumlu NVRTC çalışma zamanı kitaplıkları gerektirir. NVRTC başlangıçta GPU kernellerini derler. [NVIDIA kurulum rehberine](/tr/blog/mine-blocknet-nvidia-gpu/) göre dağıtımınızdan veya NVIDIA paketlerinden çalışma zamanını ve eşleşen builtins kitaplığını kurun. Paket adları dağıtım ve CUDA sürümüne bağlıdır; kendi sisteminizin talimatlarını izleyin.
+NVIDIA kartları yalnızca NVIDIA sürücüsüne ihtiyaç duyar. AMD kartları, [AMD rehberinde](https://github.com/zpalmtree/seine/blob/master/docs/guides/amd.md) anlatıldığı gibi amdgpu sürücüsüne ve ROCm HIP çalışma zamanına ihtiyaç duyar. seine kartlarınızı kendisi bulur ve x86_64 sürümünde CPU ile birlikte onlarla kazar. [NVIDIA rehberi](/tr/blog/mine-blocknet-nvidia-gpu/), kart seçmeyi ve GPU paylarını kontrol etmeyi anlatır.
 
-Bu kitaplıklarla varsayılan mod CPU ve desteklenen NVIDIA kartlarında birlikte madencilik yapabilir. GPU çalışma zamanını hazırlarken CPU madenciliği kurmak için açıkça seçin:
-
-```sh
-./seine --backend cpu
-```
-
-Bu seçim ilgili çalıştırmada yalnızca CPU kullanır. GPU aygıt seçimi ve kabul edilen GPU payları için NVIDIA rehberine devam edin. Burada anlatılan ARM64 sürümü CPU arka ucunu içerir; CUDA kurmak bu arşive NVIDIA arka ucu eklemez.
+<MinerSettings os="linux" />
 
 ## Linux başlatma hatası nasıl çözülür?
 
@@ -83,9 +77,8 @@ Sonraki kontrolü ilk hata mesajına göre seçin:
 | Mesaj veya belirti | Kontrol edilecekler |
 |---|---|
 | `Exec format error` | Yanlış mimari: `uname -m` çıktısını arşiv adıyla karşılaştırın. |
-| `GLIBC_2.39 not found` | İkili dosya daha yeni glibc gerektiriyor. Uyumlu sistem kullanın veya kaynaktan derleyin; sistem C kitaplığını dağıtımınız yönetmeye devam etsin. |
+| `GLIBC_... not found` | İkili dosya daha yeni glibc gerektiriyor. Uyumlu sistem kullanın veya kaynaktan derleyin; sistem C kitaplığını dağıtımınız yönetmeye devam etsin. |
 | `Permission denied` | Kullanıcının çalıştırma iznini kontrol edin ve çalıştırmaya izin veren bir dosya sistemindeki klasörü kullanın. |
-| `libnvrtc` / `libnvrtc-builtins` | Uyumlu NVIDIA çalışma zamanını ve eşleşen builtins kitaplığını kurun veya hazırlarken `--backend cpu` kullanın. |
 
 Paylar kabul edilince [huge pages rehberi](/tr/blog/huge-pages-blocknet-mining/) isteğe bağlı Linux sayfa ayarlarını açıklar. [Sunucu rehberi](/tr/blog/mine-blocknet-on-servers/) grafik arayüzsüz çalışmayı ve NUMA yerleşimini kapsar. Bu ilk çalıştırma için ikisi de gerekmez; makinenizdeki etkisini anlayabilmek için değişiklikleri tek tek yapın.
 

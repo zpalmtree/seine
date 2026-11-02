@@ -11,7 +11,7 @@ faq:
     a: 'Каждый поток майнинга обрабатывает блок памяти в 2 GiB, так что рассчитывайте примерно на 2 GB на поток. Mac с 16 GB вмещает до семи потоков, с 32 GB — до 15, с 64 GB — до 31. seine учитывает свободную память, а также подбирает число потоков под ядра процессора.'
   - q: 'Можно ли майнить Blocknet на Mac с Intel?'
     a: 'Да. Для Mac с Intel seine выпускает отдельный архив seine-macos-x86_64.tar.gz, и шаги те же, что и на Apple Silicon. Скачайте его, распакуйте в Терминале, запустите ./seine и вставьте свой адрес Blocknet или @name. seine подбирает число потоков под вашу память и по умолчанию начинает майнить на bntpool.com.'
-sourceHash: '33a60ad4df0c'
+sourceHash: 10bf5cec430a
 translation: draft
 ---
 
@@ -72,6 +72,8 @@ Seine автоматически выбирает потоки и настраи
 xattr -d com.apple.quarantine ./seine
 ./seine
 ```
+
+<MinerSettings os="mac" />
 
 ## Почему Mac с Apple Silicon хорошо майнят Blocknet?
 

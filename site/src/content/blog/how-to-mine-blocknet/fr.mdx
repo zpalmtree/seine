@@ -9,7 +9,7 @@ faq:
     a: 'Le pool bntpool.com paie en PPLNS sur une fenêtre de six heures. La récompense d''un bloc ne peut être versée qu''une fois ce bloc enfoui sous 60 blocs, soit environ cinq heures avec des blocs de cinq minutes, et les soldes sont envoyés dès qu''ils atteignent 0,1 BNT. Comptez sur un premier paiement quelques heures après vos premiers shares acceptés.'
   - q: 'Puis-je miner Blocknet avec mon CPU et mon GPU en même temps ?'
     a: 'Oui. Sous Windows et Linux, seine mine à la fois sur tous les cœurs du CPU et sur toutes les cartes graphiques NVIDIA de la machine, et les deux hashrates s''additionnent. Il optimise séparément le processeur et chaque carte pendant qu''il tourne : vous tirez le maximum de tout votre matériel sans changer le moindre réglage.'
-sourceHash: '22eaba1acd1a'
+sourceHash: bff032ea0960
 translation: draft
 ---
 
@@ -26,21 +26,10 @@ Procurez-vous une adresse Blocknet ou un nom court Blocknet ID, téléchargez se
 - **Une adresse Blocknet.** Installez le portefeuille Blocknet officiel, soit le [portefeuille en ligne de commande](https://github.com/blocknetprivacy/blocknet/releases/latest), soit le [portefeuille de bureau](https://github.com/blocknetprivacy/blocknet-gui/releases/latest), et copiez votre adresse. Le [guide du portefeuille](/fr/blog/blocknet-wallet-for-mining/) vous accompagne pas à pas. Gardez le portefeuille et sa phrase de récupération sur votre propre ordinateur ; ne les mettez pas sur un rig de minage partagé.
 - **Ou un nom court.** Si vous avez un [nom court Blocknet ID](/fr/blog/blocknet-id-pay-by-name/) obtenu sur [blocknet.id](https://blocknet.id), vous pouvez miner vers `@name` au lieu de coller la longue adresse.
 - **Environ 2 GB de RAM par thread de minage.** seine s'adapte à votre machine et laisse de la marge au système : vous n'avez pas besoin de faire ce calcul au préalable.
-- **Windows, macOS ou Linux.** NVIDIA — Windows: Pilote graphique NVIDIA ; DLL d'exécution fournies à côté de l'exécutable; Linux: Pilote NVIDIA et bibliothèques d'exécution NVRTC compatibles.
 
 ## Étape 1 : téléchargez seine
 
 Récupérez l'archive pour votre système dans la [section de téléchargement](/fr/#download). Il n'y a rien à installer : décompressez-la et vous êtes prêt.
-
-| Système | Archive | Cartes graphiques |
-|---|---|---|
-| Windows (x86_64) | `seine-windows-x86_64.zip` | NVIDIA ; le runtime CUDA est inclus |
-| Linux (x86_64) | `seine-linux-x86_64.tar.gz` | Pilote NVIDIA et bibliothèques d'exécution NVRTC compatibles; glibc ≥ 2.39 |
-| Linux (ARM64) | `seine-linux-aarch64.tar.gz` | CPU (glibc 2.39 ou plus récent) |
-| macOS (Apple Silicon) | `seine-macos-aarch64.tar.gz` | CPU |
-| macOS (Intel) | `seine-macos-x86_64.tar.gz` | CPU |
-
-Chaque version publie aussi un fichier `SHA256SUMS.txt`, pour que vous puissiez vérifier que votre téléchargement correspond à la version.
 
 ## Étape 2 : lancez-le
 
@@ -55,6 +44,8 @@ Sous Windows, double-cliquez sur `seine.exe`. Sous macOS ou Linux, ouvrez un ter
 seine vous demande votre adresse de paiement ou votre `@shortname`, puis un pool. Appuyez sur Entrée pour accepter le pool par défaut, `stratum+tcp://bntpool.com:3333`. En quelques instants, [le tableau de bord](/fr/blog/seine-dashboard-explained/) affiche votre hashrate et vos premiers shares.
 
 À partir de là, seine continue de s'optimiser pendant qu'il mine. Il compare les nombres de threads et les kernels CPU sur du vrai travail de minage, ne change qu'après un gain confirmé, réduit la voilure si la mémoire vient à manquer et mémorise ce qui a fonctionné pour le prochain démarrage. Il ne se reconnecte jamais au pool pour cela : l'optimisation ne vous coûte donc aucun temps de minage.
+
+<MinerSettings os="any" />
 
 ## Combien de temps avant d'être payé ?
 
@@ -77,15 +68,6 @@ Le hashrate dépend surtout de la bande passante mémoire et du nombre de thread
 La configuration la plus rapide de ces mesures est un AMD EPYC 9355P à 97,1 H/s : 64 threads de minage et 192 GiB de RAM sous Linux avec les réglages par défaut de seine.
 
 Les résultats de chaque CPU testé se trouvent sur la [page des performances](https://github.com/zpalmtree/seine/blob/master/docs/PERFORMANCE.md), et le [guide du matériel de minage Blocknet](/fr/blog/blocknet-mining-hardware-hashrate/) explique comment la RAM et la bande passante mémoire déterminent ces chiffres.
-
-## Comment seine tire-t-il davantage du même CPU ?
-
-seine embarque plusieurs kernels Argon2id pour chaque famille de processeurs et les mesure sur votre machine pendant qu'il mine. Sur le matériel que nous avons testé, le bon kernel a fait une grande différence :
-
-- **AWS Graviton4 :** le kernel SHA3 avec prefetching mine 56 % plus vite que NEON seul (de 13,80 à 21,50 H/s).
-- **AMD EPYC 9R45 (Zen 5) :** le kernel streaming mine 30 % plus vite qu'AVX2 (de 34,47 à 44,74 H/s avec 24 threads).
-
-Vous n'avez rien à choisir. seine ne change de kernel qu'après un gain confirmé et mémorise le résultat pour le prochain démarrage.
 
 ## Comment obtenir plus de hashrate ?
 

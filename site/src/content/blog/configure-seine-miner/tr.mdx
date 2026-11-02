@@ -1,37 +1,114 @@
 ---
-title: 'seine ayarları: kayıtlı değerler ve başlatma seçenekleri'
-description: 'seine yapılandırmasını bulun, havuz ve adresi kaydedin, başlatma argümanlarının önceliğini anlayın ve Blocknet madencisini yeniden başlatarak doğrulayın.'
+title: 'seine ayarlarını değiştirin: iş parçacıkları, CPU, GPU ve havuz'
+description: 'seine’da CPU veya GPU madenciliğini kapatın, iş parçacığı sayısını belirleyin, ekran kartı seçin, ayarlarınızı her başlatmada koruyun, adresinizi veya havuzunuzu değiştirin.'
 tags: ['Madencilik rehberi', 'Yapılandırma', 'seine']
 faq:
-  - q: 'seine yapılandırmayı nereye kaydeder?'
-    a: 'Varsayılan olarak başlangıçtaki çalışma dizinine göre seine-data/seine.config.json dosyasını okur. data-dir başka bir temel dizin seçer. Terminal, kısayol ve zamanlanmış görev farklı çalışma dizinleri kullanabilir. Tam yapılandırma yolunu başlatma komutuyla birlikte kaydedin.'
-  - q: 'Komut satırı argümanı dosyayı günceller mi?'
-    a: 'Mevcut yapılandırmada açık bağlantı argümanları o çalıştırmada önceliklidir; kayıtlı adresi, havuz URL’sini veya cihaz adını değiştirmez. Argümanı normal başlatıcıda tutun ya da madenciyi durdurup kayıtlı alanı düzenleyin. Ardından normal başlangıcı doğrulayın.'
-  - q: 'Tüm seçenekleri JSON’a koyabilir miyim?'
-    a: 'Kayıtlı dosya küçük bir bağlantı şeması kullanır. Backend ve iş parçacığı gibi donanım ve çalışma seçenekleri başlatma argümanlarıdır. Benzer isimli JSON alanları bunları ayarlamaz. Veri klasörüyle birlikte başlatıcıyı da yedekleyin.'
-sourceHash: '66e5ad9f2665'
+  - q: 'seine’da CPU madenciliğini nasıl kapatırım?'
+    a: 'seine’ı backend seçeneği ekran kartınıza ayarlı olarak başlatın: nvidia veya amd. Makinede iki tür kart da varsa ikisini virgülle ayırarak yazın. seine o zaman yalnızca ekran kartlarıyla kazar ve işlemciyi başka işlere bırakır.'
+  - q: 'seine’da GPU madenciliğini nasıl kapatırım?'
+    a: 'seine’ı backend seçeneği cpu olarak ayarlı başlatın. seine o zaman yalnızca işlemciyle kazar ve tüm ekran kartlarını oyunlara ve diğer uygulamalara bırakır. İşlemci ve ekran kartlarıyla birlikte yeniden kazmak için seçeneği kaldırın.'
+  - q: 'Kaç CPU iş parçacığı kullanmalıyım?'
+    a: 'seine iş parçacığı sayısını sizin için seçer; bu yüzden yalnızca başka işlere yer bırakmak istediğinizde ayarlamanız yeterlidir. Her iş parçacığı yaklaşık 2 GB RAM kullanır. Bilgisayarınız rahat edene kadar panelde eksi tuşuna basın, sonra o sayıyı kullanın.'
+  - q: 'seine ayarlarını nereye kaydeder?'
+    a: 'seine adresinizi, havuzunuzu ve worker adınızı, başlattığınız klasörün içindeki seine-data/seine.config.json dosyasına kaydeder. İş parçacığı ve backend seçenekleri oraya kaydedilmez; her başlatmada istiyorsanız bunları küçük bir başlatma dosyasına yazın.'
+sourceHash: b5ca5a9a16d8
 translation: draft
 ---
 
-Blocknet madencinizi her defasında öngörülebilir ayarlarla başlatın. seine v0.2.37 için bu rehber kayıt konumunu, argüman önceliğini ve kalıcı değişiklikleri açıklar. Çalışan bir kurulumla başlayın; uygulamayı değiştirmek için [güncelleme rehberine](/tr/blog/update-seine-miner/) bakın.
+seine hiçbir ayar yapmadan da iyi çalışır. Bu rehber, büyük olasılıkla isteyeceğiniz değişiklikleri anlatır: CPU veya GPU madenciliğini kapatmak, daha az iş parçacığı kullanmak, ekran kartı seçmek ve adresinizi ya da havuzunuzu değiştirmek.
 
-## seine ayarları nasıl seçer?
+## Bir seine ayarı nasıl değiştirilir?
 
 <Answer>
-seine kayıtlı bağlantı değerlerini başlangıç argümanlarıyla birleştirir. Açık bağlantı argümanları ilgili kayıtlı değerlerden önce gelir. Veri dizini okunacak dosyayı belirler. Donanım ve çalışma seçenekleri başlatma argümanları olarak kalır; hem dosyayı hem de normal komutunuzu koruyun.
+seine’ı kapatın, klasöründe bir terminal açın ve ayarı komuta ekleyerek yeniden başlatın; örneğin `./seine --threads 4`. Windows’ta PowerShell ve `.\seine.exe --threads 4` kullanın. seine kayıtlı adresinizi ve havuzunuzu korur; yalnızca değiştirmek istediğinizi yazarsınız.
 </Answer>
 
-<img src="/assets/blog/configure-seine-miner.svg" alt="Kayıtlı dosya ve terminal komutu madenciye gider; yeniden başlatmanın ardından kontrol yapılır." width="1200" height="675" loading="lazy" />
+- **Windows:** seine klasörünü Dosya Gezgini’nde açın, adres çubuğuna `powershell` yazın ve Enter’a basın.
+- **macOS ve Linux:** Terminal’i açın ve `cd` ile seine klasörüne gidin.
 
-## Başlatıcının kullandığı dosyayı bulun
+Aşağıdaki örneklerde `./seine` kullanılır. Windows’ta bunun yerine `.\seine.exe` yazın.
 
-Varsayılan `./seine-data/seine.config.json` yolu süreç çalışma dizinine göredir; bu dizin program klasöründen farklı olabilir. Düzenlemeden önce terminal, kısayol veya hizmet ayarlarını kontrol edin. İki başlatıcı aynı programı farklı veri klasörleriyle çalıştırabilir.
+## CPU veya GPU madenciliği nasıl kapatılır?
 
-`--data-dir` temel dizini seçer; dosya adı `seine.config.json` kalır. Farklı yerlerden başlatırken sabit mutlak yol kullanın. Programı, çalışma dizinini, veri yolunu ve tüm argümanları birlikte kaydedin. [Windows başlangıç rehberi](/tr/blog/start-miner-automatically-windows/), boşluklu yollar dahil Görev Zamanlayıcı ayarlarını gösterir.
+seine varsayılan olarak CPU’nuzla ve desteklenen tüm ekran kartlarıyla kazar. `--backend` ayarı hangilerinin kullanılacağını seçer:
 
-## Hangi ayarlar dosyaya aittir?
+| İstediğiniz | Şunu ekleyin |
+|---|---|
+| Yalnızca CPU, GPU kapalı | `--backend cpu` |
+| Yalnızca NVIDIA GPU, CPU kapalı | `--backend nvidia` |
+| Yalnızca AMD GPU, CPU kapalı | `--backend amd` |
+| NVIDIA ve AMD GPU’lar, CPU kapalı | `--backend nvidia,amd` |
 
-Örnek ana bağlantı alanlarını gösterir. `@yourname` yerine kayıtlı Blocknet ID’nizi veya tam alıcı adresinizi yazın. Bu, komut değil dosya biçimi örneğidir. Mevcut kurulumda tüm dosyayı değiştirmek yerine ilgili alanları düzenleyin.
+Örneğin, bir NVIDIA kartıyla kazıp CPU’yu boş bırakmak için:
+
+```sh
+./seine --backend nvidia
+```
+
+[Panel](/tr/blog/seine-dashboard-explained/) içindeki Devices paneli, kazan her cihaz için bir satır gösterir.
+
+## Daha az CPU iş parçacığı nasıl kullanılır?
+
+İstediğiniz sayıyla `--threads` ekleyin:
+
+```sh
+./seine --threads 4
+```
+
+Her iş parçacığı yaklaşık 2 GB RAM kullanır; yani 4 iş parçacığı yaklaşık 8 GB kullanır. Ayarı kaldırana kadar seine bu sayıda kalır.
+
+İyi bir sayı bulmak için seine’ı normal başlatın ve panelde bir iş parçacığını kaldırmak için `-`, bir tane eklemek için `+` tuşuna basın. Değişiklik biraz sürer ve panel yeni sayıyı gösterir. Bilgisayarınız rahat edince durun ve o sayıyı `--threads` ile kullanın; çünkü tuşlar yalnızca seine’ı kapatana kadar geçerlidir.
+
+seine’ın kendisinin daha hafif bir iş parçacığı sayısı seçmesi için bunu kullanın:
+
+```sh
+./seine --cpu-profile efficiency
+```
+
+[Masaüstü rehberi](/tr/blog/mine-while-using-pc/), bilgisayarınızı kullanırken madencilik hakkında daha fazlasını anlatır.
+
+## Tek bir ekran kartı nasıl seçilir?
+
+Kartın numarasını ekleyin. İlk kart `0`’dır:
+
+```sh
+./seine --backend cpu,nvidia --nvidia-devices 0
+```
+
+Bu, CPU ve ilk NVIDIA kartıyla kazar. İki kart için `--nvidia-devices 0,1` kullanın ve CPU’yu kapatmak için `cpu,` kısmını çıkarın. AMD kartları da aynı şekilde çalışır:
+
+```sh
+./seine --backend cpu,amd --amd-devices 0
+```
+
+Diğer uygulamalar için video belleği boş bırakmak üzere `--nvidia-max-lanes 2` veya `--amd-max-lanes 2` kullanın. Her lane yaklaşık 2 GB video belleği kullanır. Tümleşik Radeon grafikleri, siz kendiniz `--backend amd` eklemedikçe kapalı kalır.
+
+## Ayarlarınız her başlatmada nasıl korunur?
+
+seine adresinizi, havuzunuzu ve worker adınızı kendisi kaydeder. `--threads` ve `--backend` gibi ayarlar yalnızca o çalıştırma için geçerlidir; bu yüzden onları küçük bir başlatma dosyasına yazın ve seine yerine o dosyayı açın.
+
+Windows’ta Not Defteri’ni açın, bu satırları kendi ayarlarınızla yazın ve dosyayı seine klasörüne `start-mining.bat` adıyla, **Kayıt türü** **Tüm dosyalar** olarak ayarlı şekilde kaydedin:
+
+```bat
+seine.exe --backend cpu --threads 4
+pause
+```
+
+Kazmaya başlamak için `start-mining.bat` dosyasına çift tıklayın. `pause` satırı, seine durursa pencereyi açık tutar; böylece son mesajını okuyabilirsiniz.
+
+macOS veya Linux’ta bu satırları seine klasörüne `start-mining.sh` adıyla kaydedin:
+
+```sh
+#!/bin/sh
+cd "$(dirname "$0")"
+./seine --backend cpu --threads 4
+```
+
+`chmod +x start-mining.sh` komutunu bir kez çalıştırın, sonra `./start-mining.sh` ile kazmaya başlayın. Otomatik güncellemeler seine’ı aynı ayarlarla yeniden başlatır. Windows’ta oturum açtığınızda her seferinde kazmaya başlamak için [otomatik başlatma rehberini](/tr/blog/start-miner-automatically-windows/) izleyin.
+
+## Adresiniz, havuzunuz veya worker adınız nasıl değiştirilir?
+
+seine’ı kapatın ve `seine-data/seine.config.json` dosyasını bir metin düzenleyicide açın. Bu klasör, seine’ı başlattığınız klasörün içindedir. İhtiyacınız olan değeri değiştirin ve dosyayı kaydedin:
 
 ```json
 {
@@ -43,34 +120,26 @@ Varsayılan `./seine-data/seine.config.json` yolu süreç çalışma dizinine g�
 }
 ```
 
-`mode`, `address`, `pool_url` ve `pool_worker`; modu, hedefi, havuzu ve cihaz adını seçer. `schema_version` ve varsa `dev_fee_pool_worker` alanını koruyun. Sonuncusu ayrı oluşturulan bir etikettir; kendi cihazınız için `pool_worker` kullanın. Kurtarma ifadesini ve özel anahtarları bu dosyaya koymayın.
+Diğer satırları olduğu gibi bırakın. Tırnak işaretlerini ve virgülleri koruyun; bu dosyaya kurtarma ifadenizi veya özel anahtarlarınızı eklemeyin.
 
-## Değişiklik nasıl kalıcı olur?
+Tek bir çalıştırma için farklı bir değer kullanmak istiyorsanız onu komuta ekleyin. Kayıtlı dosya aynı kalır:
 
-Madenciyi durdurun ve dosyayı yedekleyin. Düz metin editörü, çift tırnaklı geçerli JSON ve ek uzantısız özgün dosya adı kullanın. Doğru klasörde yalnız gereken alanı değiştirin. Virgülleri kontrol edin; yorum ve sondaki virgüllerden kaçının. Varsa editörün JSON doğrulamasını kullanın. Yedek, eski değerleri tam karşılaştırmanızı sağlar.
-
-Başlatıcıda aynı değeri geçersiz kılan argüman arayın. Eski `--address`, yeni kayıtlı adresten önce gelir. Argümanı güncelleyin veya dosyayı kullanmak için kaldırın. Normal kısayol, betik veya görevle yeniden başlatıp etkin değerleri kontrol edin.
-
-## Geçici seçenekleri bilinçli kullanın
-
-Mevcut yapılandırmada aşağıdaki havuz seçeneği cihaz adını yalnız bu çalıştırma için seçer. Sonraki başlangıçta seçenek yoksa kayıtlı ad geri gelir. Kontrollü değişiklik için uygundur; sürekli kullanmak için normal başlatıcıya ekleyin.
-
-```text
---pool-worker desktop-02
+```sh
+./seine --pool-worker desktop-02
 ```
 
-İlk başlangıçta dosya yoksa seine ilk bağlantı bilgileriyle oluşturur. Bu, mevcut ayarları geçici geçersiz kılmaktan farklıdır. Komutu başka bilgisayara kopyalarken onun ilk dosyasını oluşturabileceğini unutmayın. [Yapılandırma belgesi](https://github.com/zpalmtree/seine/blob/v0.2.37/docs/guides/configuration.md) başlangıç sorularını ve desteklenen seçenekleri açıklar.
+Diğer iki ayar `--address` ve `--pool-url` ayarlarıdır. [Adres değiştirme rehberi](https://bntpool.com/blog/tr/change-mining-wallet-address/), adresinizi değiştirdikten sonra havuzun işinizi nasıl hesabınıza yazdığını açıklar.
 
-## Donanım ayarlarını başlatma komutunda tutun
+## Bir ayar çalışmazsa ne yapılır?
 
-`--backend` ve `--threads` başlangıç argümanlarıdır. Bağlantı şeması tüm seçeneklerin listesi değildir. Benzer bir JSON alanı ilgili çalışma seçeneğini ayarlamaz. Donanım tercihlerini madenciyi başlatan betik, kısayol veya hizmette tutun.
+| Gördüğünüz | Yapmanız gereken |
+|---|---|
+| `--nvidia-devices requires selecting nvidia in --backend` | Backend’e `nvidia` ekleyin: `--backend cpu,nvidia`. Aynısı `amd` için de geçerlidir. |
+| `configured CPU lanes need` daha fazla RAM | `--threads` ile daha düşük bir sayı kullanın; her 2 GB boş RAM için yaklaşık bir iş parçacığı. |
+| `all GPU backends failed to start` | Kartınızın güncel sürücüsünü yükleyin. [AMD rehberi](https://github.com/zpalmtree/seine/blob/master/docs/guides/amd.md), AMD kartlarının Linux’ta nelere ihtiyaç duyduğunu listeler. |
+| seine adresinizi yeniden istiyor | seine’ı daha önceki klasörden başlatın veya klasörü `--data-dir` ile belirleyin. |
+| Ayarlarınız yeniden otomatiğe döndü | seine’ı başlatma dosyanızdan başlatın. `-` ve `+` tuşları yalnızca seine’ı kapatana kadar geçerlidir. |
 
-Paneldeki iş parçacığı kontrolleri oturumu değiştirir, yeni varsayılan kaydetmez. Otomatik ayarın ayrı önbellekleri vardır. Bunları bağlantı düzenlemelerinden ayrı koruyun ve her makinenin kendi donanımına uyarlanmasına izin verin. [Otomatik ayar rehberi](/tr/blog/seine-automatic-cpu-tuning/), önbellek ve açık iş parçacığı seçimlerini açıklar.
+[Seçenek başvurusu](https://github.com/zpalmtree/seine/blob/master/docs/MINER_FLAGS.md) tüm ayarları listeler.
 
-## Ayarlar neden sıfırlanmış görünüyor?
-
-Veri yolunu ve argümanları son çalışan başlangıçla karşılaştırın. Yeni çıkarma klasörü, başka terminal dizini veya eski görev argümanı farkı açıklayabilir. Ayrıştırma hatasında önce dosya adını ve mesajı okuyun. Yedeği geri yükleyin veya JSON’u düzeltip amaçlanan yoldan bir kez başlatın.
-
-Hedefi, havuzu, cihaz adını ve kabul edilen payları kontrol edin. Kalıcılık için normal başlangıcı tekrarlayın; tek argümanlı çalıştırma yalnız o komutu doğrular. [Panel rehberini](/tr/blog/seine-dashboard-explained/) ve gelecekteki ödül hedefi için [adres değiştirme rehberini](https://bntpool.com/blog/tr/change-mining-wallet-address/) kullanın. Çalışan başlatıcıyı ve yedeği birlikte saklayın.
-
-<CTA target="seine" title="Güncel seine sürümünü indirin" text="Sabit veri klasörü kullanın ve sınanmış komutu kayıtlı bağlantıyla birlikte koruyun." />
+<CTA target="seine" title="seine’ın güncel sürümünü edinin" text="seine’ı indirin, bir kez başlatın, sonra yalnızca değiştirmek istediğiniz ayarları ekleyin." />

@@ -1,37 +1,114 @@
 ---
-title: 'Cấu hình seine: thiết lập lưu và tùy chọn khởi chạy'
-description: 'Tìm cấu hình seine, lưu pool và địa chỉ, hiểu thứ tự ưu tiên của tham số và kiểm tra thiết lập phần mềm đào Blocknet sau khi khởi động lại.'
-tags: ['Hướng dẫn đào', 'Cấu hình', 'seine']
+title: 'Đổi thiết lập seine: luồng, CPU, GPU và pool'
+description: 'Tắt đào bằng CPU hoặc GPU trong seine, đặt số luồng, chọn card đồ họa, giữ thiết lập cho mỗi lần khởi động và đổi địa chỉ hoặc pool của bạn.'
+tags: ['Hướng dẫn đào coin', 'Cấu hình', 'seine']
 faq:
-  - q: 'seine lưu cấu hình ở đâu?'
-    a: 'Mặc định seine đọc seine-data/seine.config.json theo thư mục làm việc lúc khởi chạy. data-dir chọn thư mục gốc khác. Terminal, lối tắt và tác vụ theo lịch có thể dùng thư mục khác nhau. Ghi lại đường dẫn đầy đủ cùng lệnh khởi chạy.'
-  - q: 'Tham số dòng lệnh có cập nhật tệp không?'
-    a: 'Với cấu hình đã tồn tại, tham số kết nối tường minh được ưu tiên trong lần chạy đó mà không thay địa chỉ, URL pool hoặc tên máy đã lưu. Giữ tham số trong lệnh thường dùng, hoặc dừng phần mềm rồi sửa trường đã lưu. Sau đó kiểm tra khởi chạy bình thường.'
-  - q: 'Có thể đặt mọi tùy chọn trong JSON không?'
-    a: 'Tệp lưu dùng lược đồ nhỏ cho kết nối. Tùy chọn phần cứng và thực thi như backend, luồng thuộc tham số khởi chạy. Thêm trường JSON tương tự không thiết lập chúng. Sao lưu cách khởi chạy cùng thư mục dữ liệu.'
-sourceHash: '66e5ad9f2665'
+  - q: 'Làm sao để tắt đào bằng CPU trong seine?'
+    a: 'Khởi động seine với tùy chọn backend đặt thành card đồ họa của bạn, là nvidia hoặc amd. Dùng cả hai, cách nhau bằng dấu phẩy, nếu máy có cả hai loại card. Khi đó seine chỉ đào bằng các card đồ họa và để bộ xử lý rảnh cho việc khác.'
+  - q: 'Làm sao để tắt đào bằng GPU trong seine?'
+    a: 'Khởi động seine với tùy chọn backend đặt thành cpu. Khi đó seine chỉ đào bằng bộ xử lý và để mọi card đồ họa rảnh cho game và ứng dụng khác. Bỏ tùy chọn này để đào lại bằng cả bộ xử lý lẫn card đồ họa.'
+  - q: 'Tôi nên dùng bao nhiêu luồng CPU?'
+    a: 'Seine tự chọn số luồng cho bạn, nên bạn chỉ cần đặt khi muốn chừa chỗ cho việc khác. Mỗi luồng dùng khoảng 2 GB RAM. Nhấn phím trừ trong bảng điều khiển cho đến khi máy tính của bạn chạy thoải mái, rồi dùng con số đó.'
+  - q: 'Seine lưu thiết lập ở đâu?'
+    a: 'Seine lưu địa chỉ, pool và tên worker của bạn trong seine-data/seine.config.json, bên trong thư mục bạn khởi động nó. Các tùy chọn luồng và backend không được lưu ở đó, nên hãy đặt chúng vào một tệp khởi động nhỏ nếu bạn muốn dùng ở mỗi lần khởi động.'
+sourceHash: b5ca5a9a16d8
 translation: draft
 ---
 
-Khởi chạy phần mềm đào Blocknet với thiết lập nhất quán. Hướng dẫn theo seine v0.2.37 giải thích vị trí cấu hình, ưu tiên tham số và thay đổi lâu dài. Bắt đầu từ bản cài đang hoạt động; [hướng dẫn cập nhật](/vi/blog/update-seine-miner/) nói về thay ứng dụng.
+Seine chạy tốt mà không cần thiết lập nào. Hướng dẫn này nói về những thay đổi bạn có nhiều khả năng muốn làm nhất: tắt đào bằng CPU hoặc GPU, dùng ít luồng hơn, chọn card đồ họa, và đổi địa chỉ hoặc pool của bạn.
 
-## seine chọn thiết lập thế nào?
+## Làm sao để đổi một thiết lập của seine?
 
 <Answer>
-seine kết hợp kết nối đã lưu với tham số lúc khởi chạy. Tham số kết nối tường minh ưu tiên hơn giá trị tương ứng trong tệp. Thư mục dữ liệu quyết định tệp được đọc. Tùy chọn phần cứng và thực thi vẫn là tham số khởi chạy: giữ cả tệp lẫn lệnh thường dùng.
+Đóng seine, mở terminal trong thư mục của nó rồi khởi động lại với thiết lập được thêm vào lệnh, ví dụ `./seine --threads 4`. Trên Windows, dùng PowerShell và `.\seine.exe --threads 4`. Seine giữ địa chỉ và pool đã lưu của bạn, nên bạn chỉ gõ phần muốn đổi.
 </Answer>
 
-<img src="/assets/blog/configure-seine-miner.svg" alt="Tệp cấu hình và lệnh terminal đi vào phần mềm đào, rồi được kiểm tra sau khi khởi động lại." width="1200" height="675" loading="lazy" />
+- **Windows:** mở thư mục seine trong File Explorer, gõ `powershell` vào thanh địa chỉ rồi nhấn Enter.
+- **macOS và Linux:** mở Terminal và vào thư mục seine bằng `cd`.
 
-## Tìm tệp thực sự được dùng
+Các ví dụ dưới đây dùng `./seine`. Trên Windows, hãy gõ `.\seine.exe` thay vào đó.
 
-Mặc định là `./seine-data/seine.config.json`, tương đối với thư mục làm việc của tiến trình, có thể khác thư mục chương trình. Kiểm tra terminal, lối tắt hoặc dịch vụ trước khi sửa. Hai cách chạy cùng chương trình có thể chọn dữ liệu khác nhau.
+## Làm sao để tắt đào bằng CPU hoặc GPU?
 
-`--data-dir` chọn thư mục gốc; tên tệp vẫn là `seine.config.json`. Dùng đường dẫn tuyệt đối ổn định nếu khởi chạy từ nhiều nơi. Ghi chương trình, thư mục làm việc, dữ liệu và toàn bộ tham số. [Hướng dẫn khởi chạy Windows](/vi/blog/start-miner-automatically-windows/) minh họa các đường dẫn, kể cả dấu cách, trong Task Scheduler.
+Theo mặc định, seine đào bằng CPU của bạn và mọi card đồ họa được hỗ trợ. Thiết lập `--backend` chọn cái nào được dùng:
 
-## Thiết lập nào thuộc tệp lưu?
+| Điều bạn muốn | Thêm cái này |
+|---|---|
+| Chỉ CPU, tắt GPU | `--backend cpu` |
+| Chỉ GPU NVIDIA, tắt CPU | `--backend nvidia` |
+| Chỉ GPU AMD, tắt CPU | `--backend amd` |
+| GPU NVIDIA và AMD, tắt CPU | `--backend nvidia,amd` |
 
-Ví dụ cho thấy các trường kết nối chính. Thay `@yourname` bằng Blocknet ID đã đăng ký hoặc địa chỉ nhận đầy đủ của bạn. Đây là mẫu định dạng, không phải lệnh. Với bản cài hiện có, sửa trường liên quan thay vì thay cả tệp.
+Ví dụ, để đào bằng một card NVIDIA và để CPU rảnh:
+
+```sh
+./seine --backend nvidia
+```
+
+Bảng Devices trong [bảng điều khiển](/vi/blog/seine-dashboard-explained/) hiển thị một dòng cho mỗi thiết bị đang đào.
+
+## Làm sao để dùng ít luồng CPU hơn?
+
+Thêm `--threads` kèm số bạn muốn:
+
+```sh
+./seine --threads 4
+```
+
+Mỗi luồng dùng khoảng 2 GB RAM, nên 4 luồng dùng khoảng 8 GB. Seine giữ nguyên số đó cho đến khi bạn bỏ thiết lập.
+
+Để tìm một số phù hợp, hãy khởi động seine bình thường rồi nhấn `-` trong bảng điều khiển để bớt một luồng, hoặc `+` để thêm một luồng. Thay đổi cần một lúc, và bảng điều khiển hiển thị số mới. Dừng khi máy tính của bạn chạy thoải mái, rồi dùng số đó với `--threads`, vì các phím chỉ có tác dụng đến khi bạn đóng seine.
+
+Để seine tự chọn số luồng nhẹ hơn, hãy dùng lệnh này:
+
+```sh
+./seine --cpu-profile efficiency
+```
+
+[Hướng dẫn cho máy tính để bàn](/vi/blog/mine-while-using-pc/) nói thêm về việc đào trong lúc bạn dùng máy tính.
+
+## Làm sao để chọn một card đồ họa?
+
+Thêm số của card. Card đầu tiên là `0`:
+
+```sh
+./seine --backend cpu,nvidia --nvidia-devices 0
+```
+
+Lệnh này đào bằng CPU và card NVIDIA đầu tiên. Dùng `--nvidia-devices 0,1` cho hai card, và bỏ `cpu,` để tắt CPU. Card AMD hoạt động tương tự:
+
+```sh
+./seine --backend cpu,amd --amd-devices 0
+```
+
+Để chừa bộ nhớ video cho các ứng dụng khác, dùng `--nvidia-max-lanes 2` hoặc `--amd-max-lanes 2`. Mỗi lane dùng khoảng 2 GB bộ nhớ video. Đồ họa Radeon tích hợp vẫn tắt trừ khi bạn tự thêm `--backend amd`.
+
+## Làm sao để giữ thiết lập cho mỗi lần khởi động?
+
+Seine tự lưu địa chỉ, pool và tên worker của bạn. Các thiết lập như `--threads` và `--backend` chỉ có tác dụng cho lần chạy đó, nên hãy đặt chúng vào một tệp khởi động nhỏ và mở tệp đó thay vì seine.
+
+Trên Windows, mở Notepad, gõ các dòng này với thiết lập của riêng bạn, rồi lưu tệp trong thư mục seine với tên `start-mining.bat`, đặt **Lưu dưới dạng** thành **Tất cả các tệp**:
+
+```bat
+seine.exe --backend cpu --threads 4
+pause
+```
+
+Nhấp đúp `start-mining.bat` để bắt đầu đào. Dòng `pause` giữ cửa sổ mở nếu seine dừng, để bạn đọc được thông báo cuối cùng của nó.
+
+Trên macOS hoặc Linux, lưu các dòng này trong thư mục seine với tên `start-mining.sh`:
+
+```sh
+#!/bin/sh
+cd "$(dirname "$0")"
+./seine --backend cpu --threads 4
+```
+
+Chạy `chmod +x start-mining.sh` một lần, rồi bắt đầu đào bằng `./start-mining.sh`. Các bản cập nhật tự động khởi động lại seine với cùng thiết lập. Để bắt đầu đào mỗi khi bạn đăng nhập Windows, hãy làm theo [hướng dẫn tự khởi động](/vi/blog/start-miner-automatically-windows/).
+
+## Làm sao để đổi địa chỉ, pool hoặc tên worker?
+
+Đóng seine và mở `seine-data/seine.config.json` trong một trình soạn thảo văn bản. Thư mục này nằm bên trong thư mục bạn khởi động seine. Đổi giá trị bạn cần và lưu tệp:
 
 ```json
 {
@@ -43,34 +120,26 @@ Ví dụ cho thấy các trường kết nối chính. Thay `@yourname` bằng B
 }
 ```
 
-`mode`, `address`, `pool_url` và `pool_worker` chọn chế độ, đích nhận, pool và tên máy. Giữ `schema_version` và `dev_fee_pool_worker` nếu có. Trường cuối là nhãn được tạo riêng; dùng `pool_worker` cho máy của bạn. Không đặt cụm từ khôi phục hay khóa riêng ở đây.
+Giữ nguyên các dòng còn lại. Giữ dấu ngoặc kép và dấu phẩy, và đừng thêm cụm từ khôi phục hay khóa riêng vào tệp này.
 
-## Làm sao giữ thay đổi lâu dài?
+Để dùng một giá trị khác cho một lần chạy, hãy thêm nó vào lệnh. Tệp đã lưu vẫn giữ nguyên:
 
-Dừng phần mềm và sao lưu tệp. Dùng trình soạn văn bản, JSON hợp lệ với dấu nháy kép và tên gốc không thêm đuôi. Chỉ sửa trường cần thiết trong thư mục thực tế. Kiểm tra dấu phẩy, tránh chú thích và dấu phẩy cuối; dùng kiểm tra JSON của trình soạn nếu có. Bản sao giúp đối chiếu chính xác giá trị cũ.
-
-Kiểm tra tham số ghi đè trong cách khởi chạy. `--address` cũ ưu tiên hơn địa chỉ mới lưu. Cập nhật hoặc bỏ tham số để dùng tệp. Khởi động lại bằng lối tắt, tập lệnh hay tác vụ thường dùng rồi kiểm tra giá trị có hiệu lực.
-
-## Chủ động dùng tùy chọn tạm thời
-
-Với cấu hình có sẵn, tùy chọn pool dưới đây chọn tên máy cho lần chạy này. Lần sau không có tùy chọn sẽ dùng lại tên đã lưu. Điều này hữu ích để thay đổi có kiểm soát; thêm vào lệnh thường dùng nếu muốn áp dụng mọi lần.
-
-```text
---pool-worker desktop-02
+```sh
+./seine --pool-worker desktop-02
 ```
 
-Lần đầu không có tệp, seine tạo nó từ thông tin kết nối ban đầu. Việc này khác ghi đè tạm thời tệp đã có. Nhớ điều đó khi sao chép lệnh sang máy khác có thể đang tạo cấu hình đầu tiên. [Tài liệu cấu hình](https://github.com/zpalmtree/seine/blob/v0.2.37/docs/guides/configuration.md) ghi các câu hỏi đầu tiên và tùy chọn hỗ trợ.
+Hai thiết lập còn lại là `--address` và `--pool-url`. [Hướng dẫn đổi địa chỉ](https://bntpool.com/blog/vi/change-mining-wallet-address/) giải thích cách pool ghi nhận công việc của bạn sau khi bạn đổi địa chỉ.
 
-## Giữ tùy chọn phần cứng trong lệnh
+## Nếu một thiết lập không hoạt động thì sao?
 
-`--backend` và `--threads` là tham số khởi chạy. Lược đồ kết nối không phải danh sách mọi tùy chọn. Thêm trường JSON tên tương tự không thiết lập tùy chọn thực thi đó. Giữ lựa chọn phần cứng trong tập lệnh, lối tắt hoặc dịch vụ.
+| Điều bạn thấy | Việc cần làm |
+|---|---|
+| `--nvidia-devices requires selecting nvidia in --backend` | Thêm `nvidia` vào backend: `--backend cpu,nvidia`. Tương tự với `amd`. |
+| `configured CPU lanes need` RAM hơn | Dùng số thấp hơn với `--threads`, khoảng một luồng cho mỗi 2 GB RAM trống. |
+| `all GPU backends failed to start` | Cài trình điều khiển mới nhất cho card của bạn. [Hướng dẫn AMD](https://github.com/zpalmtree/seine/blob/master/docs/guides/amd.md) liệt kê những gì card AMD cần trên Linux. |
+| Seine lại hỏi địa chỉ của bạn | Khởi động seine từ cùng thư mục như trước, hoặc đặt thư mục bằng `--data-dir`. |
+| Thiết lập của bạn quay về tự động | Khởi động seine từ tệp khởi động của bạn. Các phím `-` và `+` chỉ có tác dụng đến khi bạn đóng seine. |
 
-Điều khiển luồng trên bảng điều khiển thay đổi phiên, không lưu mặc định mới. Tự điều chỉnh có tệp bộ nhớ đệm riêng. Giữ chúng tách biệt với sửa kết nối và để từng máy điều chỉnh theo phần cứng. [Hướng dẫn tự điều chỉnh](/vi/blog/seine-automatic-cpu-tuning/) giải thích cache và lựa chọn luồng tường minh.
+[Tài liệu tham khảo tùy chọn](https://github.com/zpalmtree/seine/blob/master/docs/MINER_FLAGS.md) liệt kê mọi thiết lập.
 
-## Vì sao thiết lập có vẻ bị đặt lại?
-
-So sánh đường dẫn dữ liệu và tham số với lần chạy tốt gần nhất. Thư mục giải nén mới, terminal khác hay tham số tác vụ cũ có thể giải thích khác biệt. Nếu phân tích tệp thất bại, đọc tên tệp và thông báo trước. Khôi phục bản sao hoặc sửa JSON, rồi chạy một lần theo cách dự kiến.
-
-Kiểm tra đích nhận, pool, tên máy và share được chấp nhận. Lặp lại khởi chạy bình thường để xác nhận tính lâu dài; một lần dùng tham số chỉ xác nhận lệnh đó. Dùng [hướng dẫn bảng điều khiển](/vi/blog/seine-dashboard-explained/) và [đổi địa chỉ](https://bntpool.com/blog/vi/change-mining-wallet-address/) cho đích ghi nhận công việc tương lai. Giữ cách chạy tốt cùng bản sao cấu hình.
-
-<CTA target="seine" title="Tải phiên bản seine hiện tại" text="Dùng thư mục ổn định và giữ lệnh đã kiểm tra cùng kết nối đã lưu." />
+<CTA target="seine" title="Tải bản seine hiện tại" text="Tải seine, khởi động một lần, rồi chỉ thêm những thiết lập bạn muốn đổi." />

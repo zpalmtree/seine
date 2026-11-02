@@ -11,7 +11,7 @@ faq:
     a: 'Κάθε νήμα εξόρυξης δουλεύει σε ένα μπλοκ μνήμης 2 GiB, οπότε υπολογίστε περίπου 2 GB ανά νήμα. Ένα Mac με 16 GB χωρά έως επτά νήματα, ένα με 32 GB έως 15 και ένα με 64 GB έως 31. Το seine μετρά την ελεύθερη μνήμη και επίσης ταιριάζει τα νήματα στους πυρήνες σας.'
   - q: 'Μπορώ να κάνω εξόρυξη Blocknet σε Mac με Intel;'
     a: 'Ναι. Το seine δημοσιεύει ξεχωριστό αρχείο για Mac με Intel, το seine-macos-x86_64.tar.gz, και τα βήματα είναι ίδια με το Apple Silicon. Κατεβάστε το, αποσυμπιέστε το στο Τερματικό, εκτελέστε ./seine και επικολλήστε τη διεύθυνση Blocknet ή το @name σας. Το seine προσαρμόζει τα νήματα στη μνήμη σας και ξεκινά εξόρυξη στο bntpool.com από προεπιλογή.'
-sourceHash: '33a60ad4df0c'
+sourceHash: 10bf5cec430a
 translation: draft
 ---
 
@@ -72,6 +72,8 @@ cd "$HOME/seine"
 xattr -d com.apple.quarantine ./seine
 ./seine
 ```
+
+<MinerSettings os="mac" />
 
 ## Γιατί τα Mac με Apple Silicon κάνουν καλή εξόρυξη Blocknet;
 

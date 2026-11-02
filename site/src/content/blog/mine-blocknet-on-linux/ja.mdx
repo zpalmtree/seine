@@ -4,12 +4,12 @@ description: "Linux: seineをダウンロードして展開し、Blocknetアド�
 tags: ['マイニングガイド', 'Linux', 'NVIDIA']
 faq:
   - q: 'どのLinuxアーカイブをダウンロードすればよいですか？'
-    a: "ダウンロード欄を開きます。uname -mを実行し、x86_64ならseine-linux-x86_64.tar.gz、aarch64ならseine-linux-aarch64.tar.gzを選びます。Linux版にはglibc 2.39以降が必要です。x86_64版はCPUとNVIDIA、ARM64版はCPUマイニングに対応します。"
+    a: "ダウンロード欄を開きます。uname -mを実行し、x86_64ならseine-linux-x86_64.tar.gz、aarch64ならseine-linux-aarch64.tar.gzを選びます。Linux版にはglibc 2.31以降が必要です。x86_64版はCPUとNVIDIA、ARM64版はCPUマイニングに対応します。"
   - q: 'seineはsudoで実行する必要がありますか？'
     a: '通常のマイナーは、書き込み可能なフォルダーから自分のユーザーで実行します。アーカイブを展開し、必要なら所有者に実行権限を付与して、./seineで起動します。予約ヒュージページの準備は別の管理作業です。通常の起動では標準のメモリページを使用できます。'
-  - q: 'LinuxでNVRTCライブラリが見つからないと表示されるのはなぜですか？'
-    a: 'LinuxのNVIDIAバックエンドには、互換性のあるドライバーと、対応するbuiltinsライブラリを含むNVRTCランタイムライブラリが必要です。ディストリビューションまたはNVIDIAがサポートするパッケージからインストールしてください。LinuxアーカイブにWindowsのDLLは同梱されていません。GPUの準備中はCPUバックエンドを選べます。'
-sourceHash: 'fee2c843812c'
+  - q: 'LinuxでNVIDIA GPUマイニングをするのにCUDAやNVRTCは必要ですか？'
+    a: 'いいえ。NVIDIAドライバーがあれば十分です。seineはNVRTCがインストールされていればそれを使い、なければseineに組み込まれたカーネルを読み込みます。これはGeForce GTX 10 series以降のカードに対応しています。ドライバーをインストールしてseineを起動し、Devicesパネルにカードが表示されることを確認してください。'
+sourceHash: acdcb56b3c1f
 translation: draft
 ---
 
@@ -21,7 +21,7 @@ seineをダウンロードして展開し、Blocknetアドレスを入力して�
 
 ## ステップ1：適切なビルドをダウンロード
 
-[ダウンロード欄](/ja/#download)を開きます。`uname -m`を実行し、`x86_64`なら`seine-linux-x86_64.tar.gz`、`aarch64`なら`seine-linux-aarch64.tar.gz`を選びます。Linux版にはglibc 2.39以降が必要です。x86_64版はCPUとNVIDIA、ARM64版はCPUマイニングに対応します。
+[ダウンロード欄](/ja/#download)を開きます。`uname -m`を実行し、`x86_64`なら`seine-linux-x86_64.tar.gz`、`aarch64`なら`seine-linux-aarch64.tar.gz`を選びます。Linux版にはglibc 2.31以降が必要です。x86_64版はCPUとNVIDIA、ARM64版はCPUマイニングに対応します。
 
 <img src="/assets/blog/setup-download.webp" alt="LinuxとLinux ARM64のアーカイブが並ぶ公式ダウンロード表" loading="lazy" />
 
@@ -64,17 +64,11 @@ seineはスレッド数を選び、自動で調整します。次回からも同
 
 [マイ統計](https://bntpool.com/stats?lang=ja)を開き、同じアドレスまたは登録済みの名前を入力して、ワーカー、シェア、残高を確認します。
 
-## LinuxでNVIDIAマイニングを行うには何が必要？
+## LinuxでのGPUマイニングに必要なものは何ですか？
 
-Linux x86_64のGPUマイニングには、NVIDIAドライバーと互換性のあるNVRTCランタイムライブラリが必要です。NVRTCは起動時にGPUカーネルをコンパイルします。[NVIDIA設定ガイド](/ja/blog/mine-blocknet-nvidia-gpu/)に従い、ディストリビューションまたはNVIDIAのパッケージからランタイムと対応するbuiltinsライブラリをインストールしてください。パッケージ名はディストリビューションとCUDAのバージョンによって異なるため、自分のシステム向けの手順を使用します。
+NVIDIAカードに必要なのはNVIDIAドライバーだけです。AMDカードには、[AMDガイド](https://github.com/zpalmtree/seine/blob/master/docs/guides/amd.md)で説明しているとおり、amdgpuドライバーとROCm HIPランタイムが必要です。seineはカードを自動で見つけ、x86_64ビルドではCPUと一緒にそれらでマイニングします。カードの選び方とGPUシェアの確認方法は[NVIDIAガイド](/ja/blog/mine-blocknet-nvidia-gpu/)で説明しています。
 
-これらのライブラリがあれば、既定のモードでCPUと対応するNVIDIAカードを同時に使ってマイニングできます。GPUランタイムを準備しながらCPUマイニングを開始するには、CPUを明示的に選びます：
-
-```sh
-./seine --backend cpu
-```
-
-これは今回の起動でCPUのみを使う指定です。GPUデバイスの選択とGPUシェアの受理確認についてはNVIDIAガイドへ進んでください。ここで説明するARM64リリースはCPUバックエンドを収録しており、CUDAをインストールしてもこのアーカイブにNVIDIAバックエンドは追加されません。
+<MinerSettings os="linux" />
 
 ## Linuxの起動エラーはどう解決する？
 
@@ -83,9 +77,8 @@ Linux x86_64のGPUマイニングには、NVIDIAドライバーと互換性の�
 | メッセージまたは症状 | 確認する項目 |
 |---|---|
 | `Exec format error` | アーキテクチャが不一致です。`uname -m`とアーカイブのファイル名を照合してください。 |
-| `GLIBC_2.39 not found` | バイナリには新しいglibcが必要です。互換性のあるシステムを使うかソースからビルドし、システムのCライブラリはディストリビューションの管理に任せてください。 |
+| `GLIBC_... not found` | バイナリには新しいglibcが必要です。互換性のあるシステムを使うかソースからビルドし、システムのCライブラリはディストリビューションの管理に任せてください。 |
 | `Permission denied` | ユーザーの実行権限を確認し、実行を許可するファイルシステム上のフォルダーを使用してください。 |
-| `libnvrtc` / `libnvrtc-builtins` | 互換性のあるNVIDIAランタイムと対応するbuiltinsライブラリをインストールするか、準備中は`--backend cpu`を使用してください。 |
 
 シェアの受理を確認したら、必要に応じて[ヒュージページガイド](/ja/blog/huge-pages-blocknet-mining/)でLinuxのページ設定を確認できます。[サーバーガイド](/ja/blog/mine-blocknet-on-servers/)ではヘッドレス運用とNUMA配置を説明しています。どちらの準備も、この初回起動の手順には必須ではありません。マシン上で何が変わったか判断できるよう、変更は1つずつ行ってください。
 

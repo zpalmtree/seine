@@ -4,12 +4,12 @@ description: "Linux: seine을 다운로드해 압축을 풀고 Blocknet 주소�
 tags: ['채굴 가이드', 'Linux', 'NVIDIA']
 faq:
   - q: '어떤 Linux 압축 파일을 다운로드해야 하나요?'
-    a: "다운로드 영역을 여세요. uname -m을 실행해 x86_64이면 seine-linux-x86_64.tar.gz, aarch64이면 seine-linux-aarch64.tar.gz를 선택하세요. Linux 빌드는 glibc 2.39 이상이 필요합니다. x86_64 빌드는 CPU와 NVIDIA를, ARM64 빌드는 CPU 채굴을 지원합니다."
+    a: "다운로드 영역을 여세요. uname -m을 실행해 x86_64이면 seine-linux-x86_64.tar.gz, aarch64이면 seine-linux-aarch64.tar.gz를 선택하세요. Linux 빌드는 glibc 2.31 이상이 필요합니다. x86_64 빌드는 CPU와 NVIDIA를, ARM64 빌드는 CPU 채굴을 지원합니다."
   - q: 'seine를 sudo로 실행해야 하나요?'
     a: '일반적인 채굴기는 쓰기 가능한 폴더에서 본인 사용자 계정으로 실행하세요. 압축을 풀고, 필요하면 파일 소유자에게 실행 권한을 부여한 다음 ./seine로 시작합니다. 예약된 휴즈 페이지를 준비하는 것은 별도의 관리자 작업이며, 일반 실행에는 보통 메모리 페이지를 사용할 수 있습니다.'
-  - q: 'Linux에서 NVRTC 라이브러리가 없다고 나오는 이유는 무엇인가요?'
-    a: 'Linux의 NVIDIA 백엔드에는 호환 드라이버와 해당 builtins 라이브러리를 포함한 NVRTC 런타임 라이브러리가 필요합니다. 배포판 또는 NVIDIA에서 지원하는 패키지로 설치하세요. Linux 압축 파일에는 Windows DLL이 포함되지 않습니다. GPU 지원을 준비하는 동안에는 CPU 백엔드를 선택할 수 있습니다.'
-sourceHash: 'fee2c843812c'
+  - q: 'Linux에서 NVIDIA 채굴에 CUDA나 NVRTC가 필요합니까?'
+    a: '아니요. NVIDIA 드라이버만 있으면 됩니다. seine는 NVRTC가 설치되어 있으면 이를 사용하고, 없으면 seine에 내장된 커널을 불러옵니다. 내장 커널은 GeForce GTX 10 series 및 그 이후 카드를 지원합니다. 드라이버를 설치하고 seine를 시작한 뒤, Devices 패널에 카드가 표시되는지 확인하세요.'
+sourceHash: acdcb56b3c1f
 translation: draft
 ---
 
@@ -21,7 +21,7 @@ seine을 다운로드해 압축을 풀고 Blocknet 주소를 입력한 다음 bn
 
 ## 1단계: 알맞은 빌드 다운로드
 
-[다운로드 영역](/ko/#download)을 여세요. `uname -m`을 실행해 `x86_64`이면 `seine-linux-x86_64.tar.gz`, `aarch64`이면 `seine-linux-aarch64.tar.gz`를 선택하세요. Linux 빌드는 glibc 2.39 이상이 필요합니다. x86_64 빌드는 CPU와 NVIDIA를, ARM64 빌드는 CPU 채굴을 지원합니다.
+[다운로드 영역](/ko/#download)을 여세요. `uname -m`을 실행해 `x86_64`이면 `seine-linux-x86_64.tar.gz`, `aarch64`이면 `seine-linux-aarch64.tar.gz`를 선택하세요. Linux 빌드는 glibc 2.31 이상이 필요합니다. x86_64 빌드는 CPU와 NVIDIA를, ARM64 빌드는 CPU 채굴을 지원합니다.
 
 <img src="/assets/blog/setup-download.webp" alt="Linux 및 Linux ARM64 압축 파일이 표시된 공식 다운로드 표" loading="lazy" />
 
@@ -64,17 +64,11 @@ seine은 스레드를 선택하고 자동으로 조정합니다. 이후에도 �
 
 [내 통계](https://bntpool.com/stats?lang=ko)를 열고 같은 주소나 등록한 이름을 입력해 워커, 셰어, 잔액을 확인하세요.
 
-## Linux에서 NVIDIA로 채굴하려면 무엇이 필요한가요?
+## Linux에서 GPU 채굴에는 무엇이 필요합니까?
 
-Linux x86_64의 GPU 채굴에는 NVIDIA 드라이버와 호환되는 NVRTC 런타임 라이브러리가 필요합니다. NVRTC는 시작 시 GPU 커널을 컴파일합니다. [NVIDIA 설정 가이드](/ko/blog/mine-blocknet-nvidia-gpu/)에 따라 배포판 또는 NVIDIA 패키지로 런타임과 해당 builtins 라이브러리를 설치하세요. 패키지 이름은 배포판과 CUDA 버전에 따라 다르므로 본인 시스템에 맞는 안내를 사용하세요.
+NVIDIA 카드에는 NVIDIA 드라이버만 필요합니다. AMD 카드에는 [AMD 가이드](https://github.com/zpalmtree/seine/blob/master/docs/guides/amd.md)에 설명된 대로 amdgpu 드라이버와 ROCm HIP 런타임이 필요합니다. seine는 카드를 자동으로 찾아 x86_64 빌드에서 CPU와 함께 채굴합니다. 카드를 고르는 방법과 GPU 셰어를 확인하는 방법은 [NVIDIA 가이드](/ko/blog/mine-blocknet-nvidia-gpu/)에서 다룹니다.
 
-이 라이브러리가 있으면 기본 모드에서 CPU와 지원되는 NVIDIA 카드를 함께 사용해 채굴할 수 있습니다. GPU 런타임을 준비하면서 CPU 채굴을 먼저 설정하려면 명시적으로 CPU를 선택하세요:
-
-```sh
-./seine --backend cpu
-```
-
-이는 해당 실행에서 CPU만 사용하도록 하는 선택입니다. GPU 장치 선택과 GPU 셰어 수락 확인은 NVIDIA 가이드를 이어서 참고하세요. 여기서 설명하는 ARM64 릴리스에는 CPU 백엔드가 포함됩니다. CUDA를 설치해도 이 압축 파일에 NVIDIA 백엔드가 추가되지는 않습니다.
+<MinerSettings os="linux" />
 
 ## Linux 시작 오류는 어떻게 해결하나요?
 
@@ -83,9 +77,8 @@ Linux x86_64의 GPU 채굴에는 NVIDIA 드라이버와 호환되는 NVRTC 런�
 | 메시지 또는 증상 | 확인할 사항 |
 |---|---|
 | `Exec format error` | 아키텍처 불일치: `uname -m`을 압축 파일 이름과 비교하세요. |
-| `GLIBC_2.39 not found` | 바이너리에 더 새로운 glibc가 필요합니다. 호환되는 시스템을 사용하거나 소스에서 빌드하고, 시스템 C 라이브러리는 배포판이 관리하도록 유지하세요. |
+| `GLIBC_... not found` | 바이너리에 더 새로운 glibc가 필요합니다. 호환되는 시스템을 사용하거나 소스에서 빌드하고, 시스템 C 라이브러리는 배포판이 관리하도록 유지하세요. |
 | `Permission denied` | 사용자의 실행 권한을 확인하고 실행을 허용하는 파일 시스템의 폴더를 사용하세요. |
-| `libnvrtc` / `libnvrtc-builtins` | 호환되는 NVIDIA 런타임과 해당 builtins 라이브러리를 설치하거나, 준비하는 동안 `--backend cpu`를 사용하세요. |
 
 셰어가 수락되기 시작하면 [휴즈 페이지 가이드](/ko/blog/huge-pages-blocknet-mining/)에서 선택적인 Linux 페이지 설정을 확인할 수 있습니다. [서버 가이드](/ko/blog/mine-blocknet-on-servers/)에서는 헤드리스 운영과 NUMA 배치를 다룹니다. 이 첫 실행 안내를 따르기 위해 두 준비 작업이 필요한 것은 아닙니다. 장비에서 무엇이 바뀌었는지 알 수 있도록 변경은 하나씩 적용하세요.
 
