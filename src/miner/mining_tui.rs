@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -11,8 +11,10 @@ use crossterm::event::{self, Event};
 use super::hashrate_tracker::HashrateTracker;
 use super::session::SessionHistory;
 use super::stats::{format_hashrate_ui, Stats};
-use super::tui::{DeviceHashrate, TuiRenderer, TuiState};
-use super::ui::{clear_tui_state, set_tui_state, warn};
+use super::tui::{
+    new_tui_state, restore_terminal, DeviceHashrate, LogLevel, TuiRenderer, TuiState,
+};
+use super::ui::{clear_tui_state, current_tui_state, set_tui_state, warn};
 use super::{backend_descriptions, backend_display_names, BackendSlot};
 
 const NVIDIA_CURRENT_WINDOW_SECS: f64 = 30.0;
@@ -20,7 +22,11 @@ const TUI_RENDER_INTERVAL: Duration = Duration::from_secs(1);
 const TUI_QUIT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const TUI_RENDER_SIGNAL_CAPACITY: usize = 8;
 
+const EXIT_SUMMARY_MAX_PROBLEMS: usize = 5;
+const EXIT_SUMMARY_PROBLEM_MAX_AGE_SECS: f64 = 300.0;
+
 static PROMPT_ACTIVE: AtomicBool = AtomicBool::new(false);
+static ACTIVE_DASHBOARD: Mutex<Weak<Dashboard>> = Mutex::new(Weak::new());
 
 pub(super) struct PromptSessionGuard;
 
@@ -35,15 +41,134 @@ pub(super) fn begin_prompt_session() -> PromptSessionGuard {
     PromptSessionGuard
 }
 
-pub(super) struct TuiDisplay {
-    state: TuiState,
-    last_render_request: Instant,
-    last_state_label: String,
+/// The live terminal screen: draws whichever state is current in `ui` and owns
+/// the keyboard. It can outlive any one mining run, so startup, thread-change
+/// restarts and shutdown all stay on the same screen.
+pub(crate) struct Dashboard {
     render_signal: Sender<RenderSignal>,
     render_stop: Arc<AtomicBool>,
     render_worker: Option<JoinHandle<()>>,
     quit_watcher_stop: Arc<AtomicBool>,
     quit_watcher: Option<JoinHandle<()>>,
+    exit_summary: bool,
+}
+
+impl Dashboard {
+    fn spawn(shutdown: Arc<AtomicBool>, exit_summary: bool) -> Result<Arc<Self>> {
+        let (render_signal, render_stop, render_worker) =
+            spawn_tui_render_worker(Arc::clone(&shutdown))?;
+        let (quit_watcher_stop, quit_watcher) =
+            spawn_tui_quit_watcher(shutdown, render_signal.clone());
+        let dashboard = Arc::new(Self {
+            render_signal,
+            render_stop,
+            render_worker: Some(render_worker),
+            quit_watcher_stop,
+            quit_watcher: Some(quit_watcher),
+            exit_summary,
+        });
+        *ACTIVE_DASHBOARD.lock().unwrap_or_else(|e| e.into_inner()) = Arc::downgrade(&dashboard);
+        Ok(dashboard)
+    }
+}
+
+impl Drop for Dashboard {
+    fn drop(&mut self) {
+        self.render_stop.store(true, Ordering::SeqCst);
+        let _ = self.render_signal.try_send(RenderSignal::RenderNow);
+        if let Some(handle) = self.render_worker.take() {
+            let _ = handle.join();
+        }
+        self.quit_watcher_stop.store(true, Ordering::SeqCst);
+        if let Some(handle) = self.quit_watcher.take() {
+            let _ = handle.join();
+        }
+        if let Some(state) = current_tui_state() {
+            clear_tui_state(&state);
+            if self.exit_summary {
+                print_exit_summary(&state);
+            }
+        }
+    }
+}
+
+/// Opens the dashboard before hardware detection and tuning, so the whole
+/// startup happens on it. Returns None to continue in plain mode.
+pub(crate) fn start_dashboard(
+    shutdown: Arc<AtomicBool>,
+    startup: &crate::config::StartupUi,
+) -> Option<Arc<Dashboard>> {
+    let state = new_tui_state();
+    if let Ok(mut s) = state.lock() {
+        s.mode = startup.mode_label.to_string();
+        s.api_url = startup.pool_url.clone().unwrap_or_default();
+        s.pool_worker = startup.pool_worker.clone().unwrap_or_default();
+        s.version = crate::version::ui_display_version();
+        s.state = "checking hardware".to_string();
+        s.before_first_run = true;
+    }
+    set_tui_state(Arc::clone(&state));
+    match Dashboard::spawn(shutdown, true) {
+        Ok(dashboard) => Some(dashboard),
+        Err(err) => {
+            clear_tui_state(&state);
+            warn(
+                "TUI",
+                format!("disabled after init failure; continuing in plain mode ({err:#})"),
+            );
+            None
+        }
+    }
+}
+
+/// What the alternate screen took with it: recent problems and how the run went.
+fn print_exit_summary(state: &TuiState) {
+    use crate::console_output::{eprintln, println};
+    let Ok(state) = state.lock() else {
+        return;
+    };
+    let now = state.started_at.elapsed().as_secs_f64();
+    let problems: Vec<_> = state
+        .log_entries
+        .iter()
+        .rev()
+        .filter(|entry| {
+            matches!(entry.level, LogLevel::Warn | LogLevel::Error)
+                && now - entry.elapsed_secs <= EXIT_SUMMARY_PROBLEM_MAX_AGE_SECS
+        })
+        .take(EXIT_SUMMARY_MAX_PROBLEMS)
+        .collect();
+    for entry in problems.iter().rev() {
+        eprintln!("{}: {}", entry.tag, entry.message);
+    }
+    // A run that never got going has only its error to report.
+    if !state.before_first_run {
+        println!("{}", exit_summary_line(&state));
+    }
+}
+
+fn exit_summary_line(state: &super::tui::TuiStateInner) -> String {
+    let mut line = format!("seine stopped after {}", state.uptime());
+    if state.total_hashes > 0 {
+        let noun = if state.mode == "pool" {
+            "shares"
+        } else {
+            "blocks"
+        };
+        line.push_str(&format!(
+            ": {} average, {} {noun} accepted",
+            state.avg_hashrate, state.accepted
+        ));
+    }
+    line
+}
+
+pub(super) struct TuiDisplay {
+    state: TuiState,
+    last_render_request: Instant,
+    last_state_label: String,
+    render_signal: Sender<RenderSignal>,
+    _dashboard: Arc<Dashboard>,
     hashrate_tracker: HashrateTracker,
     history: Arc<SessionHistory>,
 }
@@ -69,19 +194,20 @@ impl TuiDisplay {
         shutdown: Arc<AtomicBool>,
         history: Arc<SessionHistory>,
     ) -> Result<Self> {
-        let (render_signal, render_stop, render_worker) =
-            spawn_tui_render_worker(Arc::clone(&tui_state), Arc::clone(&shutdown))?;
-        let (quit_watcher_stop, quit_watcher) =
-            spawn_tui_quit_watcher(shutdown, Arc::clone(&tui_state), render_signal.clone());
+        let active = ACTIVE_DASHBOARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .upgrade();
+        let dashboard = match active {
+            Some(dashboard) => dashboard,
+            None => Dashboard::spawn(shutdown, false)?,
+        };
         let display = Self {
             state: tui_state,
             last_render_request: Instant::now() - TUI_RENDER_INTERVAL,
             last_state_label: String::new(),
-            render_signal,
-            render_stop,
-            render_worker: Some(render_worker),
-            quit_watcher_stop,
-            quit_watcher: Some(quit_watcher),
+            render_signal: dashboard.render_signal.clone(),
+            _dashboard: dashboard,
             hashrate_tracker: history.take_hashrate_tracker(),
             history,
         };
@@ -220,17 +346,6 @@ fn current_hashrate_window_secs_for_backend(backend_name: &str) -> Option<f64> {
 impl Drop for TuiDisplay {
     fn drop(&mut self) {
         crate::diagnostics::cleanup_stage(seine_telemetry::CleanupStage::StoppingTui);
-        self.render_stop.store(true, Ordering::SeqCst);
-        let _ = self.render_signal.try_send(RenderSignal::RenderNow);
-        if let Some(handle) = self.render_worker.take() {
-            let _ = handle.join();
-        }
-
-        self.quit_watcher_stop.store(true, Ordering::SeqCst);
-        if let Some(handle) = self.quit_watcher.take() {
-            let _ = handle.join();
-        }
-        clear_tui_state(&self.state);
         let mut tracker = std::mem::replace(&mut self.hashrate_tracker, HashrateTracker::new());
         tracker.pause_for_restart();
         self.history.save_hashrate_tracker(tracker);
@@ -246,6 +361,7 @@ pub(super) fn init_tui_display(
     match TuiDisplay::new(Arc::clone(&state), shutdown, history) {
         Ok(display) => {
             set_tui_state(state);
+            display.request_render();
             Some(display)
         }
         Err(err) => {
@@ -362,7 +478,6 @@ pub(super) fn set_tui_wallet_overview(
 }
 
 fn spawn_tui_render_worker(
-    state: TuiState,
     shutdown: Arc<AtomicBool>,
 ) -> Result<(Sender<RenderSignal>, Arc<AtomicBool>, JoinHandle<()>)> {
     let (render_signal_tx, render_signal_rx) = bounded(TUI_RENDER_SIGNAL_CAPACITY.max(1));
@@ -382,26 +497,33 @@ fn spawn_tui_render_worker(
             }
         };
 
-        if let Ok(locked) = state.lock() {
-            let _ = renderer.render(&locked);
-        }
-
-        while !render_stop_flag.load(Ordering::Relaxed) && !shutdown.load(Ordering::Relaxed) {
-            match render_signal_rx.recv_timeout(Duration::from_millis(100)) {
-                Ok(RenderSignal::RenderNow) => {
-                    if let Ok(mut locked) = state.lock() {
-                        locked.poll_thread_reply();
-                        let _ = renderer.render(&locked);
-                    }
-                }
-                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
-                    if let Ok(mut locked) = state.lock() {
-                        if locked.poll_thread_reply() {
-                            let _ = renderer.render(&locked);
-                        }
-                    }
-                }
+        let mut last_render: Option<Instant> = None;
+        let mut last_log_seq = 0;
+        while !render_stop_flag.load(Ordering::Relaxed) {
+            let requested = match render_signal_rx.recv_timeout(Duration::from_millis(100)) {
+                Ok(RenderSignal::RenderNow) => true,
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) => false,
                 Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+            };
+            let Some(state) = current_tui_state() else {
+                continue;
+            };
+            let Ok(mut locked) = state.lock() else {
+                continue;
+            };
+            if shutdown.load(Ordering::Relaxed) {
+                locked.stopping = true;
+            }
+            let thread_reply = locked.poll_thread_reply();
+            let notice_expired = locked.expire_thread_notice(Instant::now());
+            // Startup has no mining loop asking for frames, so new log lines
+            // and the clock drive redraws too.
+            let due = last_render.is_none_or(|at| at.elapsed() >= TUI_RENDER_INTERVAL);
+            if requested || thread_reply || notice_expired || due || locked.log_seq != last_log_seq
+            {
+                last_log_seq = locked.log_seq;
+                let _ = renderer.render(&locked);
+                last_render = Some(Instant::now());
             }
         }
     });
@@ -425,13 +547,12 @@ fn spawn_tui_render_worker(
 
 fn spawn_tui_quit_watcher(
     shutdown: Arc<AtomicBool>,
-    state: TuiState,
     render_signal: Sender<RenderSignal>,
 ) -> (Arc<AtomicBool>, JoinHandle<()>) {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_flag = Arc::clone(&stop);
     let handle = thread::spawn(move || {
-        while !stop_flag.load(Ordering::Relaxed) && !shutdown.load(Ordering::Relaxed) {
+        while !stop_flag.load(Ordering::Relaxed) {
             if PROMPT_ACTIVE.load(Ordering::Acquire) {
                 thread::sleep(Duration::from_millis(50));
                 continue;
@@ -441,14 +562,15 @@ fn spawn_tui_quit_watcher(
                 continue;
             }
             if let Ok(Event::Key(key)) = event::read() {
-                let quit = state
-                    .lock()
-                    .map(|mut state| state.handle_key(key))
+                let quit = current_tui_state()
+                    .and_then(|state| state.lock().ok().map(|mut s| s.handle_key(key)))
                     .unwrap_or(false);
                 let _ = render_signal.try_send(RenderSignal::RenderNow);
-                if quit {
-                    shutdown.store(true, Ordering::SeqCst);
-                    break;
+                // A second quit skips cleanup a stuck backend may be holding up.
+                if quit && shutdown.swap(true, Ordering::SeqCst) {
+                    restore_terminal();
+                    crate::backend::amd::on_process_exit();
+                    std::process::exit(130);
                 }
             }
         }
@@ -458,7 +580,26 @@ fn spawn_tui_quit_watcher(
 
 #[cfg(test)]
 mod tests {
-    use super::{current_hashrate_window_secs_for_backend, should_zero_current_hashrate};
+    use super::{
+        current_hashrate_window_secs_for_backend, exit_summary_line, should_zero_current_hashrate,
+    };
+    use crate::miner::tui::TuiStateInner;
+
+    #[test]
+    fn exit_summary_reports_results_only_after_mining() {
+        let mut state = TuiStateInner::new();
+        state.mode = "pool".into();
+        let line = exit_summary_line(&state);
+        assert!(line.starts_with("seine stopped after "));
+        assert!(!line.contains("average"));
+
+        state.total_hashes = 100;
+        state.avg_hashrate = "1.200 kH/s".into();
+        state.accepted = 3;
+        assert!(exit_summary_line(&state).ends_with(": 1.200 kH/s average, 3 shares accepted"));
+        state.mode = "daemon".into();
+        assert!(exit_summary_line(&state).ends_with("3 blocks accepted"));
+    }
 
     #[test]
     fn zeroes_current_hashrate_for_non_mining_states() {

@@ -313,7 +313,7 @@ fn prepare_with_resources(
     let seed = match read_seed(cfg) {
         Ok(record) => Some(record),
         Err(reason) => {
-            info(
+            super::ui::detail(
                 "MINER",
                 format!("cpu-autotune | {reason}; tuning while mining"),
             );
@@ -376,7 +376,12 @@ fn prepare_with_resources(
     } else {
         "initial estimate"
     };
-    info("MINER", format!("cpu-autotune | starting with {threads} threads ({reason}); tuning while mining, capacity={max}, worker slots={slots}, currently available={available}"));
+    super::ui::detail("MINER", format!("cpu-autotune | starting with {threads} threads ({reason}); tuning while mining, capacity={max}, worker slots={slots}, currently available={available}"));
+    if available == 0 {
+        super::ui::note("CPU", "paused until enough RAM is free for one thread");
+    } else if seed.is_none() {
+        super::ui::note("CPU", "finding the best settings while mining");
+    }
     Ok(())
 }
 
@@ -1409,7 +1414,7 @@ impl Controller {
                                         }
                                     }
                                 }
-                                info("MINER", "cpu-autotune | stopped: BLAKE2b work runs every CPU worker");
+                                super::ui::detail("MINER", "cpu-autotune | stopped: BLAKE2b work runs every CPU worker");
                                 break;
                             }
                             let actual = snapshots.iter().map(|s| s.threads).min().unwrap_or(0);
@@ -1444,7 +1449,7 @@ impl Controller {
                                 }
                             }
                             if let Some(message) = action.message {
-                                info("MINER", format!("cpu-autotune | {message}"));
+                                super::ui::detail("MINER", format!("cpu-autotune | {message}"));
                             }
                             if action.reset_scores {
                                 discard_cached_scores(&mut record);
@@ -1455,7 +1460,13 @@ impl Controller {
                                         backend.set_active_threads(decision.threads);
                                     }
                                 }
-                                info(
+                                if decision.learned.is_some() {
+                                    super::ui::note_success(
+                                        "CPU",
+                                        format!("tuned to {} threads", decision.threads),
+                                    );
+                                }
+                                super::ui::detail(
                                     "MINER",
                                     format!(
                                         "cpu-autotune | {}{} threads per CPU backend: {} (available={available}, effective cap={cap})",

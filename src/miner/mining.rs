@@ -1330,14 +1330,14 @@ pub(super) fn run_mining_loop(
         Some(t) => t,
         None => {
             stats.print();
-            info("MINER", "stopped");
+            super::ui::detail("MINER", "stopped");
             return Ok(());
         }
     };
     sync_disabled_dev_fee(&mut control_plane, &mut dev_fee_tracker);
     control_plane.maybe_refresh_tui_wallet_overview(&mut tui, true);
     success("MINER", "connected and mining");
-    info(
+    super::ui::verbose(
         "MINER",
         format!(
             "template-history | max={} retention={}s cap={}MiB",
@@ -1375,9 +1375,7 @@ pub(super) fn run_mining_loop(
                         }
                         info(
                             "BACKEND",
-                            format!(
-                                "{slot_name}: online (initialized in background, {slot_lanes} lanes)"
-                            ),
+                            format!("{slot_name}: online ({slot_lanes} lanes)"),
                         );
                         backend_weights.insert(slot.id, slot.lanes.max(1) as f64);
                         stats.register_expected_backends(&[format!(
@@ -1542,13 +1540,13 @@ pub(super) fn run_mining_loop(
     if !backends.is_empty() {
         let final_submit_template = SubmitTemplate::from_template(&template);
         crate::diagnostics::cleanup_stage(seine_telemetry::CleanupStage::QuiescingBackends);
-        info("MINER", "shutting down: quiescing backends...");
+        super::ui::detail("MINER", "shutting down: quiescing backends...");
         match quiesce_backend_slots(backends, RuntimeMode::Mining, backend_executor) {
             Ok(_) => {}
             Err(err) => warn("BACKEND", format!("final backend quiesce failed: {err:#}")),
         }
         crate::diagnostics::cleanup_stage(seine_telemetry::CleanupStage::DrainingEvents);
-        info("MINER", "shutting down: draining final events...");
+        super::ui::detail("MINER", "shutting down: draining final events...");
         let mut final_pending_solution = None;
         {
             let mut deferred_state = DeferredQueueState {
@@ -1637,7 +1635,7 @@ pub(super) fn run_mining_loop(
         &mut inflight_solution_keys,
         &stats,
     );
-    info("MINER", "shutting down: flushing pending submits...");
+    super::ui::detail("MINER", "shutting down: flushing pending submits...");
     process_submit_results(
         control_plane.finish(&stats, &mut tui),
         &mut deferred_solutions,
@@ -1649,7 +1647,7 @@ pub(super) fn run_mining_loop(
     );
 
     stats.print();
-    info("MINER", "stopped");
+    super::ui::detail("MINER", "stopped");
     Ok(())
 }
 
@@ -1670,7 +1668,7 @@ fn maybe_log_pending_gpu_progress(
     let started_at = pending_started_at.get_or_insert(now);
     if !*pending_logged {
         for (kind, count) in pending_gpu_counts(pending) {
-            info(
+            super::ui::detail(
                 "BACKEND",
                 format!(
                     "{kind} initialization in progress: {count} pending (first run or cache miss can take around {} minutes)",
@@ -2903,6 +2901,7 @@ mod tests {
             bench_baseline_policy: crate::config::BenchBaselinePolicy::Strict,
             nvidia_hint: None,
             startup_notices: Vec::new(),
+            startup_details: Vec::new(),
         }
     }
 

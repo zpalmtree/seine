@@ -77,6 +77,7 @@ See [collection fields and self-hosting](../telemetry/README.md).
 | `--no-auto-update` | bool flag (default `false`) | Keeps mining the current version; a newer release is only logged. |
 | `--refresh-on-same-height` | bool flag (default `false`) | Refresh on same-height `new_block` hash change events. |
 | `--ui` | `auto`, `tui`, `plain`; default `auto` | Output mode selection. |
+| `--verbose` | bool flag | Shows internal settings and routine activity on the dashboard and in logs. |
 
 ## CPU Backend Tuning
 

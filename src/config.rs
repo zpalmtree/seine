@@ -719,6 +719,10 @@ struct Cli {
     #[arg(long, value_enum, default_value_t = UiMode::Auto)]
     ui: UiMode,
 
+    /// Show internal settings and routine activity on the dashboard and in logs.
+    #[arg(long)]
+    verbose: bool,
+
     /// Start local control API server alongside miner operation.
     #[arg(long, default_value_t = false)]
     api_server: bool,
@@ -946,10 +950,22 @@ pub struct Config {
     pub nvidia_hint: Option<&'static str>,
     /// GPU detection/auto-expansion notices, logged once at miner startup.
     pub startup_notices: Vec<String>,
+    /// Startup facts for plain logs; not worth a dashboard line.
+    pub startup_details: Vec<String>,
+}
+
+/// What `main` needs to know before the slower parts of configuration run.
+pub struct StartupUi {
+    pub verbose: bool,
+    pub opens_dashboard: bool,
+    pub mode_label: &'static str,
+    pub pool_url: Option<String>,
+    pub pool_worker: Option<String>,
 }
 
 impl Config {
-    pub fn parse() -> Result<Self> {
+    /// `on_startup` runs once, after any prompts and before hardware detection.
+    pub fn parse(on_startup: impl FnOnce(StartupUi) -> Result<()>) -> Result<Self> {
         let matches = Cli::command().get_matches();
         let nvidia_hashes_per_launch_per_lane_was_set = matches!(
             matches.value_source("nvidia_hashes_per_launch_per_lane"),
@@ -1003,12 +1019,14 @@ impl Config {
                 cli.pool_worker = Some(generate_default_pool_worker());
             }
         }
+        let memo_prompted = prompt_payout_memo_on_screen(&mut cli)?;
         if resolve_required_payout_memo(
             &mut cli,
             io::stdin().is_terminal() && io::stderr().is_terminal(),
             &mut io::stdin().lock(),
             &mut io::stderr(),
-        )? {
+        )? || memo_prompted
+        {
             persist_prompted_payout_memo(&cli, user_cfg.as_mut(), &user_config_path)?;
         }
         if dev_fee_pool_worker.is_none() {
@@ -1175,12 +1193,27 @@ impl Config {
             }
         }
 
+        on_startup(StartupUi {
+            verbose: cli.verbose,
+            opens_dashboard: !cli.bench
+                && !cli.service
+                && cli.proxy_listen.is_none()
+                && crate::miner::ui_mode_enables_tui(cli.ui),
+            mode_label: match cli.mode.unwrap_or(MiningMode::Pool) {
+                MiningMode::Pool => "pool",
+                MiningMode::Daemon => "daemon",
+            },
+            pool_url: cli.pool_url.clone(),
+            pool_worker: cli.pool_worker.clone(),
+        })?;
+
         let nvidia_detection = detect_nvidia_devices();
         let nvidia_available = nvidia_detection
             .as_ref()
             .map(|devices| !devices.is_empty())
             .unwrap_or(false);
         let mut startup_notices = Vec::new();
+        let mut startup_details = Vec::new();
         // HIP is dlopen'd when AMD is requested without explicit devices, or
         // when no backend is requested so discrete AMD GPUs can be enabled
         // automatically; explicit --amd-devices keeps startup free of
@@ -1228,7 +1261,6 @@ impl Config {
         startup_notices.extend(build_gpu_detection_notices(
             "NVIDIA",
             "nvidia",
-            "--nvidia-devices",
             &nvidia_detection,
             &cli.nvidia_devices,
             backends.contains(&BackendKind::Nvidia),
@@ -1237,7 +1269,6 @@ impl Config {
             startup_notices.extend(build_gpu_detection_notices(
                 "AMD",
                 "amd",
-                "--amd-devices",
                 detection,
                 &cli.amd_devices,
                 backends.contains(&BackendKind::Amd),
@@ -1303,7 +1334,7 @@ impl Config {
             cpu_autotune_threads,
         )?;
         if cpu_backend_instances > 0 && (cli.threads.is_none() || cpu_autotune_threads) {
-            startup_notices.push(format!(
+            startup_details.push(format!(
                 "CPU automatic sizing reserves {} of effective RAM; cap={} thread(s) per instance (--cpu-memory-reserve-percent 0 disables the reserve)",
                 cli.cpu_memory_reserve_percent
                     .map_or("5% (at most 512 MiB with 16 GiB or more, else 1 GiB)".to_string(), |p| format!("{p}%")),
@@ -1572,6 +1603,7 @@ impl Config {
             bench_baseline_policy: cli.bench_baseline_policy,
             nvidia_hint,
             startup_notices,
+            startup_details,
         };
         if cfg.cpu_autotune_threads && !cfg.bench {
             cfg.cpu_auto_threads_cap = cpu_autotune_capacity(&cfg, 0).0;
@@ -1899,7 +1931,6 @@ fn partition_supported_amd_devices(
 fn build_gpu_detection_notices(
     vendor: &str,
     backend_flag: &str,
-    subset_flag: &str,
     detection: &Result<Vec<DetectedGpu>>,
     explicit_devices: &[u32],
     kind_selected: bool,
@@ -1931,17 +1962,11 @@ fn build_gpu_detection_notices(
         Ok(detected) => {
             let device_list = detected
                 .iter()
-                .map(|device| {
-                    format!(
-                        "[{}] {} ({} MiB)",
-                        device.index, device.name, device.memory_total_mib
-                    )
-                })
+                .map(|device| device.name.as_str())
                 .collect::<Vec<_>>()
                 .join(", ");
             notices.push(format!(
-                "detected {} {vendor} GPU(s): {device_list}; enabling one {backend_flag} backend \
-                 instance per device (use {subset_flag} to select a subset)",
+                "detected {} {vendor} GPU(s): {device_list}",
                 detected.len()
             ));
         }
@@ -2760,6 +2785,46 @@ fn resolve_required_payout_memo(
     }
 }
 
+/// The full-screen form when one can be shown; otherwise the line prompt in
+/// `resolve_required_payout_memo` handles it. Returns true once a memo is entered.
+fn prompt_payout_memo_on_screen(cli: &mut Cli) -> Result<bool> {
+    if !screen_prompts_available(cli)
+        || cli.bench
+        || cli.service
+        || cli.no_payout_memo
+        || cli.payout_memo.is_some()
+        || cli.proxy_listen.is_some()
+        || cli.mode.unwrap_or(MiningMode::Pool) != MiningMode::Pool
+    {
+        return Ok(false);
+    }
+    let Some(exchange) = cli
+        .mining_address
+        .as_deref()
+        .and_then(crate::payout_destination::known_exchange)
+    else {
+        return Ok(false);
+    };
+    let help = format!("{exchange} requires the deposit memo shown on your deposit page.");
+    let memo = crate::miner::prompt_screen(crate::miner::PromptSpec {
+        help: &help,
+        label: "Deposit memo",
+        initial: "",
+        validate: &|value| {
+            crate::payout_destination::validate_memo(value).map_err(|err| err.to_string())
+        },
+    })?;
+    cli.payout_memo = Some(memo);
+    validate_payout_memo_config(cli)?;
+    Ok(true)
+}
+
+fn screen_prompts_available(cli: &Cli) -> bool {
+    io::stdin().is_terminal()
+        && io::stdout().is_terminal()
+        && crate::miner::ui_mode_enables_tui(cli.ui)
+}
+
 fn persist_prompted_payout_memo(
     cli: &Cli,
     saved: Option<&mut UserConfig>,
@@ -2796,14 +2861,30 @@ fn resolve_first_run_pool_inputs(cli: &mut Cli, user_config_path: &Path) -> Resu
                 user_config_path.display()
             );
         }
-        let address = prompt_required_value(
-            "Enter your Blocknet address or shortname (@name / $name): ",
-            None,
-        )?;
+        let address = if screen_prompts_available(cli) {
+            crate::miner::prompt_screen(crate::miner::PromptSpec {
+                help: "Welcome to seine. Mining rewards are paid to your Blocknet wallet.",
+                label: "Your address or shortname (@name / $name)",
+                initial: "",
+                validate: &|value| {
+                    validate_destination(value).map_err(|_| {
+                        "That is not a Blocknet address. Paste the whole address, or use @name."
+                            .to_string()
+                    })
+                },
+            })?
+        } else {
+            prompt_required_value(
+                "Enter your Blocknet address or shortname (@name / $name): ",
+                None,
+            )?
+        };
         cli.mining_address = Some(address);
     }
 
-    resolve_required_payout_memo(cli, interactive, &mut io::stdin().lock(), &mut io::stderr())?;
+    if !prompt_payout_memo_on_screen(cli)? {
+        resolve_required_payout_memo(cli, interactive, &mut io::stdin().lock(), &mut io::stderr())?;
+    }
     if cli
         .pool_url
         .as_ref()
@@ -2817,10 +2898,23 @@ fn resolve_first_run_pool_inputs(cli: &mut Cli, user_config_path: &Path) -> Resu
                 user_config_path.display()
             );
         }
-        let pool_url = prompt_required_value(
-            "Enter pool URL [default: stratum+tcp://bntpool.com:3333]: ",
-            Some(DEFAULT_POOL_URL),
-        )?;
+        let pool_url = if screen_prompts_available(cli) {
+            crate::miner::prompt_screen(crate::miner::PromptSpec {
+                help: "Press Enter to mine on the default pool, or type another.",
+                label: "Pool",
+                initial: DEFAULT_POOL_URL,
+                validate: &|value| {
+                    normalize_pool_url(value).map(|_| ()).ok_or_else(|| {
+                        "Enter a pool as host:port or stratum+tcp://host:port".to_string()
+                    })
+                },
+            })?
+        } else {
+            prompt_required_value(
+                "Enter pool URL [default: stratum+tcp://bntpool.com:3333]: ",
+                Some(DEFAULT_POOL_URL),
+            )?
+        };
         cli.pool_url = Some(pool_url);
     }
 
@@ -3354,7 +3448,7 @@ fn underused_threads_notice(
     (cpu_backend_instances > 0 && !cpu_autotune_threads && threads.saturating_mul(2) <= auto_threads_cap)
         .then(|| {
             format!(
-                "--threads {threads} uses under half of the {auto_threads_cap} CPU workers this machine's cores and free RAM allow; omit --threads to size and tune workers automatically for more hashrate"
+                "--threads {threads} is under half of the {auto_threads_cap} this machine can run; omit --threads for more hashrate"
             )
         })
 }
@@ -3400,7 +3494,7 @@ fn wsl_sizing_notice(
     let gib = |bytes: u64| bytes.div_ceil(1024 * 1024 * 1024);
     let needed_gib = gib(CPU_LANE_MEMORY_BYTES.saturating_mul(cpu_lanes as u64)) + 2;
     Some(format!(
-        "WSL2 limits this Linux VM to {} GiB of RAM, which fits {memory_lanes} CPU worker(s) of the {cpu_lanes} this CPU allows; if the PC has more RAM, put \"[wsl2]\" and \"memory={needed_gib}GB\" in %UserProfile%\\.wslconfig and run `wsl --shutdown`, or run the native Windows build, which uses all of it",
+        "WSL2 gives this VM {} GiB of RAM, enough for {memory_lanes} of {cpu_lanes} CPU threads. For more, set memory={needed_gib}GB under [wsl2] in %UserProfile%\\.wslconfig and run `wsl --shutdown`, or use the Windows build.",
         gib(effective_total_bytes)
     ))
 }
@@ -4152,6 +4246,7 @@ mod tests {
             disable_sse: false,
             disable_update_check: false,
             refresh_on_same_height: false,
+            verbose: false,
             ui: UiMode::Auto,
             api_server: false,
             service: false,
@@ -4853,19 +4948,10 @@ HugePages_Rsvd:          0
             detected_gpu(0, "RTX 5090", 32607),
             detected_gpu(1, "RTX 4090", 24564),
         ]);
-        let notices = build_gpu_detection_notices(
-            "NVIDIA",
-            "nvidia",
-            "--nvidia-devices",
-            &detection,
-            &[],
-            true,
-        );
+        let notices = build_gpu_detection_notices("NVIDIA", "nvidia", &detection, &[], true);
         assert_eq!(notices.len(), 1);
         assert!(notices[0].contains("detected 2 NVIDIA GPU(s)"));
-        assert!(notices[0].contains("[0] RTX 5090 (32607 MiB)"));
-        assert!(notices[0].contains("[1] RTX 4090 (24564 MiB)"));
-        assert!(notices[0].contains("--nvidia-devices to select a subset"));
+        assert!(notices[0].contains("RTX 5090, RTX 4090"));
     }
 
     #[test]
@@ -4874,14 +4960,7 @@ HugePages_Rsvd:          0
             detected_gpu(0, "RTX 4090", 24564),
             detected_gpu(1, "RTX 4090", 24564),
         ]);
-        let notices = build_gpu_detection_notices(
-            "NVIDIA",
-            "nvidia",
-            "--nvidia-devices",
-            &detection,
-            &[0, 5],
-            true,
-        );
+        let notices = build_gpu_detection_notices("NVIDIA", "nvidia", &detection, &[0, 5], true);
         assert_eq!(notices.len(), 1);
         assert!(notices[0].contains("requested NVIDIA device index 5"));
         assert!(notices[0].contains("available: [0, 1]"));
@@ -4890,14 +4969,7 @@ HugePages_Rsvd:          0
     #[test]
     fn detection_notice_reports_forced_kind_enumeration_failure() {
         let detection = Err(anyhow::anyhow!("nvidia-smi not found"));
-        let notices = build_gpu_detection_notices(
-            "NVIDIA",
-            "nvidia",
-            "--nvidia-devices",
-            &detection,
-            &[],
-            true,
-        );
+        let notices = build_gpu_detection_notices("NVIDIA", "nvidia", &detection, &[], true);
         assert_eq!(notices.len(), 1);
         assert!(notices[0].contains("--backend nvidia selected"));
         assert!(notices[0].contains("nvidia-smi not found"));
@@ -4907,22 +4979,14 @@ HugePages_Rsvd:          0
     #[test]
     fn detection_notices_empty_when_kind_not_selected() {
         let detection = Ok(vec![detected_gpu(0, "RTX 4090", 24564)]);
-        let notices = build_gpu_detection_notices(
-            "NVIDIA",
-            "nvidia",
-            "--nvidia-devices",
-            &detection,
-            &[],
-            false,
-        );
+        let notices = build_gpu_detection_notices("NVIDIA", "nvidia", &detection, &[], false);
         assert!(notices.is_empty());
     }
 
     #[test]
     fn detection_notice_reports_no_usable_devices() {
         let detection = Ok(Vec::new());
-        let notices =
-            build_gpu_detection_notices("AMD", "amd", "--amd-devices", &detection, &[], true);
+        let notices = build_gpu_detection_notices("AMD", "amd", &detection, &[], true);
         assert_eq!(notices.len(), 1);
         assert!(notices[0].contains("no usable AMD devices"));
     }
@@ -4933,14 +4997,7 @@ HugePages_Rsvd:          0
             detected_gpu(0, "RTX 4090", 24564),
             detected_gpu(1, "RTX 4090", 24564),
         ]);
-        let notices = build_gpu_detection_notices(
-            "NVIDIA",
-            "nvidia",
-            "--nvidia-devices",
-            &detection,
-            &[1, 0],
-            true,
-        );
+        let notices = build_gpu_detection_notices("NVIDIA", "nvidia", &detection, &[1, 0], true);
         assert!(notices.is_empty());
     }
 
@@ -5252,7 +5309,7 @@ HugePages_Rsvd:          0
         let notice = wsl_sizing_notice("wsl2", 1, 3, 16, 8 * gib).unwrap();
         assert!(notice.contains("memory=34GB"), "{notice}");
         assert!(
-            notice.contains("8 GiB of RAM, which fits 3 CPU worker(s) of the 16"),
+            notice.contains("8 GiB of RAM, enough for 3 of 16 CPU threads"),
             "{notice}"
         );
         assert!(wsl_sizing_notice("wsl2", 1, 16, 16, 64 * gib).is_none());
@@ -5263,7 +5320,7 @@ HugePages_Rsvd:          0
     #[test]
     fn underused_explicit_threads_get_a_sizing_hint() {
         assert!(underused_threads_notice(Some(3), 1, false, 11)
-            .is_some_and(|n| n.contains("--threads 3") && n.contains("11 CPU workers")));
+            .is_some_and(|n| n.contains("--threads 3") && n.contains("under half of the 11")));
         assert!(underused_threads_notice(Some(6), 1, false, 11).is_none());
         assert!(underused_threads_notice(None, 1, false, 11).is_none());
         assert!(underused_threads_notice(Some(3), 1, true, 11).is_none());

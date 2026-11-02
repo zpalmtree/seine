@@ -707,6 +707,9 @@ fn run_worker_benchmark(
     for notice in &cfg.startup_notices {
         info("BACKEND", notice);
     }
+    for detail in &cfg.startup_details {
+        info("BACKEND", detail);
+    }
     let initial_startup_started = Instant::now();
     let requested_backend_kinds: Vec<String> = instances
         .iter()

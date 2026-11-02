@@ -39,6 +39,20 @@ impl SessionHistory {
     pub(super) fn attach_tui(&self, state: &TuiState) {
         let mut previous = self.previous_tui.lock().unwrap_or_else(|e| e.into_inner());
         let mut next = state.lock().unwrap_or_else(|e| e.into_inner());
+        let same_state = previous.as_ref().is_some_and(|old| Arc::ptr_eq(old, state));
+        // A long-lived dashboard state keeps its log; re-anchor it to this session.
+        let shift = self
+            .stats
+            .started_at()
+            .saturating_duration_since(next.started_at)
+            .as_secs_f64();
+        if !same_state && previous.is_none() {
+            for entry in &mut next.log_entries {
+                entry.elapsed_secs -= shift;
+            }
+            next.avg_hashrate = "0.000 H/s".to_string();
+            next.block_found_ticks.clear();
+        }
         next.started_at = self.stats.started_at();
         let snapshot = self.stats.snapshot();
         next.total_hashes = snapshot.hashes;
@@ -47,7 +61,7 @@ impl SessionHistory {
         next.stale_shares = snapshot.stale_shares;
         next.accepted = snapshot.accepted;
         next.share_retries = snapshot.share_retries;
-        if let Some(old) = previous.as_ref() {
+        if let Some(old) = previous.as_ref().filter(|_| !same_state) {
             let old = old.lock().unwrap_or_else(|e| e.into_inner());
             next.avg_hashrate.clone_from(&old.avg_hashrate);
             next.block_found_ticks.clone_from(&old.block_found_ticks);
@@ -83,6 +97,24 @@ mod tests {
     use crate::miner::tui::{new_tui_state, LogEntry, LogLevel};
 
     #[test]
+    fn long_lived_dashboard_state_survives_replacement_without_deadlock() {
+        let history = SessionHistory::new();
+        let state = new_tui_state();
+        state
+            .lock()
+            .unwrap()
+            .push_log(LogEntry::new(0.0, LogLevel::Info, "CPU", "startup line"));
+        history.attach_tui(&state);
+        history.stats.add_hashes(10);
+        state.lock().unwrap().avg_hashrate = "9.00 H/s".into();
+        history.attach_tui(&state);
+        let state = state.lock().unwrap();
+        assert_eq!(state.total_hashes, 10);
+        assert_eq!(state.avg_hashrate, "9.00 H/s");
+        assert_eq!(state.log_entries.len(), 1);
+    }
+
+    #[test]
     fn replacement_preserves_totals_uptime_and_history_including_teardown_updates() {
         let history = Arc::new(SessionHistory::new());
         let first = new_tui_state();
@@ -104,6 +136,7 @@ mod tests {
                 level: LogLevel::Mined,
                 tag: "MINED".into(),
                 message: "accepted block".into(),
+                count: 1,
             });
             first.thread_change_pending = true;
         }

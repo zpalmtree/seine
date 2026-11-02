@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
 
-use super::ui::{info, warn};
+use super::ui::warn;
 
 #[derive(Debug, Clone, Copy)]
 pub struct StatsSnapshot {
@@ -185,7 +185,7 @@ impl Stats {
             String::new()
         };
 
-        info(
+        super::ui::detail(
             "STATS",
             format!(
                 "elapsed={:.1}s hashes={} rate={} templates={} submitted={} stale={} accepted={} deferred={} dropped={}{}",

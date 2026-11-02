@@ -1000,10 +1000,7 @@ impl MinerSupervisor {
         drop(reply);
         crate::miner::ui::info(
             "THREADS",
-            format!(
-                "restarting mining with {} threads per CPU backend; session statistics preserved",
-                request.threads
-            ),
+            format!("restarting with {} threads", request.threads),
         );
         self.restart_session(StartRequest::default(), true, Some(&request.quit_requested))?;
         Ok(())
@@ -1384,9 +1381,12 @@ async fn run_async(cfg: Config, shutdown: Arc<AtomicBool>) -> Result<()> {
         None => {
             let token = generate_api_token()?;
             write_api_cookie(&cfg.api_cookie_path, &token)?;
-            crate::console_output::eprintln!(
-                "control API token written to {}",
-                cfg.api_cookie_path.display()
+            crate::miner::ui::info(
+                "API",
+                format!(
+                    "control API token written to {}",
+                    cfg.api_cookie_path.display()
+                ),
             );
             token
         }

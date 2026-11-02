@@ -4,6 +4,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, Once};
 use std::time::{Duration, Instant};
 
+use crossterm::cursor::Show;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{
@@ -18,9 +19,13 @@ use ratatui::Terminal;
 
 use super::thread_control::{ThreadChangeRequest, ThreadControl};
 
-const LOG_CAPACITY: usize = 200;
+const LOG_CAPACITY: usize = 2_000;
 const BLOCK_MARKER_CAPACITY: usize = 4096;
-const CONFIG_TWO_COLUMN_MIN_WIDTH: u16 = 148;
+const CONFIG_TWO_COLUMN_MIN_WIDTH: u16 = 80;
+/// Below this many rows the header gives up its second wave row to the log.
+const TALL_DASHBOARD_MIN_HEIGHT: u16 = 40;
+const LOG_PAGE_ENTRIES: usize = 10;
+const THREAD_NOTICE_LIFETIME: Duration = Duration::from_secs(8);
 
 #[derive(Clone)]
 pub struct LogEntry {
@@ -28,9 +33,23 @@ pub struct LogEntry {
     pub level: LogLevel,
     pub tag: String,
     pub message: String,
+    /// Consecutive identical lines folded into this one.
+    pub count: u32,
 }
 
-#[derive(Clone, Copy)]
+impl LogEntry {
+    pub fn new(elapsed_secs: f64, level: LogLevel, tag: &str, message: &str) -> Self {
+        Self {
+            elapsed_secs,
+            level,
+            tag: tag.to_string(),
+            message: message.to_string(),
+            count: 1,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum LogLevel {
     Info,
     Success,
@@ -40,16 +59,6 @@ pub enum LogLevel {
 }
 
 impl LogLevel {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Info => "INFO",
-            Self::Success => " OK ",
-            Self::Warn => "WARN",
-            Self::Error => " ERR",
-            Self::Mined => " ** ",
-        }
-    }
-
     fn color(self) -> Color {
         match self {
             Self::Info => Color::Rgb(140, 160, 180),
@@ -128,6 +137,8 @@ pub struct TuiStateInner {
     pub thread_control: Option<ThreadControl>,
     pub thread_change_pending: bool,
     pub thread_notice: Option<String>,
+    /// The notice on screen and when it appeared, so it can make way for the log.
+    thread_notice_shown: Option<(String, Instant)>,
     thread_reply: Option<crossbeam_channel::Receiver<String>>,
     pub refresh_secs: u64,
     pub sse_enabled: bool,
@@ -141,6 +152,15 @@ pub struct TuiStateInner {
 
     // Log
     pub log_entries: VecDeque<LogEntry>,
+    /// Entries scrolled back from the newest; 0 follows new lines.
+    pub log_scroll: usize,
+    /// Bumped on every log change so the renderer can redraw promptly.
+    pub log_seq: u64,
+
+    /// Set once the process is shutting down.
+    pub stopping: bool,
+    /// True while the dashboard is open but no mining run has been set up yet.
+    pub before_first_run: bool,
 
     // Wave markers for mined blocks (elapsed seconds when each block was accepted)
     pub block_found_ticks: VecDeque<u64>,
@@ -183,6 +203,7 @@ impl TuiStateInner {
             thread_control: None,
             thread_change_pending: false,
             thread_notice: None,
+            thread_notice_shown: None,
             thread_reply: None,
             refresh_secs: 0,
             sse_enabled: false,
@@ -193,17 +214,91 @@ impl TuiStateInner {
 
             started_at: Instant::now(),
 
-            log_entries: VecDeque::with_capacity(LOG_CAPACITY),
+            log_entries: VecDeque::new(),
+            log_scroll: 0,
+            log_seq: 0,
+            stopping: false,
+            before_first_run: false,
 
             block_found_ticks: VecDeque::with_capacity(BLOCK_MARKER_CAPACITY),
         }
     }
 
     pub fn push_log(&mut self, entry: LogEntry) {
+        self.log_seq = self.log_seq.wrapping_add(1);
+        if let Some(last) = self.log_entries.back_mut() {
+            if last.level == entry.level && last.tag == entry.tag && last.message == entry.message {
+                last.count = last.count.saturating_add(entry.count);
+                last.elapsed_secs = entry.elapsed_secs;
+                return;
+            }
+        }
         if self.log_entries.len() >= LOG_CAPACITY {
             self.log_entries.pop_front();
         }
         self.log_entries.push_back(entry);
+        // Keep what the reader is looking at in place while new lines arrive.
+        if self.log_scroll > 0 {
+            self.log_scroll = (self.log_scroll + 1).min(self.log_entries.len() - 1);
+        }
+    }
+
+    /// Clears what belongs to one mining run; a thread change or restart keeps
+    /// the log, balances and session totals on screen.
+    pub(super) fn reset_for_new_run(&mut self) {
+        self.before_first_run = false;
+        self.state = "starting".to_string();
+        self.blocktemplate_retry_since = None;
+        self.round_hashrate = "0.000 H/s".to_string();
+        self.device_hashrates.clear();
+        self.pending_gpus.clear();
+        self.pending_gpus_since = None;
+        self.dev_fee_active = false;
+        self.thread_control = None;
+        self.thread_change_pending = false;
+        self.thread_notice = None;
+        self.thread_reply = None;
+    }
+
+    /// Clears a finished thread notice after a while. Returns true when it did.
+    pub(super) fn expire_thread_notice(&mut self, now: Instant) -> bool {
+        let Some(notice) = self
+            .thread_notice
+            .as_ref()
+            .filter(|_| !self.thread_change_pending)
+        else {
+            self.thread_notice_shown = None;
+            return false;
+        };
+        match &self.thread_notice_shown {
+            Some((shown, since)) if shown == notice => {
+                if now.saturating_duration_since(*since) < THREAD_NOTICE_LIFETIME {
+                    return false;
+                }
+                self.thread_notice = None;
+                self.thread_notice_shown = None;
+                true
+            }
+            _ => {
+                self.thread_notice_shown = Some((notice.clone(), now));
+                false
+            }
+        }
+    }
+
+    fn scroll_log(&mut self, key: KeyCode) -> bool {
+        let oldest = self.log_entries.len().saturating_sub(1);
+        self.log_scroll = match key {
+            KeyCode::Up => self.log_scroll + 1,
+            KeyCode::Down => self.log_scroll.saturating_sub(1),
+            KeyCode::PageUp => self.log_scroll + LOG_PAGE_ENTRIES,
+            KeyCode::PageDown => self.log_scroll.saturating_sub(LOG_PAGE_ENTRIES),
+            KeyCode::Home => oldest,
+            KeyCode::End => 0,
+            _ => return false,
+        }
+        .min(oldest);
+        true
     }
 
     pub(super) fn poll_thread_reply(&mut self) -> bool {
@@ -233,6 +328,9 @@ impl TuiStateInner {
                 control.quit_requested.store(true, Ordering::SeqCst);
             }
             return true;
+        }
+        if self.scroll_log(key.code) {
+            return false;
         }
         self.poll_thread_reply();
         if !matches!(
@@ -305,7 +403,7 @@ impl TuiStateInner {
         self.block_found_ticks.push_back(tick);
     }
 
-    fn uptime(&self) -> String {
+    pub(super) fn uptime(&self) -> String {
         let secs = self.started_at.elapsed().as_secs();
         if secs < 60 {
             format!("{}s", secs)
@@ -323,6 +421,12 @@ impl TuiStateInner {
 }
 
 pub type TuiState = Arc<Mutex<TuiStateInner>>;
+
+/// Puts the terminal back when the process must exit without running destructors.
+pub(super) fn restore_terminal() {
+    let _ = disable_raw_mode();
+    let _ = execute!(io::stdout(), LeaveAlternateScreen, Show);
+}
 
 pub fn new_tui_state() -> TuiState {
     Arc::new(Mutex::new(TuiStateInner::new()))
@@ -431,7 +535,11 @@ fn draw_dashboard(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner)
     } else {
         runtime_panel_height + wallet_panel_height
     };
-    let header_height: u16 = 4;
+    let header_height: u16 = if area.height >= TALL_DASHBOARD_MIN_HEIGHT {
+        4
+    } else {
+        3
+    };
 
     if area.height < header_height + stats_height + devices_height + config_height + 4 {
         draw_compact_dashboard(frame, area, state);
@@ -464,9 +572,14 @@ fn thread_line(state: &TuiStateInner) -> Line<'static> {
     } else {
         ""
     };
+    let threads = if state.before_first_run {
+        "---".to_string()
+    } else {
+        state.threads.to_string()
+    };
     Line::from(vec![
         Span::styled("Threads: ", LABEL_STYLE),
-        Span::styled(state.threads.to_string(), VALUE_STYLE),
+        Span::styled(threads, VALUE_STYLE),
         Span::styled(hint, TITLE_STYLE),
     ])
 }
@@ -549,6 +662,7 @@ fn draw_header(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
     let inner_width = area.width.saturating_sub(2) as usize;
 
     let mut lines = wave_lines(inner_width, tick, &state.block_found_ticks);
+    lines.truncate(area.height.saturating_sub(2).max(1) as usize);
 
     // Overlay uptime on the last wave row
     if let Some(last) = lines.last_mut() {
@@ -681,14 +795,19 @@ fn draw_stats(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner, wid
 }
 
 fn format_state_display(state: &TuiStateInner) -> (String, Color) {
+    if state.stopping {
+        return ("stopping".to_string(), Color::Rgb(200, 170, 80));
+    }
     let mut state_display = if state.dev_fee_active && state.state == "working" {
         "working (dev fee)".to_string()
     } else {
-        state.state.clone()
+        friendly_state_label(&state.state).to_string()
     };
 
     let mut state_color = match state.state.as_str() {
         "working" => Color::Rgb(100, 170, 100),
+        "pool-disconnected" | "pool-resync" => Color::Rgb(215, 165, 95),
+        "pool-login-rejected" => Color::Rgb(220, 105, 95),
         "stale-tip" | "stale-refresh" => Color::Rgb(200, 170, 80),
         "solved" => Color::Rgb(120, 190, 120),
         "wallet-required" | "wallet-password-required" => Color::Rgb(220, 170, 90),
@@ -713,6 +832,20 @@ fn format_state_display(state: &TuiStateInner) -> (String, Color) {
     }
 
     (state_display, state_color)
+}
+
+fn friendly_state_label(state: &str) -> &str {
+    match state {
+        "initializing" => "starting",
+        "pool-connecting" => "connecting",
+        "pool-connected" => "connected",
+        "pool-authenticated" => "logged in",
+        "waiting-pool-job" => "waiting for work",
+        "pool-disconnected" => "reconnecting",
+        "pool-resync" => "resyncing with pool",
+        "pool-login-rejected" => "login rejected",
+        other => other,
+    }
 }
 
 fn draw_stats_wide(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
@@ -998,24 +1131,56 @@ fn pool_paid_lines(state: &TuiStateInner, inner_width: usize) -> Vec<Line<'stati
 }
 
 fn draw_config_runtime_panel(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
+    let (endpoint_label, endpoint) = if state.mode == "pool" {
+        ("  Pool: ", endpoint_for_display(&state.api_url))
+    } else {
+        ("  Daemon: ", state.api_url.as_str())
+    };
     let line1 = Line::from(vec![
-        Span::styled("  Endpoint: ", LABEL_STYLE),
-        Span::styled(&state.api_url, VALUE_STYLE),
-        Span::styled("  Worker: ", LABEL_STYLE),
-        Span::styled(&state.pool_worker, VALUE_STYLE),
+        Span::styled(endpoint_label, LABEL_STYLE),
+        Span::styled(endpoint, VALUE_STYLE),
     ]);
+    // Thread keys first: a long worker name may clip, the controls must not.
     let mut line2 = thread_line(state);
     line2.spans.insert(0, Span::raw("  "));
-    line2.spans.push(Span::styled("  Backends: ", LABEL_STYLE));
-    line2
-        .spans
-        .push(Span::styled(state.backends_desc.clone(), VALUE_STYLE));
+    if state.mode == "pool" {
+        line2.spans.push(Span::styled("  Worker: ", LABEL_STYLE));
+        line2
+            .spans
+            .push(Span::styled(state.pool_worker.clone(), VALUE_STYLE));
+    }
     let config_block = Block::default()
         .title(Span::styled(" CONFIG ", TITLE_STYLE))
         .borders(Borders::ALL)
         .border_style(BORDER_STYLE);
     let config = Paragraph::new(vec![line1, line2]).block(config_block);
     frame.render_widget(config, area);
+}
+
+fn endpoint_for_display(endpoint: &str) -> &str {
+    endpoint.strip_prefix("stratum+tcp://").unwrap_or(endpoint)
+}
+
+/// Drops the right-hand value when both will not fit, rather than clipping it.
+fn wallet_line_fitted(
+    left_label: &str,
+    left_value: &str,
+    right_label: &str,
+    right_value: &str,
+    inner_width: usize,
+) -> Line<'static> {
+    let line = wallet_line_with_right(
+        left_label,
+        left_value,
+        right_label,
+        right_value,
+        inner_width,
+    );
+    if line.width() <= inner_width {
+        line
+    } else {
+        kv_line(left_label, left_value)
+    }
 }
 
 fn draw_config_wallet_panel(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
@@ -1026,7 +1191,7 @@ fn draw_config_wallet_panel(frame: &mut ratatui::Frame, area: Rect, state: &TuiS
         (
             " BALANCES ",
             vec![
-                wallet_line_with_right(
+                wallet_line_fitted(
                     "P.Pending",
                     &state.pool_pending,
                     "Miner",
@@ -1034,7 +1199,7 @@ fn draw_config_wallet_panel(frame: &mut ratatui::Frame, area: Rect, state: &TuiS
                     inner_width,
                 ),
                 kv_line("P.Paid", &state.pool_paid),
-                wallet_line_with_right(
+                wallet_line_fitted(
                     "W.Pending",
                     &state.wallet_pending,
                     "Address",
@@ -1048,7 +1213,7 @@ fn draw_config_wallet_panel(frame: &mut ratatui::Frame, area: Rect, state: &TuiS
         (
             " POOL BALANCE ",
             vec![
-                wallet_line_with_right(
+                wallet_line_fitted(
                     "Pending",
                     &state.pool_pending,
                     "Miner",
@@ -1062,7 +1227,7 @@ fn draw_config_wallet_panel(frame: &mut ratatui::Frame, area: Rect, state: &TuiS
         (
             " WALLET ",
             vec![
-                wallet_line_with_right(
+                wallet_line_fitted(
                     "Pending",
                     &state.wallet_pending,
                     "Address",
@@ -1085,147 +1250,116 @@ fn draw_config_wallet_panel(frame: &mut ratatui::Frame, area: Rect, state: &TuiS
 }
 
 fn draw_log(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
+    let title = if state.log_scroll > 0 {
+        " LOG  paused, End to follow "
+    } else {
+        " LOG "
+    };
+    let hint = if state.stopping {
+        " q again to force quit "
+    } else {
+        " ↑↓ scroll  q quit "
+    };
     let log_block = Block::default()
-        .title(Span::styled(" LOG ", TITLE_STYLE))
+        .title(Span::styled(title, TITLE_STYLE))
+        .title(Line::from(Span::styled(hint, DIM_STYLE)).right_aligned())
         .borders(Borders::ALL)
         .border_style(BORDER_STYLE);
 
     let inner_height = area.height.saturating_sub(2) as usize;
     let inner_width = area.width.saturating_sub(2) as usize;
     let now_elapsed_secs = state.started_at.elapsed().as_secs_f64();
-    // Build wrapped lines from the end so recent entries are always visible.
-    let mut all_lines: Vec<Line> = Vec::new();
-    let elapsed_labels: Vec<String> = state
-        .log_entries
-        .iter()
-        .map(|entry| {
-            format_elapsed_log_ago(log_entry_age_secs(now_elapsed_secs, entry.elapsed_secs))
-        })
-        .collect();
-    let row_indent = "  ";
-    let time_col_width = elapsed_labels
-        .iter()
-        .map(|label| label.chars().count())
-        .max()
-        .unwrap_or(8)
-        .max(8);
-    for (entry, elapsed) in state.log_entries.iter().zip(elapsed_labels.iter()) {
-        let time_text = format!(" {elapsed:>time_col_width$} ");
-        let time = Span::styled(time_text.clone(), DIM_STYLE);
-        let level_text = format!(" {} ", entry.level.label());
-        let level = Span::styled(
-            level_text.clone(),
-            Style::default()
-                .fg(entry.level.label_fg())
-                .bg(entry.level.label_bg())
-                .add_modifier(Modifier::BOLD),
+    // Walk back from the newest entry and stop as soon as the panel is full.
+    let mut rows: Vec<Line> = Vec::with_capacity(inner_height);
+    for entry in state.log_entries.iter().rev().skip(state.log_scroll) {
+        rows.extend(
+            log_entry_rows(entry, now_elapsed_secs, inner_width)
+                .into_iter()
+                .rev(),
         );
-        let tag_text = format!(" {:^8} ", entry.tag);
-        let tag_width = tag_text.chars().count();
-        let tag = Span::styled(
-            tag_text,
-            Style::default()
-                .fg(Color::Rgb(200, 200, 200))
-                .bg(Color::Rgb(40, 40, 40))
-                .add_modifier(Modifier::BOLD),
-        );
-        let message_separator = " ";
-        let prefix_width = row_indent.chars().count()
-            + level_text.chars().count()
-            + tag_width
-            + message_separator.chars().count();
-        let suffix_width = time_text.chars().count();
-        let msg_width = inner_width
-            .saturating_sub(prefix_width + suffix_width)
-            .max(1);
-        let msg_style = if matches!(entry.level, LogLevel::Mined) {
-            Style::default()
-                .fg(entry.level.color())
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(entry.level.color())
-        };
-        let chunks = wrap_str(&entry.message, msg_width);
-        for (i, chunk) in chunks.iter().enumerate() {
-            if i == 0 {
-                let msg = Span::styled(chunk.clone(), msg_style);
-                let gap =
-                    inner_width.saturating_sub(prefix_width + chunk.chars().count() + suffix_width);
-                all_lines.push(Line::from(vec![
-                    Span::raw(row_indent),
-                    level.clone(),
-                    tag.clone(),
-                    Span::raw(message_separator),
-                    msg,
-                    Span::raw(" ".repeat(gap)),
-                    time.clone(),
-                ]));
-            } else {
-                let pad = " ".repeat(prefix_width);
-                let msg = Span::styled(format!("{pad}{chunk}"), msg_style);
-                all_lines.push(Line::from(vec![msg]));
-            }
+        if rows.len() >= inner_height {
+            break;
         }
     }
-    let start = all_lines.len().saturating_sub(inner_height);
-    let visible: Vec<Line> = all_lines.into_iter().skip(start).collect();
+    rows.truncate(inner_height);
+    rows.reverse();
 
-    let log = Paragraph::new(visible).block(log_block);
-    frame.render_widget(log, area);
+    frame.render_widget(Paragraph::new(rows).block(log_block), area);
+}
+
+fn log_entry_rows(
+    entry: &LogEntry,
+    now_elapsed_secs: f64,
+    inner_width: usize,
+) -> Vec<Line<'static>> {
+    const TAG_WIDTH: usize = 9;
+    const AGE_WIDTH: usize = 9;
+    // The age column gives way to the message on very narrow terminals.
+    const AGE_MIN_INNER_WIDTH: usize = 60;
+    let tag = Span::styled(
+        format!(" {:<width$}", entry.tag, width = TAG_WIDTH - 1),
+        Style::default()
+            .fg(entry.level.label_fg())
+            .bg(entry.level.label_bg())
+            .add_modifier(Modifier::BOLD),
+    );
+    let prefix_width = TAG_WIDTH + 1;
+    let age_width = if inner_width >= AGE_MIN_INNER_WIDTH {
+        AGE_WIDTH
+    } else {
+        0
+    };
+    let message_width = inner_width.saturating_sub(prefix_width + age_width).max(1);
+    let message_style = if matches!(entry.level, LogLevel::Mined) {
+        Style::default()
+            .fg(entry.level.color())
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(entry.level.color())
+    };
+    let message = if entry.count > 1 {
+        format!("{} ×{}", entry.message, entry.count)
+    } else {
+        entry.message.clone()
+    };
+    let mut rows = Vec::new();
+    for (index, chunk) in wrap_str(&message, message_width).into_iter().enumerate() {
+        if index > 0 {
+            rows.push(Line::from(vec![
+                Span::raw(" ".repeat(prefix_width)),
+                Span::styled(chunk, message_style),
+            ]));
+            continue;
+        }
+        let mut spans = vec![tag.clone(), Span::raw(" ")];
+        let used = chunk.chars().count();
+        spans.push(Span::styled(chunk, message_style));
+        if age_width > 0 {
+            let age =
+                format_elapsed_log_ago(log_entry_age_secs(now_elapsed_secs, entry.elapsed_secs));
+            spans.push(Span::raw(" ".repeat(message_width.saturating_sub(used))));
+            spans.push(Span::styled(
+                format!("{age:>width$} ", width = AGE_WIDTH - 1),
+                DIM_STYLE,
+            ));
+        }
+        rows.push(Line::from(spans));
+    }
+    rows
 }
 
 fn log_entry_age_secs(now_elapsed_secs: f64, entry_elapsed_secs: f64) -> f64 {
-    let now = now_elapsed_secs.max(0.0);
-    let entry = entry_elapsed_secs.max(0.0);
-    if now >= entry {
-        now - entry
-    } else {
-        0.0
-    }
+    (now_elapsed_secs - entry_elapsed_secs).max(0.0)
 }
 
 fn format_elapsed_log_ago(elapsed_secs: f64) -> String {
     let total = elapsed_secs.max(0.0).floor() as u64;
-    if total < 60 {
-        return if total == 1 {
-            "1 sec ago".to_string()
-        } else {
-            format!("{total} sec ago")
-        };
-    }
-
-    let minutes = total / 60;
-    if minutes < 60 {
-        return if minutes == 1 {
-            "1 min ago".to_string()
-        } else {
-            format!("{minutes} mins ago")
-        };
-    }
-
-    let hours = minutes / 60;
-    if hours < 24 {
-        return if hours == 1 {
-            "1 hour ago".to_string()
-        } else {
-            format!("{hours} hours ago")
-        };
-    }
-
-    let days = hours / 24;
-    if days < 7 {
-        return if days == 1 {
-            "1 day ago".to_string()
-        } else {
-            format!("{days} days ago")
-        };
-    }
-
-    let weeks = days / 7;
-    if weeks == 1 {
-        "1 week ago".to_string()
-    } else {
-        format!("{weeks} weeks ago")
+    match total {
+        0..=4 => "now".to_string(),
+        5..=59 => format!("{total}s ago"),
+        60..=3_599 => format!("{}m ago", total / 60),
+        3_600..=86_399 => format!("{}h ago", total / 3_600),
+        _ => format!("{}d ago", total / 86_400),
     }
 }
 
@@ -1282,21 +1416,35 @@ fn device_line(name: &str, current: &str, average: &str) -> Line<'static> {
     ])
 }
 
+/// Wraps at spaces, splitting only words longer than a whole row (URLs, paths).
 fn wrap_str(s: &str, max: usize) -> Vec<String> {
-    if max == 0 {
-        return vec![s.to_string()];
-    }
-    let chars: Vec<char> = s.chars().collect();
-    if chars.len() <= max {
-        return vec![s.to_string()];
-    }
+    let max = max.max(1);
     let mut lines = Vec::new();
-    let mut pos = 0;
-    while pos < chars.len() {
-        let end = (pos + max).min(chars.len());
-        lines.push(chars[pos..end].iter().collect());
-        pos = end;
+    let mut line = String::new();
+    let mut width = 0;
+    for word in s.split(' ') {
+        let word_width = word.chars().count();
+        if width > 0 && width + 1 + word_width > max {
+            lines.push(std::mem::take(&mut line));
+            width = 0;
+        }
+        if width > 0 {
+            line.push(' ');
+            width += 1;
+        }
+        let mut chars = word.chars();
+        let mut remaining = word_width;
+        while width + remaining > max {
+            let take = max - width;
+            line.extend(chars.by_ref().take(take));
+            lines.push(std::mem::take(&mut line));
+            remaining -= take;
+            width = 0;
+        }
+        line.extend(chars);
+        width += remaining;
     }
+    lines.push(line);
     lines
 }
 
@@ -1639,13 +1787,13 @@ mod tests {
     #[test]
     fn log_ring_buffer_capacity() {
         let mut state = TuiStateInner::new();
-        for i in 0..250 {
-            state.push_log(LogEntry {
-                elapsed_secs: i as f64,
-                level: LogLevel::Info,
-                tag: "TEST".to_string(),
-                message: format!("msg {}", i),
-            });
+        for i in 0..LOG_CAPACITY + 50 {
+            state.push_log(LogEntry::new(
+                i as f64,
+                LogLevel::Info,
+                "TEST",
+                &format!("msg {i}"),
+            ));
         }
         assert_eq!(state.log_entries.len(), LOG_CAPACITY);
         assert_eq!(state.log_entries.front().unwrap().message, "msg 50");
@@ -1667,6 +1815,144 @@ mod tests {
         assert!(config_uses_two_columns(CONFIG_TWO_COLUMN_MIN_WIDTH));
     }
 
+    fn test_entry(message: &str) -> LogEntry {
+        LogEntry::new(1.0, LogLevel::Info, "TEST", message)
+    }
+
+    #[test]
+    fn finished_thread_notice_makes_way_for_the_log() {
+        let mut state = TuiStateInner::new();
+        let start = Instant::now();
+        state.thread_notice = Some("CPU threads: 4".into());
+        assert!(!state.expire_thread_notice(start));
+        assert!(!state.expire_thread_notice(start + THREAD_NOTICE_LIFETIME / 2));
+        assert!(state.expire_thread_notice(start + THREAD_NOTICE_LIFETIME));
+        assert_eq!(state.thread_notice, None);
+
+        // A change still in progress keeps its notice, and restarts the clock after.
+        state.thread_notice = Some("Checking RAM".into());
+        state.thread_change_pending = true;
+        assert!(!state.expire_thread_notice(start));
+        assert!(!state.expire_thread_notice(start + THREAD_NOTICE_LIFETIME * 2));
+        assert!(state.thread_notice.is_some());
+        state.thread_change_pending = false;
+        assert!(!state.expire_thread_notice(start + THREAD_NOTICE_LIFETIME * 2));
+        assert!(state.thread_notice.is_some());
+    }
+
+    #[test]
+    fn identical_lines_fold_into_one_row() {
+        let mut state = TuiStateInner::new();
+        state.push_log(test_entry("share accepted"));
+        state.push_log(test_entry("share accepted"));
+        state.push_log(test_entry("share accepted"));
+        assert_eq!(state.log_entries.len(), 1);
+        assert!(render_text(&state, 120, 30).contains("share accepted ×3"));
+
+        state.push_log(test_entry("connected"));
+        state.push_log(test_entry("share accepted"));
+        assert_eq!(state.log_entries.len(), 3);
+        assert_eq!(state.log_entries.back().unwrap().count, 1);
+    }
+
+    #[test]
+    fn scrolling_back_pins_the_view_until_end_is_pressed() {
+        let mut state = TuiStateInner::new();
+        for i in 0..100 {
+            state.push_log(test_entry(&format!("line-{i:03}")));
+        }
+        assert!(render_text(&state, 120, 30).contains("line-099"));
+
+        assert!(!press(&mut state, KeyCode::PageUp));
+        assert_eq!(state.log_scroll, LOG_PAGE_ENTRIES);
+        let paused = render_text(&state, 120, 30);
+        assert!(paused.contains("line-089"));
+        assert!(!paused.contains("line-099"));
+        assert!(paused.contains("End to follow"));
+
+        // A new line must not move what the reader is looking at.
+        state.push_log(test_entry("line-new"));
+        let still = render_text(&state, 120, 30);
+        assert!(still.contains("line-089"));
+        assert!(!still.contains("line-new"));
+
+        press(&mut state, KeyCode::Home);
+        assert!(render_text(&state, 120, 30).contains("line-000"));
+        press(&mut state, KeyCode::Up);
+        assert_eq!(state.log_scroll, state.log_entries.len() - 1);
+
+        press(&mut state, KeyCode::End);
+        assert_eq!(state.log_scroll, 0);
+        assert!(render_text(&state, 120, 30).contains("line-new"));
+    }
+
+    fn log_inner_rows(state: &TuiStateInner, width: u16, height: u16) -> usize {
+        // One bordered panel holds the log: count rows between its borders.
+        let text = render_text(state, width, height);
+        let lines: Vec<&str> = text.lines().collect();
+        let top = lines
+            .iter()
+            .position(|line| line.contains(" LOG "))
+            .unwrap();
+        lines.len() - top - 2
+    }
+
+    #[test]
+    fn common_window_sizes_leave_the_log_room_to_read() {
+        let mut state = TuiStateInner::new();
+        state.mode = "pool".into();
+        state.device_hashrates.push(DeviceHashrate {
+            name: "cpu#1".into(),
+            current: "1.000 kH/s".into(),
+            average: "1.000 kH/s".into(),
+        });
+        assert_eq!(log_inner_rows(&state, 120, 30), 13);
+        assert_eq!(log_inner_rows(&state, 80, 24), 7);
+        assert_eq!(log_inner_rows(&state, 120, 40), 22);
+    }
+
+    #[test]
+    fn thread_keys_survive_a_long_worker_name_at_80_columns() {
+        let (mut state, _rx) = controlled_state();
+        state.mode = "pool".into();
+        state.backends_desc = "cpu#1".into();
+        state.api_url = "stratum+tcp://bntpool.com:3333".into();
+        state.pool_worker = "a-very-long-worker-name-from-the-config".into();
+        let text = render_text(&state, 80, 24);
+        assert!(text.contains("[+] [-]"), "{text}");
+        assert!(text.contains("Pool: bntpool.com:3333"), "{text}");
+    }
+
+    #[test]
+    fn narrow_wallet_panel_keeps_balances_instead_of_clipping_the_address() {
+        let mut state = TuiStateInner::new();
+        state.mode = "pool".into();
+        state.pool_address = "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789AbCdEfGhIj".into();
+        state.pool_pending = "123.45678901 BNT".into();
+        let text = render_text(&state, 80, 24);
+        assert!(text.contains("123.45678901 BNT"));
+    }
+
+    #[test]
+    fn wrap_prefers_spaces_and_splits_only_oversized_words() {
+        assert_eq!(wrap_str("one two three", 7), ["one two", "three"]);
+        assert_eq!(wrap_str("abcdefghij kl", 4), ["abcd", "efgh", "ij", "kl"]);
+        assert_eq!(wrap_str("short", 80), ["short"]);
+        assert_eq!(wrap_str("", 10), [""]);
+    }
+
+    #[test]
+    fn startup_states_read_as_plain_words() {
+        let mut state = TuiStateInner::new();
+        state.state = "pool-connecting".into();
+        assert_eq!(format_state_display(&state).0, "connecting");
+        state.state = "preparing miners".into();
+        assert_eq!(format_state_display(&state).0, "preparing miners");
+        state.stopping = true;
+        assert_eq!(format_state_display(&state).0, "stopping");
+        assert!(render_text(&state, 120, 30).contains("q again to force quit"));
+    }
+
     #[test]
     fn uptime_formatting() {
         let state = TuiStateInner::new();
@@ -1676,11 +1962,12 @@ mod tests {
 
     #[test]
     fn log_elapsed_formatter_uses_relative_ago_style() {
-        assert_eq!(format_elapsed_log_ago(0.0), "0 sec ago");
-        assert_eq!(format_elapsed_log_ago(65.0), "1 min ago");
-        assert_eq!(format_elapsed_log_ago(3_600.0), "1 hour ago");
-        assert_eq!(format_elapsed_log_ago(32_857.9), "9 hours ago");
-        assert_eq!(format_elapsed_log_ago(360_000.0), "4 days ago");
+        assert_eq!(format_elapsed_log_ago(0.0), "now");
+        assert_eq!(format_elapsed_log_ago(12.0), "12s ago");
+        assert_eq!(format_elapsed_log_ago(65.0), "1m ago");
+        assert_eq!(format_elapsed_log_ago(3_600.0), "1h ago");
+        assert_eq!(format_elapsed_log_ago(32_857.9), "9h ago");
+        assert_eq!(format_elapsed_log_ago(360_000.0), "4d ago");
     }
 
     #[test]

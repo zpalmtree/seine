@@ -1850,7 +1850,7 @@ impl NvidiaBackend {
             self.effective_hashes_per_launch_per_lane_cap(selected);
 
         if let Some(forced_rregcount) = self.tuning_options.max_rregcount_override {
-            crate::miner::ui::info(
+            crate::miner::ui::detail(
                 "NVIDIA",
                 format!(
                     "nvidia-autotune | GPU {}: disabled by explicit register cap",
@@ -1895,7 +1895,7 @@ impl NvidiaBackend {
                 // Keep Blackwell's implicit launch-depth handling unchanged.
                 let cached = self
                     .apply_runtime_tuning_overrides(cached, cached_hashes_per_launch_per_lane_cap);
-                crate::miner::ui::info(
+                crate::miner::ui::detail(
                     "NVIDIA",
                     format!(
                         "nvidia-autotune | GPU {}: using cached tuning",
@@ -1908,7 +1908,7 @@ impl NvidiaBackend {
                 return cached;
             }
             Err(_) if skip_autotune => {
-                crate::miner::ui::info(
+                crate::miner::ui::detail(
                     "NVIDIA",
                     format!(
                         "nvidia-autotune | GPU {}: network is on BLAKE2b; skipping Argon2 autotune",
@@ -1923,13 +1923,22 @@ impl NvidiaBackend {
                     requested_hashes_per_launch_per_lane,
                 );
             }
-            Err(reason) => crate::miner::ui::info(
-                "NVIDIA",
-                format!(
-                    "nvidia-autotune | GPU {}: {reason}; running autotune",
-                    selected.index
-                ),
-            ),
+            Err(reason) => {
+                crate::miner::ui::detail(
+                    "NVIDIA",
+                    format!(
+                        "nvidia-autotune | GPU {}: {reason}; running autotune",
+                        selected.index
+                    ),
+                );
+                crate::miner::ui::note(
+                    "NVIDIA",
+                    format!(
+                        "GPU {}: tuning (first run can take a few minutes)",
+                        selected.index
+                    ),
+                );
+            }
         }
 
         let tuned = self.apply_runtime_tuning_overrides(

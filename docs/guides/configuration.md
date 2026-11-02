@@ -101,6 +101,10 @@ startup overrides.
 Short terminal windows use a compact dashboard that keeps the CPU thread count,
 mining state, and hashrate visible. Press `q` or `Ctrl+C` to quit.
 
+Use the arrow keys, `PgUp`, `PgDn` and `Home` to scroll back through the log; the
+view holds still until you press `End`. Add `--verbose` to see internal settings
+and routine activity such as new jobs. `--ui plain` logs routine activity too.
+
 Seine checks GitHub for a newer release at startup and every 12 hours, and
 retries within about an hour when a check or install fails. When one exists, the
 dashboard header shows `update vX.Y.Z available` and the log gets one line with

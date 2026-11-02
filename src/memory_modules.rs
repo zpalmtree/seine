@@ -145,20 +145,20 @@ pub fn memory_setup_notices(modules: &[MemoryModule]) -> Vec<String> {
     let mut notices = Vec::new();
     if modules.len() == 1 {
         notices.push(format!(
-            "only one memory module is installed ({} GiB {generation}), so the CPU runs on a single memory channel; CPU mining is limited by memory bandwidth, and a second matching module in the motherboard's dual-channel slot doubles it",
+            "only one memory module is installed ({} GiB {generation}); a second matching module doubles the memory bandwidth CPU mining depends on",
             modules[0].size_mib.div_ceil(1024)
         ));
     }
     if configured > 0 && rated > 0 && u64::from(configured) * 100 < u64::from(rated) * 95 {
         notices.push(format!(
-            "memory runs at {configured} MT/s but the modules are rated {rated} MT/s; enable EXPO/XMP (or set the rated speed) in BIOS for more CPU hashrate"
+            "memory runs at {configured} MT/s but is rated {rated} MT/s; enable EXPO/XMP in BIOS for more CPU hashrate"
         ));
     } else if configured > 0
         && ((generation == "DDR5" && configured <= 4800)
             || (generation == "DDR4" && configured <= 2666))
     {
         notices.push(format!(
-            "memory runs at {configured} MT/s, the {generation} default; if the modules support EXPO or XMP, enabling it in BIOS raises CPU hashrate"
+            "memory runs at the {generation} default of {configured} MT/s; enabling EXPO/XMP in BIOS may raise CPU hashrate"
         ));
     }
     notices
@@ -267,7 +267,7 @@ mod tests {
         let notices = memory_setup_notices(&modules);
         assert_eq!(notices.len(), 2);
         assert!(notices[0].contains("only one memory module"));
-        assert!(notices[1].contains("4800 MT/s, the DDR5 default"));
+        assert!(notices[1].contains("DDR5 default of 4800 MT/s"));
     }
 
     #[test]
@@ -278,7 +278,7 @@ mod tests {
         ]));
         let notices = memory_setup_notices(&modules);
         assert_eq!(notices.len(), 1);
-        assert!(notices[0].contains("2400 MT/s but the modules are rated 3200"));
+        assert!(notices[0].contains("2400 MT/s but is rated 3200"));
     }
 
     #[test]

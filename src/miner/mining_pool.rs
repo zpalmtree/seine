@@ -398,15 +398,11 @@ fn rebind_active_pool_job(
         .unwrap_or_else(|| "unknown".to_string());
     match (previous_difficulty, job.difficulty) {
         (Some(old), Some(new)) if old != new => {
-            if new > old {
-                success("VARDIFF", format!("difficulty {old} -> {new}"));
-            } else {
-                info("VARDIFF", format!("difficulty {old} -> {new}"));
-            }
+            super::ui::detail("VARDIFF", format!("difficulty {old} -> {new}"));
         }
         _ => {}
     }
-    info(
+    super::ui::detail(
         "JOB",
         format!(
             "updated job height={} difficulty={difficulty_label}",
@@ -752,7 +748,7 @@ fn connect_pool_session(
     )?;
     if connection.mode.is_user() {
         let compact_address = compact_pool_address_for_log(&connection.address);
-        info(
+        super::ui::detail(
             "CONN",
             format!(
                 "connecting ({}) to {} as {}.{}{}",
@@ -1092,7 +1088,7 @@ pub(super) fn run_pool_mining_loop(
                     &snapshot.unlocked,
                 );
                 if local_wallet_address_logged.as_deref() != Some(snapshot.address.as_str()) {
-                    info(
+                    super::ui::detail(
                         "WALLET",
                         format!("using local daemon wallet balance: {}", snapshot.address),
                     );
@@ -1100,7 +1096,7 @@ pub(super) fn run_pool_mining_loop(
                     local_wallet_mismatch_logged = false;
                 }
                 if snapshot.address != user_address && !local_wallet_mismatch_logged {
-                    warn(
+                    super::ui::detail(
                         "WALLET",
                         "local daemon wallet differs from pool payout address; wallet panel shows the local daemon wallet",
                     );
@@ -1199,10 +1195,7 @@ pub(super) fn run_pool_mining_loop(
                         let slot_name = pending_backend_slot_label(backends, &slot);
                         info(
                             "BACKEND",
-                            format!(
-                                "{slot_name}: online (initialized in background, {} lanes)",
-                                slot.lanes
-                            ),
+                            format!("{slot_name}: online ({} lanes)", slot.lanes),
                         );
                         backend_weights.insert(slot.id, slot.lanes.max(1) as f64);
                         stats.register_expected_backends(&[format!(
@@ -1222,7 +1215,7 @@ pub(super) fn run_pool_mining_loop(
             }
             if !deferred_remaining.is_empty() && !pending_gpus_logged {
                 for (kind, count) in super::mining::pending_gpu_counts(&deferred_remaining) {
-                    info(
+                    super::ui::detail(
                         "BACKEND",
                         format!("{kind} initialization in progress: {count} pending"),
                     );
@@ -1504,7 +1497,7 @@ pub(super) fn run_pool_mining_loop(
                             .request_nonce_refill(&active_job.job.job_id),
                     }
                     if active_mode.is_user() {
-                        info("JOB", "nonce range finished; requesting fresh work");
+                        super::ui::detail("JOB", "nonce range finished; requesting fresh work");
                     }
                 }
                 update_tui(
@@ -1561,7 +1554,7 @@ pub(super) fn run_pool_mining_loop(
 
     if !backends.is_empty() {
         crate::diagnostics::cleanup_stage(seine_telemetry::CleanupStage::QuiescingBackends);
-        info("MINER", "shutting down: cancelling pool work...");
+        super::ui::detail("MINER", "shutting down: cancelling pool work...");
         if let Err(err) =
             super::cancel_backend_slots(backends, RuntimeMode::Mining, backend_executor)
         {
@@ -1571,7 +1564,7 @@ pub(super) fn run_pool_mining_loop(
     }
 
     stats.print();
-    info("MINER", "stopped");
+    super::ui::detail("MINER", "stopped");
     Ok(())
 }
 
@@ -1640,7 +1633,7 @@ fn handle_active_pool_event(
         PoolEvent::Connected => {
             *connected = true;
             if mode.is_user() {
-                success("CONN", "connected");
+                success("CONN", "connected to pool");
             }
             set_tui_state_label(tui, "pool-connected");
         }
@@ -1680,7 +1673,7 @@ fn handle_active_pool_event(
             if mode.is_user() {
                 set_tui_pool_payout_minimum(tui, ack.min_payout_atomic);
                 if let Some(minimum) = ack.min_payout_atomic {
-                    info(
+                    super::ui::detail(
                         "PAYOUT",
                         format!(
                             "Minimum payout: {} BNT.",
@@ -1693,7 +1686,7 @@ fn handle_active_pool_event(
                 } else {
                     ack.required_capabilities.join(",")
                 };
-                success(
+                super::ui::detail(
                     "AUTH",
                     format!(
                         "login accepted (protocol v{}, required={required})",
@@ -1767,7 +1760,8 @@ fn handle_active_pool_event(
                     .map(|pending| format!(" (backend={})", pending.backend_label))
                     .unwrap_or_default();
                 if mode.is_user() {
-                    success("SHARE", format!("accepted{retry_suffix}{backend_suffix}"));
+                    super::ui::detail("SHARE", format!("accepted{retry_suffix}{backend_suffix}"));
+                    super::ui::note_success("SHARE", "share accepted");
                 }
                 if let Some(display) = tui.as_mut() {
                     display.mark_block_found();
@@ -1968,7 +1962,7 @@ fn handle_inactive_pool_event(
     match event {
         PoolEvent::Connected => {
             if !*connected && mode.is_user() {
-                info("CONN", format!("{} session connected", mode.as_str()));
+                super::ui::detail("CONN", format!("{} session connected", mode.as_str()));
             }
             *connected = true;
         }
@@ -1984,7 +1978,7 @@ fn handle_inactive_pool_event(
             if mode.is_user() {
                 set_tui_pool_payout_minimum(tui, ack.min_payout_atomic);
                 if let Some(minimum) = ack.min_payout_atomic {
-                    info(
+                    super::ui::detail(
                         "PAYOUT",
                         format!(
                             "Minimum payout: {} BNT.",
@@ -1997,7 +1991,7 @@ fn handle_inactive_pool_event(
                 } else {
                     ack.required_capabilities.join(",")
                 };
-                success(
+                super::ui::detail(
                     "AUTH",
                     format!(
                         "{} session login accepted (protocol v{}, required={required})",
@@ -2054,7 +2048,7 @@ fn handle_inactive_pool_event(
                     .map(|pending| format!(" (backend={})", pending.backend_label))
                     .unwrap_or_default();
                 if mode.is_user() {
-                    success(
+                    super::ui::detail(
                         "SHARE",
                         format!("accepted ({}){retry_suffix}{backend_suffix}", mode.as_str()),
                     );
@@ -2139,13 +2133,11 @@ fn apply_submit_ack_difficulty(
     job.target = new_target;
     if mode.is_user() {
         if let Some(old) = old_difficulty {
-            if difficulty > old {
-                success("VARDIFF", format!("difficulty {old} -> {difficulty}"));
-            } else if difficulty < old {
-                info("VARDIFF", format!("difficulty {old} -> {difficulty}"));
+            if difficulty != old {
+                super::ui::detail("VARDIFF", format!("difficulty {old} -> {difficulty}"));
             }
         } else {
-            info("VARDIFF", format!("difficulty set to {difficulty}"));
+            super::ui::detail("VARDIFF", format!("difficulty set to {difficulty}"));
         }
     }
     let assign_started = Instant::now();
@@ -2289,7 +2281,7 @@ fn assign_pool_job(
     *active_job = Some(next_job);
 
     if mode.is_user() {
-        info(
+        super::ui::detail(
             "JOB",
             format!("new job height={height} difficulty={difficulty_label}"),
         );
@@ -2481,7 +2473,7 @@ fn maybe_hot_rebalance_active_pool_job(
                 job,
             )?;
             record_pool_assignment_timing(job, "hot-rebalance", None, assign_started.elapsed());
-            info("JOB", format!("{reason}; hot-rebalanced current pool job"));
+            super::ui::detail("JOB", format!("{reason}; hot-rebalanced current pool job"));
         }
     }
 
@@ -2538,7 +2530,7 @@ fn service_pool_submit_backlog_with_submitter<F>(
     let (flushed, submit_failed) =
         flush_deferred_pool_submits(job, stats, &mut submitter, recent_submit_lookup);
     if flushed > 0 && mode.is_user() {
-        info("SHARE", format!("submitted {flushed} deferred share(s)"));
+        super::ui::detail("SHARE", format!("submitted {flushed} deferred share(s)"));
     }
     if submit_failed && mode.is_user() {
         warn("SHARE", "failed to queue deferred submit");
@@ -2760,7 +2752,7 @@ where
     {
         stats.bump_submitted();
         if mode.is_user() {
-            info("SHARE", format!("submitted (backend={backend_label})"));
+            super::ui::detail("SHARE", format!("submitted (backend={backend_label})"));
         }
         job.pending_submit_nonces.insert(
             (binding.job_id.clone(), solution.nonce),

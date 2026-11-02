@@ -3,6 +3,7 @@ mod backend;
 mod config;
 mod console_exit;
 mod console_output;
+mod console_window;
 mod control_api;
 mod daemon_api;
 mod dev_fee;
@@ -58,13 +59,27 @@ fn run() -> Result<()> {
     // Config parsing may raise AMD GPU performance levels; put them back on
     // every return path, including config errors after detection.
     let _restore_perf_levels = RestorePerfLevels;
-    let cfg = Config::parse()?;
+    console_window::prepare_own_console();
     let shutdown = Arc::new(AtomicBool::new(false));
+    let mut shutdown_guard = None;
+    let mut dashboard = None;
+    // Prompts come first and need the default Ctrl+C; everything after them
+    // happens on the dashboard.
+    let cfg = Config::parse(|startup| {
+        shutdown_guard = Some(shutdown::install(Arc::clone(&shutdown))?);
+        miner::ui::set_verbose(startup.verbose);
+        if startup.opens_dashboard {
+            dashboard = miner::start_dashboard(Arc::clone(&shutdown), &startup);
+        }
+        Ok(())
+    })?;
+    let _shutdown_guard = shutdown_guard;
+    if shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+        return Ok(());
+    }
     if cfg.update_check_enabled && !cfg.bench {
         update_check::spawn(cfg.auto_update, Arc::clone(&shutdown));
     }
-
-    let _shutdown_guard = shutdown::install(Arc::clone(&shutdown))?;
 
     let result = if cfg.proxy_listen.is_some() {
         proxy::run(&cfg, shutdown)
@@ -76,6 +91,7 @@ fn run() -> Result<()> {
         miner::run(&cfg, shutdown)
     };
     backend::amd::on_process_exit();
+    drop(dashboard);
     if result.is_ok() && self_update::restart_pending() {
         self_update::restart()?;
     }

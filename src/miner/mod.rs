@@ -27,6 +27,7 @@ mod template_prefetch;
 pub(crate) mod thread_control;
 mod tip;
 mod tui;
+mod tui_prompt;
 pub(crate) mod ui;
 mod wallet;
 mod work_allocator;
@@ -59,9 +60,11 @@ use crate::config::{
     BackendKind, BackendSpec, Config, CpuPerformanceProfile, MiningMode, UiMode, WorkAllocation,
 };
 use crate::daemon_api::ApiClient;
+pub(crate) use mining_tui::start_dashboard;
 use scheduler::NonceReservation;
 use stats::{format_hashrate, Stats};
 use tui::{new_tui_state, TuiState};
+pub(crate) use tui_prompt::{prompt_screen, PromptSpec};
 use ui::{info, warn};
 
 const TEMPLATE_RETRY_DELAY: Duration = Duration::from_secs(2);
@@ -470,11 +473,11 @@ fn start_deferred_backend(
         BackendKind::Amd => "initializing HIP engine...",
         BackendKind::Cpu | BackendKind::Metal => "initializing...",
     };
-    info("BACKEND", format!("{backend_name}: {detail}"));
+    ui::detail("BACKEND", format!("{backend_name}: {detail}"));
     let start_t = Instant::now();
     match start_backend_interruptibly(&backend, backend_id, shutdown) {
         Ok(()) => {
-            info(
+            ui::detail(
                 "BACKEND",
                 format!(
                     "{backend_name}#{display_id}: initialized in {:.1}s (awaiting activation)",
@@ -604,6 +607,7 @@ fn run_with_thread_control_inner(
     // Pin the destination for this run, including pool reconnects and daemon
     // template requests. Keep the user's saved shortname for the next run.
     crate::diagnostics::set_phase(seine_telemetry::RunPhase::ResolvingAddress);
+    ui::set_startup_phase("preparing miners");
     let resolved_cfg = resolve_mining_config(cfg, &crate::shortname::ShortnameResolver::default())?;
     let cfg = &resolved_cfg;
 
@@ -720,7 +724,7 @@ fn run_with_thread_control_inner(
                 .expect("failed to spawn GPU init thread");
         }
         for (kind, count) in &display_ids {
-            info(
+            ui::detail(
                 "BACKEND",
                 format!(
                     "{kind}: launching {count} background initialization task(s) (CPU mining starts meanwhile)"
@@ -892,10 +896,7 @@ fn run_with_thread_control_inner(
         let slot_name = pending_backend_slot_label(&backends, &slot);
         info(
             "BACKEND",
-            format!(
-                "{slot_name}: online (initialized in background, {} lanes)",
-                slot.lanes
-            ),
+            format!("{slot_name}: online ({} lanes)", slot.lanes),
         );
         backends.push(slot);
     }
@@ -959,28 +960,35 @@ fn run_with_thread_control_inner(
         None
     };
 
-    if let Some(hint) = cfg.nvidia_hint {
-        info("HINT", hint);
+    // Once per process: a thread-change restart must not repeat setup advice.
+    static NOTICES_SHOWN: AtomicBool = AtomicBool::new(false);
+    if !NOTICES_SHOWN.swap(true, Ordering::Relaxed) {
+        if let Some(hint) = cfg.nvidia_hint {
+            info("HINT", hint);
+        }
+        for notice in &cfg.startup_notices {
+            info("BACKEND", notice);
+        }
+        for detail in &cfg.startup_details {
+            ui::detail("BACKEND", detail);
+        }
     }
-    for notice in &cfg.startup_notices {
-        info("BACKEND", notice);
-    }
-    info(
+    ui::detail(
         "CONFIG",
         format!("data directory: {}", cfg.data_dir.display()),
     );
-    info(
+    ui::detail(
         "CONFIG",
         format!("user settings file: {}", cfg.user_config_path.display()),
     );
     if cfg.user_config_created {
         info(
             "CONFIG",
-            "created first-run config file (edit this file to change defaults)",
+            format!("settings saved to {}", cfg.user_config_path.display()),
         );
     }
     if let Some(summary) = cfg.daemon_connection_summary() {
-        info("CONFIG", format!("daemon discovery: {summary}"));
+        ui::detail("CONFIG", format!("daemon discovery: {summary}"));
     }
 
     let endpoint_label = match cfg.mode {
@@ -1002,7 +1010,7 @@ fn run_with_thread_control_inner(
         MiningMode::Daemon => "effective | daemon",
         MiningMode::Pool => "effective",
     };
-    info(
+    ui::detail(
         "MINER",
         format!(
             "{effective_prefix} | {} auth={} backends={} cpu_threads={} ui={}",
@@ -1014,7 +1022,7 @@ fn run_with_thread_control_inner(
         ),
     );
 
-    info(
+    ui::detail(
         "MINER",
         format!(
             "starting | {} | {} lanes | ~{:.1} GiB RAM",
@@ -1023,11 +1031,11 @@ fn run_with_thread_control_inner(
             cpu_ram_gib
         ),
     );
-    info(
+    ui::verbose(
         "MINER",
         format!("preemption | {}", backend_preemption_profiles(&backends)),
     );
-    info(
+    ui::verbose(
         "MINER",
         format!(
             "allocation | {}",
@@ -1043,7 +1051,7 @@ fn run_with_thread_control_inner(
             "--sub-round-rebalance-ms is set but --work-allocation=static; in-round rebalance is disabled",
         );
     }
-    info(
+    ui::verbose(
         "MINER",
         format!(
             "chunking | {}",
@@ -1070,7 +1078,7 @@ fn run_with_thread_control_inner(
             ),
         );
     }
-    info(
+    ui::verbose(
         "MINER",
         format!(
             "hash-poll | configured={}ms effective={}ms",
@@ -1078,7 +1086,7 @@ fn run_with_thread_control_inner(
             effective_hash_poll_interval(&backends, cfg.hash_poll_interval).as_millis(),
         ),
     );
-    info(
+    ui::verbose(
         "MINER",
         format!(
             "cpu-profile | {} | page_mode={} | auto-cap={} | autotune={} range={}..{} secs={}",
@@ -1096,7 +1104,7 @@ fn run_with_thread_control_inner(
             cfg.cpu_autotune_secs,
         ),
     );
-    info(
+    ui::verbose(
         "MINER",
         format!(
             "cpu-tuning | hash_batch={} control_check={} hash_flush={}ms event_q={}",
@@ -1110,7 +1118,7 @@ fn run_with_thread_control_inner(
         .sub_round_rebalance_interval
         .map(|interval| format!("{}ms", interval.as_millis()))
         .unwrap_or_else(|| "off".to_string());
-    info(
+    ui::verbose(
         "MINER",
         format!(
             "timeouts | assign={}ms assign_strikes={} control={}ms prefetch_wait={}ms tip_join_wait={}ms submit_join_wait={}ms sub_round_rebalance={}",
@@ -1123,7 +1131,7 @@ fn run_with_thread_control_inner(
             sub_round_rebalance,
         ),
     );
-    info(
+    ui::verbose(
         "MINER",
         format!("timeout-policy | {}", backend_timeout_profiles(&backends)),
     );
@@ -1253,7 +1261,7 @@ fn run_with_thread_control_inner(
     crate::diagnostics::cleanup_stage(seine_telemetry::CleanupStage::StoppingAutotune);
     adaptive_controller.stop();
     let shutdown_requested = shutdown.load(Ordering::SeqCst);
-    info("MINER", "shutting down: stopping backends...");
+    ui::detail("MINER", "shutting down: stopping backends...");
     let stop_t = Instant::now();
     stop_backend_slots(
         &mut backends,
@@ -1261,7 +1269,7 @@ fn run_with_thread_control_inner(
         cfg.backend_control_timeout,
         "BACKEND",
     );
-    info(
+    ui::detail(
         "MINER",
         format!("backends stopped in {:.1}s", stop_t.elapsed().as_secs_f64()),
     );
@@ -1284,7 +1292,11 @@ fn run_with_thread_control_inner(
 }
 
 pub(crate) fn should_enable_tui(cfg: &Config) -> bool {
-    match cfg.ui_mode {
+    ui_mode_enables_tui(cfg.ui_mode)
+}
+
+pub(crate) fn ui_mode_enables_tui(mode: UiMode) -> bool {
+    match mode {
         UiMode::Plain => false,
         UiMode::Tui => true,
         UiMode::Auto => std::io::stdout().is_terminal() && std::io::stderr().is_terminal(),
@@ -1295,8 +1307,13 @@ fn build_tui_state(cfg: &Config, backends: &[BackendSlot]) -> TuiState {
     // Read before locking the dashboard; the update checker takes these locks
     // in the opposite order.
     let update = crate::update_check::for_new_dashboard();
-    let tui_state = new_tui_state();
+    // An open dashboard keeps its state, and with it the log so far, across runs.
+    let (tui_state, reused) = match ui::current_tui_state() {
+        Some(state) => (state, true),
+        None => (new_tui_state(), false),
+    };
     if let Ok(mut s) = tui_state.lock() {
+        s.reset_for_new_run();
         s.mode = match cfg.mode {
             MiningMode::Pool => "pool".to_string(),
             MiningMode::Daemon => "daemon".to_string(),
@@ -1330,29 +1347,28 @@ fn build_tui_state(cfg: &Config, backends: &[BackendSlot]) -> TuiState {
         if let Some(update) = update {
             s.update_available = Some(update.latest);
             if let Some(message) = update.log_message {
-                s.push_log(tui::LogEntry {
-                    elapsed_secs: 0.0,
-                    level: tui::LogLevel::Info,
-                    tag: "UPDATE".to_string(),
-                    message,
-                });
+                s.push_log(tui::LogEntry::new(
+                    0.0,
+                    tui::LogLevel::Info,
+                    "UPDATE",
+                    &message,
+                ));
             }
         }
-        if let Some(hint) = cfg.nvidia_hint {
-            s.push_log(tui::LogEntry {
-                elapsed_secs: 0.0,
-                level: tui::LogLevel::Info,
-                tag: "HINT".to_string(),
-                message: hint.to_string(),
-            });
-        }
-        for notice in &cfg.startup_notices {
-            s.push_log(tui::LogEntry {
-                elapsed_secs: 0.0,
-                level: tui::LogLevel::Info,
-                tag: "BACKEND".to_string(),
-                message: notice.clone(),
-            });
+        // Without an open dashboard these lines go to the plain log, which the
+        // dashboard is about to cover; carry them over.
+        if !reused {
+            if let Some(hint) = cfg.nvidia_hint {
+                s.push_log(tui::LogEntry::new(0.0, tui::LogLevel::Info, "HINT", hint));
+            }
+            for notice in &cfg.startup_notices {
+                s.push_log(tui::LogEntry::new(
+                    0.0,
+                    tui::LogLevel::Info,
+                    "BACKEND",
+                    notice,
+                ));
+            }
         }
     }
     tui_state
@@ -1380,7 +1396,7 @@ fn maybe_autotune_cpu_threads(
             .iter()
             .any(|spec| spec.kind == BackendKind::Cpu)
         {
-            info(
+            ui::detail(
                 runtime_mode_tag(mode),
                 "cpu-autotune | disabled; using configured thread count",
             );
@@ -2600,15 +2616,13 @@ fn activate_single_backend(
             let lanes = backend.enabled_lanes();
             let ram_gib =
                 (lanes as f64 * CPU_LANE_MEMORY_BYTES as f64) / (1024.0 * 1024.0 * 1024.0);
-            format!(
-                "{backend_name}: initializing {lanes} workers (~{ram_gib:.1} GiB RAM, precomputing refs)...",
-            )
+            format!("{backend_name}: starting {lanes} threads (~{ram_gib:.1} GiB RAM)",)
         }
-        "nvidia" => format!("{backend_name}: initializing CUDA engine...",),
+        "nvidia" => format!("{backend_name}: starting CUDA engine",),
         "amd" => {
-            format!("{backend_name}: initializing HIP engine (kernel compile may take ~1 min)...",)
+            format!("{backend_name}: starting HIP engine (first run can take about a minute)",)
         }
-        _ => format!("{backend_name}: initializing..."),
+        _ => format!("{backend_name}: starting"),
     };
     info("BACKEND", &backend_start_detail);
     let start_t = Instant::now();
@@ -2616,7 +2630,7 @@ fn activate_single_backend(
     let start_result = start_backend_interruptibly(&backend, backend_id, shutdown);
     match start_result {
         Ok(()) => {
-            info(
+            ui::detail(
                 "BACKEND",
                 format!(
                     "{backend_name}#{backend_id}: ready in {:.1}s",
@@ -4273,6 +4287,7 @@ pub(crate) mod tests {
             bench_baseline_policy: crate::config::BenchBaselinePolicy::Strict,
             nvidia_hint: None,
             startup_notices: Vec::new(),
+            startup_details: Vec::new(),
         }
     }
 
