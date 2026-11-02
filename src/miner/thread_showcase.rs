@@ -758,24 +758,25 @@ fn export_startup_dashboard_showcase() {
     };
     let steady_counts = [(3, 96), (5, 115)];
     let working = counted("working", steady, &steady_counts);
-    // Long enough to overflow the log panel at every captured size.
-    let history: Vec<(LogLevel, &str, String, f64)> = (0..40)
-        .map(|i| {
-            (
-                Success,
-                "SHARE",
-                format!("share accepted at height {}", 71_270 + i),
-                (40 - i) as f64 * 60.0,
-            )
+    // Long enough to overflow the log panel at every captured size. Only a
+    // different line ends a folded row, so accepted runs alternate with rejections.
+    let history: Vec<(LogLevel, &str, &str, f64)> = (0..40)
+        .map(|row| {
+            let age = (40 - row) as f64 * 240.0;
+            if row % 2 == 0 {
+                (Success, "SHARE", "share accepted", age)
+            } else {
+                (Warn, "SHARE", "rejected (stale share)", age)
+            }
         })
         .collect();
-    let history: Vec<(LogLevel, &str, &str, f64)> = history
-        .iter()
-        .map(|(level, tag, message, age)| (*level, *tag, message.as_str(), *age))
+    let history_counts: Vec<(usize, u32)> = (0..40)
+        .step_by(2)
+        .map(|row| (row, 20 + (row as u32 * 7) % 60))
         .collect();
-    let mut scrolled = mining_fixture("working", &history);
+    let mut scrolled = counted("working", history.as_slice(), &history_counts);
     scrolled.log_scroll = 10;
-    let mut scrolled_to_oldest = mining_fixture("working", &history);
+    let mut scrolled_to_oldest = counted("working", history.as_slice(), &history_counts);
     scrolled_to_oldest.log_scroll = usize::MAX;
     let reconnecting = counted("pool-disconnected", outage, &[(1, 88), (2, 14)]);
     let login_rejected = dashboard_fixture("pool-login-rejected", rejected);
