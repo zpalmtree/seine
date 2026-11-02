@@ -221,16 +221,17 @@ fn cohort_stream_kernel(
 const STARTUP_STREAM_MIN_WORKERS: usize = 8;
 
 /// Ryzen 3000 and 4000 (17h 71h, 60h), Ryzen 5000 (19h 21h, 50h), Ryzen 7000 (19h
-/// 61h), EPYC 9004 (19h 11h, A0h), Ryzen 9000 (1Ah 44h), Intel 12th Gen to Core Ultra
-/// 200 desktops, and Skylake-SP to Granite Rapids Xeons start on their cohort kernel
-/// at any worker count; EPYC 7002 and 7003 (17h 31h, 19h 01h) from four workers.
+/// 61h), EPYC 9004 (19h 11h, A0h), EPYC 9005 (1Ah 02h), Ryzen 9000 (1Ah 44h), Intel
+/// 12th Gen to Core Ultra 200 desktops, and Skylake-SP to Granite Rapids Xeons start on
+/// their cohort kernel at any worker count; EPYC 7002 and 7003 (17h 31h, 19h 01h) from
+/// four workers.
 fn startup_stream_min_workers(identity: &crate::runtime_identity::CpuIdentity) -> usize {
     let any_count = match identity.vendor.as_deref() {
         Some("AuthenticAMD") => matches!(
             (identity.family, identity.model),
             (Some(0x17), Some(0x60 | 0x71))
                 | (Some(0x19), Some(0x11 | 0x21 | 0x50 | 0x61 | 0xa0))
-                | (Some(0x1a), Some(0x44))
+                | (Some(0x1a), Some(0x02 | 0x44))
         ),
         Some("GenuineIntel") => is_intel_model(
             identity,
@@ -3072,6 +3073,7 @@ mod tests {
             (intel(0x6a), &avx512[..], CpuKernel::Avx512Stream),
             (intel(0xad), &avx512[..], CpuKernel::Avx512Stream),
             (amd(0x19, 0x11), &avx512[..], CpuKernel::Avx512StreamL2),
+            (amd(0x1a, 0x02), &avx512[..], CpuKernel::Avx512Stream),
         ] {
             assert_eq!(
                 static_kernel_for_identity(&identity, supported, 2),
@@ -3092,11 +3094,11 @@ mod tests {
         }
         // Neighbouring cohorts keep the gate, and a low pinned count compares
         // kernels instead of staying on the plain path.
-        let turin = amd(0x1a, 0x02);
-        assert_eq!(static_kernel_for_identity(&turin, &avx512, 7), None);
-        assert!(static_kernel_for_identity(&turin, &avx512, 8).is_some());
-        assert!(fixed_count_trials_wanted_for(&turin, &avx512, 7));
-        assert!(!fixed_count_trials_wanted_for(&turin, &avx512, 8));
+        let turin_dense = amd(0x1a, 0x11);
+        assert_eq!(static_kernel_for_identity(&turin_dense, &avx512, 7), None);
+        assert!(static_kernel_for_identity(&turin_dense, &avx512, 8).is_some());
+        assert!(fixed_count_trials_wanted_for(&turin_dense, &avx512, 7));
+        assert!(!fixed_count_trials_wanted_for(&turin_dense, &avx512, 8));
         // An unsupported kernel is never selected, whatever the identity.
         assert_eq!(
             static_kernel_for_identity(&amd(0x19, 0x21), &[CpuKernel::Avx2], 2),
