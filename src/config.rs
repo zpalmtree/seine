@@ -3419,10 +3419,83 @@ fn pcore_count() -> Option<usize> {
 }
 
 fn logical_cpu_parallelism() -> usize {
-    std::thread::available_parallelism()
+    let available = std::thread::available_parallelism()
         .map(|p| p.get())
         .unwrap_or(1)
-        .max(1)
+        .max(1);
+    #[cfg(target_os = "linux")]
+    {
+        with_fractional_quota(available, linux_cgroup_cpu_quota(), linux_affinity_count())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        available
+    }
+}
+
+/// `available_parallelism` rounds a fractional CPU quota down, which leaves part of the
+/// quota unused. Count the partial CPU as a worker slot, within the CPUs this process
+/// may run on. Automatic tuning still decides whether that worker is worth running.
+#[cfg(any(target_os = "linux", test))]
+fn with_fractional_quota(available: usize, quota: Option<f64>, affinity: Option<usize>) -> usize {
+    let rounded_up = match quota {
+        Some(cpus) if cpus.fract() > 0.0 && cpus.floor() as usize == available => available + 1,
+        _ => return available,
+    };
+    affinity.map_or(available, |allowed| rounded_up.min(allowed).max(available))
+}
+
+/// CPUs allowed by `cpu.max` or `cpu.cfs_quota_us`, the tightest along the hierarchy.
+#[cfg(target_os = "linux")]
+fn linux_cgroup_cpu_quota() -> Option<f64> {
+    let mut tightest: Option<f64> = None;
+    if let Some(mut dir) = linux_cgroup_v2_path() {
+        loop {
+            if let Some(cpus) = fs::read_to_string(dir.join("cpu.max"))
+                .ok()
+                .and_then(|raw| parse_cgroup_v2_cpu_max(&raw))
+            {
+                tightest = Some(tightest.map_or(cpus, |t: f64| t.min(cpus)));
+            }
+            if dir == std::path::Path::new("/sys/fs/cgroup") || !dir.pop() {
+                break;
+            }
+        }
+    }
+    if tightest.is_some() {
+        return tightest;
+    }
+    ["/sys/fs/cgroup/cpu", "/sys/fs/cgroup/cpu,cpuacct"]
+        .iter()
+        .find_map(|root| {
+            let read = |name: &str| fs::read_to_string(format!("{root}/{name}")).ok();
+            parse_cgroup_v1_cpu_quota(&read("cpu.cfs_quota_us")?, &read("cpu.cfs_period_us")?)
+        })
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn parse_cgroup_v2_cpu_max(raw: &str) -> Option<f64> {
+    let mut parts = raw.split_whitespace();
+    let quota: f64 = parts.next()?.parse().ok()?;
+    let period: f64 = parts.next().unwrap_or("100000").parse().ok()?;
+    (quota > 0.0 && period > 0.0).then_some(quota / period)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn parse_cgroup_v1_cpu_quota(quota: &str, period: &str) -> Option<f64> {
+    let quota: f64 = quota.trim().parse().ok()?;
+    let period: f64 = period.trim().parse().ok()?;
+    (quota > 0.0 && period > 0.0).then_some(quota / period)
+}
+
+#[cfg(target_os = "linux")]
+fn linux_affinity_count() -> Option<usize> {
+    // SAFETY: the set is zero-initialized and sized for this call.
+    unsafe {
+        let mut set: libc::cpu_set_t = std::mem::zeroed();
+        (libc::sched_getaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &mut set) == 0)
+            .then(|| libc::CPU_COUNT(&set) as usize)
+    }
 }
 
 #[allow(dead_code)]
@@ -5435,6 +5508,33 @@ HugePages_Rsvd:          0
         assert_eq!(cli.cpu_memory_reserve_percent, Some(0));
         assert_eq!(cli.cpu_affinity, CpuAffinityMode::Os);
         assert!(Cli::try_parse_from(["seine", "--cpu-memory-reserve-percent", "100"]).is_err());
+    }
+
+    #[test]
+    fn a_fractional_cpu_quota_counts_the_partial_cpu() {
+        // 15.36 CPUs on 16: the partial CPU is usable.
+        assert_eq!(with_fractional_quota(15, Some(15.36), Some(16)), 16);
+        // A whole quota, no quota, or a tighter affinity changes nothing.
+        assert_eq!(with_fractional_quota(8, Some(8.0), Some(16)), 8);
+        assert_eq!(with_fractional_quota(16, None, Some(16)), 16);
+        assert_eq!(with_fractional_quota(4, Some(7.68), Some(4)), 4);
+        // Pinned to as many CPUs as the quota rounds down to.
+        assert_eq!(with_fractional_quota(7, Some(7.68), Some(7)), 7);
+        // A quota below one CPU still gives one worker.
+        assert_eq!(with_fractional_quota(1, Some(0.5), Some(16)), 1);
+        // Affinity unknown: keep what the standard library reported.
+        assert_eq!(with_fractional_quota(7, Some(7.68), None), 7);
+    }
+
+    #[test]
+    fn cgroup_cpu_quotas_parse() {
+        assert_eq!(parse_cgroup_v2_cpu_max("1536000 100000\n"), Some(15.36));
+        assert_eq!(parse_cgroup_v2_cpu_max("max 100000\n"), None);
+        assert_eq!(
+            parse_cgroup_v1_cpu_quota("768000\n", "100000\n"),
+            Some(7.68)
+        );
+        assert_eq!(parse_cgroup_v1_cpu_quota("-1\n", "100000\n"), None);
     }
 
     #[test]
