@@ -33,6 +33,8 @@ pub struct LogEntry {
     pub level: LogLevel,
     pub tag: String,
     pub message: String,
+    /// Consecutive identical lines folded into this one.
+    pub count: u32,
 }
 
 impl LogEntry {
@@ -42,6 +44,7 @@ impl LogEntry {
             level,
             tag: tag.to_string(),
             message: message.to_string(),
+            count: 1,
         }
     }
 }
@@ -226,9 +229,9 @@ impl TuiStateInner {
 
     pub fn push_log(&mut self, entry: LogEntry) {
         self.log_seq = self.log_seq.wrapping_add(1);
-        // A repeated line stays on one row and just moves its age forward.
         if let Some(last) = self.log_entries.back_mut() {
             if last.level == entry.level && last.tag == entry.tag && last.message == entry.message {
+                last.count = last.count.saturating_add(entry.count);
                 last.elapsed_secs = entry.elapsed_secs;
                 return;
             }
@@ -1329,11 +1332,13 @@ fn log_entry_rows(
     } else {
         Style::default().fg(entry.level.color())
     };
+    let message = if entry.count > 1 {
+        format!("{} ×{}", entry.message, entry.count)
+    } else {
+        entry.message.clone()
+    };
     let mut rows = Vec::new();
-    for (index, chunk) in wrap_str(&entry.message, message_width)
-        .into_iter()
-        .enumerate()
-    {
+    for (index, chunk) in wrap_str(&message, message_width).into_iter().enumerate() {
         if index > 0 {
             rows.push(Line::from(vec![
                 Span::raw(" ".repeat(prefix_width)),
@@ -1878,19 +1883,22 @@ mod tests {
     }
 
     #[test]
-    fn repeated_lines_stay_on_one_row_without_a_counter() {
+    fn identical_lines_fold_into_one_counted_row() {
         let mut state = TuiStateInner::new();
-        let mut repeat = test_entry("pool connection lost");
-        state.push_log(repeat.clone());
-        repeat.elapsed_secs = 9.0;
-        state.push_log(repeat);
+        state.push_log(test_entry("share accepted"));
+        assert!(!render_text(&state, 120, 30).contains('×'));
+        state.push_log(test_entry("share accepted"));
+        let mut newest = test_entry("share accepted");
+        newest.elapsed_secs = 9.0;
+        state.push_log(newest);
         assert_eq!(state.log_entries.len(), 1);
         assert_eq!(state.log_entries[0].elapsed_secs, 9.0);
-        assert_eq!(state.log_entries[0].message, "pool connection lost");
+        assert!(render_text(&state, 120, 30).contains("share accepted ×3"));
 
-        state.push_log(test_entry("connected to pool"));
-        state.push_log(test_entry("pool connection lost"));
+        state.push_log(test_entry("connected"));
+        state.push_log(test_entry("share accepted"));
         assert_eq!(state.log_entries.len(), 3);
+        assert_eq!(state.log_entries.back().unwrap().count, 1);
     }
 
     #[test]

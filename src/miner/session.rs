@@ -136,6 +136,7 @@ mod tests {
                 level: LogLevel::Mined,
                 tag: "MINED".into(),
                 message: "accepted block".into(),
+                count: 1,
             });
             first.thread_change_pending = true;
         }

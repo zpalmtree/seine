@@ -382,6 +382,7 @@ fn export_autotune_showcase() {
             },
             tag: tag.into(),
             message: format!("{prefix}{reason}{action}"),
+            count: 1,
         });
         html.push_str(&format!("<section><h2>{title}</h2><div class='desktop'>{}</div><div class='mobile'>{}</div></section>", capture_log(&state, 120, 5), capture_log(&state, 48, 10)));
     }
@@ -393,7 +394,7 @@ fn export_autotune_showcase() {
         assert!(live.contains(reason));
         let mut state = TuiStateInner::new();
         let threads = if reason == "waiting for RAM" { 0 } else { 2 };
-        state.push_log(LogEntry { elapsed_secs: 0.0, level: LogLevel::Info, tag: "MINER".into(), message: format!("cpu-autotune | starting with {threads} threads ({reason}); tuning while mining, capacity=4, worker slots=4, currently available={threads}") });
+        state.push_log(LogEntry { elapsed_secs: 0.0, level: LogLevel::Info, tag: "MINER".into(), message: format!("cpu-autotune | starting with {threads} threads ({reason}); tuning while mining, capacity=4, worker slots=4, currently available={threads}"), count: 1 });
         html.push_str(&format!("<section><h2>CPU / {reason}</h2><div class='desktop'>{}</div><div class='mobile'>{}</div></section>", capture_log(&state, 120, 5), capture_log(&state, 48, 12)));
     }
     html.push_str("</html>");
@@ -534,6 +535,7 @@ fn export_exchange_payout_showcase() {
                 tag: "AUTH".into(),
                 message: "pool did not acknowledge the payout memo; no shares will be submitted"
                     .into(),
+                count: 1,
             });
         }
         html.push_str(&format!("<section id='{slug}'><h2>{title}</h2><div class='desktop'>{}</div><div class='mobile'>{}</div></section>", capture(&state, 120, 30), capture(&state, 40, 18)));
@@ -747,13 +749,21 @@ fn export_startup_dashboard_showcase() {
     gpu_pending.pending_gpus = vec!["nvidia"];
     gpu_pending.pending_gpus_since = Some(Instant::now());
     let connecting = mining_fixture("pool-connecting", tuning);
-    let working = mining_fixture("working", steady);
-    let mut scrolled = mining_fixture("working", steady);
+    let counted = |label: &str, log, counts: &[(usize, u32)]| {
+        let mut state = mining_fixture(label, log);
+        for (row, count) in counts {
+            state.log_entries[*row].count = *count;
+        }
+        state
+    };
+    let steady_counts = [(3, 96), (5, 115)];
+    let working = counted("working", steady, &steady_counts);
+    let mut scrolled = counted("working", steady, &steady_counts);
     scrolled.log_scroll = 3;
-    let reconnecting = mining_fixture("pool-disconnected", outage);
+    let reconnecting = counted("pool-disconnected", outage, &[(1, 88), (2, 14)]);
     let login_rejected = dashboard_fixture("pool-login-rejected", rejected);
     let advice = mining_fixture("working", notices);
-    let mut stopping = mining_fixture("working", steady);
+    let mut stopping = counted("working", steady, &steady_counts);
     stopping.stopping = true;
 
     let mut body = String::new();
@@ -838,7 +848,7 @@ fn export_startup_dashboard_showcase() {
         ),
         (
             "Mining",
-            "Each new share refreshes one row; the Accepted count is in the mining panel.",
+            "Identical lines fold into one row: share accepted ×96 means 96 shares in a row were accepted.",
             &working,
         ),
         (
@@ -848,7 +858,7 @@ fn export_startup_dashboard_showcase() {
         ),
         (
             "Reconnecting",
-            "A repeated error stays on one row and shows when it last happened.",
+            "Repeated errors fold the same way: ×14 means it happened 14 times in a row.",
             &reconnecting,
         ),
         (
