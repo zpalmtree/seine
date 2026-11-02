@@ -816,7 +816,7 @@ impl Search {
         self.testing_update = tested_anything_new || hot_changed || incumbent_improved;
         if self.testing_update {
             self.search_reason = Some(
-                "new version: testing what changed, the thread count may change for a few minutes",
+                "new seine version: testing what changed, the thread count may change for a few minutes",
             );
         }
         self.stage = if self.testing_update {

@@ -182,7 +182,7 @@ fn export_autotune_showcase() {
     let update_note = (
         LogLevel::Info,
         "CPU",
-        "new version: testing what changed, the thread count may change for a few minutes",
+        "new seine version: testing what changed, the thread count may change for a few minutes",
         120.0,
     );
     let tuned = (LogLevel::Success, "CPU", "tuned to 12 threads", 12.0);
