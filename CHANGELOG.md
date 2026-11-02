@@ -14,7 +14,7 @@ supported hardware only.
 - **Up to 2.5x faster on NVIDIA GPUs** (GTX 1660 Ti, RTX 2070, RTX 2080 Ti, RTX 3060, RTX 4060, RTX 4090, RTX 5060 Ti)
 - **Up to 33% faster on CPUs** (12th Gen Intel Core, 3rd Gen Xeon, Ryzen 5000, 7000 and 9000)
 - **AMD GPU support** (RX 6000, RX 7000, RX 9000, Radeon PRO): [setup](https://github.com/zpalmtree/seine/blob/v0.3.0/docs/guides/amd.md)
-- **Exchange mining support** (mine straight to your exchange deposit address; `--payout-memo` is required): [setup](https://github.com/zpalmtree/seine/blob/v0.3.0/docs/EXCHANGE_PAYOUTS.md)
+- **Exchange mining support** (mine straight to your exchange deposit address; `--payout-memo` is required): [setup](https://github.com/zpalmtree/seine/blob/master/docs/EXCHANGE_PAYOUTS.md)
 - **Mining OS packages**
   - HiveOS: [seine-hiveos-0.3.0.tar.gz](https://github.com/zpalmtree/seine/releases/download/v0.3.0/seine-hiveos-0.3.0.tar.gz) ([guide](https://github.com/zpalmtree/seine/blob/v0.3.0/docs/guides/hiveos.md))
   - mmpOS: [seine-mmpos-0.3.0.tar.gz](https://github.com/zpalmtree/seine/releases/download/v0.3.0/seine-mmpos-0.3.0.tar.gz) ([guide](https://github.com/zpalmtree/seine/blob/v0.3.0/docs/guides/mmpos.md))

@@ -1,73 +1,39 @@
-# Exchange payouts in Seine
+# Mining to an exchange
 
-Use the full exchange deposit address and your own deposit memo:
-
-```sh
-./seine --pool-url POOL_URL --address EXCHANGE_ADDRESS --payout-memo YOUR_MEMO
-```
-
-Keep the memo separate from the address in Seine. Its case, leading zeros and
-literal characters are preserved. Known exchange addresses prompt for a missing
-memo during interactive startup. Personal wallets need no memo or extra setup.
-
-## Compatible pool formats
-
-- Pools advertising `payout_memo_v1` receive a separate `payout_memo` login field.
-  They must acknowledge the exact address-plus-memo account. A successful login
-  without that acknowledgement does not enable mining.
-- The verified Longhorn endpoints `stratum+ssl://us.longhornpool.net:3334` and
-  `stratum+ssl://asia.longhornpool.net:3334` receive `ADDRESS?memo=MEMO` in the
-  login address. Their TLS certificate is verified against the hostname, and
-  their protocol-v2 login reply must advertise `submit_claimed_hash`. Longhorn
-  validates the memo as 1–124 printable ASCII characters without spaces. Its
-  reply currently supplies neither an account echo nor a payout minimum.
-  [Longhorn's connection page](https://longhornpool.net/start) generates commands
-  using the same suffix format.
-
-The Longhorn adapter applies only to those exact TLS endpoints. It is selected
-again for every reconnect or pool switch. Unknown pools never receive an
-address-suffix retry or an address-only login in place of the supplied memo.
-Other memo formats need a verified adapter before they can be used.
-
-## Minimums and stats
-
-The payout minimum is optional display information. Seine shows a positive
-integer `min_payout_atomic` reported by the accepted login, and hides the label
-when it is missing or invalid. Missing minimum information does not invalidate
-an otherwise accepted memo destination. No default minimum is guessed.
-
-Stats use the accepted pool and its account format. Longhorn balances are read
-from its HTTPS API with the entire address-plus-memo encoded as one path
-segment; the response must echo that exact account. A failed lookup never falls
-back to the shared address. Replies from a previous pool are ignored after
-switching pools. Account paths are redacted from local telemetry errors.
-
-## Verification
-
-The automated tests cover endpoint selection, literal memo bytes, optional
-minimums, rejected account acknowledgements, pre-login jobs, encoded stats
-paths, wrong-account responses and pool changes. A separate opt-in integration
-check connects to both Longhorn endpoints, verifies login and receipt of work,
-then disconnects without submitting shares or starting any mining backend:
+You can mine straight to your exchange deposit address. Copy the address and your
+deposit memo from the exchange's deposit page:
 
 ```sh
-cargo test --no-default-features --bin seine longhorn_live_memo_handshake -- --ignored
+./seine --address EXCHANGE_ADDRESS --payout-memo YOUR_MEMO
 ```
 
-A successful handshake does not test an actual exchange deposit or payout.
+Copy the memo exactly. Capital letters and leading zeros matter, and a wrong memo can
+send your coins to the wrong account. Personal wallets don't need a memo.
 
-## Release artifact check (Linux)
+## Starting Seine
 
-Run against an extracted candidate before publishing:
+The memo is required for known exchange addresses such as SafeTrade. If you start
+Seine in a terminal without one, it asks for the memo and saves it. Services and other
+unattended miners need `--payout-memo` on the command line, or Seine won't start.
 
-```sh
-python3 scripts/check_memo_rollout.py --binary /path/to/extracted/seine
-```
+To go back to a personal wallet, set the new address with `--no-payout-memo`.
 
-The bounded check uses temporary saved configurations, a terminal for the memo
-prompt, and loopback Stratum fixtures. It covers ordinary-wallet compatibility,
-saved exchange prompting and persistence, unattended missing-memo failure,
-optional payout minima, and memo preservation through failover and reconnect.
-Updates and hardware telemetry are disabled; the fixtures send no mining jobs.
-It prints the binary SHA-256 and passed checks. Repeat against the actual release
-artifact; a development candidate does not validate later builds or other OSes.
+Memos need a direct pool connection. They don't work in solo mode or through the farm
+proxy.
+
+## Which pools work
+
+The pool has to support memos:
+
+- **bntpool.com** supports them. The minimum payout to a memo is 10 BNT.
+- **Longhorn** supports them on `stratum+ssl://us.longhornpool.net:3334` and
+  `stratum+ssl://asia.longhornpool.net:3334`. Its memos must be printable ASCII with no
+  spaces.
+
+If a pool doesn't confirm your memo, Seine won't mine on it, so your work can't be paid
+to the wrong place.
+
+## Checking your balance
+
+Each address and memo pair has its own balance. On the pool's stats page, enter both
+the address and the memo.
