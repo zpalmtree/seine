@@ -50,8 +50,10 @@ and signature, regenerates the inner checksums, and replaces the Windows archive
 artifact. NVIDIA DLLs retain their original bytes and signatures. The final
 release job waits for signing before hashing and signing the finished archives.
 
-Run **Build Release** manually on `master` after setup. A manual run creates
-workflow artifacts without publishing a release. Download its Windows archive,
+Run **Build Release** manually on `master` after setup. A manual branch run creates
+workflow artifacts and checks Windows signing without requesting release approval.
+Only version tags matching `v*` enter the protected `release` environment to sign
+archive checksums and publish a release. Download the manual run's Windows archive,
 extract it, and verify it on Windows:
 
 ```powershell

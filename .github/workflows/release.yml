@@ -358,6 +358,8 @@ jobs:
           if-no-files-found: error
 
   release:
+    # Only releases enter the protected environment and request approval.
+    if: startsWith(github.ref, 'refs/tags/v')
     needs: [build, mining-os, windows-sign]
     runs-on: ubuntu-latest
     environment: release
