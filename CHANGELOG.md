@@ -9,6 +9,7 @@ supported hardware only.
 
 ## Unreleased
 
+- **Up to 3% higher CPU hashrate with default settings, often on less RAM** (Ryzen 9 5900X, Ryzen 9 9900X, Core i5-12400F, Core i7-14700K)
 - **Tunes faster, then stops**: finds your best thread count and kernel in minutes, keeps the lowest thread count that gets the same hashrate, and stops testing until something changes
 - **Updates keep your tuning**: a new version starts on your saved settings and only tests what it changed
 - **Much faster with fewer than 8 threads**: about 90% higher hashrate on Ryzen 5 5600, 40% on Skylake Xeon servers and 25% on Ice Lake Xeons and EPYC 9754 when `--threads` is set, and full speed from the first minutes without it
