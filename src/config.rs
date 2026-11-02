@@ -321,36 +321,35 @@ enum TelemetryChoice {
     Off,
 }
 
+const HELP_POOL: &str = "Pool and payout";
+const HELP_HARDWARE: &str = "Hardware";
+const HELP_CPU: &str = "CPU";
+const HELP_SOLO: &str = "Solo mining";
+const HELP_OUTPUT: &str = "Display and data";
+const HELP_MONITORING: &str = "Monitoring";
+const HELP_UPDATES: &str = "Updates and privacy";
+const HELP_BENCH: &str = "Benchmark";
+const HELP_INFO: &str = "Help";
+
+/// `--help` lists what most miners need. Other flags use `hide = true`, keep
+/// working, and are documented in docs/MINER_FLAGS.md.
 #[derive(Debug, Parser)]
 #[command(
     name = "seine",
     version = crate::version::RELEASE_VERSION,
-    about = "Seine net miner for Blocknet"
+    about = "Seine net miner for Blocknet",
+    after_help = "Every flag: https://github.com/zpalmtree/seine/blob/master/docs/MINER_FLAGS.md"
 )]
 struct Cli {
-    /// Save hardware telemetry preference. Requires a collector URL on first opt-in.
-    #[arg(long, value_enum)]
-    telemetry: Option<TelemetryChoice>,
-
-    /// Hardware telemetry collector (HTTPS). An explicit opt-out is preserved across destinations.
-    #[arg(long)]
-    telemetry_url: Option<String>,
-    /// Mining mode. Default is pool mode.
-    #[arg(long, value_enum)]
-    mode: Option<MiningMode>,
-
-    /// Use Blocknet testnet defaults for daemon discovery in daemon mode.
-    #[arg(long, default_value_t = false)]
-    testnet: bool,
-
-    /// Stratum pool endpoint for pool mode: host:port, stratum+tcp://host:port,
-    /// or stratum+ssl://host:port for TLS. Repeat the flag or separate URLs
-    /// with commas to list backup pools in failover order.
+    /// Pool to mine on: host:port, or stratum+ssl://host:port for TLS. Repeat or separate
+    /// with commas to add backup pools.
     #[arg(
         long = "pool-url",
         short = 'o',
         visible_alias = "url",
-        value_delimiter = ','
+        value_delimiter = ',',
+        value_name = "URL",
+        help_heading = HELP_POOL,
     )]
     pool_url_args: Vec<String>,
 
@@ -358,120 +357,246 @@ struct Cli {
     #[arg(skip)]
     pool_url: Option<String>,
 
-    /// Worker name used when logging into a pool.
-    #[arg(long = "pool-worker", visible_alias = "worker", alias = "rig-id")]
-    pool_worker: Option<String>,
-
-    /// Reach pools through a SOCKS5 proxy: socks5://[user:pass@]host:port.
-    /// Pool hostnames are resolved by the proxy. Covers Stratum and pool stats
-    /// requests; update checks and optional telemetry connect directly.
-    #[arg(long = "pool-proxy", visible_alias = "socks5")]
-    pool_proxy: Option<String>,
-
-    /// Run as a farm proxy instead of mining: rigs connect to this address
-    /// (for example 0.0.0.0:3333) and share one session with --pool-url,
-    /// paying --address.
-    #[arg(long = "proxy-listen")]
-    proxy_listen: Option<String>,
-
-    /// Accepted for compatibility with other miners' launch templates.
-    /// Blocknet pools do not use passwords.
-    #[arg(long = "pass", short = 'p', alias = "password")]
-    pool_password: Option<String>,
-
-    /// API base URL for the blocknet daemon.
-    /// When omitted, Seine prefers Blocknet wrapper config/pidfiles/processes and then falls back to 127.0.0.1:8332.
-    #[arg(long = "api-url")]
-    api_url: Option<String>,
-
-    /// Bearer token for authenticated API access.
-    #[arg(long)]
-    token: Option<String>,
-
-    /// Wallet password used for automatic wallet load when daemon starts without a wallet.
-    #[arg(long)]
-    wallet_password: Option<String>,
-
-    /// Path to a file containing the wallet password for automatic wallet load.
-    #[arg(long)]
-    wallet_password_file: Option<PathBuf>,
-
-    /// Optional payout address or Blocknet ID shortname (@name or $name).
-    /// When set, block templates are requested with this address instead of daemon wallet default.
-    /// In pool mode ADDRESS.WORKER also sets the worker name.
-    #[arg(long = "address", short = 'u', visible_alias = "user")]
+    /// Where your rewards go: an address or Blocknet ID (@name or $name). ADDRESS.WORKER
+    /// also sets the worker name.
+    #[arg(
+        long = "address",
+        short = 'u',
+        visible_alias = "user",
+        value_name = "ADDRESS",
+        help_heading = HELP_POOL,
+    )]
     mining_address: Option<String>,
 
+    /// Worker name shown on the pool.
+    #[arg(
+        long = "pool-worker",
+        visible_alias = "worker",
+        alias = "rig-id",
+        value_name = "NAME",
+        help_heading = HELP_POOL,
+    )]
+    pool_worker: Option<String>,
+
     /// Exact exchange deposit memo (pool mining only).
-    #[arg(long)]
+    #[arg(long, value_name = "MEMO", help_heading = HELP_POOL)]
     payout_memo: Option<String>,
-    /// Ignore the saved payout memo when switching to an ordinary wallet.
-    #[arg(long, conflicts_with = "payout_memo")]
-    no_payout_memo: bool,
 
-    /// Path to api.cookie file.
-    /// When omitted, Seine auto-detects the managed cookie from Blocknet wrapper config or --daemon-dir.
-    #[arg(long)]
-    cookie: Option<PathBuf>,
+    /// Connect to pools through a SOCKS5 proxy: socks5://[user:pass@]host:port.
+    #[arg(
+        long = "pool-proxy",
+        visible_alias = "socks5",
+        value_name = "URL",
+        help_heading = HELP_POOL,
+    )]
+    pool_proxy: Option<String>,
 
-    /// Daemon data directory (used to locate api.cookie when --cookie is unset).
-    /// Defaults to the Blocknet wrapper-managed data dir under ~/.config/bnt/data/{mainnet,testnet}.
-    #[arg(long)]
-    daemon_dir: Option<PathBuf>,
+    /// Run as a farm proxy instead of mining: rigs connect to this address and share one
+    /// pool session.
+    #[arg(long = "proxy-listen", value_name = "HOST:PORT", help_heading = HELP_POOL)]
+    proxy_listen: Option<String>,
 
-    /// Seine's own data directory for persisted configs (e.g. autotune results).
-    #[arg(long, default_value = "./seine-data")]
-    data_dir: PathBuf,
-
-    /// One or more mining backends. Repeat the flag or pass comma-separated values.
-    /// When omitted, Seine auto-detects available backends (CPU, plus NVIDIA and discrete AMD GPUs when available).
+    /// Hardware to mine on. Repeat or separate with commas. Detected automatically by default.
     #[arg(
         long = "backend",
         value_enum,
         value_delimiter = ',',
-        num_args = 1..
+        num_args = 1..,
+        value_name = "BACKEND",
+        help_heading = HELP_HARDWARE,
     )]
     backends: Vec<BackendKind>,
 
-    /// Explicit NVIDIA device indices; creates one NVIDIA backend instance per index.
-    /// Requires selecting NVIDIA in --backend.
-    #[arg(long = "nvidia-devices", value_delimiter = ',', num_args = 1..)]
+    /// CPU threads to use, about 2 GB of RAM each. Sized and tuned automatically by default.
+    #[arg(long, alias = "cpu-threads", value_name = "N", help_heading = HELP_HARDWARE)]
+    threads: Option<usize>,
+
+    /// NVIDIA GPUs to use, for example 0,1,3. All by default.
+    #[arg(
+        long = "nvidia-devices",
+        value_delimiter = ',',
+        num_args = 1..,
+        value_name = "INDEX",
+        help_heading = HELP_HARDWARE,
+    )]
     nvidia_devices: Vec<u32>,
 
-    /// Explicit AMD device indices; creates one AMD backend instance per index.
-    /// Requires selecting AMD in --backend (and a build with --features amd).
-    #[arg(long = "amd-devices", value_delimiter = ',', num_args = 1..)]
+    /// AMD GPUs to use, for example 0,1,3. All by default.
+    #[arg(
+        long = "amd-devices",
+        value_delimiter = ',',
+        num_args = 1..,
+        value_name = "INDEX",
+        help_heading = HELP_HARDWARE,
+    )]
     amd_devices: Vec<u32>,
 
-    /// Number of CPU mining threads per CPU backend instance (each uses ~2GB RAM for Argon2id).
-    /// When omitted, threads auto-size from available CPU parallelism and RAM budget.
-    #[arg(long, alias = "cpu-threads")]
-    threads: Option<usize>,
+    /// Limit lanes on each NVIDIA GPU to use less VRAM (about 2 GB per lane).
+    #[arg(long, value_name = "N", help_heading = HELP_HARDWARE)]
+    nvidia_max_lanes: Option<usize>,
+
+    /// Limit lanes on each AMD GPU to use less VRAM (about 2 GB per lane).
+    #[arg(long, value_name = "N", help_heading = HELP_HARDWARE)]
+    amd_max_lanes: Option<usize>,
+
+    /// Limit Metal lanes to use less memory (about 2 GB per lane).
+    #[arg(long, value_name = "N", help_heading = HELP_HARDWARE)]
+    metal_max_lanes: Option<usize>,
+
+    /// Tuning goal: balanced and throughput aim for the highest hashrate; efficiency may
+    /// use fewer threads.
+    #[arg(
+        long = "cpu-profile",
+        value_enum,
+        default_value_t = CpuPerformanceProfile::Balanced,
+        value_name = "PROFILE",
+        help_heading = HELP_CPU,
+    )]
+    cpu_profile: CpuPerformanceProfile,
+
+    /// Most CPU threads automatic tuning may use, to leave room for other work.
+    #[arg(long, value_name = "N", help_heading = HELP_CPU)]
+    cpu_autotune_max_threads: Option<usize>,
+
+    /// Memory pages for CPU mining: auto uses large pages when it can, regular never does,
+    /// large and large-1g require them.
+    #[arg(
+        long = "cpu-page-mode",
+        value_enum,
+        default_value_t = CpuPageMode::Auto,
+        value_name = "MODE",
+        help_heading = HELP_CPU,
+    )]
+    cpu_page_mode: CpuPageMode,
+
+    /// How CPU threads are placed on cores.
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = DEFAULT_CPU_AFFINITY,
+        value_name = "POLICY",
+        help_heading = HELP_CPU,
+    )]
+    cpu_affinity: CpuAffinityMode,
+
+    /// Mine on a pool, or use daemon to mine solo on your own node. Pool by default.
+    #[arg(long, value_enum, value_name = "MODE", help_heading = HELP_SOLO)]
+    mode: Option<MiningMode>,
+
+    /// Daemon API address. Detected automatically by default.
+    #[arg(long = "api-url", value_name = "URL", help_heading = HELP_SOLO)]
+    api_url: Option<String>,
+
+    /// Path to the daemon's api.cookie. Detected automatically by default.
+    #[arg(long, value_name = "PATH", help_heading = HELP_SOLO)]
+    cookie: Option<PathBuf>,
+
+    /// File with the wallet password, to load the wallet automatically.
+    #[arg(long, value_name = "PATH", help_heading = HELP_SOLO)]
+    wallet_password_file: Option<PathBuf>,
+
+    /// Display: auto, tui for the full-screen dashboard, or plain for log lines.
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = UiMode::Auto,
+        value_name = "MODE",
+        help_heading = HELP_OUTPUT,
+    )]
+    ui: UiMode,
+
+    /// Show internal settings and routine activity on the dashboard and in logs.
+    #[arg(long, help_heading = HELP_OUTPUT)]
+    verbose: bool,
+
+    /// Seconds between stats lines in plain output.
+    #[arg(long, default_value_t = 10, value_name = "SECS", help_heading = HELP_OUTPUT)]
+    stats_secs: u64,
+
+    /// Where Seine keeps its settings and tuning results.
+    #[arg(long, default_value = "./seine-data", value_name = "DIR", help_heading = HELP_OUTPUT)]
+    data_dir: PathBuf,
+
+    /// Also run the local control API and Prometheus metrics.
+    #[arg(long, default_value_t = false, help_heading = HELP_MONITORING)]
+    api_server: bool,
+
+    /// Address for the control API.
+    #[arg(
+        long,
+        default_value = "127.0.0.1:9977",
+        value_name = "HOST:PORT",
+        help_heading = HELP_MONITORING,
+    )]
+    api_bind: String,
+
+    /// Install the newest release now, then exit.
+    #[arg(long, default_value_t = false, help_heading = HELP_UPDATES)]
+    self_update: bool,
+
+    /// Keep this version while mining; only log that a newer release exists.
+    #[arg(
+        long,
+        action = ArgAction::SetTrue,
+        conflicts_with = "auto_update",
+        help_heading = HELP_UPDATES,
+    )]
+    no_auto_update: bool,
+
+    /// Don't check GitHub for newer releases.
+    #[arg(long, action = ArgAction::SetTrue, help_heading = HELP_UPDATES)]
+    disable_update_check: bool,
+
+    /// Turn hardware and performance reports on or off (saved for later runs).
+    #[arg(long, value_enum, value_name = "STATE", help_heading = HELP_UPDATES)]
+    telemetry: Option<TelemetryChoice>,
+
+    /// Measure hashrate on this machine instead of mining.
+    #[arg(long, default_value_t = false, help_heading = HELP_BENCH)]
+    bench: bool,
+
+    // Everything below works but stays out of `--help`; docs/MINER_FLAGS.md lists it.
+    /// Hardware telemetry collector (HTTPS). An explicit opt-out is preserved across destinations.
+    #[arg(long, hide = true)]
+    telemetry_url: Option<String>,
+
+    /// Use Blocknet testnet defaults for daemon discovery in daemon mode.
+    #[arg(long, default_value_t = false, hide = true)]
+    testnet: bool,
+
+    /// Accepted for compatibility with other miners' launch templates.
+    /// Blocknet pools do not use passwords.
+    #[arg(long = "pass", short = 'p', alias = "password", hide = true)]
+    pool_password: Option<String>,
+
+    /// Bearer token for authenticated API access.
+    #[arg(long, hide = true)]
+    token: Option<String>,
+
+    /// Wallet password used for automatic wallet load when daemon starts without a wallet.
+    #[arg(long, hide = true)]
+    wallet_password: Option<String>,
+
+    /// Ignore the saved payout memo when switching to an ordinary wallet.
+    #[arg(long, conflicts_with = "payout_memo", hide = true)]
+    no_payout_memo: bool,
+
+    /// Daemon data directory (used to locate api.cookie when --cookie is unset).
+    /// Defaults to the Blocknet wrapper-managed data dir under
+    /// ~/.config/bnt/data/{mainnet,testnet}.
+    #[arg(long, hide = true)]
+    daemon_dir: Option<PathBuf>,
 
     /// Percentage of effective total RAM left unused by automatic CPU sizing/autotuning.
     /// Default: 5%, at most 512 MiB on hosts with 16 GiB or more (else at most 1 GiB). Explicit
     /// thread counts override this reserve.
     /// Set 0 to disable headroom.
-    #[arg(long, value_parser = clap::value_parser!(u8).range(0..=99))]
+    #[arg(long, value_parser = clap::value_parser!(u8).range(0..=99), hide = true)]
     cpu_memory_reserve_percent: Option<u8>,
-
-    /// CPU affinity/scheduler-hint policy for CPU mining workers.
-    /// Default: `pcore-only` on macOS Apple Silicon, otherwise `auto`.
-    #[arg(long, value_enum, default_value_t = DEFAULT_CPU_AFFINITY)]
-    cpu_affinity: CpuAffinityMode,
-
-    /// CPU arena page policy: auto fallback, forced regular pages, required large pages,
-    /// or required 1 GiB HugeTLB pages (`large-1g`, x86_64 Linux only).
-    #[arg(long = "cpu-page-mode", value_enum, default_value_t = CpuPageMode::Auto)]
-    cpu_page_mode: CpuPageMode,
-
-    /// CPU mining profile preset; applies default threads/poll/flush knobs unless explicitly set.
-    #[arg(long = "cpu-profile", value_enum, default_value_t = CpuPerformanceProfile::Balanced)]
-    cpu_profile: CpuPerformanceProfile,
 
     /// Optional per-CPU-instance thread counts (comma-separated).
     /// Length must match the number of configured CPU backend instances.
-    #[arg(long = "cpu-threads-per-instance", value_delimiter = ',', num_args = 1..)]
+    #[arg(long = "cpu-threads-per-instance", value_delimiter = ',', num_args = 1.., hide = true)]
     cpu_threads_per_instance: Vec<usize>,
 
     /// Optional per-CPU-instance affinity policies (comma-separated).
@@ -480,152 +605,123 @@ struct Cli {
         long = "cpu-affinity-per-instance",
         value_enum,
         value_delimiter = ',',
-        num_args = 1..
+        num_args = 1..,
+        hide = true,
     )]
     cpu_affinity_per_instance: Vec<CpuAffinityMode>,
 
     /// Allow starting when configured CPU lanes exceed detected system RAM.
-    #[arg(long, default_value_t = false)]
+    #[arg(long, default_value_t = false, hide = true)]
     allow_oversubscribe: bool,
 
-    /// Maximum time to work on one block template before refreshing.
-    #[arg(long, default_value_t = 20)]
+    /// Maximum time to work on one block template before refreshing (daemon mode).
+    #[arg(long, default_value_t = 20, hide = true)]
     refresh_secs: u64,
 
     /// Timeout for JSON API requests (blocktemplate/submitblock/wallet/load), in seconds.
-    #[arg(long, default_value_t = 10)]
+    #[arg(long, default_value_t = 10, hide = true)]
     request_timeout_secs: u64,
 
     /// Timeout for each SSE stream connection attempt, in seconds.
-    #[arg(long, default_value_t = 10)]
+    #[arg(long, default_value_t = 10, hide = true)]
     events_stream_timeout_secs: u64,
 
     /// Maximum lifetime for one SSE stream request before reconnecting, in seconds.
-    #[arg(long, default_value_t = 90)]
+    #[arg(long, default_value_t = 90, hide = true)]
     events_idle_timeout_secs: u64,
 
-    /// Interval for periodic stats printing.
-    #[arg(long, default_value_t = 10)]
-    stats_secs: u64,
-
     /// Capacity of the bounded backend event queue.
-    #[arg(long, default_value_t = 1024)]
+    #[arg(long, default_value_t = 1024, hide = true)]
     backend_event_capacity: usize,
 
     /// Backend hash polling interval in milliseconds.
-    #[arg(long)]
+    #[arg(long, hide = true)]
     hash_poll_ms: Option<u64>,
 
     /// CPU worker hash flush batch size.
-    #[arg(long)]
+    #[arg(long, hide = true)]
     cpu_hash_batch_size: Option<u64>,
 
     /// CPU worker control polling cadence in hashes (deadline checks are also time-bounded).
-    #[arg(long)]
+    #[arg(long, hide = true)]
     cpu_control_check_interval_hashes: Option<u64>,
 
     /// CPU worker hash flush interval in milliseconds.
-    #[arg(long)]
+    #[arg(long, hide = true)]
     cpu_hash_flush_ms: Option<u64>,
 
     /// CPU backend internal event dispatch queue capacity.
-    #[arg(long)]
+    #[arg(long, hide = true)]
     cpu_event_dispatch_capacity: Option<usize>,
 
     /// Enable adaptive CPU tuning while mining (offline kernel search in benchmark mode).
-    #[arg(long, action = ArgAction::SetTrue)]
+    #[arg(long, action = ArgAction::SetTrue, hide = true)]
     cpu_autotune_threads: bool,
 
     /// Disable adaptive CPU thread/kernel tuning; keep a fixed count and the default ISA.
-    #[arg(long, action = ArgAction::SetTrue)]
+    #[arg(long, action = ArgAction::SetTrue, hide = true)]
     disable_cpu_autotune_threads: bool,
 
     /// Minimum per-instance CPU thread count considered by autotuner.
-    #[arg(long, default_value_t = 1)]
+    #[arg(long, default_value_t = 1, hide = true)]
     cpu_autotune_min_threads: usize,
-
-    /// Maximum per-instance CPU thread count considered by autotuner.
-    #[arg(long)]
-    cpu_autotune_max_threads: Option<usize>,
 
     /// Base CPU autotune sample window; mining uses max(30, 5 * seconds).
     /// Samples may run longer to collect a stable minimum hash count.
-    #[arg(long, default_value_t = DEFAULT_CPU_AUTOTUNE_SECS)]
+    #[arg(long, default_value_t = DEFAULT_CPU_AUTOTUNE_SECS, hide = true)]
     cpu_autotune_secs: u64,
 
     /// Path for persisted CPU autotune result (default: <data-dir>/seine.cpu-autotune.json).
-    #[arg(long)]
+    #[arg(long, hide = true)]
     cpu_autotune_config: Option<PathBuf>,
 
     /// Base benchmark window (seconds) per NVIDIA autotune sample.
-    #[arg(long, default_value_t = DEFAULT_NVIDIA_AUTOTUNE_SECS)]
+    #[arg(long, default_value_t = DEFAULT_NVIDIA_AUTOTUNE_SECS, hide = true)]
     nvidia_autotune_secs: u64,
 
     /// Number of benchmark samples per NVIDIA autotune candidate (median score wins).
-    #[arg(long, default_value_t = DEFAULT_NVIDIA_AUTOTUNE_SAMPLES)]
+    #[arg(long, default_value_t = DEFAULT_NVIDIA_AUTOTUNE_SAMPLES, hide = true)]
     nvidia_autotune_samples: u32,
 
     /// Path for persisted NVIDIA autotune result (default: <data-dir>/seine.nvidia-autotune.json).
-    #[arg(long)]
+    #[arg(long, hide = true)]
     nvidia_autotune_config: Option<PathBuf>,
 
     /// Force NVIDIA kernel register cap and skip autotune/cache lookup.
-    #[arg(long)]
+    #[arg(long, hide = true)]
     nvidia_max_rregcount: Option<u32>,
 
-    /// Cap NVIDIA active lanes per device instance.
-    #[arg(long)]
-    nvidia_max_lanes: Option<usize>,
-
     /// Override NVIDIA dispatch chunk hint (iterations per lane).
-    #[arg(long)]
+    #[arg(long, hide = true)]
     nvidia_dispatch_iters_per_lane: Option<u64>,
 
     /// Override NVIDIA reservation/allocation hint (iterations per lane).
-    #[arg(long)]
+    #[arg(long, hide = true)]
     nvidia_allocation_iters_per_lane: Option<u64>,
 
-    /// Maximum hashes each lane executes per CUDA launch (higher = fewer launches, coarser preemption).
-    /// When left unset, Blackwell GPUs treat depth-1 as the preferred frontier:
-    /// cached/default depth-2 records clamp to depth-1 at runtime, and fresh autotune
-    /// jointly re-probes regcap+depth with Blackwell-only tie-breaks toward shallower full-lane profiles.
-    /// Explicit overrides keep the requested depth.
-    #[arg(
-        long,
-        default_value_t = DEFAULT_NVIDIA_HASHES_PER_LAUNCH_PER_LANE
-    )]
+    /// Hashes each lane runs per CUDA launch; unset uses this GPU's default.
+    #[arg(long, default_value_t = DEFAULT_NVIDIA_HASHES_PER_LAUNCH_PER_LANE, hide = true)]
     nvidia_hashes_per_launch_per_lane: u32,
 
     /// Disable adaptive NVIDIA launch-depth pressure control and keep the configured launch depth.
-    #[arg(long, action = ArgAction::SetTrue)]
+    #[arg(long, action = ArgAction::SetTrue, hide = true)]
     nvidia_no_adaptive_launch_depth: bool,
 
-    /// Enable fused target-check in the fill kernel (can regress throughput on some GPUs).
-    #[arg(long, action = ArgAction::SetTrue)]
+    /// Run the target check inside the fill kernel.
+    #[arg(long, action = ArgAction::SetTrue, hide = true)]
     nvidia_fused_target_check: bool,
 
     /// NVIDIA stop-at-template policy: `auto` follows round accounting mode, `on` always enforces,
     /// `off` never enforces in the backend worker loop.
-    #[arg(long, value_enum, default_value_t = NvidiaTemplateStopPolicy::Auto)]
+    #[arg(long, value_enum, default_value_t = NvidiaTemplateStopPolicy::Auto, hide = true)]
     nvidia_template_stop_policy: NvidiaTemplateStopPolicy,
 
-    /// Cap AMD active lanes per device instance (each lane uses ~2GB VRAM).
-    #[arg(long)]
-    amd_max_lanes: Option<usize>,
-
-    /// Cap Metal active lanes (each uses ~2GB unified memory).
-    #[arg(long)]
-    metal_max_lanes: Option<usize>,
-
-    /// Maximum hashes each lane executes per Metal dispatch (higher = fewer dispatches, coarser preemption).
-    #[arg(
-        long,
-        default_value_t = DEFAULT_METAL_HASHES_PER_LAUNCH_PER_LANE
-    )]
+    /// Hashes each lane runs per Metal dispatch.
+    #[arg(long, default_value_t = DEFAULT_METAL_HASHES_PER_LAUNCH_PER_LANE, hide = true)]
     metal_hashes_per_launch_per_lane: u32,
 
     /// Maximum time to wait for one backend assignment dispatch call, in milliseconds.
-    #[arg(long, default_value_t = 1000)]
+    #[arg(long, default_value_t = 1000, hide = true)]
     backend_assign_timeout_ms: u64,
 
     /// Optional per-backend-instance assignment dispatch timeouts in milliseconds.
@@ -633,12 +729,13 @@ struct Cli {
     #[arg(
         long = "backend-assign-timeout-ms-per-instance",
         value_delimiter = ',',
-        num_args = 1..
+        num_args = 1..,
+        hide = true,
     )]
     backend_assign_timeout_ms_per_instance: Vec<u64>,
 
     /// Consecutive assignment timeouts before backend quarantine.
-    #[arg(long, default_value_t = 3)]
+    #[arg(long, default_value_t = 3, hide = true)]
     backend_assign_timeout_strikes: u32,
 
     /// Optional per-backend-instance assignment-timeout strike thresholds.
@@ -646,12 +743,13 @@ struct Cli {
     #[arg(
         long = "backend-assign-timeout-strikes-per-instance",
         value_delimiter = ',',
-        num_args = 1..
+        num_args = 1..,
+        hide = true,
     )]
     backend_assign_timeout_strikes_per_instance: Vec<u32>,
 
     /// Maximum time to wait for backend cancel/fence control calls, in milliseconds.
-    #[arg(long, default_value_t = 60_000)]
+    #[arg(long, default_value_t = 60_000, hide = true)]
     backend_control_timeout_ms: u64,
 
     /// Optional per-backend-instance cancel/fence timeouts in milliseconds.
@@ -659,28 +757,29 @@ struct Cli {
     #[arg(
         long = "backend-control-timeout-ms-per-instance",
         value_delimiter = ',',
-        num_args = 1..
+        num_args = 1..,
+        hide = true,
     )]
     backend_control_timeout_ms_per_instance: Vec<u64>,
 
     /// Allow backends with best-effort deadline semantics.
-    #[arg(long, default_value_t = false)]
+    #[arg(long, default_value_t = false, hide = true)]
     allow_best_effort_deadlines: bool,
 
     /// Maximum time to wait for a prefetched block template before falling back.
-    #[arg(long, default_value_t = 250)]
+    #[arg(long, default_value_t = 250, hide = true)]
     prefetch_wait_ms: u64,
 
     /// Maximum time to wait for tip-listener shutdown before detaching.
-    #[arg(long, default_value_t = 250)]
+    #[arg(long, default_value_t = 250, hide = true)]
     tip_listener_join_wait_ms: u64,
 
     /// Maximum time to wait for submit-worker shutdown before detaching.
-    #[arg(long, default_value_t = 2_000)]
+    #[arg(long, default_value_t = 2_000, hide = true)]
     submit_join_wait_ms: u64,
 
-    /// Enable strict per-round quiesce barriers for exact accounting (lower throughput).
-    #[arg(long, action = ArgAction::SetTrue)]
+    /// Stop all backends at each round end for exact round accounting.
+    #[arg(long, action = ArgAction::SetTrue, hide = true)]
     strict_round_accounting: bool,
 
     /// Deprecated alias kept for compatibility; relaxed accounting is now the default.
@@ -688,89 +787,56 @@ struct Cli {
     relaxed_accounting: bool,
 
     /// Optional nonce seed.
-    #[arg(long)]
+    #[arg(long, hide = true)]
     start_nonce: Option<u64>,
 
     /// Maximum iterations each lane will scan before switching to next reservation.
-    #[arg(long, default_value_t = 1u64 << 36)]
+    #[arg(long, default_value_t = 1u64 << 36, hide = true)]
     nonce_iters_per_lane: u64,
 
     /// Nonce chunk allocation strategy across active backends.
-    #[arg(long, value_enum, default_value_t = WorkAllocation::Adaptive)]
+    #[arg(long, value_enum, default_value_t = WorkAllocation::Adaptive, hide = true)]
     work_allocation: WorkAllocation,
 
     /// Optional periodic in-round redistribution interval in milliseconds (0 disables).
-    #[arg(long, default_value_t = 0)]
+    #[arg(long, default_value_t = 0, hide = true)]
     sub_round_rebalance_ms: u64,
 
     /// Disable SSE tip notifications (/api/events) and rely only on refresh timer.
-    #[arg(long, action = ArgAction::SetTrue)]
+    #[arg(long, action = ArgAction::SetTrue, hide = true)]
     disable_sse: bool,
 
-    /// Disable the background check for newer seine releases on GitHub.
-    #[arg(long, action = ArgAction::SetTrue)]
-    disable_update_check: bool,
-
-    /// Refresh on same-height new_block hash changes (disabled by default to avoid replay churn).
-    #[arg(long, action = ArgAction::SetTrue)]
+    /// Refresh on same-height new_block hash changes.
+    #[arg(long, action = ArgAction::SetTrue, hide = true)]
     refresh_on_same_height: bool,
 
-    /// UI mode: auto (TTY-detected), tui (force full-screen TUI), plain (stdout logs only).
-    #[arg(long, value_enum, default_value_t = UiMode::Auto)]
-    ui: UiMode,
-
-    /// Show internal settings and routine activity on the dashboard and in logs.
-    #[arg(long)]
-    verbose: bool,
-
-    /// Start local control API server alongside miner operation.
-    #[arg(long, default_value_t = false)]
-    api_server: bool,
-
     /// API service mode: start local control API and wait for start commands.
-    #[arg(long, default_value_t = false)]
+    #[arg(long, default_value_t = false, hide = true)]
     service: bool,
 
-    /// Bind address for local control API server.
-    #[arg(long, default_value = "127.0.0.1:9977")]
-    api_bind: String,
-
     /// Allow non-loopback API bind addresses.
-    #[arg(long, default_value_t = false)]
+    #[arg(long, default_value_t = false, hide = true)]
     api_allow_unsafe_bind: bool,
 
     /// CORS allow-origin value for control API responses. Empty (default) sends no CORS
     /// headers, so web pages on other origins cannot call the API from a browser.
-    #[arg(long, default_value = "")]
+    #[arg(long, default_value = "", hide = true)]
     api_cors: String,
 
     /// Bearer token required by the control API. When omitted, Seine generates a random
     /// token at startup and writes it to --api-cookie.
-    #[arg(long)]
+    #[arg(long, hide = true)]
     api_token: Option<String>,
 
     /// File the generated control API token is written to (default: <data-dir>/control-api.cookie).
-    #[arg(long)]
+    #[arg(long, hide = true)]
     api_cookie: Option<PathBuf>,
-
-    /// Run local performance benchmark instead of mining over API.
-    #[arg(long, default_value_t = false)]
-    bench: bool,
-
-    /// Replace this executable with the newest stable release for this platform
-    /// (checked against the release's SHA256SUMS.txt), then exit without mining.
-    #[arg(long, default_value_t = false)]
-    self_update: bool,
 
     /// Install new stable releases while mining (the default): download, verify
     /// the release signature and checksum, swap the executable and restart with
     /// the same arguments. Needs the update check.
-    #[arg(long, default_value_t = true, action = ArgAction::SetTrue)]
+    #[arg(long, default_value_t = true, action = ArgAction::SetTrue, hide = true)]
     auto_update: bool,
-
-    /// Keep mining the current version: only log that a newer release exists.
-    #[arg(long, action = ArgAction::SetTrue, conflicts_with = "auto_update")]
-    no_auto_update: bool,
 
     /// Experimental: side-buffer slots (1 KiB each) for the AVX-512 streaming
     /// kernels; 0 disables, unset uses this CPU's default.
@@ -786,47 +852,70 @@ struct Cli {
     /// Benchmark mode.
     /// `kernel-effective` measures kernel throughput with wall-time accounting and the backend's
     /// target/eval path enabled so results are directly comparable to backend-mode overhead.
-    #[arg(long, value_enum, default_value_t = BenchKind::Backend)]
+    #[arg(long, value_enum, default_value_t = BenchKind::Backend, hide = true)]
     bench_kind: BenchKind,
 
     /// Proof of work to benchmark: argon2id (default) or blake2b (the Faraday fork
     /// hash; `backend` and `end-to-end` kinds only).
-    #[arg(long, value_enum, default_value_t = BenchPow::Argon2id)]
+    #[arg(long, value_enum, default_value_t = BenchPow::Argon2id, hide = true)]
     bench_pow: BenchPow,
 
-    /// Force a supported CPU kernel for offline benchmarks (scalar, avx2, avx512, avx512-256, avx512-256-stream, avx512-256-stream-r8d2, avx512-256-stream-r64d3, avx512-256-stream-r64d4, avx512-256-stream-r64d6, avx2-stream, avx512-stream, avx512-256-stream-l2, avx512-stream-l2, neon, neon-sha3).
+    /// Force a supported CPU kernel for offline benchmarks.
     /// Requires --bench, CPU-only backends, fixed --threads, and no CPU autotuning.
-    #[arg(long, requires_all = ["bench", "threads"])]
+    #[arg(long, requires_all = ["bench", "threads"], hide = true)]
     bench_cpu_kernel: Option<blocknet_pow_kernel::CpuKernel>,
 
     /// Per-round benchmark duration in seconds.
-    #[arg(long, default_value_t = 20)]
+    #[arg(long, default_value_t = 20, hide = true)]
     bench_secs: u64,
 
     /// Number of benchmark rounds.
-    #[arg(long, default_value_t = 3)]
+    #[arg(long, default_value_t = 3, hide = true)]
     bench_rounds: u32,
 
     /// Number of warmup rounds run before measured benchmark rounds.
-    #[arg(long, default_value_t = 0)]
+    #[arg(long, default_value_t = 0, hide = true)]
     bench_warmup_rounds: u32,
 
     /// Write benchmark report JSON to this file.
-    #[arg(long)]
+    #[arg(long, hide = true)]
     bench_output: Option<PathBuf>,
 
     /// Compare benchmark average H/s against a previous JSON report.
-    #[arg(long)]
+    #[arg(long, hide = true)]
     bench_baseline: Option<PathBuf>,
 
     /// Fail benchmark run if average H/s regresses below baseline by more than this percent.
-    #[arg(long)]
+    #[arg(long, hide = true)]
     bench_fail_below_pct: Option<f64>,
 
     /// Baseline compatibility mode: strict validates environment/build identity;
     /// ignore-environment allows cross-build comparisons while keeping runtime/config/PoW checks.
-    #[arg(long, value_enum, default_value_t = BenchBaselinePolicy::Strict)]
+    #[arg(long, value_enum, default_value_t = BenchBaselinePolicy::Strict, hide = true)]
     bench_baseline_policy: BenchBaselinePolicy,
+}
+
+/// The command line, with `--help` printing the same list as `-h`.
+fn cli_command() -> clap::Command {
+    Cli::command()
+        .disable_help_flag(true)
+        .disable_version_flag(true)
+        .arg(
+            clap::Arg::new("help")
+                .short('h')
+                .long("help")
+                .action(ArgAction::HelpShort)
+                .help("Print help")
+                .help_heading(HELP_INFO),
+        )
+        .arg(
+            clap::Arg::new("version")
+                .short('V')
+                .long("version")
+                .action(ArgAction::Version)
+                .help("Print version")
+                .help_heading(HELP_INFO),
+        )
 }
 
 #[derive(Debug, Clone)]
@@ -966,7 +1055,7 @@ pub struct StartupUi {
 impl Config {
     /// `on_startup` runs once, after any prompts and before hardware detection.
     pub fn parse(on_startup: impl FnOnce(StartupUi) -> Result<()>) -> Result<Self> {
-        let matches = Cli::command().get_matches();
+        let matches = cli_command().get_matches();
         let nvidia_hashes_per_launch_per_lane_was_set = matches!(
             matches.value_source("nvidia_hashes_per_launch_per_lane"),
             Some(clap::parser::ValueSource::CommandLine)
@@ -5641,5 +5730,229 @@ mod benchmark_kernel_tests {
         ])
         .unwrap();
         assert_eq!(cli.bench_cpu_kernel, Some(CpuKernel::Scalar));
+    }
+
+    /// A new flag stays hidden unless most miners need it.
+    #[test]
+    fn help_lists_only_the_flags_miners_need() {
+        let command = cli_command();
+        let visible: Vec<&str> = command
+            .get_arguments()
+            .filter(|arg| !arg.is_hide_set())
+            .filter_map(|arg| arg.get_long())
+            .collect();
+        assert_eq!(
+            visible,
+            [
+                "pool-url",
+                "address",
+                "pool-worker",
+                "payout-memo",
+                "pool-proxy",
+                "proxy-listen",
+                "backend",
+                "threads",
+                "nvidia-devices",
+                "amd-devices",
+                "nvidia-max-lanes",
+                "amd-max-lanes",
+                "metal-max-lanes",
+                "cpu-profile",
+                "cpu-autotune-max-threads",
+                "cpu-page-mode",
+                "cpu-affinity",
+                "mode",
+                "api-url",
+                "cookie",
+                "wallet-password-file",
+                "ui",
+                "verbose",
+                "stats-secs",
+                "data-dir",
+                "api-server",
+                "api-bind",
+                "self-update",
+                "no-auto-update",
+                "disable-update-check",
+                "telemetry",
+                "bench",
+                "help",
+                "version",
+            ]
+        );
+    }
+
+    #[test]
+    fn long_and_short_help_print_the_same_list() {
+        let render = |flag: &str| {
+            let err = cli_command()
+                .try_get_matches_from(["seine", flag])
+                .expect_err("help exits through an error");
+            assert_eq!(err.kind(), clap::error::ErrorKind::DisplayHelp);
+            err.to_string()
+        };
+        let long = render("--help");
+        assert_eq!(long, render("-h"));
+        assert!(long.contains("--pool-url"));
+        assert!(!long.contains("--backend-assign-timeout-ms"));
+        assert!(long.contains("MINER_FLAGS.md"));
+    }
+
+    #[test]
+    fn version_flags_still_report_the_version() {
+        for flag in ["--version", "-V"] {
+            let err = cli_command()
+                .try_get_matches_from(["seine", flag])
+                .expect_err("version exits through an error");
+            assert_eq!(err.kind(), clap::error::ErrorKind::DisplayVersion);
+            assert!(err.to_string().contains(crate::version::RELEASE_VERSION));
+        }
+    }
+
+    /// Auto-update restarts with the same arguments, so a flag removed from the
+    /// parser would stop any rig that passes it.
+    #[test]
+    fn hidden_flags_are_still_accepted() {
+        let cli = cli_command()
+            .try_get_matches_from([
+                "seine",
+                "-p",
+                "x",
+                "--auto-update",
+                "--telemetry-url",
+                "https://example.invalid/v1/reports",
+                "--testnet",
+                "--token",
+                "t",
+                "--daemon-dir",
+                "/tmp/d",
+                "--wallet-password",
+                "w",
+                "--refresh-secs",
+                "20",
+                "--request-timeout-secs",
+                "10",
+                "--events-stream-timeout-secs",
+                "10",
+                "--events-idle-timeout-secs",
+                "90",
+                "--backend-event-capacity",
+                "1024",
+                "--hash-poll-ms",
+                "200",
+                "--cpu-hash-batch-size",
+                "1",
+                "--cpu-control-check-interval-hashes",
+                "1",
+                "--cpu-hash-flush-ms",
+                "200",
+                "--cpu-event-dispatch-capacity",
+                "64",
+                "--cpu-memory-reserve-percent",
+                "5",
+                "--allow-oversubscribe",
+                "--cpu-threads-per-instance",
+                "1",
+                "--cpu-affinity-per-instance",
+                "auto",
+                "--disable-cpu-autotune-threads",
+                "--cpu-autotune-min-threads",
+                "1",
+                "--cpu-autotune-secs",
+                "6",
+                "--cpu-autotune-config",
+                "/tmp/c",
+                "--nvidia-autotune-secs",
+                "5",
+                "--nvidia-autotune-samples",
+                "2",
+                "--nvidia-autotune-config",
+                "/tmp/n",
+                "--nvidia-max-rregcount",
+                "128",
+                "--nvidia-dispatch-iters-per-lane",
+                "1",
+                "--nvidia-allocation-iters-per-lane",
+                "1",
+                "--nvidia-hashes-per-launch-per-lane",
+                "2",
+                "--nvidia-no-adaptive-launch-depth",
+                "--nvidia-fused-target-check",
+                "--nvidia-template-stop-policy",
+                "auto",
+                "--metal-hashes-per-launch-per-lane",
+                "2",
+                "--backend-assign-timeout-ms",
+                "1000",
+                "--backend-assign-timeout-ms-per-instance",
+                "1000",
+                "--backend-assign-timeout-strikes",
+                "3",
+                "--backend-assign-timeout-strikes-per-instance",
+                "3",
+                "--backend-control-timeout-ms",
+                "60000",
+                "--backend-control-timeout-ms-per-instance",
+                "60000",
+                "--allow-best-effort-deadlines",
+                "--prefetch-wait-ms",
+                "250",
+                "--tip-listener-join-wait-ms",
+                "250",
+                "--submit-join-wait-ms",
+                "2000",
+                "--strict-round-accounting",
+                "--start-nonce",
+                "0",
+                "--nonce-iters-per-lane",
+                "1",
+                "--work-allocation",
+                "adaptive",
+                "--sub-round-rebalance-ms",
+                "0",
+                "--disable-sse",
+                "--refresh-on-same-height",
+                "--service",
+                "--api-allow-unsafe-bind",
+                "--api-cors",
+                "*",
+                "--api-token",
+                "t",
+                "--api-cookie",
+                "/tmp/k",
+                "--bench",
+                "--bench-kind",
+                "backend",
+                "--bench-pow",
+                "argon2id",
+                "--bench-secs",
+                "1",
+                "--bench-rounds",
+                "1",
+                "--bench-warmup-rounds",
+                "0",
+                "--bench-output",
+                "/tmp/o",
+                "--bench-baseline",
+                "/tmp/b",
+                "--bench-fail-below-pct",
+                "1",
+                "--bench-baseline-policy",
+                "strict",
+            ])
+            .map(|matches| Cli::from_arg_matches(&matches).unwrap());
+        assert!(cli.is_ok(), "{:?}", cli.err());
+
+        assert!(Cli::try_parse_from(["seine", "--no-payout-memo"]).is_ok());
+        assert!(Cli::try_parse_from(["seine", "--cpu-autotune-threads"]).is_ok());
+        assert!(Cli::try_parse_from([
+            "seine",
+            "--bench",
+            "--threads",
+            "1",
+            "--bench-cpu-kernel",
+            "scalar",
+        ])
+        .is_ok());
     }
 }

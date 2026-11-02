@@ -82,4 +82,5 @@ action they need to take, in short plain bullets with the biggest benefit first.
 
 ## References
 
-- Every flag: `docs/MINER_FLAGS.md` / `seine --help`.
+- Every flag: `docs/MINER_FLAGS.md`. `seine --help` lists only what most miners
+  need: give a new flag `hide = true` and a row in that page unless they need it.

@@ -18,7 +18,7 @@ argon2 = "0.5"
 axum = { version = "0.7", features = ["http1", "json", "tokio"] }
 blake2 = "0.10"
 bs58 = "0.5"
-clap = { version = "4.5", features = ["derive"] }
+clap = { version = "4.5", features = ["derive", "wrap_help"] }
 curve25519-dalek = "4.1"
 crossterm = "0.28"
 ctrlc = { version = "3.4", features = ["termination"] }

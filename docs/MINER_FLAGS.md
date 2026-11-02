@@ -2,11 +2,8 @@
 
 This page documents every `seine` CLI flag and what it controls.
 
-For the raw CLI output, run:
-
-```bash
-./seine --help
-```
+`./seine --help` lists the flags most miners need. All of the flags below work
+whether or not `--help` shows them.
 
 ## Connectivity, Auth, and Paths
 
@@ -59,7 +56,7 @@ See [collection fields and self-hosting](../telemetry/README.md).
 
 | Flag | Values / Default | What it does |
 |---|---|---|
-| `--refresh-secs` | integer `>=1`, default `20` | Max time spent on one template before refresh. |
+| `--refresh-secs` | integer `>=1`, default `20` | Daemon mode: max time spent on one template before refresh. |
 | `--request-timeout-secs` | integer `>=1`, default `10` | Timeout for template/submit/wallet JSON API calls. |
 | `--events-stream-timeout-secs` | integer `>=1`, default `10` | Timeout for each SSE connection attempt to daemon `/api/events`. |
 | `--events-idle-timeout-secs` | integer `>=1`, default `90` | Max lifetime of one daemon SSE request before reconnect. |
@@ -105,7 +102,7 @@ See [collection fields and self-hosting](../telemetry/README.md).
 | `--nvidia-max-lanes` | integer `>=1` | Caps active NVIDIA lanes per device instance. |
 | `--nvidia-dispatch-iters-per-lane` | integer `>=1` | Overrides NVIDIA scheduler dispatch hint (iters/lane). |
 | `--nvidia-allocation-iters-per-lane` | integer `>=1` | Overrides NVIDIA reservation/allocation hint (iters/lane). |
-| `--nvidia-hashes-per-launch-per-lane` | integer `>=1`, default `2` | Work depth per CUDA launch per lane. On Blackwell, when this flag is left unset, Seine now treats depth `1` as the preferred runtime/fresh-autotune frontier: cached/default depth-`2` records are clamped to `1`, and fresh autotune jointly re-probes regcap+depth with Blackwell-only tie-breaks that favor shallower full-lane profiles. Explicit overrides keep the requested depth. |
+| `--nvidia-hashes-per-launch-per-lane` | integer `>=1`; unset uses this GPU's default | Hashes each lane runs per CUDA launch. |
 | `--nvidia-no-adaptive-launch-depth` | bool flag | Disables adaptive launch depth shaping. |
 | `--nvidia-fused-target-check` | bool flag | Enables fused in-kernel target checks. |
 | `--nvidia-template-stop-policy` | `auto`, `on`, `off`; default `auto` | Controls backend enforcement of template `stop_at`. |
@@ -171,7 +168,7 @@ See [collection fields and self-hosting](../telemetry/README.md).
 
 | Flag | What it does |
 |---|---|
-| `-h`, `--help` | Prints help output. |
+| `-h`, `--help` | Lists the flags most miners need. |
 | `-V`, `--version` | Prints version. |
 
 ## Hidden/Compatibility Flag
