@@ -253,7 +253,10 @@ const SKIP_REBUILD_RATE: [(u64, f64); 10] = [
 const SKIP_REBUILD_COST_BLOCKS: f64 = 1.5;
 
 fn skip_rebuild_rate(permille: u64) -> f64 {
-    let (first, last) = (SKIP_REBUILD_RATE[0], SKIP_REBUILD_RATE[SKIP_REBUILD_RATE.len() - 1]);
+    let (first, last) = (
+        SKIP_REBUILD_RATE[0],
+        SKIP_REBUILD_RATE[SKIP_REBUILD_RATE.len() - 1],
+    );
     if permille <= first.0 {
         return first.1;
     }
@@ -311,9 +314,14 @@ pub(crate) fn plan_skip_from(
     let mut best = (0u32, 0.0f64);
     for permille in candidates {
         let skip_from = skip_from_permille(m_blocks, t_cost, permille);
-        let lanes = lane_capacity_from_budget(memory_budget_mib, lane_bytes_for(m_blocks, skip_from))
-            .min(lane_cap);
-        let rebuilds = if skip_from == 0 { 0.0 } else { skip_rebuild_rate(permille) };
+        let lanes =
+            lane_capacity_from_budget(memory_budget_mib, lane_bytes_for(m_blocks, skip_from))
+                .min(lane_cap);
+        let rebuilds = if skip_from == 0 {
+            0.0
+        } else {
+            skip_rebuild_rate(permille)
+        };
         let score = lanes as f64 / (1.0 + SKIP_REBUILD_COST_BLOCKS * rebuilds);
         // Later candidates rebuild less, so they win ties.
         if score >= best.1 {
@@ -647,19 +655,21 @@ impl HipArgon2Engine {
             )
         };
         let mut skip_from = plan_skip(builtin_kernels);
-        let code = match argon2_kernel_code(api, &device.gcn_arch_name, &options_for(skip_from)) {
-            Ok(code) => code,
-            Err(err) => {
-                // hipRTC failed: fall back to a boundary the built-in kernels cover.
-                let builtin_skip_from = plan_skip(true);
-                if builtin_skip_from == skip_from {
-                    return Err(err);
+        let (code, kernel_source) =
+            match argon2_kernel_code(api, &device.gcn_arch_name, &options_for(skip_from)) {
+                Ok(code) => code,
+                Err(err) => {
+                    // hipRTC failed: fall back to a boundary the built-in kernels cover.
+                    let builtin_skip_from = plan_skip(true);
+                    if builtin_skip_from == skip_from {
+                        return Err(err);
+                    }
+                    skip_from = builtin_skip_from;
+                    argon2_kernel_code(api, &device.gcn_arch_name, &options_for(skip_from))?
                 }
-                skip_from = builtin_skip_from;
-                argon2_kernel_code(api, &device.gcn_arch_name, &options_for(skip_from))?
-            }
-        };
+            };
         let module = Module::load(api, &code)?;
+        super::note_kernel_source(device.index, kernel_source);
         let kernel_nonfused = module.function("argon2id_fill_kernel")?;
         let kernel_fused_target = module.function("argon2id_fill_kernel_fused_target")?;
         let seed_kernel = module.function("build_seed_blocks_kernel")?;
@@ -1309,21 +1319,23 @@ fn compile_hip_module_with_wavefront_fallback(
 
 /// The Argon2 code object: compiled with hipRTC, or the built-in one for this
 /// architecture when hipRTC is missing or fails (or `SEINE_AMD_BUILTIN_KERNELS=1`).
+/// The Argon2 code object and where it came from.
 fn argon2_kernel_code(
     api: &'static HipApi,
     gcn_arch_name: &str,
     options: &[String],
-) -> Result<Vec<u8>> {
+) -> Result<(Vec<u8>, seine_telemetry::GpuKernelSource)> {
+    use seine_telemetry::GpuKernelSource;
     let key = super::code_objects::options_key(HIP_KERNEL_SRC, options);
     let builtin = super::code_objects::find("argon2", gcn_arch_name, key);
     let prefer_builtin = std::env::var_os("SEINE_AMD_BUILTIN_KERNELS").is_some_and(|v| v == "1");
     if let (Some(code), true) = (builtin, prefer_builtin || api.hiprtc.is_err()) {
-        return Ok(code.to_vec());
+        return Ok((code.to_vec(), GpuKernelSource::BuiltinCodeObject));
     }
     match compile_hip_module_with_wavefront_fallback(api, options) {
-        Ok(code) => Ok(code),
+        Ok(code) => Ok((code, GpuKernelSource::Hiprtc)),
         Err(err) => match builtin {
-            Some(code) => Ok(code.to_vec()),
+            Some(code) => Ok((code.to_vec(), GpuKernelSource::BuiltinCodeObject)),
             None => Err(err.context(format!(
                 "failed to compile HIP module with hipRTC (no built-in kernel for {})",
                 gcn_arch_name.trim()
@@ -1500,7 +1512,11 @@ mod tests {
         assert_eq!(skip_from_block("gfx1201", blocks, 1), from);
         assert_eq!(skip_from_block("gfx1151", blocks, 1), 0);
         assert_eq!(skip_from_block("gfx1030", blocks, 1), from);
-        assert_eq!(skip_from_block("gfx1100", blocks, 3), 0, "multi-pass stores every block");
+        assert_eq!(
+            skip_from_block("gfx1100", blocks, 3),
+            0,
+            "multi-pass stores every block"
+        );
         assert_eq!(lane_stride_blocks(blocks, 0), u64::from(blocks));
         assert_eq!(
             lane_stride_blocks(blocks, from),
@@ -1522,8 +1538,14 @@ mod tests {
             lane_capacity_from_budget(budget, lane_bytes_for(blocks, skip_from))
         };
         // A lane cap below what VRAM holds: skipping buys no lanes, so store every block.
-        assert_eq!(plan_skip_from("gfx1101", blocks, 1, 24_000, Some(4), false), 0);
-        assert_eq!(plan_skip_from("gfx1101", blocks, 1, 24_000, Some(4), true), 0);
+        assert_eq!(
+            plan_skip_from("gfx1101", blocks, 1, 24_000, Some(4), false),
+            0
+        );
+        assert_eq!(
+            plan_skip_from("gfx1101", blocks, 1, 24_000, Some(4), true),
+            0
+        );
         // An 8 GiB card: the most lanes VRAM allows, at the highest boundary that keeps them.
         let skip_from = plan_skip_from("gfx1030", blocks, 1, 7_764, None, false);
         assert!(skip_from >= blocks / 2);
@@ -1668,7 +1690,11 @@ mod tests {
             device.wavefront_size,
             params.block_count() as u32,
             params.t_cost(),
-            skip_from_block(&device.gcn_arch_name, params.block_count() as u32, params.t_cost()),
+            skip_from_block(
+                &device.gcn_arch_name,
+                params.block_count() as u32,
+                params.t_cost(),
+            ),
         );
         let code = compile_hip_module_with_wavefront_fallback(api, &options)
             .expect("HIP kernel should compile with hipRTC");

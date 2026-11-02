@@ -4,6 +4,44 @@ Seine hardware and performance reporting, with a separate Rust/Axum
 collector and PostgreSQL database. Pool Stratum, wallet and daemon contracts are
 unchanged. A collector outage drops reports without stopping mining.
 
+Schema 14 adds operational summaries for the v0.3.0 release, all fixed booleans,
+counts and enums:
+
+- `diagnostics.update`: whether this process installs releases by itself
+  (`auto_install`), release lookups answered by the GitHub API, by the release
+  page, or failed both ways, plus installs and failed installs in the window and
+  the stage of the most recent failure (`no_build`, `missing_asset`, `download`,
+  `signature`, `checksum`, `extract`, `startup_probe` or `replace`).
+- `diagnostics.pool` (pool mode only): whether the primary pool uses TLS, pools
+  are reached through SOCKS5, and a payout memo is configured; the number of
+  backup pools; and failovers, seconds on a backup pool, reconnects and
+  nonce-range refills in the window.
+- `diagnostics.amd_detection`: whether the HIP runtime was unavailable, AMD GPUs
+  found and selected, integrated GPUs and unsupported-wavefront GPUs skipped,
+  and `pci_devices`, the AMD display devices the OS lists (Linux sysfs, vendor
+  0x1002) whether or not HIP can use them; absent where unknown, such as Windows.
+- `diagnostics.unsupported_work_paused_secs`: seconds in the window that mining
+  was paused on work this build cannot mine, with the diagnostic reason
+  `unsupported_work` and operation `receive_work`. This measures readiness for
+  the Faraday fork: paused miners need an update.
+- `backends[].settings.gpu_arch` (`gfx1100` or `sm_86`) and
+  `gpu_kernel_source` for NVIDIA and AMD backends (`prebuilt_cubin`,
+  `prebuilt_ptx`, `nvrtc`, `nvrtc_cached`, `nvrtc_failed_prebuilt_ptx`,
+  `builtin_code_object` or `hiprtc`), plus `amd_perf_level` for AMD backends
+  (`already_high`, `raised`, `needs_root`, `kept_by_operator`, `unavailable` or
+  `not_raised_for_arch`).
+
+Privacy: these fields never contain payout memos, wallet addresses, pool hosts or
+URLs, proxy addresses, IP addresses, release URLs or error text, and AMD
+detection reports counts, not device identifiers. The
+[schema-14 fixture](schema14-fixture.json) populates every new field.
+`release_health.sql` aggregates them for the agent briefing, and the fleet alert
+runner raises an alert when three installations of one version report failed
+installs or paused mining within 24 hours. The GPU fields stay out of performance
+cohorts, because the kernel source differs between otherwise identical runs. Deploy the
+schema-14 collector before schema-14 miners. Schemas 1–13 remain accepted; no
+SQL storage migration is required.
+
 Schema 13 records backend control failures with the backend type, cancel/fence
 operation, and enqueue/execution timeout stage. A backend-returned error remains
 `backend_control_failed`; its category is a hint, not a proven timeout stage.
@@ -139,12 +177,17 @@ The strict upload schema is in [src/lib.rs](src/lib.rs), with an example in
 - Schema 3 reliability summaries: fixed warning/error codes and category hints,
   repository source locations, counts and elapsed times, build revision and source
   fingerprint, requested mining settings and an unclean-previous-run marker.
+- Schema 14 operational summaries: self-update checks, installs and the failed
+  install stage; pool TLS/SOCKS/payout-memo booleans, backup-pool count and
+  failover/reconnect/refill counts (never hosts or memos); AMD GPUs found,
+  selected, skipped and listed by the OS; seconds paused on unsupported work; and
+  GPU architecture, kernel source and AMD performance level.
 
 ### Reliability reporting
 
 The [reliability fixture](reliability-fixture.json) demonstrates schema 5; the
 [diagnostic fixture](diagnostics-fixture.json) retains schema-4 compatibility coverage.
-The collector accepts schemas 1–13. Deploy schema-13 support before schema-13 miners.
+The collector accepts schemas 1–14. Deploy schema-14 support before schema-14 miners.
 The recorder starts after configuration parsing, before address resolution,
 backend initialization and tuning. UI warnings/errors identify their original
 call site through `track_caller`; backend error and quarantine paths also report
@@ -394,6 +437,21 @@ and the database are healthy. `inventory_only_clusters` separately shows observe
 pool connection warnings and mining phase; neither a mining checkpoint nor the
 absence of a connection warning proves that usable work was available. Low report counts alone are not an outage; unstable
 tuning windows remain visible in the stable-sample count.
+The `release_health` section (`release_health.sql`, seven days) covers schema-14
+reporters only; `coverage` shows how many installations per version send these
+fields. It reports, by version, self-update checks, installs, failed installs and
+their last failed stage, and installations with automatic installs on; fork
+readiness as installations and seconds paused on unsupported work (by version
+and pool/daemon mode) plus `unsupported_work` events; AMD detection cohorts,
+including `amd_gpu_not_mining` (the OS lists an AMD display device while HIP is
+unavailable or no AMD GPU was selected, usually missing ROCm; `hip_unavailable`
+alone is normal without an AMD GPU); AMD performance level by architecture and
+OS; GPU kernel source by backend and architecture; and pool TLS/SOCKS/memo/backup
+shares with failover, reconnect, refill and backup-time totals, per-installation
+quantiles, by-version and daily series. Settings use each installation's latest
+report; counts are summed over report windows. Like `diagnostics.sql`, it flags
+`attention` after three installations of one version report failed installs, or
+mining paused on unsupported work, within 24 hours.
 Send the user a concise interpretation and next action rather than raw SQL output.
 
 The command is invoked during agent work; it does not schedule unattended agent
@@ -432,7 +490,8 @@ describe reporting installations and may not represent all miners.
 ```sh
 python3 -m unittest discover -s telemetry -p 'test_a*.py'
 python3 -m unittest discover -s telemetry -p 'test_performance_sql.py'
-# Includes disposable PostgreSQL cohort/alert tests when PostgreSQL 16 is installed.
+python3 -m unittest discover -s telemetry -p 'test_*_sql.py'
+# Includes disposable PostgreSQL cohort/alert/diagnostic/release-health tests when PostgreSQL 16 is installed.
 cargo +1.93.0 test -p seine-telemetry --features server
 cargo +1.93.0 test --bin seine --no-default-features hardware_telemetry
 cargo +1.93.0 check --workspace --all-targets --features seine-telemetry/server,amd

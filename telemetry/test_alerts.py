@@ -194,6 +194,19 @@ class AlertsTests(unittest.TestCase):
         self.assertNotIn('v0.2.36:', active[0]['summary'])
         self.assertIn('Unknown previous version', active[1]['summary'])
 
+    def test_update_failures_and_unsupported_work_alert_at_three_installations(self):
+        active, _ = alerts.evaluate({'diagnostics': {
+            'recent_error_versions': [], 'recent_unclean_versions': [],
+            'recent_install_failure_versions': [
+                {'version': 'v0.3.0', 'affected_installations': 2},
+                {'version': 'v0.3.1', 'affected_installations': 3}],
+            'recent_unsupported_work_versions': [
+                {'version': 'v0.3.0', 'affected_installations': 4}]}})
+        summaries = [item['summary'] for item in active]
+        self.assertEqual(len(summaries), 2)
+        self.assertIn('v0.3.1: 3 installations with failed self-update installs', summaries[0])
+        self.assertIn('v0.3.0: 4 installations with mining paused', summaries[1])
+
     def test_pool_connection_spike_needs_breadth_above_the_prior_day(self):
         def evaluate(recent, baseline):
             return alerts.evaluate({'diagnostics': {

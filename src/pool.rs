@@ -35,6 +35,10 @@ const RECONNECT_DELAY: Duration = Duration::from_secs(2);
 const MAX_CONNECTION_LIMIT_DELAY: Duration = Duration::from_secs(120);
 /// Longest wait between reconnects after repeated quick failures.
 const MAX_RECONNECT_BACKOFF: Duration = Duration::from_secs(60);
+/// Longest base retry delay with backup pools configured, so the failover
+/// check runs soon after `FAILOVER_AFTER_UNREACHABLE` instead of one long
+/// backoff later.
+const MAX_RECONNECT_BACKOFF_WITH_BACKUPS: Duration = Duration::from_secs(8);
 /// A session that stays logged in this long resets the backoff.
 const HEALTHY_SESSION: Duration = Duration::from_secs(60);
 /// Delay used when a `connection_limit` notice gives none.
@@ -695,8 +699,15 @@ async fn run_pool_client_loop(
     let mut allow_login_difficulty_hint = false;
     let mut login_difficulty_hint: Option<u64> = None;
     let mut failover = PoolFailover::new(endpoints.len());
-    let mut backoff = ReconnectBackoff::default();
+    let mut backoff = ReconnectBackoff::for_pools(endpoints.len());
+    let mut attempts = 0u32;
+    let mut on_backup = BackupTelemetry(false);
     while !should_shutdown(process_shutdown.as_ref(), shutdown.as_ref()) {
+        if attempts > 0 {
+            crate::diagnostics::pool_reconnect();
+        }
+        attempts = attempts.saturating_add(1);
+        on_backup.set(failover.active != 0);
         let endpoint = endpoints[failover.active].clone();
         let mut session_logged_in = false;
         let mut session_login_rejected = false;
@@ -1114,7 +1125,10 @@ async fn run_pool_client_loop(
                                 Some(outcome) => {
                                     pending_refill = None;
                                     match outcome {
-                                        RefillOutcome::Job(job) => Some((PoolEvent::Job(job), None)),
+                                        RefillOutcome::Job(job) => {
+                                            crate::diagnostics::pool_refill();
+                                            Some((PoolEvent::Job(job), None))
+                                        }
                                         RefillOutcome::Stale => None,
                                         RefillOutcome::RateLimited => {
                                             refill_retry = current_job_id.clone().map(|job_id| {
@@ -1273,7 +1287,9 @@ async fn run_pool_client_loop(
         let previous = failover.active;
         if switch_to_primary {
             failover.switch_to_primary();
+            crate::diagnostics::pool_failover();
         } else if failover.session_ended(session_logged_in, session_login_rejected) {
+            crate::diagnostics::pool_failover();
             let _ = event_tx.try_send(PoolEvent::Notification(PoolNotification {
                 kind: POOL_NOTIFICATION_FAILOVER.to_string(),
                 message: format!(
@@ -1284,6 +1300,25 @@ async fn run_pool_client_loop(
                 retry_after: None,
             }));
         }
+    }
+}
+
+/// Reports time this session spends on a backup pool; clears on drop, so an
+/// ended or aborted session never leaves the clock running.
+struct BackupTelemetry(bool);
+
+impl BackupTelemetry {
+    fn set(&mut self, on_backup: bool) {
+        if self.0 != on_backup {
+            self.0 = on_backup;
+            crate::diagnostics::pool_on_backup(on_backup);
+        }
+    }
+}
+
+impl Drop for BackupTelemetry {
+    fn drop(&mut self) {
+        self.set(false);
     }
 }
 
@@ -2067,21 +2102,29 @@ fn parse_pool_notification(params: Option<Value>) -> Option<PoolNotification> {
     })
 }
 
-/// Reconnect delays: none after a healthy session, otherwise 2 s doubling to
-/// 60 s across consecutive quick failures, with jitter so many rigs that fail
-/// together do not retry together.
+/// Reconnect delays: a short random spread after a healthy session, otherwise
+/// 2 s doubling to 60 s (8 s with backup pools) across consecutive quick
+/// failures, with jitter so many rigs that fail together do not retry together.
 #[derive(Debug, Default)]
 struct ReconnectBackoff {
     failures: u32,
+    max_delay: Option<Duration>,
 }
 
 impl ReconnectBackoff {
+    fn for_pools(pools: usize) -> Self {
+        Self {
+            failures: 0,
+            max_delay: (pools > 1).then_some(MAX_RECONNECT_BACKOFF_WITH_BACKUPS),
+        }
+    }
+
     /// The wait after a failed connect, a rejected login, or a session that
     /// ended before it was healthy.
     fn failed(&mut self) -> Duration {
         let base = RECONNECT_DELAY
             .saturating_mul(1u32 << self.failures.min(6))
-            .min(MAX_RECONNECT_BACKOFF);
+            .min(self.max_delay.unwrap_or(MAX_RECONNECT_BACKOFF));
         self.failures = self.failures.saturating_add(1);
         jittered(base)
     }
@@ -3411,6 +3454,18 @@ mod tests {
         assert!(normalize_pool_urls(" , ").is_err());
         assert!(normalize_pool_urls("pool.example.com").is_err());
         assert!(normalize_pool_urls("http://pool.example.com:80").is_err());
+    }
+
+    #[test]
+    fn backup_pools_cap_retry_delays_so_failover_is_not_a_long_backoff_late() {
+        let mut backoff = ReconnectBackoff::for_pools(2);
+        let waits: Vec<Duration> = (0..8).map(|_| backoff.failed()).collect();
+        assert!(waits
+            .iter()
+            .all(|wait| *wait <= MAX_RECONNECT_BACKOFF_WITH_BACKUPS.mul_f64(1.25)));
+        let mut single = ReconnectBackoff::for_pools(1);
+        let longest = (0..8).map(|_| single.failed()).max().unwrap();
+        assert!(longest >= MAX_RECONNECT_BACKOFF.mul_f64(0.75));
     }
 
     #[test]

@@ -594,6 +594,9 @@ impl PowBackend for CpuBackend {
                 .blake2b_workers
                 .load(Ordering::Acquire)
                 .then(|| "blake2b".to_string()),
+            gpu_arch: None,
+            gpu_kernel_source: None,
+            amd_perf_level: None,
         }
     }
 

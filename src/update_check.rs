@@ -56,6 +56,7 @@ pub(crate) fn spawn(auto_update: bool, shutdown: Arc<AtomicBool>) {
     }
     let auto_install = auto_update && RELEASE_BUILD;
     AUTO_INSTALL.store(auto_install, Ordering::Release);
+    crate::diagnostics::update_checker_started(auto_install);
     if auto_update && !RELEASE_BUILD {
         ui::info(
             "UPDATE",

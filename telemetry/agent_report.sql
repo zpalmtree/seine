@@ -57,7 +57,8 @@ WITH decoded AS MATERIALIZED (
     FROM reports GROUP BY 1 ORDER BY 1
 ), samples AS (
     SELECT installation_id, received_at, version, cpu, os, context,
-           sample->'settings' AS settings,
+           -- Schema-14 GPU context is reported in release_health.sql, not cohorts.
+           (sample->'settings') - 'gpu_arch' - 'gpu_kernel_source' - 'amd_perf_level' AS settings,
            (sample->>'hashes')::double precision /
              NULLIF((sample->>'observed_secs')::double precision, 0) AS hps
     FROM reports CROSS JOIN LATERAL jsonb_array_elements(backends) AS sample

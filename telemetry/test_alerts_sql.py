@@ -95,6 +95,17 @@ class AlertSQLTests(unittest.TestCase):
                 self.seed(mutate=lambda p, i, h: mutation(p) if h < 36 else None)
                 self.assertEqual(self.analysis()['performance_cohorts'], [])
 
+    def test_schema14_gpu_context_does_not_split_a_cohort(self):
+        # A first NVRTC build and its cache hit are the same kernel on the same GPU.
+        def mutate(payload, index, hour):
+            payload['backends'][0]['settings'].update(
+                gpu_arch='sm_86',
+                gpu_kernel_source='nvrtc_cached' if hour < 36 else 'nvrtc')
+        self.seed(mutate=mutate)
+        cohort, = self.analysis()['performance_cohorts']
+        self.assertEqual(cohort['installations'], 5)
+        self.assertNotIn('gpu_kernel_source', cohort['settings'])
+
     def test_release_comparison_allows_source_changes_within_one_mode(self):
         self.seed(mutate=lambda p, i, h: p.update(diagnostics={
             'reason': 'periodic', 'mode': 'pool',

@@ -17,7 +17,9 @@ WITH reports AS (
       AND coalesce(payload #>> '{diagnostics,reason}', 'periodic') = 'periodic'
 ), samples AS (
     SELECT installation_id, received_at, version, hardware, build, period,
-           sample->'settings' AS settings,
+           -- Schema-14 GPU context stays out of cohorts: the kernel source differs
+           -- between otherwise identical runs (a first build, then its cache).
+           (sample->'settings') - 'gpu_arch' - 'gpu_kernel_source' - 'amd_perf_level' AS settings,
            (sample->>'hashes')::double precision /
              NULLIF((sample->>'observed_secs')::double precision, 0) AS hps
     FROM reports CROSS JOIN LATERAL jsonb_array_elements(payload->'backends') sample

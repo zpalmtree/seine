@@ -10,7 +10,8 @@ import agent_report
 
 
 class BriefingTests(unittest.TestCase):
-    def run_briefing(self, quality, query_failure=False, diagnostic_status='unavailable', tuning=None):
+    def run_briefing(self, quality, query_failure=False, diagnostic_status='unavailable', tuning=None,
+                     release=None):
         results = [
             SimpleNamespace(returncode=0, stdout='service healthy', stderr=''),
             SimpleNamespace(returncode=0, stdout=json.dumps(quality), stderr=''),
@@ -19,6 +20,7 @@ class BriefingTests(unittest.TestCase):
                             stderr='query failed' if query_failure else ''),
             SimpleNamespace(returncode=0, stdout=json.dumps({'status': diagnostic_status}), stderr=''),
             SimpleNamespace(returncode=0, stdout=json.dumps(tuning or {'status': 'unavailable', 'ranked_hints': []}), stderr=''),
+            SimpleNamespace(returncode=0, stdout=json.dumps(release or {'status': 'unavailable'}), stderr=''),
         ]
         output = io.StringIO()
         with patch.object(agent_report, 'remote', side_effect=results), \
@@ -68,6 +70,19 @@ class BriefingTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn('issue clusters', briefing['diagnostic_assessment'])
         self.assertEqual(briefing['telemetry']['performance_candidates'], [])
+
+    def test_release_health_states_keep_distinct_meaning(self):
+        code, missing = self.run_briefing({'status': 'ok'})
+        self.assertEqual(code, 0)
+        self.assertIn('unknown, not healthy', missing['release_health_assessment'])
+        code, attention = self.run_briefing({'status': 'ok'}, release={'status': 'attention'})
+        self.assertEqual(code, 1)
+        self.assertIn('install_failure_stages', attention['release_health_assessment'])
+        self.assertEqual(attention['diagnostic_assessment'], missing['diagnostic_assessment'])
+        code, ok = self.run_briefing({'status': 'ok'}, release={'status': 'ok', 'amd': {}})
+        self.assertEqual(code, 0)
+        self.assertIn('amd_gpu_not_mining', ok['release_health_assessment'])
+        self.assertEqual(ok['release_health']['amd'], {})
 
 
 if __name__ == '__main__':

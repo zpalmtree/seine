@@ -66,8 +66,10 @@ def evaluate(results):
                     severity='info' if legacy else 'warning'))
     diagnostics = results.get('diagnostics')
     if diagnostics is not None:
-        for field, title in [('recent_error_versions', 'miner errors/quarantines'), ('recent_unclean_versions', 'unclean previous runs (not proof of crashes)')]:
-            for row in diagnostics[field]:
+        for field, title in [('recent_error_versions', 'miner errors/quarantines'), ('recent_unclean_versions', 'unclean previous runs (not proof of crashes)'),
+                             ('recent_install_failure_versions', 'failed self-update installs'),
+                             ('recent_unsupported_work_versions', 'mining paused on work this build cannot mine (these miners need an update)')]:
+            for row in diagnostics.get(field, []):
                 count = row['affected_installations']
                 if count >= 3:
                     version = label(row['version'])

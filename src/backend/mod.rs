@@ -1025,6 +1025,9 @@ pub trait PowBackend: Send + Sync {
             cpu_backing_mib: None,
             cpu_affinity: None,
             pow: None,
+            gpu_arch: None,
+            gpu_kernel_source: None,
+            amd_perf_level: None,
         }
     }
 

@@ -46,13 +46,14 @@ def main():
         ('telemetry', REMOTE_SQL, Path(__file__).with_suffix('.sql').read_text()),
         ('diagnostics', REMOTE_SQL, Path(__file__).with_name('diagnostics.sql').read_text()),
         ('tuning', REMOTE_SQL, Path(__file__).with_name('tuning_report.sql').read_text()),
+        ('release_health', REMOTE_SQL, Path(__file__).with_name('release_health.sql').read_text()),
     ):
         try:
             result = remote(args.host, command, data)
             if result.returncode:
                 briefing[key] = {'status': 'error', 'detail': (result.stderr or result.stdout).strip()[:1000]}
                 failed = True
-            elif key in ('telemetry', 'data_quality', 'diagnostics', 'tuning'):
+            elif key in ('telemetry', 'data_quality', 'diagnostics', 'tuning', 'release_health'):
                 briefing[key] = json.loads(result.stdout)
             else:
                 briefing[key] = {'status': 'ok', 'detail': result.stdout.strip()}
@@ -132,6 +133,32 @@ def main():
         briefing['tuning_assessment'] = (
             'No paired trials in this window; verify producer release adoption and collector compatibility. '
             'Missing trials do not establish no gain.'
+        )
+    release = briefing.get('release_health', {})
+    briefing['release_health_interpretation'] = (
+        'Schema-14 miners only; coverage shows how many installations per version can report these fields. '
+        'Update, pool, fork and AMD counts are summed over report windows; auto_install, pool settings, '
+        'AMD detection and GPU kernel sources use each installation\'s latest report. '
+        'install_failure_stages records only the last failed stage per report window. '
+        'amd_gpu_not_mining counts installations whose OS lists an AMD display device (pci_devices > 0, '
+        'Linux only) while HIP is unavailable or no AMD GPU was selected, usually missing ROCm; '
+        'hip_unavailable alone is normal on machines without AMD GPUs. nvrtc_failed_prebuilt_ptx means '
+        'NVRTC was installed but failed. Pool counts are booleans and counts, never hosts or memos.'
+    )
+    if release.get('status') == 'error':
+        briefing['release_health_assessment'] = 'Release-health query failed; missing schema-14 aggregates do not establish healthy updates.'
+    elif release.get('status') == 'attention':
+        failed = True
+        briefing['release_health_assessment'] = (
+            'At least three installations of one version reported failed self-update installs, or mining '
+            'paused on work this build cannot mine, within 24 hours. Check install_failure_stages and '
+            'fork_readiness by version; paused miners need an update.'
+        )
+    elif release.get('status') == 'unavailable':
+        briefing['release_health_assessment'] = 'No schema-14 reports yet; update, pool and AMD detection health are unknown, not healthy.'
+    elif release.get('status') == 'ok':
+        briefing['release_health_assessment'] = (
+            'Review install failures, fork readiness, amd_gpu_not_mining and NVRTC fallbacks below the fleet threshold.'
         )
     print(json.dumps(briefing, indent=2))
     return int(failed)

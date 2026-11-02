@@ -72,8 +72,8 @@ which is what Blocknet pools run.
   you name it by IP address, the connection is encrypted without the name check,
   which also suits pools whose certificate does not match the address you use.
 - **Failover.** List several pools with repeated `--pool-url` flags or commas
-  (`a:3333,b:3333`). If Seine cannot connect to or log in to a pool for about
-  30 seconds, it moves to the next one. While on a backup it checks the first pool
+  (`a:3333,b:3333`). If Seine cannot reach a pool for 30 to 40 seconds, or the
+  pool rejects the login twice, it moves to the next one. While on a backup it checks the first pool
   every few minutes and switches back between shares once that pool answers.
   The saved config keeps the whole list.
 - **Proxy.** `--pool-proxy socks5://host:port` reaches every pool through a

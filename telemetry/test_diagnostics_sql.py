@@ -198,6 +198,30 @@ class DiagnosticSQLTests(unittest.TestCase):
         self.assertEqual(result['unclean_run_clusters'][0]['installations_with_truncated_previous_events'], 1)
         self.assertNotIn(identity, json.dumps(result))
 
+    def test_schema14_unsupported_work_is_a_typed_warning_cluster(self):
+        fixture = json.loads((Path(__file__).parent / 'schema14-fixture.json').read_text())
+        for _ in range(3):
+            self.insert_diagnostic(fixture)
+        report = self.diagnostics()
+        cluster, = report['issue_clusters']
+        self.assertEqual(cluster['detail'], {'reason': 'unsupported_work', 'operation': 'receive_work'})
+        self.assertEqual(cluster['affected_installations'], 3)
+        self.assertEqual(report['recent_error_versions'], [])
+        # The fixture also pauses and fails an install on all three installations.
+        self.assertEqual(report['status'], 'attention')
+
+    def test_schema14_install_failures_and_pauses_reach_alert_counts(self):
+        fixture = json.loads((Path(__file__).parent / 'schema14-fixture.json').read_text())
+        for _ in range(3):
+            self.insert_diagnostic(fixture)
+        alerts = json.loads(self.query((Path(__file__).parent / 'diagnostic_alerts.sql').read_text()))
+        version = fixture['miner_version']
+        self.assertEqual(alerts['recent_install_failure_versions'],
+                         [{'version': version, 'affected_installations': 3}])
+        self.assertEqual(alerts['recent_unsupported_work_versions'],
+                         [{'version': version, 'affected_installations': 3}])
+        self.assertEqual(alerts['status'], 'attention')
+
     def test_unique_failure_is_not_hidden_by_common_warning_limit(self):
         fixture = json.loads((Path(__file__).parent / 'diagnostics-fixture.json').read_text())
         for line in range(40):

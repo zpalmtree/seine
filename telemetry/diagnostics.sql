@@ -109,6 +109,18 @@ WITH reports AS (
     FROM events WHERE received_at >= now() - interval '24 hours'
       AND event->>'code' IN ('error','backend_error','backend_quarantined','run_failed','rust_panic')
     GROUP BY 1
+), recent_install_failures AS (
+    SELECT version, count(DISTINCT installation_id) AS affected_installations
+    FROM covered
+    WHERE received_at >= now() - interval '24 hours'
+      AND (diagnostics #>> '{update,install_failures}')::bigint > 0
+    GROUP BY 1
+), recent_paused AS (
+    SELECT version, count(DISTINCT installation_id) AS affected_installations
+    FROM covered
+    WHERE received_at >= now() - interval '24 hours'
+      AND (diagnostics->>'unsupported_work_paused_secs')::bigint > 0
+    GROUP BY 1
 ), pool_connection AS (
     -- Pool connection warnings (resolve, connect, read, write, login and
     -- connection-limit refusals). Fleet-wide spikes against the prior day
@@ -143,6 +155,8 @@ SELECT jsonb_build_object(
     'reports_with_dropped_diagnostics', (SELECT count(*) FROM covered WHERE (diagnostics->>'dropped_events')::bigint > 0 OR (diagnostics->>'dropped_backend_samples')::bigint > 0),
     'recent_error_versions', coalesce((SELECT jsonb_agg(recent_errors ORDER BY version) FROM recent_errors), '[]'::jsonb),
     'recent_unclean_versions', coalesce((SELECT jsonb_agg(recent_unclean ORDER BY version) FROM recent_unclean), '[]'::jsonb),
+    'recent_install_failure_versions', coalesce((SELECT jsonb_agg(r ORDER BY version) FROM recent_install_failures r), '[]'::jsonb),
+    'recent_unsupported_work_versions', coalesce((SELECT jsonb_agg(r ORDER BY version) FROM recent_paused r), '[]'::jsonb),
     'pool_connection_warnings', jsonb_build_object(
         'last_hour_installations', (SELECT count(DISTINCT installation_id) FROM pool_connection WHERE received_at >= now() - interval '1 hour'),
         'last_hour_limit_installations', (SELECT count(DISTINCT installation_id) FROM pool_connection WHERE received_at >= now() - interval '1 hour' AND refused_at_limit),
@@ -150,7 +164,9 @@ SELECT jsonb_build_object(
         'baseline_hourly_installations', (SELECT coalesce(sum(installations), 0) / 24.0 FROM pool_connection_hours)
     ),
     'status', CASE WHEN EXISTS (SELECT 1 FROM recent_errors WHERE affected_installations >= 3)
-                    OR EXISTS (SELECT 1 FROM recent_unclean WHERE affected_installations >= 3) THEN 'attention'
+                    OR EXISTS (SELECT 1 FROM recent_unclean WHERE affected_installations >= 3)
+                    OR EXISTS (SELECT 1 FROM recent_install_failures WHERE affected_installations >= 3)
+                    OR EXISTS (SELECT 1 FROM recent_paused WHERE affected_installations >= 3) THEN 'attention'
                    WHEN NOT EXISTS (SELECT 1 FROM covered) THEN 'unavailable' ELSE 'ok' END
 );
 ROLLBACK;

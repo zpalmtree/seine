@@ -25,7 +25,9 @@ CREATE OR REPLACE VIEW telemetry_backend_performance AS
 WITH samples AS (
     SELECT installation_id, report_id, payload->>'miner_version' AS miner_version,
            payload #>> '{hardware,cpu_model}' AS cpu_model,
-           payload #>> '{hardware,os}' AS os, sample->'settings' AS settings,
+           payload #>> '{hardware,os}' AS os,
+           -- Schema-14 GPU context stays out of cohorts; see release_health.sql.
+           (sample->'settings') - 'gpu_arch' - 'gpu_kernel_source' - 'amd_perf_level' AS settings,
            jsonb_build_object(
                'os_version', payload #> '{hardware,os_version}',
                'runtime_environment', payload #> '{hardware,runtime_environment}',

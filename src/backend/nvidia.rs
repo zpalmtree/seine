@@ -263,6 +263,40 @@ mod library_tests {
 mod blake2b;
 
 const CUDA_KERNEL_SRC: &str = include_str!("nvidia_kernel.cu");
+
+/// Per-device architecture and kernel source for telemetry. The engine built
+/// last for a device (the mining engine, after any autotune) wins.
+static GPU_TELEMETRY: Mutex<
+    std::collections::BTreeMap<u32, (Option<String>, Option<seine_telemetry::GpuKernelSource>)>,
+> = Mutex::new(std::collections::BTreeMap::new());
+
+fn note_gpu_telemetry(
+    device_index: u32,
+    compute_capability: Option<(u32, u32)>,
+    source: Option<seine_telemetry::GpuKernelSource>,
+) {
+    let arch = compute_capability
+        .filter(|(major, _)| *major > 0)
+        .map(|(major, minor)| format!("sm_{major}{minor}"))
+        .filter(|arch| seine_telemetry::valid_gpu_arch(arch));
+    let mut map = GPU_TELEMETRY.lock().unwrap_or_else(|e| e.into_inner());
+    let entry = map.entry(device_index).or_insert((None, None));
+    if arch.is_some() {
+        entry.0 = arch;
+    }
+    if source.is_some() {
+        entry.1 = source;
+    }
+}
+
+fn gpu_telemetry(device_index: u32) -> (Option<String>, Option<seine_telemetry::GpuKernelSource>) {
+    GPU_TELEMETRY
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&device_index)
+        .cloned()
+        .unwrap_or((None, None))
+}
 /// `CUDA_KERNEL_SRC` built as PTX for the network's Argon2 parameters, one per
 /// group of `arch_fill_defines`, loaded through the driver when NVRTC is not
 /// installed. The Blackwell file targets compute_100 and needs a CUDA 12.8
@@ -909,6 +943,14 @@ impl CudaArgon2Engine {
         let prebuilt_module = prebuilt_argon2_cubin(cc_major_u32, cc_minor_u32, m_blocks, t_cost)
             .and_then(|cubin| ctx.load_module(Ptx::from_binary(cubin.to_vec())).ok());
         let mut compiled = use_nvrtc && prebuilt_module.is_none();
+        use seine_telemetry::GpuKernelSource;
+        let mut kernel_source = if prebuilt_module.is_some() {
+            GpuKernelSource::PrebuiltCubin
+        } else if !use_nvrtc {
+            GpuKernelSource::PrebuiltPtx
+        } else {
+            GpuKernelSource::Nvrtc
+        };
         let load_prebuilt_ptx = || {
             let ptx = prebuilt_argon2_ptx(cc_major_u32, cc_minor_u32, m_blocks, t_cost)
                 .ok_or_else(|| {
@@ -933,6 +975,7 @@ impl CudaArgon2Engine {
                         ),
                     );
                     compiled = false;
+                    kernel_source = GpuKernelSource::NvrtcFailedPrebuiltPtx;
                     Ok(module)
                 }
                 Err(prebuilt_err) => Err(nvrtc_err.context(format!("{prebuilt_err:#}"))),
@@ -944,7 +987,10 @@ impl CudaArgon2Engine {
             load_prebuilt_ptx()?
         } else if let Some(cached) = load_cached_cubin(&cache_path) {
             match ctx.load_module(Ptx::from_binary(cached)) {
-                Ok(module) => module,
+                Ok(module) => {
+                    kernel_source = GpuKernelSource::NvrtcCached;
+                    module
+                }
                 Err(err) => {
                     let _ = fs::remove_file(&cache_path);
                     let nvrtc = compile_cuda_module_with_nvrtc_fallback(
@@ -993,6 +1039,11 @@ impl CudaArgon2Engine {
             });
             nvrtc_or_prebuilt(nvrtc)?
         };
+        note_gpu_telemetry(
+            device_index,
+            Some((cc_major_u32, cc_minor_u32)),
+            Some(kernel_source),
+        );
         let kernel_nonfused = module
             .load_function("argon2id_fill_kernel")
             .map_err(|err| anyhow!("failed to load CUDA kernel function: {err:?}"))?;
@@ -1962,6 +2013,10 @@ impl PowBackend for NvidiaBackend {
     fn hardware_telemetry(&self) -> seine_telemetry::BackendSettings {
         let device = self.resolved_device.try_read().ok().and_then(|d| d.clone());
         let tuning = self.kernel_tuning.try_read().ok().and_then(|t| *t);
+        let (gpu_arch, gpu_kernel_source) = device
+            .as_ref()
+            .map(|d| gpu_telemetry(d.index))
+            .unwrap_or((None, None));
         seine_telemetry::BackendSettings {
             backend: "nvidia".into(),
             device_model: device.as_ref().map(|d| d.name.clone()),
@@ -1978,6 +2033,9 @@ impl PowBackend for NvidiaBackend {
                 .blake2b_active
                 .load(Ordering::Acquire)
                 .then(|| "blake2b".to_string()),
+            gpu_arch,
+            gpu_kernel_source,
+            amd_perf_level: None,
         }
     }
 
@@ -2037,6 +2095,11 @@ impl PowBackend for NvidiaBackend {
         // Without NVRTC, Argon2 runs from the prebuilt PTX where one fits this
         // GPU and the network's parameters; otherwise the backend stays idle on
         // Argon2 work (`supports_pow`) and mines BLAKE2b.
+        note_gpu_telemetry(
+            selected.index,
+            query_cuda_compute_capability(selected.index),
+            None,
+        );
         let argon2_supported = argon2_uses_nvrtc()
             || pow_params().ok().is_some_and(|params| {
                 let (cc_major, cc_minor) =

@@ -1755,8 +1755,24 @@ pub(crate) fn detect_amd_devices(
     include_integrated: bool,
     raise_perf_level: bool,
 ) -> Result<Vec<DetectedGpu>> {
-    let mut devices = crate::backend::amd::query_amd_devices()?;
+    // Startup detection (not device listing) feeds telemetry.
+    let record = raise_perf_level;
+    let mut devices = match crate::backend::amd::query_amd_devices() {
+        Ok(devices) => devices,
+        Err(err) => {
+            if record {
+                crate::diagnostics::set_amd_detection(seine_telemetry::AmdDetection {
+                    hip_unavailable: true,
+                    pci_devices: amd_pci_display_devices(),
+                    ..Default::default()
+                });
+            }
+            return Err(err);
+        }
+    };
+    let found = devices.len() as u32;
     devices.retain(|device| include_integrated || !device.integrated);
+    let integrated_skipped = found - devices.len() as u32;
     for device in &devices {
         if !raise_perf_level || !crate::backend::amd::supports_wavefront_size(device.wavefront_size)
         {
@@ -1773,9 +1789,43 @@ pub(crate) fn detect_amd_devices(
             &outcome,
         ));
     }
+    let considered = devices.len() as u32;
     let (usable, skipped) = partition_supported_amd_devices(devices);
     notices.extend(skipped);
+    if record {
+        crate::diagnostics::set_amd_detection(seine_telemetry::AmdDetection {
+            hip_unavailable: false,
+            found: found.min(64),
+            selected: (usable.len() as u32).min(64),
+            integrated_skipped,
+            unsupported_skipped: considered - usable.len() as u32,
+            pci_devices: amd_pci_display_devices(),
+        });
+    }
     Ok(usable)
+}
+
+/// AMD display devices (vendor 0x1002, PCI class 0x03), integrated or
+/// discrete, as the OS lists them whether or not HIP can use them. Linux only.
+#[cfg(all(feature = "amd", any(target_os = "linux", windows)))]
+fn amd_pci_display_devices() -> Option<u32> {
+    if !cfg!(target_os = "linux") {
+        return None;
+    }
+    let entries = std::fs::read_dir("/sys/bus/pci/devices").ok()?;
+    let read = |path: std::path::PathBuf| {
+        std::fs::read_to_string(path)
+            .map(|value| value.trim().to_ascii_lowercase())
+            .unwrap_or_default()
+    };
+    let count = entries
+        .flatten()
+        .filter(|entry| {
+            read(entry.path().join("vendor")) == "0x1002"
+                && read(entry.path().join("class")).starts_with("0x03")
+        })
+        .count();
+    Some(count.min(64) as u32)
 }
 
 #[cfg(not(all(feature = "amd", any(target_os = "linux", windows))))]

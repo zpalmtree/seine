@@ -153,15 +153,34 @@ pub(crate) fn install(release: Release) -> Result<Outcome> {
 /// Looks up the newest stable release through the GitHub API, falling back to
 /// the release web page's redirect when the API fails or rate-limits.
 pub(crate) fn latest_release() -> Result<Release> {
+    use crate::diagnostics::{update_checked, UpdateCheck};
     let client = lookup_client(reqwest::redirect::Policy::default())?;
     match lookup_release_api(&client, RELEASE_API_URL) {
-        Ok(release) => Ok(release),
+        Ok(release) => {
+            update_checked(UpdateCheck::Api);
+            Ok(release)
+        }
         Err(api_err) => {
             let client = lookup_client(reqwest::redirect::Policy::none())?;
-            lookup_release_web(&client, RELEASE_WEB_LATEST_URL, RELEASE_DOWNLOAD_BASE_URL)
-                .map_err(|web_err| anyhow!("{api_err:#}; release page: {web_err:#}"))
+            let release =
+                lookup_release_web(&client, RELEASE_WEB_LATEST_URL, RELEASE_DOWNLOAD_BASE_URL)
+                    .map_err(|web_err| anyhow!("{api_err:#}; release page: {web_err:#}"));
+            update_checked(if release.is_ok() {
+                UpdateCheck::Web
+            } else {
+                UpdateCheck::Failed
+            });
+            release
         }
     }
+}
+
+/// Records a failed install step for telemetry, passing the result through.
+fn at_stage<T>(stage: seine_telemetry::UpdateFailure, result: Result<T>) -> Result<T> {
+    if result.is_err() {
+        crate::diagnostics::update_install_failed(stage);
+    }
+    result
 }
 
 fn lookup_client(redirect: reqwest::redirect::Policy) -> Result<reqwest::blocking::Client> {
@@ -273,32 +292,59 @@ fn install_fetched(
             latest: release.tag_name,
         });
     }
-    let name = asset_name().ok_or_else(|| {
-        anyhow!(
-            "no release build for {}-{}; build from source instead",
-            std::env::consts::OS,
-            std::env::consts::ARCH
-        )
-    })?;
-    let asset = find_asset(&release.assets, name)?;
-    let checksums = find_asset(&release.assets, CHECKSUMS_ASSET)?;
-    let signature = find_asset(&release.assets, SIGNATURE_ASSET).map_err(|_| {
-        anyhow!(
-            "release {} has no {SIGNATURE_ASSET}; refusing to install an unsigned release",
-            release.tag_name
-        )
-    })?;
-    let checksum_bytes = download_bytes(&client, &checksums.browser_download_url)?;
-    let signature_bytes = download_bytes(&client, &signature.browser_download_url)?;
-    verify_release_signature(&checksum_bytes, &signature_bytes, public_key).with_context(|| {
-        format!(
-            "release {} is not signed by the seine release key",
-            release.tag_name
-        )
-    })?;
-    let checksum_text =
-        String::from_utf8(checksum_bytes).context("checksum list is not UTF-8 text")?;
-    let expected = expected_sha256(&checksum_text, name)?;
+    use seine_telemetry::UpdateFailure;
+    let name = at_stage(
+        UpdateFailure::NoBuild,
+        asset_name().ok_or_else(|| {
+            anyhow!(
+                "no release build for {}-{}; build from source instead",
+                std::env::consts::OS,
+                std::env::consts::ARCH
+            )
+        }),
+    )?;
+    let (asset, checksums, signature) = at_stage(
+        UpdateFailure::MissingAsset,
+        (|| {
+            let asset = find_asset(&release.assets, name)?;
+            let checksums = find_asset(&release.assets, CHECKSUMS_ASSET)?;
+            let signature = find_asset(&release.assets, SIGNATURE_ASSET).map_err(|_| {
+                anyhow!(
+                    "release {} has no {SIGNATURE_ASSET}; refusing to install an unsigned release",
+                    release.tag_name
+                )
+            })?;
+            Ok((asset, checksums, signature))
+        })(),
+    )?;
+    let (checksum_bytes, signature_bytes) = at_stage(
+        UpdateFailure::Download,
+        (|| {
+            Ok((
+                download_bytes(client, &checksums.browser_download_url)?,
+                download_bytes(client, &signature.browser_download_url)?,
+            ))
+        })(),
+    )?;
+    at_stage(
+        UpdateFailure::Signature,
+        verify_release_signature(&checksum_bytes, &signature_bytes, public_key).with_context(
+            || {
+                format!(
+                    "release {} is not signed by the seine release key",
+                    release.tag_name
+                )
+            },
+        ),
+    )?;
+    let expected = at_stage(
+        UpdateFailure::Checksum,
+        (|| {
+            let checksum_text =
+                String::from_utf8(checksum_bytes).context("checksum list is not UTF-8 text")?;
+            expected_sha256(&checksum_text, name)
+        })(),
+    )?;
 
     let dir = exe
         .parent()
@@ -306,13 +352,19 @@ fn install_fetched(
     let archive = dir.join(format!(".seine-update-{name}"));
     let staged = dir.join(format!(".seine-update-{}", executable_name()));
     let result = stage_update(client, asset, &expected, &archive, &staged)
-        .and_then(|()| verify(&staged, &release.tag_name))
-        .and_then(|()| replace_executable(exe, &staged));
+        .and_then(|()| {
+            at_stage(
+                UpdateFailure::StartupProbe,
+                verify(&staged, &release.tag_name),
+            )
+        })
+        .and_then(|()| at_stage(UpdateFailure::Replace, replace_executable(exe, &staged)));
     let _ = fs::remove_file(&archive);
     if result.is_err() {
         let _ = fs::remove_file(&staged);
     }
     result?;
+    crate::diagnostics::update_installed();
     // The OS may report a deleted or renamed image after replacement.
     let _ = UPDATED_EXECUTABLE.set(exe.to_path_buf());
     Ok(Outcome::Updated {
@@ -431,30 +483,48 @@ fn stage_update(
     archive: &Path,
     staged: &Path,
 ) -> Result<()> {
-    if asset.size > MAX_ARCHIVE_BYTES {
-        bail!(
-            "release asset {} is implausibly large ({} bytes)",
-            asset.name,
-            asset.size
-        );
-    }
-    download_file(client, &asset.browser_download_url, archive)?;
-    let actual = sha256_file(archive)?;
-    if actual != expected_sha256 {
-        bail!(
-            "checksum mismatch for {}: release lists {expected_sha256}, download has {actual}",
-            asset.name
-        );
-    }
-    extract_executable(archive, staged)
-        .with_context(|| format!("cannot extract {} from {}", executable_name(), asset.name))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(staged, fs::Permissions::from_mode(0o755))
-            .context("cannot mark the new executable runnable")?;
-    }
-    Ok(())
+    use seine_telemetry::UpdateFailure;
+    at_stage(
+        UpdateFailure::Download,
+        (|| {
+            if asset.size > MAX_ARCHIVE_BYTES {
+                bail!(
+                    "release asset {} is implausibly large ({} bytes)",
+                    asset.name,
+                    asset.size
+                );
+            }
+            download_file(client, &asset.browser_download_url, archive)
+        })(),
+    )?;
+    at_stage(
+        UpdateFailure::Checksum,
+        (|| {
+            let actual = sha256_file(archive)?;
+            if actual != expected_sha256 {
+                bail!(
+                "checksum mismatch for {}: release lists {expected_sha256}, download has {actual}",
+                asset.name
+            );
+            }
+            Ok(())
+        })(),
+    )?;
+    at_stage(
+        UpdateFailure::Extract,
+        (|| {
+            extract_executable(archive, staged).with_context(|| {
+                format!("cannot extract {} from {}", executable_name(), asset.name)
+            })?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(staged, fs::Permissions::from_mode(0o755))
+                    .context("cannot mark the new executable runnable")?;
+            }
+            Ok(())
+        })(),
+    )
 }
 
 /// Runs the staged executable with `--version` and requires it to exit

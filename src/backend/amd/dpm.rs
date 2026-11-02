@@ -43,17 +43,62 @@ pub(crate) fn raises_level_for(gcn_arch_name: &str) -> bool {
     gcn_arch_name.trim().starts_with("gfx11")
 }
 
+/// Startup outcome per PCI address, for telemetry.
+static TELEMETRY_LEVELS: Mutex<Vec<(String, seine_telemetry::AmdPerfLevel)>> =
+    Mutex::new(Vec::new());
+
+/// The performance-level outcome recorded for a device at startup.
+pub(crate) fn telemetry_level(pci_address: &str) -> Option<seine_telemetry::AmdPerfLevel> {
+    TELEMETRY_LEVELS
+        .lock()
+        .ok()?
+        .iter()
+        .find(|(address, _)| address == pci_address)
+        .map(|(_, level)| *level)
+}
+
+fn note_telemetry_level(pci_address: &str, level: seine_telemetry::AmdPerfLevel) {
+    if let Ok(mut levels) = TELEMETRY_LEVELS.lock() {
+        match levels
+            .iter_mut()
+            .find(|(address, _)| address == pci_address)
+        {
+            Some(entry) => entry.1 = level,
+            None => levels.push((pci_address.to_string(), level)),
+        }
+    }
+}
+
 /// Raise the device's performance level to "high" if it is not already there,
 /// remembering the previous value for [`restore_performance_levels`].
 pub(crate) fn raise_performance_level(pci_address: &str, gcn_arch_name: &str) -> PerfLevelOutcome {
+    use seine_telemetry::AmdPerfLevel;
     // The level is a Linux amdgpu sysfs control.
-    if cfg!(not(target_os = "linux"))
-        || std::env::var_os(KEEP_ENV).is_some()
-        || !raises_level_for(gcn_arch_name)
-    {
+    let skipped = if cfg!(not(target_os = "linux")) {
+        Some(AmdPerfLevel::Unavailable)
+    } else if std::env::var_os(KEEP_ENV).is_some() {
+        Some(AmdPerfLevel::KeptByOperator)
+    } else if !raises_level_for(gcn_arch_name) {
+        Some(AmdPerfLevel::NotRaisedForArch)
+    } else {
+        None
+    };
+    if let Some(level) = skipped {
+        note_telemetry_level(pci_address, level);
         return PerfLevelOutcome::Skipped;
     }
-    raise_at_path(&level_path_for_pci(pci_address))
+    let outcome = raise_at_path(&level_path_for_pci(pci_address));
+    note_telemetry_level(
+        pci_address,
+        match &outcome {
+            PerfLevelOutcome::AlreadyHigh => AmdPerfLevel::AlreadyHigh,
+            PerfLevelOutcome::Raised { .. } => AmdPerfLevel::Raised,
+            PerfLevelOutcome::NeedsRoot { .. } => AmdPerfLevel::NeedsRoot,
+            PerfLevelOutcome::Skipped => AmdPerfLevel::KeptByOperator,
+            PerfLevelOutcome::Unavailable => AmdPerfLevel::Unavailable,
+        },
+    );
+    outcome
 }
 
 pub(crate) fn raise_at_path(path: &Path) -> PerfLevelOutcome {

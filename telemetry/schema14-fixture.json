@@ -1,0 +1,164 @@
+{
+  "schema_version": 14,
+  "installation_id": "11111111111111111111111111111111",
+  "report_id": "22222222222222222222222222222222",
+  "miner_version": "v0.3.0-fixture",
+  "build_target": "x86_64-unknown-linux-gnu",
+  "build_features": "nvidia,amd",
+  "debug_build": false,
+  "hardware": {
+    "os": "linux",
+    "os_version": "24.04",
+    "runtime_environment": "native",
+    "cpu_model": "Example CPU (fixture)",
+    "cpu_vendor": "AuthenticAMD",
+    "cpu_family": 26,
+    "cpu_model_id": 68,
+    "logical_cpus": 32,
+    "physical_cores": 16,
+    "memory_gib": 64,
+    "supported_cpu_kernels": [
+      "avx2",
+      "avx512"
+    ],
+    "resources": {
+      "allowed_logical_cpus": 32,
+      "available_parallelism": 32,
+      "effective_memory_gib": 64,
+      "available_memory_gib": 40
+    }
+  },
+  "window_secs": 3600,
+  "backends": [
+    {
+      "instance": 1,
+      "settings": {
+        "backend": "cpu",
+        "device_model": null,
+        "memory_mib": null,
+        "lanes": 8,
+        "cpu_kernel": "avx512",
+        "cpu_page_mode": "regular",
+        "gpu_register_cap": null,
+        "gpu_launch_depth": null,
+        "cpu_backing_mib": [
+          0,
+          0,
+          0,
+          16384,
+          0
+        ],
+        "cpu_affinity": "auto"
+      },
+      "hashes": 36000,
+      "observed_secs": 3600.0,
+      "settings_changed": false
+    },
+    {
+      "instance": 2,
+      "settings": {
+        "backend": "nvidia",
+        "device_model": "Example NVIDIA GPU (fixture)",
+        "memory_mib": 24576,
+        "lanes": 64,
+        "cpu_kernel": null,
+        "cpu_page_mode": null,
+        "gpu_register_cap": 128,
+        "gpu_launch_depth": 2,
+        "gpu_arch": "sm_86",
+        "gpu_kernel_source": "nvrtc_cached"
+      },
+      "hashes": 360000,
+      "observed_secs": 3600.0,
+      "settings_changed": false
+    },
+    {
+      "instance": 3,
+      "settings": {
+        "backend": "amd",
+        "device_model": "Example AMD GPU (fixture)",
+        "memory_mib": 24576,
+        "lanes": 48,
+        "cpu_kernel": null,
+        "cpu_page_mode": null,
+        "gpu_register_cap": null,
+        "gpu_launch_depth": null,
+        "gpu_arch": "gfx1100",
+        "gpu_kernel_source": "hiprtc",
+        "amd_perf_level": "needs_root"
+      },
+      "hashes": 180000,
+      "observed_secs": 3600.0,
+      "settings_changed": false
+    }
+  ],
+  "diagnostics": {
+    "build_commit": "abcdef123456",
+    "source_fingerprint": "1234abcd",
+    "mode": "pool",
+    "requested_backends": [
+      "cpu",
+      "nvidia",
+      "amd"
+    ],
+    "requested_cpu_threads": 8,
+    "cpu_page_mode": "regular",
+    "cpu_affinity": "auto",
+    "cpu_autotune": true,
+    "uptime_secs": 3600,
+    "reason": "periodic",
+    "previous_run_unclean": false,
+    "dropped_events": 0,
+    "dropped_backend_samples": 0,
+    "events": [
+      {
+        "code": "warning",
+        "kind": "general",
+        "source": "src/miner/mining_pool.rs",
+        "line": 200,
+        "backend": null,
+        "count": 3,
+        "first_seen_secs": 900,
+        "last_seen_secs": 1020,
+        "phase": "mining",
+        "detail": {
+          "reason": "unsupported_work",
+          "operation": "receive_work"
+        }
+      }
+    ],
+    "phase": "mining",
+    "nvidia_software": {
+      "driver_cuda_version": 12080,
+      "nvrtc_version": 12090
+    },
+    "update": {
+      "auto_install": true,
+      "checks_api": 1,
+      "checks_web": 1,
+      "checks_failed": 1,
+      "installs": 0,
+      "install_failures": 1,
+      "last_install_failure": "signature"
+    },
+    "pool": {
+      "tls": true,
+      "socks": false,
+      "payout_memo": true,
+      "backup_pools": 2,
+      "failovers": 1,
+      "secs_on_backup": 600,
+      "reconnects": 3,
+      "refills": 4
+    },
+    "amd_detection": {
+      "hip_unavailable": false,
+      "found": 2,
+      "selected": 1,
+      "integrated_skipped": 1,
+      "unsupported_skipped": 0,
+      "pci_devices": 2
+    },
+    "unsupported_work_paused_secs": 120
+  }
+}

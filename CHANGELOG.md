@@ -23,7 +23,7 @@ Upgrade notes:
 - Discrete AMD GPUs now mine by default. Use `--backend cpu` (or `--backend cpu,nvidia`) to keep the previous behaviour.
 - AMD GPUs need the ROCm HIP runtime on Linux or the AMD graphics driver on Windows. On Linux RDNA3 cards, run Seine as root or apply the performance-level command it prints at startup for full speed; see [AMD setup](https://github.com/zpalmtree/seine/blob/v0.3.0/docs/guides/amd.md).
 - Exchange payouts need a compatible pool and your exchange deposit memo; see [exchange payouts](https://github.com/zpalmtree/seine/blob/v0.3.0/docs/EXCHANGE_PAYOUTS.md).
-- Self-hosted telemetry collectors need the schema 13 update before upgrading miners.
+- Self-hosted telemetry collectors need the schema 14 update before upgrading miners.
 
 ## v0.2.45
 

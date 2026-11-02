@@ -391,9 +391,47 @@ impl Drop for AmdBackend {
     }
 }
 
+/// Kernel source per device index for telemetry; the engine built last wins.
+static KERNEL_SOURCES: std::sync::Mutex<Vec<(u32, seine_telemetry::GpuKernelSource)>> =
+    std::sync::Mutex::new(Vec::new());
+
+pub(crate) fn note_kernel_source(device_index: u32, source: seine_telemetry::GpuKernelSource) {
+    if let Ok(mut sources) = KERNEL_SOURCES.lock() {
+        match sources.iter_mut().find(|(index, _)| *index == device_index) {
+            Some(entry) => entry.1 = source,
+            None => sources.push((device_index, source)),
+        }
+    }
+}
+
+fn kernel_source(device_index: u32) -> Option<seine_telemetry::GpuKernelSource> {
+    KERNEL_SOURCES
+        .lock()
+        .ok()?
+        .iter()
+        .find(|(index, _)| *index == device_index)
+        .map(|(_, source)| *source)
+}
+
+/// `gfx1100` from a HIP architecture name such as `gfx1100:sramecc-:xnack-`.
+pub(crate) fn telemetry_arch(gcn_arch_name: &str) -> Option<String> {
+    let arch = gcn_arch_name.split(':').next()?.trim().to_ascii_lowercase();
+    seine_telemetry::valid_gpu_arch(&arch).then_some(arch)
+}
+
 impl PowBackend for AmdBackend {
     fn hardware_telemetry(&self) -> seine_telemetry::BackendSettings {
         let device = self.resolved_device.try_read().ok().and_then(|d| d.clone());
+        let (gpu_arch, gpu_kernel_source, amd_perf_level) = device
+            .as_ref()
+            .map(|d| {
+                (
+                    telemetry_arch(&d.gcn_arch_name),
+                    kernel_source(d.index),
+                    dpm::telemetry_level(&d.pci_address),
+                )
+            })
+            .unwrap_or((None, None, None));
         seine_telemetry::BackendSettings {
             backend: "amd".into(),
             device_model: device.as_ref().map(|d| d.name.clone()),
@@ -412,6 +450,9 @@ impl PowBackend for AmdBackend {
                 .blake2b_active
                 .load(Ordering::Acquire)
                 .then(|| "blake2b".to_string()),
+            gpu_arch,
+            gpu_kernel_source,
+            amd_perf_level,
         }
     }
 
