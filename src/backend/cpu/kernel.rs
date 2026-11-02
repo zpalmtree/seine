@@ -763,6 +763,25 @@ fn release_arena_backing(shared: &Shared, observation: ArenaBackingObservation) 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn large_page_advice_matches_the_windows_failure() {
+        let advice = super::windows_large_page_advice;
+
+        for missing_right in [1300, 1314] {
+            let message = advice(missing_right).expect("missing right has a fix");
+            assert!(message.contains("'Lock pages in memory'"), "{message}");
+            assert!(!message.contains("restart your PC"), "{message}");
+        }
+        for short_of_memory in [8, 14, 1450, 1455] {
+            let message = advice(short_of_memory).expect("low memory has a fix");
+            assert!(message.contains("restart your PC"), "{message}");
+            assert!(!message.contains("Lock pages"), "{message}");
+            assert!(!message.contains("error"), "{message}");
+        }
+        assert!(advice(87).expect("unknown code").contains("(error 87)"));
+        assert_eq!(advice(0), None);
+    }
+
     #[cfg(target_os = "linux")]
     use super::PowArena;
     use super::{handle_found_solution, SolutionDisposition};
@@ -1929,7 +1948,7 @@ fn emit_windows_large_page_diagnostics(
     let Some(arena) = arena.virtual_ref() else {
         emit_warning(
             shared,
-            "VirtualAlloc failed; CPU hashing fell back to heap memory and may suffer extra TLB pressure"
+            "Hashrate could be higher. Windows doesn't have enough free memory, so close other apps and restart Seine."
                 .to_owned(),
         );
         return;
@@ -1942,19 +1961,33 @@ fn emit_windows_large_page_diagnostics(
     // backend event path turns it into a generic display warning.
     crate::diagnostics::allocation_failure(true, block_bytes, Some(i64::from(error)));
 
-    emit_warning(
-        shared,
-        format!(
-            "Windows large-page allocation unavailable for {} MiB per worker (Win32 error {}); using regular VirtualAlloc pages",
-            block_bytes / (1024 * 1024),
-            error,
+    if let Some(advice) = windows_large_page_advice(error) {
+        emit_warning(shared, advice);
+    }
+}
+
+/// Dashboard advice for auto mode falling back from large pages. `error` is the
+/// Win32 code from enabling the privilege or from `VirtualAlloc`; 0 means Windows
+/// reports no large-page support, which the miner cannot change.
+#[cfg(any(target_os = "windows", test))]
+fn windows_large_page_advice(error: u32) -> Option<String> {
+    const GUIDE: &str = "https://seineminer.com/blog/huge-pages-blocknet-mining/";
+    match error {
+        0 => None,
+        // ERROR_NOT_ALL_ASSIGNED, ERROR_PRIVILEGE_NOT_HELD
+        1300 | 1314 => Some(format!(
+            "Hashrate could be higher. Give your Windows account the 'Lock pages in memory' right, then sign out and back in. Guide: {GUIDE}"
+        )),
+        // ERROR_NOT_ENOUGH_MEMORY, ERROR_OUTOFMEMORY, ERROR_NO_SYSTEM_RESOURCES,
+        // ERROR_COMMITMENT_LIMIT. The account already holds the right here.
+        8 | 14 | 1450 | 1455 => Some(
+            "Hashrate could be higher. Windows doesn't have enough free memory for large pages, so restart your PC and start Seine before other apps."
+                .to_owned(),
         ),
-    );
-    emit_warning(
-        shared,
-        "Large-page fix: grant this account 'Lock pages in memory' (SeLockMemoryPrivilege), sign out and back in, then restart Seine"
-            .to_owned(),
-    );
+        _ => Some(format!(
+            "Hashrate could be higher. Windows wouldn't provide large pages (error {error}). Guide: {GUIDE}"
+        )),
+    }
 }
 
 #[cfg(target_os = "windows")]

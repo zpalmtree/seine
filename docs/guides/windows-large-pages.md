@@ -16,8 +16,13 @@ Large-page use requires the mining account to hold **Lock pages in memory**
 `secpol.msc` ships with Windows Pro, Enterprise and Education. On Home editions,
 grant the right with an equivalent tool such as `ntrights`.
 
-Seine never grants the right or triggers a sign-out itself, and it logs the Win32
-fallback reason so benchmark manifests remain interpretable.
+Seine never grants the right or triggers a sign-out itself.
+
+## If Seine says Windows doesn't have enough free memory
+
+Your account already has the right, but Windows can't find enough free memory for
+large pages. This is common once a PC has been running for a while. Restart your
+PC and start Seine before other apps.
 
 ## Page modes
 
