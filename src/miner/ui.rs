@@ -214,6 +214,14 @@ pub(super) fn current_tui_state() -> Option<TuiState> {
     lock(&TUI_STATE).clone()
 }
 
+pub(super) fn set_share_difficulty(difficulty: Option<u64>) {
+    if let Some(state) = current_tui_state() {
+        if let Ok(mut state) = state.lock() {
+            state.share_difficulty = difficulty;
+        }
+    }
+}
+
 /// Names what the miner is doing while there is no mining loop to report it.
 pub(super) fn set_startup_phase(phase: &str) {
     if let Some(state) = current_tui_state() {

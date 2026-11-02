@@ -389,6 +389,9 @@ fn rebind_active_pool_job(
     active_job.register_share_binding(job.job_id.clone(), target);
     active_job.job = job.clone();
 
+    if mode.is_user() {
+        super::ui::set_share_difficulty(job.difficulty);
+    }
     if !mode.is_user() || !log_changes {
         return;
     }
@@ -2127,6 +2130,9 @@ fn apply_submit_ack_difficulty(
     let new_target = difficulty_to_target(difficulty);
     let old_difficulty = job.share_difficulty;
     job.share_difficulty = Some(difficulty);
+    if mode.is_user() {
+        super::ui::set_share_difficulty(Some(difficulty));
+    }
     if new_target == job.target {
         return Ok(());
     }
@@ -2267,6 +2273,9 @@ fn assign_pool_job(
 
     stats.bump_templates();
     let height = job.height;
+    if mode.is_user() {
+        super::ui::set_share_difficulty(job.difficulty);
+    }
     let difficulty_label = job
         .difficulty
         .map(|difficulty| difficulty.to_string())

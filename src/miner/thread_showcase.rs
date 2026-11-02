@@ -669,6 +669,7 @@ fn mining_fixture(state_label: &str, log: &[(LogLevel, &str, &str, f64)]) -> Tui
     state.avg_hashrate = "15.18 KH/s".into();
     state.total_hashes = 1_823_114;
     state.submitted = 212;
+    state.share_difficulty = Some(90);
     state.accepted = 211;
     state.stale_shares = 1;
     state.pool_pending = "0.4182 BNT".into();

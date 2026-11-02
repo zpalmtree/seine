@@ -150,10 +150,11 @@ fn print_exit_summary(state: &TuiState) {
 fn exit_summary_line(state: &super::tui::TuiStateInner) -> String {
     let mut line = format!("seine stopped after {}", state.uptime());
     if state.total_hashes > 0 {
-        let noun = if state.mode == "pool" {
-            "shares"
-        } else {
-            "blocks"
+        let noun = match (state.mode == "pool", state.accepted == 1) {
+            (true, true) => "share",
+            (true, false) => "shares",
+            (false, true) => "block",
+            (false, false) => "blocks",
         };
         line.push_str(&format!(
             ": {} average, {} {noun} accepted",
@@ -599,6 +600,10 @@ mod tests {
         assert!(exit_summary_line(&state).ends_with(": 1.200 kH/s average, 3 shares accepted"));
         state.mode = "daemon".into();
         assert!(exit_summary_line(&state).ends_with("3 blocks accepted"));
+        state.accepted = 1;
+        assert!(exit_summary_line(&state).ends_with("1 block accepted"));
+        state.mode = "pool".into();
+        assert!(exit_summary_line(&state).ends_with("1 share accepted"));
     }
 
     #[test]

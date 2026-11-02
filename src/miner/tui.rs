@@ -108,6 +108,8 @@ pub struct TuiStateInner {
     pub total_hashes: u64,
     pub templates: u64,
     pub submitted: u64,
+    /// The pool's current share difficulty for this miner.
+    pub share_difficulty: Option<u64>,
     pub stale_shares: u64,
     pub accepted: u64,
     /// Resubmits after retryable ("server busy, retry") pool rejects.
@@ -177,6 +179,7 @@ impl TuiStateInner {
             total_hashes: 0,
             templates: 0,
             submitted: 0,
+            share_difficulty: None,
             stale_shares: 0,
             accepted: 0,
             share_retries: 0,
@@ -247,6 +250,7 @@ impl TuiStateInner {
         self.state = "starting".to_string();
         self.blocktemplate_retry_since = None;
         self.round_hashrate = "0.000 H/s".to_string();
+        self.share_difficulty = None;
         self.device_hashrates.clear();
         self.pending_gpus.clear();
         self.pending_gpus_since = None;
@@ -592,10 +596,18 @@ fn draw_compact_dashboard(frame: &mut ratatui::Frame, area: Rect, state: &TuiSta
         ]),
         Line::from(format!("Current: {}", state.round_hashrate)),
         Line::from(format!("Average: {}", state.avg_hashrate)),
-        Line::from(format!(
-            "Accepted: {}  Submitted: {}",
-            state.accepted, state.submitted
-        )),
+        Line::from(if state.mode == "pool" {
+            format!(
+                "Accepted: {}  Difficulty: {}",
+                state.accepted,
+                share_difficulty_display(state)
+            )
+        } else {
+            format!(
+                "Accepted: {}  Submitted: {}",
+                state.accepted, state.submitted
+            )
+        }),
         Line::from(format!(
             "{}: {}  Height: {}",
             if state.mode == "pool" {
@@ -893,19 +905,7 @@ fn draw_stats_wide(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner
     frame.render_widget(network, cols[1]);
 
     // Mining panel
-    let submitted_str = format_u64(state.submitted);
-    let stale_shares_str = rejected_shares_display(state, format_u64);
-    let accepted_str = format_u64(state.accepted);
-    let rejected_or_stale_label = if state.mode == "pool" {
-        "Rejected"
-    } else {
-        "Stale"
-    };
-    let mining_lines = vec![
-        kv_line("Submitted", &submitted_str),
-        kv_line(rejected_or_stale_label, &stale_shares_str),
-        kv_line("Accepted", &accepted_str),
-    ];
+    let mining_lines = mining_panel_lines(state);
     let mining_block = Block::default()
         .title(Span::styled(" MINING ", TITLE_STYLE))
         .borders(Borders::ALL)
@@ -953,24 +953,39 @@ fn draw_stats_narrow(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInn
     frame.render_widget(Paragraph::new(network_lines).block(network_block), rows[1]);
 
     // Mining
-    let submitted_str = format_u64(state.submitted);
-    let stale_shares_str = rejected_shares_display(state, format_u64);
-    let accepted_str = format_u64(state.accepted);
-    let rejected_or_stale_label = if state.mode == "pool" {
-        "Rejected"
-    } else {
-        "Stale"
-    };
-    let mining_lines = vec![
-        kv_line("Submitted", &submitted_str),
-        kv_line(rejected_or_stale_label, &stale_shares_str),
-        kv_line("Accepted", &accepted_str),
-    ];
+    let mining_lines = mining_panel_lines(state);
     let mining_block = Block::default()
         .title(Span::styled(" MINING ", TITLE_STYLE))
         .borders(Borders::ALL)
         .border_style(BORDER_STYLE);
     frame.render_widget(Paragraph::new(mining_lines).block(mining_block), rows[2]);
+}
+
+fn mining_panel_lines(state: &TuiStateInner) -> Vec<Line<'static>> {
+    let first = if state.mode == "pool" {
+        kv_line("Difficulty", &share_difficulty_display(state))
+    } else {
+        kv_line("Submitted", &format_u64(state.submitted))
+    };
+    let rejected_or_stale_label = if state.mode == "pool" {
+        "Rejected"
+    } else {
+        "Stale"
+    };
+    vec![
+        first,
+        kv_line(
+            rejected_or_stale_label,
+            &rejected_shares_display(state, format_u64),
+        ),
+        kv_line("Accepted", &format_u64(state.accepted)),
+    ]
+}
+
+fn share_difficulty_display(state: &TuiStateInner) -> String {
+    state
+        .share_difficulty
+        .map_or_else(|| "---".to_string(), format_u64)
 }
 
 /// Rejected/stale count, with busy-reject resubmits alongside in pool mode so
@@ -1833,6 +1848,33 @@ mod tests {
         state.thread_change_pending = false;
         assert!(!state.expire_thread_notice(start + THREAD_NOTICE_LIFETIME * 2));
         assert!(state.thread_notice.is_some());
+    }
+
+    #[test]
+    fn pool_mode_shows_share_difficulty_in_every_layout() {
+        let mut state = TuiStateInner::new();
+        state.mode = "pool".into();
+        state.submitted = 7;
+        state.accepted = 3;
+        assert!(render_text(&state, 120, 30).contains("Difficulty ---"));
+
+        state.share_difficulty = Some(12_345);
+        for (width, height) in [(120, 30), (80, 24), (60, 30), (60, 12)] {
+            let text = render_text(&state, width, height);
+            assert!(text.contains("12,345"), "{width}x{height}: {text}");
+            assert!(!text.contains("Submitted"), "{width}x{height}: {text}");
+        }
+    }
+
+    #[test]
+    fn daemon_mode_keeps_submitted_because_it_has_no_share_difficulty() {
+        let mut state = TuiStateInner::new();
+        state.mode = "daemon".into();
+        for (width, height) in [(120, 30), (60, 12)] {
+            let text = render_text(&state, width, height);
+            assert!(text.contains("Submitted"), "{width}x{height}: {text}");
+            assert!(!text.contains("Difficulty"), "{width}x{height}: {text}");
+        }
     }
 
     #[test]
