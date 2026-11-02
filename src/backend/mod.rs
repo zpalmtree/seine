@@ -197,8 +197,12 @@ pub mod amd {
         _device_index: Option<u32>,
     }
 
-    /// No DPM level is touched in builds without the AMD backend.
-    pub fn restore_performance_levels() {}
+    /// No AMD state exists in builds without the AMD backend.
+    pub fn on_process_exit() {}
+
+    pub(crate) fn automatic_start_skipped() -> bool {
+        false
+    }
 
     pub fn export_code_objects(_dir: &std::path::Path) -> Result<()> {
         bail!("AMD support is not compiled into this build")

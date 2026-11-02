@@ -75,7 +75,7 @@ fn run() -> Result<()> {
     } else {
         miner::run(&cfg, shutdown)
     };
-    backend::amd::restore_performance_levels();
+    backend::amd::on_process_exit();
     if result.is_ok() && self_update::restart_pending() {
         self_update::restart()?;
     }
@@ -86,6 +86,6 @@ struct RestorePerfLevels;
 
 impl Drop for RestorePerfLevels {
     fn drop(&mut self) {
-        backend::amd::restore_performance_levels();
+        backend::amd::on_process_exit();
     }
 }

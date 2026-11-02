@@ -29,6 +29,7 @@
         "last_error": { "type": ["string", "null"] },
         "pending_wallet_password": { "type": "boolean" },
         "pending_nvidia_count": { "type": "integer", "minimum": 0 },
+        "pending_amd_count": { "type": "integer", "minimum": 0 },
         "dev_fee_percent": { "type": "number", "minimum": 0 },
         "dev_fee_mode": { "type": "string", "enum": ["user", "dev"] },
         "dev_fee_address": { "type": "string" },

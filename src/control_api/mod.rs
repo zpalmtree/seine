@@ -311,6 +311,7 @@ struct RuntimeStateSnapshot {
     last_error: Option<String>,
     pending_wallet_password: bool,
     pending_nvidia_count: u64,
+    pending_amd_count: u64,
     dev_fee_percent: f64,
     dev_fee_mode: String,
     dev_fee_address: &'static str,
@@ -350,6 +351,7 @@ struct SupervisorState {
     staged_config: Option<Config>,
     pending_wallet_password: Option<String>,
     pending_nvidia_count: u64,
+    pending_amd_count: u64,
     dev_fee_mode: String,
     backend_phases: BTreeMap<String, String>,
     metrics: RuntimeMetrics,
@@ -371,6 +373,7 @@ impl Default for SupervisorState {
             staged_config: None,
             pending_wallet_password: None,
             pending_nvidia_count: 0,
+            pending_amd_count: 0,
             dev_fee_mode: "user".to_string(),
             backend_phases: BTreeMap::new(),
             metrics: RuntimeMetrics::default(),
@@ -432,6 +435,7 @@ impl MinerSupervisor {
             last_error: state.last_error.clone(),
             pending_wallet_password: state.pending_wallet_password.is_some(),
             pending_nvidia_count: state.pending_nvidia_count,
+            pending_amd_count: state.pending_amd_count,
             dev_fee_percent: DEV_FEE_PERCENT,
             dev_fee_mode: state.dev_fee_mode.clone(),
             dev_fee_address: DEV_ADDRESS,
@@ -477,7 +481,10 @@ impl MinerSupervisor {
             }
 
             if log.tag == "BACKEND" {
-                if let Some(pending) = parse_pending_nvidia_count(&log.message) {
+                if let Some(pending) = parse_pending_gpu_count(&log.message, "amd") {
+                    state.pending_amd_count = pending;
+                }
+                if let Some(pending) = parse_pending_gpu_count(&log.message, "nvidia") {
                     state.pending_nvidia_count = pending;
                     extra_events.push((
                         "nvidia.init.progress",
@@ -486,6 +493,16 @@ impl MinerSupervisor {
                             "message": log.message,
                         }),
                     ));
+                }
+
+                match gpu_left_pending(&log.message) {
+                    Some("amd") => {
+                        state.pending_amd_count = state.pending_amd_count.saturating_sub(1);
+                    }
+                    Some(_) => {
+                        state.pending_nvidia_count = state.pending_nvidia_count.saturating_sub(1);
+                    }
+                    None => {}
                 }
 
                 if let Some((backend_label, phase)) = parse_backend_phase(&log.message) {
@@ -694,6 +711,7 @@ impl MinerSupervisor {
             state.effective_config = Some(cfg.clone());
             state.backend_phases.clear();
             state.pending_nvidia_count = 0;
+            state.pending_amd_count = 0;
             self.emit_state_changed(previous, state.lifecycle, "start requested");
             run_id
         };
@@ -1172,6 +1190,7 @@ struct ConfigEnvelope {
 #[derive(Debug, Clone, Serialize)]
 struct BackendsResponse {
     pending_nvidia_count: u64,
+    pending_amd_count: u64,
     backend_phases: BTreeMap<String, String>,
     configured_backends: Vec<BackendSpecView>,
     available_devices: Vec<AvailableDeviceView>,
@@ -1714,6 +1733,7 @@ async fn get_backends(State(state): State<AppState>) -> Json<BackendsResponse> {
 
     Json(BackendsResponse {
         pending_nvidia_count: snapshot.pending_nvidia_count,
+        pending_amd_count: snapshot.pending_amd_count,
         backend_phases: snapshot.backend_phases,
         configured_backends,
         available_devices,
@@ -1785,6 +1805,11 @@ async fn get_metrics(State(state): State<AppState>) -> String {
     output.push_str(&format!(
         "seine_miner_pending_nvidia {}\n",
         snapshot.pending_nvidia_count
+    ));
+    output.push_str("# TYPE seine_miner_pending_amd gauge\n");
+    output.push_str(&format!(
+        "seine_miner_pending_amd {}\n",
+        snapshot.pending_amd_count
     ));
     output.push_str("# TYPE seine_miner_start_requests_total counter\n");
     output.push_str(&format!(
@@ -1862,13 +1887,25 @@ fn emit_broadcast_event(
     });
 }
 
-fn parse_pending_nvidia_count(message: &str) -> Option<u64> {
-    if !message.starts_with("nvidia initialization in progress:") {
-        return None;
-    }
-    let tail = message.split(':').nth(1)?.trim();
+fn parse_pending_gpu_count(message: &str, kind: &str) -> Option<u64> {
+    let tail = message
+        .strip_prefix(kind)?
+        .strip_prefix(" initialization in progress:")?
+        .trim();
     let digits: String = tail.chars().take_while(|c| c.is_ascii_digit()).collect();
     digits.parse::<u64>().ok()
+}
+
+/// The GPU kind whose startup this log line finished, online or unavailable.
+fn gpu_left_pending(message: &str) -> Option<&'static str> {
+    let kind = if message.starts_with("amd#") {
+        "amd"
+    } else if message.starts_with("nvidia#") {
+        "nvidia"
+    } else {
+        return None;
+    };
+    (message.contains(": online") || message.contains(" unavailable: ")).then_some(kind)
 }
 
 fn parse_backend_phase(message: &str) -> Option<(String, &'static str)> {
@@ -3043,6 +3080,25 @@ mod tests {
         let snapshot = supervisor.snapshot();
         assert_eq!(snapshot.run_id, 1);
         assert_eq!(snapshot.lifecycle, MinerLifecycle::Idle);
+    }
+
+    #[test]
+    fn pending_gpu_counts_follow_each_kind() {
+        let amd = "amd initialization in progress: 2 pending";
+        let nvidia = "nvidia initialization in progress: 3 pending";
+        assert_eq!(parse_pending_gpu_count(amd, "amd"), Some(2));
+        assert_eq!(parse_pending_gpu_count(amd, "nvidia"), None);
+        assert_eq!(parse_pending_gpu_count(nvidia, "nvidia"), Some(3));
+        assert_eq!(
+            gpu_left_pending("amd#1: online (initialized in background, 9 lanes)"),
+            Some("amd")
+        );
+        assert_eq!(
+            gpu_left_pending("nvidia#2 unavailable: driver error"),
+            Some("nvidia")
+        );
+        assert_eq!(gpu_left_pending("amd#1: initializing HIP engine..."), None);
+        assert_eq!(gpu_left_pending("cpu#1: online"), None);
     }
 
     #[test]

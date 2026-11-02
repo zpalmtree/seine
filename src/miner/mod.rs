@@ -35,7 +35,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::IsTerminal;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Result};
@@ -397,6 +397,9 @@ fn start_backend_interruptibly(
     std::thread::Builder::new()
         .name(format!("{backend_name}-{backend_id}-start"))
         .spawn(move || {
+            // Held through the cancelled stop too: a new mining session on the
+            // same card must not start until this one has let go of it.
+            let _serial = amd_start_serial(backend_ref.name());
             if tx.send(backend_ref.start()).is_err() {
                 backend_ref.stop();
             }
@@ -440,6 +443,16 @@ pub(super) fn remove_pending_gpu(pending: &mut Vec<&'static str>, name: &str) {
 /// AMD cards start one at a time, as they did when startup was synchronous.
 static AMD_START_LOCK: Mutex<()> = Mutex::new(());
 
+fn amd_start_serial(backend_name: &str) -> Option<MutexGuard<'static, ()>> {
+    (backend_name == "amd").then(|| AMD_START_LOCK.lock().unwrap_or_else(|e| e.into_inner()))
+}
+
+/// Stops a backend that never joined the run, in turn with AMD starts.
+fn stop_unjoined_backend(backend: &dyn PowBackend) {
+    let _serial = amd_start_serial(backend.name());
+    backend.stop();
+}
+
 /// Starts one GPU backend off the main thread and hands it to the run through
 /// `deferred_tx`, or reports why it is unavailable.
 fn start_deferred_backend(
@@ -452,8 +465,6 @@ fn start_deferred_backend(
     deferred_tx: &Sender<BackendSlot>,
 ) {
     let backend_name = backend.name();
-    let _serial = (spec.kind == BackendKind::Amd)
-        .then(|| AMD_START_LOCK.lock().unwrap_or_else(|e| e.into_inner()));
     let detail = match spec.kind {
         BackendKind::Nvidia => "initializing CUDA engine...",
         BackendKind::Amd => "initializing HIP engine...",
@@ -480,7 +491,7 @@ fn start_deferred_backend(
                                 "{backend_name}#{display_id} capability contract violation: {err:#}"
                             ),
                         );
-                        backend.stop();
+                        stop_unjoined_backend(backend.as_ref());
                         return;
                     }
                 };
@@ -500,7 +511,7 @@ fn start_deferred_backend(
                     "BACKEND",
                     format!("skipping {backend_name}#{display_id}: reported zero lanes"),
                 );
-                backend.stop();
+                stop_unjoined_backend(backend.as_ref());
                 return;
             }
             let runtime_policy = backend_runtime_policy(cfg, &spec, capabilities);
@@ -513,7 +524,7 @@ fn start_deferred_backend(
             };
             // The run may have ended (or failed to start) meanwhile.
             if let Err(unsent) = deferred_tx.send(slot) {
-                unsent.into_inner().backend.stop();
+                stop_unjoined_backend(unsent.into_inner().backend.as_ref());
             }
         }
         Err(err) => {
@@ -526,16 +537,34 @@ fn start_deferred_backend(
                 format!("{backend_name}#{display_id} unavailable: {err:#}"),
             );
             warn("BACKEND", backend_requirements_hint(spec.kind));
-            backend.stop();
+            stop_unjoined_backend(backend.as_ref());
         }
     }
+}
+
+/// CPU/Metal all failed to start, but a pending GPU can still carry the run.
+fn wait_for_gpu_after_failed_start(
+    deferred_rx: &Receiver<BackendSlot>,
+    shutdown: &AtomicBool,
+) -> Result<BackendSlot> {
+    check_startup_shutdown(shutdown)?;
+    warn(
+        "MINER",
+        "no CPU/Metal backend started; waiting for a GPU to finish initializing...",
+    );
+    wait_for_startup(deferred_rx, shutdown, "all GPU backends failed to start")
 }
 
 fn backend_requirements_hint(kind: BackendKind) -> &'static str {
     match kind {
         BackendKind::Amd => {
-            "AMD mining requires: (1) amdgpu drivers and (2) the ROCm 6.x runtime \
-             (libamdhip64/libhiprtc) — https://rocm.docs.amd.com"
+            if cfg!(windows) {
+                "AMD mining requires a current AMD graphics driver (Adrenalin or Radeon PRO) \
+                 — https://www.amd.com/en/support"
+            } else {
+                "AMD mining requires the amdgpu driver and the ROCm HIP runtime \
+                 (libamdhip64) — https://rocm.docs.amd.com"
+            }
         }
         _ => {
             "NVIDIA mining requires an up-to-date NVIDIA GPU driver \
@@ -591,6 +620,17 @@ fn run_with_thread_control_inner(
     }
 
     crate::diagnostics::set_phase(seine_telemetry::RunPhase::InitializingBackends);
+    if crate::backend::amd::automatic_start_skipped()
+        && !cfg
+            .backend_specs
+            .iter()
+            .any(|spec| spec.kind == BackendKind::Amd)
+    {
+        record_backend_start_failure(
+            &anyhow!("AMD GPUs skipped after failed starts"),
+            BackendKind::Amd,
+        );
+    }
     // Phase 1: Build GPU backends (NVIDIA, AMD) and start them in background
     // threads so CPU/Metal mining does not wait for kernel builds, memory
     // probes or a slow driver. Each GPU joins the run once it is ready.
@@ -841,8 +881,22 @@ fn run_with_thread_control_inner(
 
     // Merge early GPU backends into the activated set; the rest are pending.
     let mut pending_gpus = deferred_kinds;
+    if backends.is_empty() && early_gpu_backends.is_empty() && !pending_gpus.is_empty() {
+        early_gpu_backends.push(wait_for_gpu_after_failed_start(
+            &deferred_rx,
+            shutdown.as_ref(),
+        )?);
+    }
     for slot in early_gpu_backends {
         remove_pending_gpu(&mut pending_gpus, slot.backend.name());
+        let slot_name = pending_backend_slot_label(&backends, &slot);
+        info(
+            "BACKEND",
+            format!(
+                "{slot_name}: online (initialized in background, {} lanes)",
+                slot.lanes
+            ),
+        );
         backends.push(slot);
     }
 
@@ -2627,11 +2681,7 @@ fn activate_single_backend(
                 );
             }
             if backend_name == "amd" {
-                warn(
-                    "BACKEND",
-                    "AMD mining requires: (1) amdgpu drivers and (2) the ROCm 6.x runtime \
-                     (libamdhip64/libhiprtc) — https://rocm.docs.amd.com",
-                );
+                warn("BACKEND", backend_requirements_hint(BackendKind::Amd));
             }
             backend.stop();
             Err(err.context(format!("{backend_name}#{backend_id} unavailable")))
@@ -3943,6 +3993,68 @@ pub(crate) mod tests {
         remove_pending_gpu(&mut pending, "amd");
         remove_pending_gpu(&mut pending, "metal");
         assert_eq!(pending, vec!["nvidia", "amd"]);
+    }
+
+    #[test]
+    fn cancelled_amd_start_holds_the_next_start_until_it_has_stopped() {
+        let old_state = Arc::new(MockState::default());
+        let new_state = Arc::new(MockState::default());
+        let (entered_tx, entered_rx) = bounded(1);
+        let (release_tx, release_rx) = bounded(1);
+        let mut old = MockBackend::new("amd", 1, old_state.clone());
+        old.start_gate = Some((entered_tx, release_rx));
+        let old: Arc<dyn PowBackend> = Arc::new(old);
+        let new: Arc<dyn PowBackend> = Arc::new(MockBackend::new("amd", 1, new_state.clone()));
+
+        let old_shutdown = Arc::new(AtomicBool::new(false));
+        let cancelled = {
+            let shutdown = old_shutdown.clone();
+            std::thread::spawn(move || start_backend_interruptibly(&old, 1, &shutdown))
+        };
+        entered_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("first start entered");
+        old_shutdown.store(true, Ordering::Relaxed);
+        assert!(cancelled
+            .join()
+            .unwrap()
+            .expect_err("start cancelled")
+            .is::<StartupCancelled>());
+
+        let next = std::thread::spawn(move || {
+            start_backend_interruptibly(&new, 2, &AtomicBool::new(false))
+        });
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(
+            new_state.start_calls.load(Ordering::Relaxed),
+            0,
+            "the next start must wait for the cancelled one"
+        );
+        release_tx.send(()).unwrap();
+        next.join().unwrap().expect("next start");
+        assert_eq!(new_state.start_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            old_state.stop_calls.load(Ordering::Relaxed),
+            1,
+            "the cancelled start must have stopped before the next one ran"
+        );
+    }
+
+    #[test]
+    fn a_pending_gpu_carries_the_run_when_cpu_failed_to_start() {
+        let (tx, rx) = bounded(1);
+        let state = Arc::new(MockState::default());
+        tx.send(slot(1, 1, Arc::new(MockBackend::new("amd", 1, state))))
+            .unwrap();
+        let joined = wait_for_gpu_after_failed_start(&rx, &AtomicBool::new(false))
+            .expect("the pending GPU joins");
+        assert_eq!(joined.backend.name(), "amd");
+
+        drop(tx);
+        let error = wait_for_gpu_after_failed_start(&rx, &AtomicBool::new(false))
+            .err()
+            .expect("no GPU can start");
+        assert!(format!("{error:#}").contains("all GPU backends failed to start"));
     }
 
     #[test]

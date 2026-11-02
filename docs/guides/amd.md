@@ -38,6 +38,11 @@ graphics stay off unless you list `amd` yourself.
 If the runtime is missing, Seine mines on the CPU only; with `--backend amd` it says
 so at startup.
 
+If the AMD runtime ends Seine twice in a row while it uses the GPU, Seine stops
+selecting AMD GPUs by itself, says so at startup and keeps mining on the rest. It
+tries again after its next update. To try sooner, for example after a driver update,
+list `amd` yourself (`--backend cpu,amd`).
+
 ## Performance level
 
 On RDNA3 cards (RX 7000, Radeon PRO W7000/V710) Seine sets the amdgpu performance

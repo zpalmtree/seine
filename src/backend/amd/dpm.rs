@@ -63,6 +63,10 @@ fn note_telemetry_level(pci_address: &str, level: seine_telemetry::AmdPerfLevel)
             .iter_mut()
             .find(|(address, _)| address == pci_address)
         {
+            // start() re-raises what detection raised; keep that it was us.
+            Some(entry)
+                if entry.1 == seine_telemetry::AmdPerfLevel::Raised
+                    && level == seine_telemetry::AmdPerfLevel::AlreadyHigh => {}
             Some(entry) => entry.1 = level,
             None => levels.push((pci_address.to_string(), level)),
         }
@@ -215,6 +219,17 @@ mod tests {
         restore_performance_levels();
         assert_eq!(fs::read_to_string(&path).unwrap().trim(), "manual");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_repeated_raise_keeps_the_raised_telemetry() {
+        use seine_telemetry::AmdPerfLevel;
+        let address = "ffff:ff:ff.1";
+        note_telemetry_level(address, AmdPerfLevel::Raised);
+        note_telemetry_level(address, AmdPerfLevel::AlreadyHigh);
+        assert_eq!(telemetry_level(address), Some(AmdPerfLevel::Raised));
+        note_telemetry_level(address, AmdPerfLevel::NeedsRoot);
+        assert_eq!(telemetry_level(address), Some(AmdPerfLevel::NeedsRoot));
     }
 
     #[test]

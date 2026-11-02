@@ -272,9 +272,12 @@ components:
           minLength: 1
     BackendsResponse:
       type: object
-      required: [pending_nvidia_count, backend_phases, configured_backends, available_devices]
+      required: [pending_nvidia_count, pending_amd_count, backend_phases, configured_backends, available_devices]
       properties:
         pending_nvidia_count:
+          type: integer
+          minimum: 0
+        pending_amd_count:
           type: integer
           minimum: 0
         backend_phases:

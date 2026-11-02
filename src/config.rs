@@ -1186,6 +1186,9 @@ impl Config {
         // automatically; explicit --amd-devices keeps startup free of
         // config-time ROCm probing.
         let amd_requested = cli.backends.contains(&BackendKind::Amd);
+        if !cli.bench && cli.proxy_listen.is_none() {
+            init_amd_crash_guard(&cli.data_dir);
+        }
         let amd_detection =
             if (amd_requested || cli.backends.is_empty()) && cli.amd_devices.is_empty() {
                 Some(detect_amd_devices(
@@ -1755,9 +1758,31 @@ pub(crate) fn detect_amd_devices(
     include_integrated: bool,
     raise_perf_level: bool,
 ) -> Result<Vec<DetectedGpu>> {
+    use crate::backend::amd::{crash_guard, hip_runtime_present, query_amd_devices};
+
     // Startup detection (not device listing) feeds telemetry.
     let record = raise_perf_level;
-    let mut devices = match crate::backend::amd::query_amd_devices() {
+    // `include_integrated` means the user listed `amd`, which always tries.
+    if !include_integrated && crash_guard::skips_automatic_start() {
+        notices.push(
+            "AMD GPUs skipped: the AMD GPU runtime ended the last Seine starts while using them. \
+             Seine tries them again after its next update; add amd to --backend to try now."
+                .to_string(),
+        );
+        if record {
+            crate::diagnostics::set_amd_detection(seine_telemetry::AmdDetection {
+                hip_unavailable: false,
+                pci_devices: amd_pci_display_devices(),
+                ..Default::default()
+            });
+        }
+        return Ok(Vec::new());
+    }
+    let queried = {
+        let _native_call = hip_runtime_present().then(crash_guard::enter_native_call);
+        query_amd_devices()
+    };
+    let mut devices = match queried {
         Ok(devices) => devices,
         Err(err) => {
             if record {
@@ -1804,6 +1829,14 @@ pub(crate) fn detect_amd_devices(
     }
     Ok(usable)
 }
+
+#[cfg(all(feature = "amd", any(target_os = "linux", windows)))]
+fn init_amd_crash_guard(data_dir: &Path) {
+    crate::backend::amd::crash_guard::init(data_dir);
+}
+
+#[cfg(not(all(feature = "amd", any(target_os = "linux", windows))))]
+fn init_amd_crash_guard(_data_dir: &Path) {}
 
 /// AMD display devices (vendor 0x1002, PCI class 0x03), integrated or
 /// discrete, as the OS lists them whether or not HIP can use them. Linux only.

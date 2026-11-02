@@ -39,7 +39,7 @@ pub(crate) fn install(shutdown: Arc<AtomicBool>) -> anyhow::Result<Guard> {
         if shutdown.swap(true, Ordering::SeqCst) {
             // A second interrupt skips normal cleanup; still undo the AMD
             // performance level change.
-            crate::backend::amd::restore_performance_levels();
+            crate::backend::amd::on_process_exit();
             std::process::exit(130);
         }
     })?;

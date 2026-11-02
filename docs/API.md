@@ -179,6 +179,7 @@ Prometheus metrics exposed by the control API:
 - `seine_miner_running`
 - `seine_miner_lifecycle_info{state="..."}`
 - `seine_miner_pending_nvidia`
+- `seine_miner_pending_amd`
 - `seine_miner_start_requests_total`
 - `seine_miner_stop_requests_total`
 - `seine_miner_restart_requests_total`

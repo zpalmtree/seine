@@ -17,10 +17,25 @@
 
 mod code_objects;
 pub use code_objects::export_code_objects;
+pub(crate) mod crash_guard;
 pub mod dpm;
 mod engine;
-pub use dpm::restore_performance_levels;
 mod hip_ffi;
+
+/// Undoes process-wide AMD state on every way out of the program.
+pub fn on_process_exit() {
+    dpm::restore_performance_levels();
+    crash_guard::mark_clean_exit();
+}
+
+pub(crate) fn automatic_start_skipped() -> bool {
+    crash_guard::skips_automatic_start()
+}
+
+/// Whether the HIP runtime library can be loaded on this machine at all.
+pub(crate) fn hip_runtime_present() -> bool {
+    hip_ffi::HipApi::load().is_ok()
+}
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -506,11 +521,13 @@ impl PowBackend for AmdBackend {
             }
         }
 
+        let native_call = crash_guard::enter_native_call();
         let selected = self.validate_or_select_device()?;
         // Idempotent: config-time detection usually did this and printed the
         // notice; explicit --amd-devices skips that probe, so do it here too.
         let _ = dpm::raise_performance_level(&selected.pci_address, &selected.gcn_arch_name);
         let mut engine = self.build_engine(&selected)?;
+        drop(native_call);
         let mut blake2b_state = engine::blake2b::Blake2bWorkerState::new(selected.clone());
 
         let discovered_lanes = engine.max_lanes().max(1);
@@ -912,6 +929,24 @@ impl BenchBackend for AmdBackend {
     }
 }
 
+/// Counts this card's first launches for the crash guard.
+struct LaunchesToWorking(u32);
+
+impl LaunchesToWorking {
+    fn is_pending(&self) -> bool {
+        self.0 > 0
+    }
+
+    fn launch_completed(&mut self) {
+        if self.0 > 0 {
+            self.0 -= 1;
+            if self.0 == 0 {
+                crash_guard::mark_working();
+            }
+        }
+    }
+}
+
 fn worker_loop(
     engine: &mut HipArgon2Engine,
     blake2b: &mut engine::blake2b::Blake2bWorkerState,
@@ -936,6 +971,7 @@ fn worker_loop(
     let mut control_open = true;
     let mut running = true;
     let mut nonce_buf = vec![0u64; engine.max_hashes_per_launch()];
+    let mut launches_to_working = LaunchesToWorking(crash_guard::LAUNCHES_BEFORE_WORKING);
 
     while running {
         while control_open {
@@ -1130,6 +1166,9 @@ fn worker_loop(
                 .active_lanes
                 .store(engine.max_lanes().max(1) as u64, Ordering::Release);
             let target_snapshot = current.work.template.target_snapshot();
+            let native_call = launches_to_working
+                .is_pending()
+                .then(crash_guard::enter_native_call);
             let batch = match blake2b.run_batch(
                 &current.work.template.header_base,
                 current.next_nonce,
@@ -1137,7 +1176,11 @@ fn worker_loop(
                 &target_snapshot.target,
                 Some(current.work.template.stop_at),
             ) {
-                Ok(batch) => batch,
+                Ok(batch) => {
+                    drop(native_call);
+                    launches_to_working.launch_completed();
+                    batch
+                }
                 Err(err) => {
                     emit_worker_error(
                         &shared,
@@ -1199,13 +1242,20 @@ fn worker_loop(
 
         let target_snapshot = current.work.template.target_snapshot();
         let network_target = current.work.template.network_target();
+        let native_call = launches_to_working
+            .is_pending()
+            .then(crash_guard::enter_native_call);
         let done = match engine.run_fill_batch_preserving_candidate(
             current.work.template.header_base.as_ref(),
             &nonce_buf[..hashes_per_batch],
             Some(&target_snapshot.target),
             network_target.as_ref(),
         ) {
-            Ok(done) => done,
+            Ok(done) => {
+                drop(native_call);
+                launches_to_working.launch_completed();
+                done
+            }
             Err(err) => {
                 emit_worker_error(
                     &shared,
