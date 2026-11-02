@@ -15,7 +15,8 @@ counts and enums:
 - `diagnostics.pool` (pool mode only): whether the primary pool uses TLS, pools
   are reached through SOCKS5, and a payout memo is configured; the number of
   backup pools; and failovers, seconds on a backup pool, reconnects and
-  nonce-range refills in the window.
+  nonce-range refills in the window, for the miner's own pool session (dev-fee
+  sessions are not counted).
 - `diagnostics.amd_detection`: whether the HIP runtime was unavailable, AMD GPUs
   found and selected, integrated GPUs and unsupported-wavefront GPUs skipped,
   and `pci_devices`, the AMD display devices the OS lists (Linux sysfs, vendor
@@ -24,6 +25,10 @@ counts and enums:
   was paused on work this build cannot mine, with the diagnostic reason
   `unsupported_work` and operation `receive_work`. This measures readiness for
   the Faraday fork: paused miners need an update.
+- `diagnostics.backend_startup`: backend instances the run expected per kind, and
+  milliseconds from the start of the run to each instance's first hash, including
+  any wait for pool work. An expected backend with no entry has not hashed. Every
+  report of a run repeats this record.
 - `backends[].settings.gpu_arch` (`gfx1100` or `sm_86`) and
   `gpu_kernel_source` for NVIDIA and AMD backends (`prebuilt_cubin`,
   `prebuilt_ptx`, `nvrtc`, `nvrtc_cached`, `nvrtc_failed_prebuilt_ptx`,
@@ -180,8 +185,9 @@ The strict upload schema is in [src/lib.rs](src/lib.rs), with an example in
 - Schema 14 operational summaries: self-update checks, installs and the failed
   install stage; pool TLS/SOCKS/payout-memo booleans, backup-pool count and
   failover/reconnect/refill counts (never hosts or memos); AMD GPUs found,
-  selected, skipped and listed by the OS; seconds paused on unsupported work; and
-  GPU architecture, kernel source and AMD performance level.
+  selected, skipped and listed by the OS; seconds paused on unsupported work;
+  expected backends and time to first hash; and GPU architecture, kernel source and
+  AMD performance level.
 
 ### Reliability reporting
 

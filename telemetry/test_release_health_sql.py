@@ -68,6 +68,43 @@ class ReleaseHealthSQLTests(unittest.TestCase):
         self.assertEqual(stages, {'signature': (1, 1), 'checksum': (1, 1)})
         self.assertEqual(result['status'], 'ok')
 
+    def test_first_hash_counts_each_run_once_and_finds_backends_that_never_hashed(self):
+        base = self.fixture()
+        identity = uuid.uuid4().hex
+        # Two reports of one run repeat the record; a later run is a new observation.
+        self.insert(base, identity, hours=3)
+        self.insert(base, identity, hours=2)
+        restarted = copy.deepcopy(base)
+        restarted['diagnostics']['backend_startup']['first_hashes'][2]['first_hash_ms'] = 11000
+        self.insert(restarted, identity, hours=1)
+        # A second card that never joined, after long enough to be stuck.
+        stuck = copy.deepcopy(base)
+        stuck['diagnostics']['backend_startup']['expected_amd'] = 2
+        self.insert(stuck)
+        # Still starting: too early to call the card stuck.
+        early = copy.deepcopy(stuck)
+        early['diagnostics']['uptime_secs'] = 300
+        early['window_secs'] = 300
+        self.insert(early)
+        # No work at all says nothing about the backends.
+        idle = copy.deepcopy(stuck)
+        idle['diagnostics']['backend_startup']['first_hashes'] = []
+        self.insert(idle)
+        startup = self.report()['startup']
+        cohorts = {(c['backend'], c['gpu_arch']): c for c in startup['first_hash']}
+        amd = cohorts['amd', 'gfx1100']
+        # Installations: identity (two runs), stuck and early.
+        self.assertEqual((amd['installations'], amd['first_hash_ms_max']), (3, 31000))
+        self.assertEqual(amd['runs'], 4)
+        self.assertEqual(amd['lag_behind_cpu_ms_p50'], 30100)
+        self.assertEqual(cohorts['nvidia', 'sm_86']['lag_behind_cpu_ms_p90'], 3300)
+        self.assertEqual(cohorts['cpu', 'n/a']['lag_behind_cpu_ms_p50'], 0)
+        missing = {b['backend']: b for b in startup['backends_not_hashing']}
+        self.assertEqual(missing['amd']['installations'], 2)
+        self.assertEqual(missing['amd']['installations_missing_backends'], 1)
+        self.assertEqual(missing['amd']['instances_not_hashing'], 1)
+        self.assertEqual(missing['nvidia']['installations_missing_backends'], 0)
+
     def test_fork_readiness_counts_paused_installations_and_events_by_version(self):
         base = self.fixture()
         for version, mode in (('v0.3.0', 'pool'), ('v0.3.0', 'pool'), ('v0.2.36', 'daemon')):

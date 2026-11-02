@@ -108,6 +108,7 @@ amd AS (
 -- installation's latest report with schema-14 GPU settings.
 gpu_samples AS (
     SELECT installation_id, received_at, version, os, s->'settings' AS st,
+           (s->>'instance')::bigint AS instance,
            max(received_at) OVER (PARTITION BY installation_id) AS latest
     FROM reports CROSS JOIN LATERAL jsonb_array_elements(backends) s
     WHERE s #>> '{settings,backend}' IN ('nvidia', 'amd')
@@ -125,6 +126,59 @@ gpu_samples AS (
            coalesce(st->>'amd_perf_level', 'unknown') AS amd_perf_level,
            count(DISTINCT installation_id) AS installations, count(*) AS devices
     FROM latest_gpu WHERE st->>'backend' = 'amd' GROUP BY 1, 2, 3
+),
+-- Time to first hash. Every report of a run repeats its record, so DISTINCT
+-- counts each run once, and first runs (cold kernel builds) stay visible.
+-- first_hash_ms includes any wait for pool work; lag_behind_cpu_ms removes it.
+startup_reports AS (
+    SELECT installation_id, received_at, version, d->'backend_startup' AS b,
+           (d->>'uptime_secs')::bigint AS uptime_secs
+    FROM reports WHERE d->'backend_startup' IS NOT NULL
+), first_hash_runs AS (
+    SELECT DISTINCT r.installation_id, r.version, f->>'backend' AS backend,
+           (f->>'instance')::bigint AS instance, (f->>'first_hash_ms')::bigint AS ms,
+           (f->>'first_hash_ms')::bigint - (
+               SELECT min((c->>'first_hash_ms')::bigint)
+               FROM jsonb_array_elements(r.b->'first_hashes') c WHERE c->>'backend' = 'cpu'
+           ) AS lag_behind_cpu_ms
+    FROM startup_reports r
+    CROSS JOIN LATERAL jsonb_array_elements(coalesce(r.b->'first_hashes', '[]'::jsonb)) f
+), first_hash_cohorts AS (
+    SELECT r.version, r.backend, coalesce(a.gpu_arch, 'n/a') AS gpu_arch,
+           count(DISTINCT r.installation_id) AS installations, count(*) AS runs,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY r.ms) AS first_hash_ms_p50,
+           percentile_cont(0.9) WITHIN GROUP (ORDER BY r.ms) AS first_hash_ms_p90,
+           max(r.ms) AS first_hash_ms_max,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY r.lag_behind_cpu_ms) AS lag_behind_cpu_ms_p50,
+           percentile_cont(0.9) WITHIN GROUP (ORDER BY r.lag_behind_cpu_ms) AS lag_behind_cpu_ms_p90
+    FROM first_hash_runs r
+    LEFT JOIN LATERAL (
+        SELECT g.st->>'gpu_arch' AS gpu_arch FROM latest_gpu g
+        WHERE g.installation_id = r.installation_id AND g.instance = r.instance LIMIT 1
+    ) a ON true
+    GROUP BY 1, 2, 3
+), latest_startup AS (
+    -- Long enough that a missing backend is stuck, not still starting. A run with
+    -- no hashes at all had no work, which says nothing about its backends.
+    SELECT DISTINCT ON (installation_id) installation_id, version, b
+    FROM startup_reports
+    WHERE uptime_secs >= 600 AND jsonb_array_length(coalesce(b->'first_hashes', '[]'::jsonb)) > 0
+    ORDER BY installation_id, received_at DESC
+), expected_backends AS (
+    SELECT l.installation_id, l.version, e.backend, e.expected,
+           (SELECT count(*) FROM jsonb_array_elements(l.b->'first_hashes') f
+            WHERE f->>'backend' = e.backend) AS hashing
+    FROM latest_startup l
+    CROSS JOIN LATERAL (VALUES
+        ('cpu', (l.b->>'expected_cpu')::int), ('nvidia', (l.b->>'expected_nvidia')::int),
+        ('amd', (l.b->>'expected_amd')::int), ('metal', (l.b->>'expected_metal')::int)
+    ) AS e(backend, expected)
+    WHERE e.expected > 0
+), backends_not_hashing AS (
+    SELECT version, backend, count(*) AS installations,
+           count(*) FILTER (WHERE hashing < expected) AS installations_missing_backends,
+           coalesce(sum(greatest(expected - hashing, 0)), 0) AS instances_not_hashing
+    FROM expected_backends GROUP BY 1, 2
 ),
 -- Pool connection setup and churn (pool mode only).
 pool_reports AS (
@@ -181,6 +235,10 @@ SELECT jsonb_build_object(
         'perf_levels', coalesce((SELECT jsonb_agg(a ORDER BY gpu_arch, os, installations DESC, amd_perf_level) FROM amd_perf_levels a), '[]'::jsonb)
     ),
     'gpu_kernel_sources', coalesce((SELECT jsonb_agg(k ORDER BY backend, gpu_arch, installations DESC, gpu_kernel_source) FROM kernel_sources k), '[]'::jsonb),
+    'startup', jsonb_build_object(
+        'first_hash', coalesce((SELECT jsonb_agg(c ORDER BY version, backend, gpu_arch) FROM first_hash_cohorts c), '[]'::jsonb),
+        'backends_not_hashing', coalesce((SELECT jsonb_agg(b ORDER BY version, backend) FROM backends_not_hashing b), '[]'::jsonb)
+    ),
     'pool', jsonb_build_object(
         'installations', (SELECT count(*) FROM pool_latest),
         'tls_installations', (SELECT count(*) FROM pool_latest WHERE (p->>'tls')::boolean),

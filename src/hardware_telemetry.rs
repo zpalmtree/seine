@@ -214,6 +214,7 @@ impl Drop for TrialWorkerLifetime {
 struct Accumulated {
     settings: BackendSettings,
     hashes: u64,
+    first_hash_noted: bool,
     first: Instant,
     last: Instant,
     changed: bool,
@@ -287,20 +288,31 @@ impl Recorder {
     }
 
     pub(crate) fn record(&self, instance: u64, settings: BackendSettings, hashes: u64) {
+        let backend = (hashes > 0).then(|| settings.backend.clone());
+        // Noted outside the sample lock; a retry after contention finds it unset.
+        let first_hash = self.record_sample(instance, settings, hashes);
+        if let (true, Some(backend)) = (first_hash, backend) {
+            crate::diagnostics::backend_first_hash(&backend, instance);
+        }
+    }
+
+    /// Returns true when this is the instance's first sample with hashes.
+    fn record_sample(&self, instance: u64, settings: BackendSettings, hashes: u64) -> bool {
         // The miner never waits for a report to finish; contention loses telemetry only.
         let Ok(mut samples) = self.0.try_lock() else {
             self.1.store(true, Ordering::Relaxed);
-            return;
+            return false;
         };
         if samples.len() >= 128 && !samples.contains_key(&instance) {
             self.1.store(true, Ordering::Relaxed);
-            return;
+            return false;
         }
         let now = Instant::now();
         let first_sample = !samples.contains_key(&instance);
         let sample = samples.entry(instance).or_insert_with(|| Accumulated {
             settings: settings.clone(),
             hashes: 0,
+            first_hash_noted: false,
             first: now,
             last: now,
             changed: false,
@@ -312,6 +324,9 @@ impl Recorder {
         if !first_sample {
             sample.hashes = sample.hashes.saturating_add(hashes);
         }
+        let first_hash = hashes > 0 && !sample.first_hash_noted;
+        sample.first_hash_noted |= hashes > 0;
+        first_hash
     }
 
     #[cfg(test)]

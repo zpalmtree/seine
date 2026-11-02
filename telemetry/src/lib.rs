@@ -384,6 +384,51 @@ pub struct Diagnostics {
     /// mine (schema 14).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unsupported_work_paused_secs: Option<u32>,
+    /// Backends this run expected and how long each took to hash (schema 14).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend_startup: Option<BackendStartup>,
+}
+
+/// Backend instances this run started by kind, and when each first hashed. An
+/// expected backend with no entry has not hashed yet, or never joined the run.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BackendStartup {
+    pub expected_cpu: u32,
+    pub expected_nvidia: u32,
+    pub expected_amd: u32,
+    pub expected_metal: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub first_hashes: Vec<BackendFirstHash>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BackendFirstHash {
+    pub backend: String,
+    /// Session-local index, matching `BackendSample::instance`.
+    pub instance: u64,
+    /// Milliseconds from the start of this run, including any wait for pool work.
+    pub first_hash_ms: u64,
+}
+
+impl BackendStartup {
+    fn validate(&self, uptime_secs: u64) -> bool {
+        [
+            self.expected_cpu,
+            self.expected_nvidia,
+            self.expected_amd,
+            self.expected_metal,
+        ]
+        .iter()
+        .all(|&n| n <= 1024)
+            && self.first_hashes.len() <= 128
+            && self.first_hashes.iter().all(|f| {
+                backend_name(&f.backend)
+                    && f.instance <= 65536
+                    && f.first_hash_ms <= uptime_secs.saturating_mul(1000).saturating_add(999)
+            })
+    }
 }
 
 /// Release-check and self-update outcomes. Counts cover the reporting window.
@@ -435,11 +480,12 @@ pub struct PoolStatus {
     pub payout_memo: bool,
     /// Backup pools configured after the primary.
     pub backup_pools: u32,
-    /// Switches to another pool in this window, across all pool sessions.
+    /// Switches to another pool in this window. This and the counts below cover
+    /// the miner's own pool session, not dev-fee sessions.
     pub failovers: u32,
     /// Seconds of this window spent on a backup pool.
     pub secs_on_backup: u32,
-    /// Connection attempts after the first, across all pool sessions.
+    /// Connection attempts after the first.
     pub reconnects: u32,
     /// Nonce-range refills received.
     pub refills: u32,
@@ -623,6 +669,10 @@ impl Diagnostics {
             && self
                 .unsupported_work_paused_secs
                 .is_none_or(|s| u64::from(s) <= self.uptime_secs.max(1))
+            && self
+                .backend_startup
+                .as_ref()
+                .is_none_or(|b| b.validate(self.uptime_secs))
     }
 
     fn schema13_compatible(&self) -> bool {
@@ -630,6 +680,7 @@ impl Diagnostics {
             && self.pool.is_none()
             && self.amd_detection.is_none()
             && self.unsupported_work_paused_secs.is_none()
+            && self.backend_startup.is_none()
             && self.events.iter().all(DiagnosticEvent::schema13_compatible)
             && self.previous_run.as_ref().is_none_or(|r| {
                 r.recent_events
@@ -1468,6 +1519,7 @@ mod tests {
         assert!(diagnostics.pool.is_some());
         assert!(diagnostics.amd_detection.is_some());
         assert!(diagnostics.unsupported_work_paused_secs.is_some());
+        assert!(diagnostics.backend_startup.is_some());
 
         let clear_new_fields = |report: &mut Report| {
             let d = report.diagnostics.as_mut().unwrap();
@@ -1475,6 +1527,7 @@ mod tests {
             d.pool = None;
             d.amd_detection = None;
             d.unsupported_work_paused_secs = None;
+            d.backend_startup = None;
             d.events.clear();
             for backend in &mut report.backends {
                 backend.settings.gpu_arch = None;
@@ -1499,6 +1552,9 @@ mod tests {
             }),
             ("paused", |r| {
                 r.diagnostics.as_mut().unwrap().unsupported_work_paused_secs = Some(0);
+            }),
+            ("backend startup", |r| {
+                r.diagnostics.as_mut().unwrap().backend_startup = Some(BackendStartup::default());
             }),
             ("event", |r| {
                 let mut event = DiagnosticEvent {
@@ -1589,6 +1645,35 @@ mod tests {
             }),
             ("paused beyond uptime", |r| {
                 r.diagnostics.as_mut().unwrap().unsupported_work_paused_secs = Some(3601);
+            }),
+            ("first hash beyond uptime", |r| {
+                let startup = r
+                    .diagnostics
+                    .as_mut()
+                    .unwrap()
+                    .backend_startup
+                    .as_mut()
+                    .unwrap();
+                startup.first_hashes[0].first_hash_ms = 3_601_000;
+            }),
+            ("unknown backend name", |r| {
+                let startup = r
+                    .diagnostics
+                    .as_mut()
+                    .unwrap()
+                    .backend_startup
+                    .as_mut()
+                    .unwrap();
+                startup.first_hashes[0].backend = "private rig".into();
+            }),
+            ("expected count", |r| {
+                r.diagnostics
+                    .as_mut()
+                    .unwrap()
+                    .backend_startup
+                    .as_mut()
+                    .unwrap()
+                    .expected_amd = 1025;
             }),
             ("free-form architecture", |r| {
                 r.backends[1].settings.gpu_arch = Some("GeForce RTX 4090".into());

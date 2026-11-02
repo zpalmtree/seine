@@ -159,6 +159,17 @@
       "unsupported_skipped": 0,
       "pci_devices": 2
     },
-    "unsupported_work_paused_secs": 120
+    "unsupported_work_paused_secs": 120,
+    "backend_startup": {
+      "expected_cpu": 1,
+      "expected_nvidia": 1,
+      "expected_amd": 1,
+      "expected_metal": 0,
+      "first_hashes": [
+        {"backend": "cpu", "instance": 1, "first_hash_ms": 900},
+        {"backend": "nvidia", "instance": 2, "first_hash_ms": 4200},
+        {"backend": "amd", "instance": 3, "first_hash_ms": 31000}
+      ]
+    }
   }
 }

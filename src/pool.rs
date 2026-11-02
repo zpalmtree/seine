@@ -702,12 +702,13 @@ async fn run_pool_client_loop(
     let mut backoff = ReconnectBackoff::for_pools(endpoints.len());
     let mut attempts = 0u32;
     let mut on_backup = BackupTelemetry(false);
+    let report_churn = session_reports_churn(&address);
     while !should_shutdown(process_shutdown.as_ref(), shutdown.as_ref()) {
-        if attempts > 0 {
+        if report_churn && attempts > 0 {
             crate::diagnostics::pool_reconnect();
         }
         attempts = attempts.saturating_add(1);
-        on_backup.set(failover.active != 0);
+        on_backup.set(report_churn && failover.active != 0);
         let endpoint = endpoints[failover.active].clone();
         let mut session_logged_in = false;
         let mut session_login_rejected = false;
@@ -1126,7 +1127,9 @@ async fn run_pool_client_loop(
                                     pending_refill = None;
                                     match outcome {
                                         RefillOutcome::Job(job) => {
-                                            crate::diagnostics::pool_refill();
+                                            if report_churn {
+                                                crate::diagnostics::pool_refill();
+                                            }
                                             Some((PoolEvent::Job(job), None))
                                         }
                                         RefillOutcome::Stale => None,
@@ -1287,9 +1290,13 @@ async fn run_pool_client_loop(
         let previous = failover.active;
         if switch_to_primary {
             failover.switch_to_primary();
-            crate::diagnostics::pool_failover();
+            if report_churn {
+                crate::diagnostics::pool_failover();
+            }
         } else if failover.session_ended(session_logged_in, session_login_rejected) {
-            crate::diagnostics::pool_failover();
+            if report_churn {
+                crate::diagnostics::pool_failover();
+            }
             let _ = event_tx.try_send(PoolEvent::Notification(PoolNotification {
                 kind: POOL_NOTIFICATION_FAILOVER.to_string(),
                 message: format!(
@@ -1301,6 +1308,13 @@ async fn run_pool_client_loop(
             }));
         }
     }
+}
+
+/// Telemetry counts describe the miner's own connection. A dev-fee session
+/// also lists the miner's pools as fallbacks, so its churn would read as the
+/// miner failing over.
+fn session_reports_churn(address: &str) -> bool {
+    address != crate::dev_fee::DEV_ADDRESS
 }
 
 /// Reports time this session spends on a backup pool; clears on drop, so an
@@ -3454,6 +3468,12 @@ mod tests {
         assert!(normalize_pool_urls(" , ").is_err());
         assert!(normalize_pool_urls("pool.example.com").is_err());
         assert!(normalize_pool_urls("http://pool.example.com:80").is_err());
+    }
+
+    #[test]
+    fn only_the_miners_own_session_reports_churn() {
+        assert!(session_reports_churn("miner-address"));
+        assert!(!session_reports_churn(crate::dev_fee::DEV_ADDRESS));
     }
 
     #[test]

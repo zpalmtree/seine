@@ -143,7 +143,11 @@ def main():
         'amd_gpu_not_mining counts installations whose OS lists an AMD display device (pci_devices > 0, '
         'Linux only) while HIP is unavailable or no AMD GPU was selected, usually missing ROCm; '
         'hip_unavailable alone is normal on machines without AMD GPUs. nvrtc_failed_prebuilt_ptx means '
-        'NVRTC was installed but failed. Pool counts are booleans and counts, never hosts or memos.'
+        'NVRTC was installed but failed. Pool counts are booleans and counts, never hosts or memos. '
+        'startup.first_hash counts each run once, so cold starts stay visible; first_hash_ms includes any '
+        'wait for pool work, while lag_behind_cpu_ms removes it where a CPU backend ran. '
+        'backends_not_hashing covers runs up at least ten minutes that hashed on some backend; a GPU can '
+        'also be idle on purpose when its kernel cannot run this proof of work.'
     )
     if release.get('status') == 'error':
         briefing['release_health_assessment'] = 'Release-health query failed; missing schema-14 aggregates do not establish healthy updates.'

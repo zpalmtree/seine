@@ -44,6 +44,7 @@ pub(crate) struct Recorder {
     nvidia_software: Mutex<Option<seine_telemetry::NvidiaSoftware>>,
     checkpoint_store: Mutex<Option<(Weak<Store>, String)>>,
     previous_run: Mutex<Option<PreviousRun>>,
+    first_hashes: Mutex<BTreeMap<u64, (String, u64)>>,
 }
 
 /// Session-owned origin survives a stop arriving before the recorder is installed.
@@ -124,6 +125,37 @@ pub(crate) fn context(cfg: &Config) -> Diagnostics {
         pool: (cfg.mode == MiningMode::Pool).then(|| pool_setup(cfg)),
         amd_detection: None,
         unsupported_work_paused_secs: None,
+        backend_startup: Some(expected_backends(cfg)),
+    }
+}
+
+fn expected_backends(cfg: &Config) -> seine_telemetry::BackendStartup {
+    let count = |kind: BackendKind| {
+        cfg.backend_specs
+            .iter()
+            .filter(|spec| spec.kind == kind)
+            .count()
+            .min(1024) as u32
+    };
+    seine_telemetry::BackendStartup {
+        expected_cpu: count(BackendKind::Cpu),
+        expected_nvidia: count(BackendKind::Nvidia),
+        expected_amd: count(BackendKind::Amd),
+        expected_metal: count(BackendKind::Metal),
+        first_hashes: Vec::new(),
+    }
+}
+
+/// A backend instance reported its first hash of this run.
+pub(crate) fn backend_first_hash(backend: &str, instance: u64) {
+    if let Some(recorder) = active_recorder() {
+        let elapsed = recorder.started.elapsed().as_millis().min(u64::MAX as u128) as u64;
+        recorder
+            .first_hashes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .entry(instance)
+            .or_insert_with(|| (backend.to_owned(), elapsed));
     }
 }
 
@@ -353,6 +385,7 @@ pub(crate) fn install(context: Diagnostics) -> Guard {
         nvidia_software: Mutex::new(None),
         checkpoint_store: Mutex::new(None),
         previous_run: Mutex::new(None),
+        first_hashes: Mutex::new(BTreeMap::new()),
     });
     if let Ok(mut active) = ACTIVE.lock() {
         *active = Some(Arc::downgrade(&recorder));
@@ -843,6 +876,25 @@ impl Recorder {
             .clone()
             .filter(seine_telemetry::AmdDetection::is_valid);
         result.unsupported_work_paused_secs = take_unsupported_pause(result.uptime_secs);
+        if let Some(startup) = result.backend_startup.as_mut() {
+            // Whole-run context: every report repeats it, so a lost report loses nothing.
+            let latest = result.uptime_secs.saturating_mul(1000).saturating_add(999);
+            startup.first_hashes = self
+                .first_hashes
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .iter()
+                .filter(|(instance, _)| **instance <= 65536)
+                .take(128)
+                .map(
+                    |(instance, (backend, ms))| seine_telemetry::BackendFirstHash {
+                        backend: backend.clone(),
+                        instance: *instance,
+                        first_hash_ms: (*ms).min(latest),
+                    },
+                )
+                .collect();
+        }
         result
     }
 }
@@ -1069,12 +1121,43 @@ pub(crate) fn test_context() -> Diagnostics {
         pool: None,
         amd_detection: None,
         unsupported_work_paused_secs: None,
+        backend_startup: None,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn first_hash_keeps_the_earliest_time_per_instance_and_leaves_gaps_visible() {
+        let _lock = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mut context = test_context();
+        context.backend_startup = Some(seine_telemetry::BackendStartup {
+            expected_cpu: 1,
+            expected_amd: 2,
+            ..Default::default()
+        });
+        let guard = install(context);
+        guard
+            .0
+            .first_hashes
+            .lock()
+            .unwrap()
+            .insert(1, ("cpu".into(), 250));
+        backend_first_hash("cpu", 1);
+        backend_first_hash("amd", 2);
+        backend_first_hash("amd", 2);
+        let startup = guard.0.snapshot(false).backend_startup.unwrap();
+        // The second AMD card never hashed, so only the expected count shows it.
+        assert_eq!(startup.expected_amd, 2);
+        assert_eq!(startup.first_hashes.len(), 2);
+        assert_eq!(startup.first_hashes[0].backend, "cpu");
+        assert_eq!(startup.first_hashes[0].first_hash_ms, 250);
+        assert_eq!(startup.first_hashes[1].backend, "amd");
+        // Reports repeat the record for the whole run.
+        assert_eq!(guard.0.snapshot(false).backend_startup.unwrap(), startup);
+    }
 
     #[test]
     fn schema14_counters_cover_one_window_and_never_invalidate_a_report() {
@@ -1180,6 +1263,7 @@ mod tests {
             nvidia_software: Mutex::new(None),
             checkpoint_store: Mutex::new(None),
             previous_run: Mutex::new(None),
+            first_hashes: Mutex::new(BTreeMap::new()),
         }
     }
 
