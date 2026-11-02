@@ -10,6 +10,9 @@ pub const DEV_FEE_PERCENT: f64 = 2.0;
 /// Mine for the user this long before the first dev round.
 const GRACE_PERIOD: Duration = Duration::from_secs(10 * 60);
 
+/// Length of each dev fee accounting round in pool mining.
+pub const POOL_ROUND: Duration = Duration::from_secs(20);
+
 pub struct DevFeeTracker {
     fee_fraction: f64,
     total_elapsed: Duration,
@@ -112,6 +115,25 @@ mod tests {
         // Now billable=20s, owed=0.4s, dev_elapsed=0 => dev round
         tracker.begin_round();
         assert!(tracker.is_dev_round());
+    }
+
+    #[test]
+    fn pool_rounds_settle_on_the_fee_share() {
+        let mut tracker = DevFeeTracker::new();
+        let run = Duration::from_secs(24 * 60 * 60);
+        let mut elapsed = Duration::ZERO;
+        let mut dev = Duration::ZERO;
+        while elapsed < run {
+            tracker.begin_round();
+            if tracker.is_dev_round() {
+                dev += POOL_ROUND;
+            }
+            tracker.end_round(POOL_ROUND);
+            elapsed += POOL_ROUND;
+        }
+        let billable = (elapsed - GRACE_PERIOD).as_secs_f64();
+        let share = dev.as_secs_f64() / billable * 100.0;
+        assert!((share - DEV_FEE_PERCENT).abs() < 0.05, "share was {share}%");
     }
 
     #[test]

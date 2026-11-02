@@ -14,7 +14,7 @@ use serde_json::Value;
 use crate::backend::{DynamicShareTarget, MiningSolution, ShareBindingId};
 use crate::config::{Config, WorkAllocation};
 use crate::daemon_api::{is_unauthorized_error, ApiClient};
-use crate::dev_fee::{DevFeeTracker, DEV_ADDRESS};
+use crate::dev_fee::{DevFeeTracker, DEV_ADDRESS, POOL_ROUND};
 use crate::pool::{
     PoolClient, PoolEvent, PoolJob, PoolSubmitAck, PoolSubmitRetry, SubmitTiming,
     POOL_NOTIFICATION_MINER_BLOCK_FOUND, POOL_NOTIFICATION_POOL_BLOCK_SOLVED,
@@ -906,7 +906,7 @@ pub(super) fn run_pool_mining_loop(
             bail!("all mining backends are unavailable");
         }
 
-        if dev_fee_round_started.elapsed() >= cfg.refresh_interval {
+        if dev_fee_round_started.elapsed() >= POOL_ROUND {
             dev_fee_tracker.end_round(dev_fee_round_started.elapsed());
             dev_fee_round_started = Instant::now();
 
