@@ -9,7 +9,9 @@ checksums, which the updater continues to require.
 1. Create an Azure Artifact Signing account and complete identity validation for
    the publisher. Create a **Public Trust** certificate profile. Private Trust
    and Public Trust Test profiles are not suitable for public releases.
-2. Create a Microsoft Entra application/service principal for the release job.
+2. Create a Microsoft Entra application/service principal or a user-assigned Azure
+   managed identity for the release job. A managed identity can be created through
+   Azure Resource Manager without permission to create Entra applications.
    Grant only the **Artifact Signing Certificate Profile Signer** role at the
    certificate profile scope.
 3. Add a GitHub OIDC federated credential with issuer
@@ -22,7 +24,7 @@ checksums, which the updater continues to require.
 
    | Variable | Value |
    | --- | --- |
-   | `AZURE_CLIENT_ID` | Application/client ID |
+   | `AZURE_CLIENT_ID` | Application or managed identity client ID |
    | `AZURE_TENANT_ID` | Directory/tenant ID |
    | `AZURE_SUBSCRIPTION_ID` | Subscription containing the signing account |
    | `SEINE_SIGNING_ENDPOINT` | Regional signing URL, e.g. `https://eus.codesigning.azure.net` |
