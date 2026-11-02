@@ -11,7 +11,7 @@ supported hardware only.
 
 ## v0.3.0
 
-- **Up to about 2.5 times the NVIDIA hashrate on Linux:** about 2.5x on GeForce GTX 1660 Ti, 2.2x on RTX 2070, 2x on RTX 4060, and 64–90% more on RTX 3060, RTX 2080 Ti, RTX 4090 and RTX 5060 Ti (16 GB). GPUs start hashing within seconds, and Linux needs only the NVIDIA driver.
+- **Up to about 2.5 times the NVIDIA hashrate on Linux:** about 2.5x on GeForce GTX 1660 Ti, 2.3x on RTX 2070, 2x on RTX 3060 and RTX 4060, and 68–86% more on RTX 2080 Ti, RTX 4090 and RTX 5060 Ti. GPUs start hashing within seconds, and Linux needs only the NVIDIA driver.
 - **Faster CPU mining:** about 16% on Ryzen 9000 (Ryzen 7 9700X) on Linux and 14% on Windows, 7% on Ryzen 7000 (Ryzen 7 7700X, Ryzen 9 7950X with 32 GB) and 5% on Ryzen 5000 (Ryzen 9 5900X) on Linux, about a third on 12th Gen Intel Core (Core i5-12400F with 16 GB) on Linux, and at least 18% on AWS instances with 3rd Gen Intel Xeon.
 - **AMD Radeon GPUs mine out of the box on Linux and Windows:** discrete RDNA2, RDNA3 and RDNA4 cards (RX 6000, RX 7000, RX 9000 and Radeon PRO) mine alongside the CPU automatically; see [AMD setup](https://github.com/zpalmtree/seine/blob/v0.3.0/docs/guides/amd.md).
 - **Built for rigs and farms:** Linux builds run on glibc 2.31 and newer, with HiveOS and mmpOS packages, encrypted pool connections, automatic backup pools and a [farm proxy](https://github.com/zpalmtree/seine/blob/v0.3.0/docs/guides/farm-proxy.md). Mining keeps running when a log pipe closes, and reconnects when a pool never sends work.
@@ -22,7 +22,7 @@ Upgrade notes:
 - Linux users upgrading from v0.2.45 with `--auto-update` should restart Seine once if it exits after installing the update.
 - Discrete AMD GPUs now mine by default. Use `--backend cpu` (or `--backend cpu,nvidia`) to keep the previous behaviour.
 - AMD GPUs need the ROCm HIP runtime on Linux or the AMD graphics driver on Windows. On Linux RDNA3 cards, run Seine as root or apply the performance-level command it prints at startup for full speed; see [AMD setup](https://github.com/zpalmtree/seine/blob/v0.3.0/docs/guides/amd.md).
-- Exchange payouts need a compatible pool and your exchange deposit memo; see [exchange payouts](https://github.com/zpalmtree/seine/blob/v0.3.0/docs/EXCHANGE_PAYOUTS.md).
+- Mining to a known exchange deposit address now needs a compatible pool and your deposit memo (`--payout-memo`). Unattended miners stop with an error until it is set; see [exchange payouts](https://github.com/zpalmtree/seine/blob/v0.3.0/docs/EXCHANGE_PAYOUTS.md).
 - Self-hosted telemetry collectors need the schema 14 update before upgrading miners.
 
 ## v0.2.45

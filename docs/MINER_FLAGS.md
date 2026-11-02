@@ -16,6 +16,7 @@ For the raw CLI output, run:
 | `--pool-url` (`-o`, `--url`) | `host:port`, `stratum+tcp://host:port` or `stratum+ssl://host:port` | Stratum pool endpoint used in pool mode. `stratum+ssl://` (also `stratum+tls://`) connects over TLS. Repeat the flag or separate URLs with commas to add backup pools in failover order. See [pool connections](guides/configuration.md#pool-connections). |
 | `--payout-memo` | UTF-8 text, unset by default | Exchange deposit memo, preserved exactly. Requires a full deposit address and a compatible pool; verified Longhorn TLS endpoints use their address-suffix format automatically. Not supported in daemon mode or farm-proxy hosting. |
 | `--no-payout-memo` | flag | Ignores a saved payout memo for this run when switching back to a personal address. |
+| `--testnet` | bool flag (default `false`) | Uses Blocknet testnet defaults for daemon discovery in daemon mode. |
 | `--pool-worker` (`--worker`) | string | Worker name sent during pool login. |
 | `--pool-proxy` (`--socks5`) | `socks5://[user:pass@]host:port` | Sends pool connections, including backup pools and dev-fee rounds, through a SOCKS5 proxy. The proxy resolves pool hostnames. Pool stats requests use it too; update checks and optional telemetry connect directly. |
 | `--proxy-listen` | `host:port` | Runs Seine as a farm proxy instead of mining. Rigs connect to this address and share one session with `--pool-url`; every share pays `--address`. See [farm proxy](guides/farm-proxy.md). |
@@ -157,6 +158,7 @@ See [collection fields and self-hosting](../telemetry/README.md).
 | `--bench-kind` | `kernel`, `kernel-effective`, `backend`, `end-to-end`; default `backend` | Selects benchmark scope. |
 | `--bench-cpu-kernel` | `scalar`, `avx2`, `avx512`, `avx512-256`, `avx512-256-stream`, `neon`, `neon-sha3`; unset = automatic | Benchmark-only CPU kernel selection. Requires `--bench`, explicit `--threads`, CPU-only backends, and disabled CPU autotuning; unsupported host/build paths fail. |
 | `--bench-secs` | integer `>=1`, default `20` | Per-round measured benchmark duration. |
+| `--bench-pow` | `argon2id` or `blake2b`, default `argon2id` | Proof of work to benchmark. |
 | `--bench-rounds` | integer `>=1`, default `3` | Number of measured rounds. |
 | `--bench-warmup-rounds` | integer `>=0`, default `0` | Warmup rounds before measured rounds. |
 | `--bench-output` | path | Writes benchmark JSON report. |

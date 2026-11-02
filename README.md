@@ -41,10 +41,6 @@ separate pool balance. Command-line overrides apply to the current run; edit
 `seine-data/seine.config.json` to change saved settings. On the pool Stats page,
 enter both the address and memo.
 
-Longhorn's US and Asia TLS endpoints (`stratum+ssl://us.longhornpool.net:3334`
-and `stratum+ssl://asia.longhornpool.net:3334`) also support `--payout-memo`.
-Seine sends their address-plus-memo format automatically. Longhorn memos must
-use printable ASCII without spaces; a missing minimum stays hidden in the TUI.
 See [exchange payouts](docs/EXCHANGE_PAYOUTS.md) for pool compatibility.
 
 ## Why seine
