@@ -13,9 +13,20 @@ pub(crate) struct ThreadChangeRequest {
     /// Current runtime RAM/worker bound, which may differ from the supervisor's
     /// original configuration after automatic recovery or startup fallback.
     pub max_threads: usize,
-    pub rejection: Option<Sender<String>>,
+    /// Receives the dashboard notice: a rejection, or the applied count.
+    pub reply: Option<Sender<String>>,
     pub quit_requested: Arc<AtomicBool>,
     pub memory: Option<Arc<ThreadMemoryGuard>>,
+    /// Applies the count to the running workers when the run supports it.
+    pub live: Option<Sender<LiveThreadChange>>,
+}
+
+/// A worker count chosen in the dashboard, applied by the CPU autotune controller
+/// to the running workers.
+#[derive(Debug)]
+pub(crate) struct LiveThreadChange {
+    pub threads: usize,
+    pub reply: Option<Sender<String>>,
 }
 
 #[derive(Clone)]
@@ -26,6 +37,7 @@ pub(crate) struct ThreadControl {
     pub current_threads: usize,
     pub quit_requested: Arc<AtomicBool>,
     pub memory: Option<Arc<ThreadMemoryGuard>>,
+    pub live: Option<Sender<LiveThreadChange>>,
 }
 
 /// Read actual CPU arena ownership at admission time, never infer it from the

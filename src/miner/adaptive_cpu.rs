@@ -586,6 +586,35 @@ impl Policy {
         )
     }
 
+    /// The user picked a count: it becomes the only count the tuner uses, and
+    /// any comparison in progress ends. RAM limits can still lower it for a time.
+    fn set_manual(
+        &mut self,
+        kernels: &mut super::adaptive_kernel::Tuner,
+        now: u64,
+        snapshots: &[crate::backend::cpu::CpuAdaptiveSnapshot],
+        threads: usize,
+        cap: usize,
+        actual: usize,
+    ) -> (super::adaptive_kernel::Action, Option<Decision>) {
+        let action = if self.joint.is_some() {
+            self.cancel_joint(kernels, now, snapshots, cap, actual, false)
+                .0
+        } else {
+            self.restoring = None;
+            kernels.abort(now)
+        };
+        self.min = threads;
+        self.max = threads;
+        self.reset(now, RECOVERY_SECS);
+        self.reference_hps = None;
+        self.peak_hps = 0.0;
+        self.attempts = 0;
+        self.unsuccessful = 0;
+        self.capped_losses = 0;
+        (action, Some(self.change(threads, "set from the dashboard")))
+    }
+
     fn tick_joint(
         &mut self,
         kernels: &mut super::adaptive_kernel::Tuner,
@@ -1289,6 +1318,7 @@ impl Controller {
         backends: Vec<Arc<CpuBackend>>,
         tui: Option<TuiState>,
         telemetry: Option<crate::hardware_telemetry::Recorder>,
+        live_changes: Receiver<super::thread_control::LiveThreadChange>,
     ) -> Result<Self> {
         let (stop, rx) = bounded(1);
         let handle = if backends.is_empty() {
@@ -1298,6 +1328,7 @@ impl Controller {
                 thread::Builder::new()
                     .name("cpu-autotune".into())
                     .spawn(move || {
+                        let mut live_changes = live_changes;
                         // Arenas already exist when the controller starts. Use
                         // the same owned-memory accounting as subsequent ticks,
                         // so a large cached count does not look like newly
@@ -1323,17 +1354,26 @@ impl Controller {
                         let mut pressure = MemoryPressure::default();
                         let mut pressure_backoff = PressureBackoff::default();
                         loop {
-                            match rx.recv_timeout(Duration::from_secs(1)) {
-                                Ok(()) | Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
-                                    if let Some(monitor) = &mut kernels.monitor {
-                                        let now = started.elapsed().as_secs();
-                                        let snapshots: Vec<_> = backends.iter().map(|b| b.adaptive_snapshot()).collect();
-                                        monitor.observe(now, &snapshots, crate::config::CpuAutotuneResources { parallelism: 0, total_bytes: None, available_bytes: None });
-                                        monitor.abort(now, seine_telemetry::tuning::TrialReason::UserInterrupted);
+                            let mut manual = None;
+                            let stopping = crossbeam_channel::select! {
+                                recv(rx) -> _ => true,
+                                recv(live_changes) -> change => {
+                                    match change {
+                                        Ok(change) => manual = Some(change),
+                                        Err(_) => live_changes = crossbeam_channel::never(),
                                     }
-                                    break
+                                    false
+                                },
+                                default(Duration::from_secs(1)) => false,
+                            };
+                            if stopping {
+                                if let Some(monitor) = &mut kernels.monitor {
+                                    let now = started.elapsed().as_secs();
+                                    let snapshots: Vec<_> = backends.iter().map(|b| b.adaptive_snapshot()).collect();
+                                    monitor.observe(now, &snapshots, crate::config::CpuAutotuneResources { parallelism: 0, total_bytes: None, available_bytes: None });
+                                    monitor.abort(now, seine_telemetry::tuning::TrialReason::UserInterrupted);
                                 }
-                                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
+                                break;
                             }
                             let all_snapshots: Vec<_> =
                                 backends.iter().map(|b| b.adaptive_snapshot()).collect();
@@ -1381,9 +1421,15 @@ impl Controller {
                                 pressure_backoff.cap(pressure.elevated(), available, slots, actual, max);
                             let now = started.elapsed().as_secs();
                             if let Some(monitor) = &mut kernels.monitor { monitor.observe(now, &all_snapshots, resources); }
-                            let (action, decision) = policy.tick_joint(
-                                &mut kernels, now, &all_snapshots, cap, count_failures > failures,
-                            );
+                            let (action, decision) = match &manual {
+                                Some(change) => policy.set_manual(
+                                    &mut kernels, now, &all_snapshots,
+                                    change.threads.min(cap).max(1), cap, actual,
+                                ),
+                                None => policy.tick_joint(
+                                    &mut kernels, now, &all_snapshots, cap, count_failures > failures,
+                                ),
+                            };
                             if let Some(kernel) = action.kernel {
                                 for (backend, snapshot) in backends.iter().zip(&all_snapshots) {
                                     if snapshot.running {
@@ -1455,6 +1501,9 @@ impl Controller {
                                         control.max_threads = cap.max(policy.current);
                                     }
                                 }
+                            }
+                            if let Some(reply) = manual.and_then(|change| change.reply) {
+                                let _ = reply.try_send(format!("CPU threads: {}", policy.current));
                             }
                         }
                     })?,
@@ -1722,8 +1771,14 @@ mod tests {
             },
         ));
         backend.start().unwrap();
-        let mut controller =
-            Controller::start(cfg.clone(), vec![Arc::clone(&backend)], None, None).unwrap();
+        let mut controller = Controller::start(
+            cfg.clone(),
+            vec![Arc::clone(&backend)],
+            None,
+            None,
+            crossbeam_channel::never(),
+        )
+        .unwrap();
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             backend
                 .assign_work(WorkAssignment {
@@ -1864,6 +1919,58 @@ mod tests {
         assert!(p.tick(0, 0, false, 8, false, 1).is_none());
         assert!(p.tick(29, 0, false, 8, false, 1).is_none());
         assert_eq!(p.tick(30, 0, false, 8, false, 1).unwrap().threads, 4);
+    }
+
+    #[test]
+    fn dashboard_count_stays_until_changed_and_ram_can_still_lower_it() {
+        use crate::backend::cpu::CpuAdaptiveSnapshot;
+        use blocknet_pow_kernel::CpuKernel;
+        let mut cfg = super::super::tests::test_config();
+        cfg.cpu_autotune_config_path = std::env::temp_dir().join(format!(
+            "seine-manual-count-test-{}.json",
+            std::process::id()
+        ));
+        let mut kernels = super::super::adaptive_kernel::Tuner::identity_neutral(
+            &cfg,
+            CpuAutotuneHostFingerprint::default(),
+        );
+        let mut p = Policy::new(&cfg, 4, 1, 16);
+        let mut snapshot = CpuAdaptiveSnapshot {
+            kernel: CpuKernel::preferred(),
+            kernel_generation: 1,
+            kernel_ready: true,
+            backing_bytes: [0, 0, 0, 4 * CPU_LANE_MEMORY_BYTES, 0],
+            running: true,
+            threads: 4,
+            committed_bytes: 4 * CPU_LANE_MEMORY_BYTES,
+            resident_bytes: 4 * CPU_LANE_MEMORY_BYTES,
+            hashes: 0,
+            hashing: true,
+            allocation_failures: 0,
+            warmed: 4,
+        };
+        let (_, decision) = p.set_manual(&mut kernels, 0, &[snapshot], 2, 16, 4);
+        assert_eq!(decision.unwrap().threads, 2);
+        let mut run = |p: &mut Policy, range: std::ops::Range<u64>, cap: usize| {
+            for now in range {
+                snapshot.threads = p.current;
+                snapshot.warmed = p.current;
+                snapshot.committed_bytes = p.current as u64 * CPU_LANE_MEMORY_BYTES;
+                snapshot.resident_bytes = snapshot.committed_bytes;
+                snapshot.backing_bytes[3] = snapshot.committed_bytes;
+                snapshot.hashes += p.current as u64 * 20;
+                let (_, decision) = p.tick_joint(&mut kernels, now, &[snapshot], cap, false);
+                if let Some(decision) = decision {
+                    assert!(decision.threads <= 2, "the tuner must not raise the count");
+                }
+            }
+        };
+        run(&mut p, 1..7200, 16);
+        assert_eq!(p.current, 2, "the tuner must keep the chosen count");
+        run(&mut p, 7200..7300, 1);
+        assert_eq!(p.current, 1, "RAM pressure still sheds workers");
+        run(&mut p, 7300..9000, 16);
+        assert_eq!(p.current, 2, "the chosen count returns when RAM recovers");
     }
 
     #[test]

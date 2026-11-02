@@ -128,7 +128,7 @@ pub struct TuiStateInner {
     pub thread_control: Option<ThreadControl>,
     pub thread_change_pending: bool,
     pub thread_notice: Option<String>,
-    thread_rejection: Option<crossbeam_channel::Receiver<String>>,
+    thread_reply: Option<crossbeam_channel::Receiver<String>>,
     pub refresh_secs: u64,
     pub sse_enabled: bool,
     pub backends_desc: String,
@@ -183,7 +183,7 @@ impl TuiStateInner {
             thread_control: None,
             thread_change_pending: false,
             thread_notice: None,
-            thread_rejection: None,
+            thread_reply: None,
             refresh_secs: 0,
             sse_enabled: false,
             backends_desc: String::new(),
@@ -206,18 +206,18 @@ impl TuiStateInner {
         self.log_entries.push_back(entry);
     }
 
-    pub(super) fn poll_thread_rejection(&mut self) -> bool {
-        if let Some(message) = self
-            .thread_rejection
-            .as_ref()
-            .and_then(|rx| rx.try_recv().ok())
-        {
-            self.thread_change_pending = false;
-            self.thread_notice = Some(message);
-            self.thread_rejection = None;
-            return true;
-        }
-        false
+    pub(super) fn poll_thread_reply(&mut self) -> bool {
+        let message = match self.thread_reply.as_ref().map(|rx| rx.try_recv()) {
+            Some(Ok(message)) => message,
+            Some(Err(crossbeam_channel::TryRecvError::Disconnected)) => {
+                "Thread change unavailable; try again.".to_string()
+            }
+            Some(Err(crossbeam_channel::TryRecvError::Empty)) | None => return false,
+        };
+        self.thread_change_pending = false;
+        self.thread_notice = Some(message);
+        self.thread_reply = None;
+        true
     }
 
     /// Returns true only for an explicit quit. No backend work runs on the UI thread.
@@ -234,7 +234,7 @@ impl TuiStateInner {
             }
             return true;
         }
-        self.poll_thread_rejection();
+        self.poll_thread_reply();
         if !matches!(
             key.code,
             KeyCode::Char('+') | KeyCode::Char('=') | KeyCode::Char('-')
@@ -274,10 +274,11 @@ impl TuiStateInner {
         if threads == control.current_threads {
             return false;
         }
-        let (rejection, receiver) = crossbeam_channel::bounded(1);
+        let (reply, receiver) = crossbeam_channel::bounded(1);
         let request = ThreadChangeRequest {
             memory: control.memory.clone(),
-            rejection: Some(rejection),
+            reply: Some(reply),
+            live: control.live.clone(),
             max_threads: control.max_threads.max(control.current_threads),
             run_id: control.run_id,
             threads,
@@ -286,7 +287,7 @@ impl TuiStateInner {
         self.thread_notice = Some(match control.sender.try_send(request) {
             Ok(()) => {
                 self.thread_change_pending = true;
-                self.thread_rejection = Some(receiver);
+                self.thread_reply = Some(receiver);
                 format!(
                     "Checking RAM: {} -> {threads} threads...",
                     control.current_threads
@@ -1460,6 +1461,7 @@ mod tests {
         let mut state = TuiStateInner::new();
         state.threads = 2;
         state.thread_control = Some(ThreadControl {
+            live: None,
             run_id: 42,
             sender,
             memory: None,
@@ -1543,6 +1545,31 @@ mod tests {
     }
 
     #[test]
+    fn a_live_change_clears_pending_and_a_lost_controller_does_not_stick() {
+        let (mut state, receiver) = controlled_state();
+        press(&mut state, KeyCode::Char('+'));
+        assert!(state.thread_change_pending);
+        let request = receiver.try_recv().unwrap();
+        request
+            .reply
+            .unwrap()
+            .send("CPU threads: 3".to_string())
+            .unwrap();
+        assert!(state.poll_thread_reply());
+        assert!(!state.thread_change_pending);
+        assert_eq!(state.thread_notice.as_deref(), Some("CPU threads: 3"));
+
+        press(&mut state, KeyCode::Char('+'));
+        assert!(state.thread_change_pending);
+        drop(receiver.try_recv().unwrap());
+        assert!(state.poll_thread_reply());
+        assert!(
+            !state.thread_change_pending,
+            "a dropped reply must not block changes"
+        );
+    }
+
+    #[test]
     fn ram_rejection_is_visible_and_unblocks_retry() {
         let (mut state, receiver) = controlled_state();
         press(&mut state, KeyCode::Char('+'));
@@ -1550,8 +1577,8 @@ mod tests {
         let reason = super::super::thread_control::validate_headroom(3, 2)
             .unwrap_err()
             .to_string();
-        request.rejection.unwrap().send(reason.clone()).unwrap();
-        state.poll_thread_rejection();
+        request.reply.unwrap().send(reason.clone()).unwrap();
+        state.poll_thread_reply();
         assert!(!state.thread_change_pending);
         assert_eq!(state.threads, 2);
         for (width, height) in [(40, 18), (80, 12), (160, 34)] {

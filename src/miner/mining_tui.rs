@@ -390,13 +390,13 @@ fn spawn_tui_render_worker(
             match render_signal_rx.recv_timeout(Duration::from_millis(100)) {
                 Ok(RenderSignal::RenderNow) => {
                     if let Ok(mut locked) = state.lock() {
-                        locked.poll_thread_rejection();
+                        locked.poll_thread_reply();
                         let _ = renderer.render(&locked);
                     }
                 }
                 Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
                     if let Ok(mut locked) = state.lock() {
-                        if locked.poll_thread_rejection() {
+                        if locked.poll_thread_reply() {
                             let _ = renderer.render(&locked);
                         }
                     }

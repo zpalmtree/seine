@@ -80,6 +80,7 @@ fn export_thread_controls_showcase() {
         state.round_hashrate = "2.500 H/s".into();
         state.avg_hashrate = "2.400 H/s".into();
         state.thread_control = Some(ThreadControl {
+            live: None,
             run_id: 1,
             sender,
             max_threads: 4,
@@ -111,8 +112,8 @@ fn export_thread_controls_showcase() {
                 let message = super::super::thread_control::validate_headroom(3, 2)
                     .unwrap_err()
                     .to_string();
-                request.rejection.unwrap().send(message).unwrap();
-                state.poll_thread_rejection();
+                request.reply.unwrap().send(message).unwrap();
+                state.poll_thread_reply();
             }
             6 => {
                 drop(receiver);

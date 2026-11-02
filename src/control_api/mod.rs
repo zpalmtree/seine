@@ -723,6 +723,7 @@ impl MinerSupervisor {
             run_id,
             sender: self.thread_changes_tx.clone(),
             memory: None,
+            live: None,
             max_threads: cfg.cpu_auto_threads_cap,
             current_threads: cfg.threads,
             quit_requested: Arc::new(AtomicBool::new(false)),
@@ -977,13 +978,26 @@ impl MinerSupervisor {
                     apply_runtime_thread_count(&mut cfg, request.threads, request.max_threads)
                 });
             if let Err(err) = admission {
-                if let Some(reply) = &request.rejection {
+                if let Some(reply) = &request.reply {
                     let _ = reply.try_send(format!("{err:#}"));
                 }
                 return Err(err);
             }
             state.staged_config = Some(cfg);
         }
+        let mut reply = request.reply;
+        if let Some(live) = &request.live {
+            // Running workers take the new count; the session keeps mining.
+            let change = crate::miner::thread_control::LiveThreadChange {
+                threads: request.threads,
+                reply: reply.take(),
+            };
+            match live.try_send(change) {
+                Ok(()) => return Ok(()),
+                Err(failed) => reply = failed.into_inner().reply,
+            }
+        }
+        drop(reply);
         crate::miner::ui::info(
             "THREADS",
             format!(
@@ -2980,7 +2994,8 @@ mod tests {
                 memory: Some(Arc::new(
                     crate::miner::thread_control::ThreadMemoryGuard::new(&cfg, vec![]),
                 )),
-                rejection: Some(reply),
+                reply: Some(reply),
+                live: None,
                 quit_requested: Arc::new(AtomicBool::new(false)),
             })
             .unwrap();
@@ -3011,9 +3026,10 @@ mod tests {
         supervisor
             .thread_changes_tx
             .send(ThreadChangeRequest {
+                live: None,
                 max_threads: 8,
                 memory: None,
-                rejection: None,
+                reply: None,
                 run_id: 1,
                 threads: 1,
                 quit_requested: Arc::new(AtomicBool::new(false)),
@@ -3033,9 +3049,10 @@ mod tests {
         supervisor
             .thread_changes_tx
             .send(ThreadChangeRequest {
+                live: None,
                 max_threads: 8,
                 memory: None,
-                rejection: None,
+                reply: None,
                 run_id: 0,
                 threads: 1,
                 quit_requested: Arc::new(AtomicBool::new(false)),

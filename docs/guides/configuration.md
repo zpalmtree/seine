@@ -90,12 +90,11 @@ which is what Blocknet pools run.
 
 Press `+` or `-` directly in the mining dashboard to add or remove one thread
 per CPU backend. The hint appears beside the thread count; `=` also increases
-the count without requiring Shift. Each change applies immediately. All mining
-backends restart and pool mining reconnects, while session statistics, uptime,
-average hashrate, and dashboard history are preserved. The
-current hashrate refreshes for the new workers. Further changes are ignored
-until the restart finishes. The selected count disables CPU autotuning for that
-run and is not saved as a new default.
+the count without requiring Shift. The change applies to the running CPU workers:
+GPUs, the pool connection and the dashboard keep running. The chosen count replaces
+automatic thread tuning for that run and is not saved as a new default. If you started
+with a fixed `--threads`, the change restarts mining instead, and your session
+statistics are kept.
 Increases are limited to the automatic CPU/RAM cap; use `--threads` for explicit
 startup overrides.
 

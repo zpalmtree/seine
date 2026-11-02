@@ -906,6 +906,7 @@ fn run_with_thread_control_inner(
         RuntimeMode::Mining,
         &backend_executor,
     )?;
+    let (live_thread_tx, live_thread_rx) = bounded(1);
     let total_lanes: usize = backends.iter().map(|s| s.backend.enabled_lanes()).sum();
     let cpu_lanes = cpu_lane_count(&backends);
     let cpu_ram_gib =
@@ -941,6 +942,8 @@ fn run_with_thread_control_inner(
                         cfg,
                         cpu_memory_backends.clone(),
                     )));
+                    // Tuned runs have parked workers the controller can wake.
+                    control.live = cfg.cpu_autotune_threads.then(|| live_thread_tx.clone());
                     s.thread_control = Some(control);
                 }
             }
@@ -1197,6 +1200,7 @@ fn run_with_thread_control_inner(
         adaptive_backends,
         tui_state.clone(),
         telemetry,
+        live_thread_rx,
     ) {
         Ok(controller) => controller,
         Err(err) => {
