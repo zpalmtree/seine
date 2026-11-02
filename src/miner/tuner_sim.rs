@@ -989,7 +989,7 @@ fn scoreboard_targets_hold_on_every_seed() {
             );
             if !event_driven {
                 check(
-                    scenario.noise >= 0.02 || score.log_lines_after_first_hour_per_day <= 4.0,
+                    scenario.noise >= 0.02 || score.log_lines_after_first_hour_per_day <= 2.1,
                     format!(
                         "{:.0} log lines a day",
                         score.log_lines_after_first_hour_per_day

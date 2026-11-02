@@ -55,7 +55,11 @@ const RECOVERY_PROBE_SECS: u64 = 600;
 const RECOVERY_PROBE_MAX_SECS: u64 = 6 * 3600;
 const UNDECIDED_RETRY_SECS: u64 = 30 * 60;
 const UNDECIDED_LOOKS: u8 = 5;
-const UNDECIDED_PENDING: usize = 3;
+const UNDECIDED_PENDING: usize = 5;
+/// After the first hour, a changed result is logged at most this often. The status row
+/// always shows the current count.
+const RESULT_NOTE_SECS: u64 = 12 * 3600;
+const RESULT_NOTES_FREE_UNTIL: u64 = 3600;
 const MAX_REQUEUED: u8 = 8;
 /// A shift in large-page coverage this small does not change what a window measures.
 const BACKING_SHIFT: f64 = 0.1;
@@ -584,6 +588,7 @@ pub(super) struct Search {
     undecided_at: u64,
     /// The highest count proven worse, or the floor below `min`.
     worse_at: usize,
+    next_result_note: u64,
     retests: u32,
 
     watch: Watch,
@@ -664,6 +669,7 @@ impl Search {
             undecided: VecDeque::new(),
             undecided_at: 0,
             worse_at: min.max(1).min(max.max(1)) - 1,
+            next_result_note: 0,
             retests: 0,
             watch: Watch {
                 open: None,
@@ -1599,8 +1605,11 @@ impl Search {
                         self.started_search = now;
                         self.deadline = None;
                         self.step = (self.keep / 8).max(1);
-                        self.lo = self.worse_at.max(self.keep.saturating_sub(self.step));
-                        self.lo_measured = self.lo == self.worse_at;
+                        // A count above this one says nothing about how low it can go.
+                        let worse_below = (self.worse_at < self.keep).then_some(self.worse_at);
+                        let near = self.keep.saturating_sub(self.step).max(self.min - 1);
+                        self.lo = worse_below.map_or(near, |worse| worse.max(near));
+                        self.lo_measured = worse_below == Some(self.lo);
                         self.stage = Stage::Refine;
                     }
                 } else if verdict == Verdict::Tie {
@@ -1892,11 +1901,14 @@ impl Search {
         ));
         let announced = self.announced;
         self.announced = Some(self.operating());
-        if announced != self.announced {
+        if announced != self.announced && now >= self.next_result_note {
             self.pending_notes.push(Note {
                 text: format!("tuned to {} threads", self.keep),
                 success: true,
             });
+            if now >= RESULT_NOTES_FREE_UNTIL {
+                self.next_result_note = now + RESULT_NOTE_SECS;
+            }
         }
         self.settled_after_update = self.testing_update;
         self.testing_update = false;
@@ -2429,6 +2441,30 @@ mod tests {
             vec![AVX2, STREAM],
         ));
         assert!(changed.undecided.is_empty());
+    }
+
+    #[test]
+    fn changed_results_are_logged_at_most_twice_a_day_after_the_first_hour() {
+        let mut search = Search::new(params(10, 12));
+        let mut out = Output::default();
+        let tuned = |search: &Search| {
+            search
+                .pending_notes
+                .iter()
+                .filter(|n| n.text.starts_with("tuned to"))
+                .count()
+        };
+        for (at, keep) in [(600, 10), (3000, 11)] {
+            search.keep = keep;
+            search.settle(at, &mut out, 12);
+        }
+        assert_eq!(tuned(&search), 2);
+        for (at, keep) in [(7200, 10), (9000, 11), (20000, 10), (50400, 11)] {
+            search.keep = keep;
+            search.settle(at, &mut out, 12);
+        }
+        // 7200 logs and holds the next until 50400.
+        assert_eq!(tuned(&search), 4);
     }
 
     #[test]
