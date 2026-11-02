@@ -97,10 +97,33 @@ pub(crate) fn query_amd_devices() -> Result<Vec<AmdDeviceInfo>> {
                 props.pci_bus_id.max(0),
                 props.pci_device_id.max(0)
             ),
-            integrated: props.integrated != 0,
+            integrated: props.integrated != 0
+                || is_integrated_gpu(&props.gcn_arch_name(), &props.device_name()),
         });
     }
     Ok(devices)
+}
+
+/// Integrated Radeon graphics by architecture, or by a device name without a
+/// model number ("AMD Radeon(TM) Graphics"). The Windows driver reports the
+/// `integrated` property as 0 for these GPUs.
+pub(crate) fn is_integrated_gpu(gcn_arch_name: &str, device_name: &str) -> bool {
+    let arch = gcn_arch_name.split(':').next().unwrap_or("").trim();
+    matches!(
+        arch,
+        "gfx902"
+            | "gfx909"
+            | "gfx90c"
+            | "gfx1033"
+            | "gfx1035"
+            | "gfx1036"
+            | "gfx1037"
+            | "gfx1103"
+            | "gfx1150"
+            | "gfx1151"
+            | "gfx1152"
+            | "gfx1153"
+    ) || !device_name.chars().any(|c| c.is_ascii_digit())
 }
 
 fn query_device_props(api: &'static HipApi, index: c_int) -> Result<HipDevicePropR0000> {
@@ -1561,6 +1584,29 @@ mod tests {
         assert_eq!(plan_skip_from("gfx1100", blocks, 3, 7_764, None, false), 0);
         assert!(skip_rebuild_rate(500) > skip_rebuild_rate(510));
         assert!(skip_rebuild_rate(990) < skip_rebuild_rate(950));
+    }
+
+    #[test]
+    fn integrated_radeon_is_recognized_without_the_driver_flag() {
+        for (arch, name) in [
+            ("gfx1036", "AMD Radeon(TM) Graphics"),
+            ("gfx1103", "AMD Radeon 780M Graphics"),
+            ("gfx1151", "AMD Radeon 8060S Graphics"),
+            ("gfx1035:xnack-", "AMD Radeon 680M"),
+            ("gfx1234", "AMD Radeon(TM) Graphics"),
+        ] {
+            assert!(is_integrated_gpu(arch, name), "{arch} {name}");
+        }
+        for (arch, name) in [
+            ("gfx1030", "AMD Radeon RX 6800"),
+            ("gfx1032", "AMD Radeon RX 6600"),
+            ("gfx1100", "AMD Radeon RX 7900 XTX"),
+            ("gfx1101", "AMD Radeon Pro V710 MxGPU"),
+            ("gfx1201", "AMD Radeon AI PRO R9700"),
+            ("gfx942:sramecc+:xnack-", "AMD Instinct MI325X"),
+        ] {
+            assert!(!is_integrated_gpu(arch, name), "{arch} {name}");
+        }
     }
 
     #[test]
