@@ -2,9 +2,10 @@
 //! enough rows for the dashboard log. Windows opened by the user are theirs:
 //! shells, other terminals and redirected output are left exactly as they are.
 
-/// Target size for a miner-owned classic console window.
+/// Sizes for a miner-owned classic console window, largest first. A smaller
+/// screen falls through to the next one that fits.
 #[cfg(any(target_os = "windows", test))]
-const OWN_CONSOLE_SIZE: (u16, u16) = (120, 40);
+const OWN_CONSOLE_SIZES: [(u16, u16); 2] = [(140, 45), (120, 40)];
 
 /// Grows only: a window the user already made larger stays that way.
 #[cfg(any(target_os = "windows", test))]
@@ -46,23 +47,35 @@ pub(crate) fn prepare_own_console() {
         let Ok(current) = terminal::size() else {
             return;
         };
-        if let Some((cols, rows)) = grown_size(current, OWN_CONSOLE_SIZE) {
-            // Too large for the monitor fails without changing anything.
-            let _ = terminal::SetSize(cols, rows).execute_winapi();
+        for target in OWN_CONSOLE_SIZES {
+            let Some((cols, rows)) = grown_size(current, target) else {
+                break;
+            };
+            if terminal::SetSize(cols, rows).execute_winapi().is_ok() {
+                break;
+            }
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{grown_size, OWN_CONSOLE_SIZE};
+    use super::{grown_size, OWN_CONSOLE_SIZES};
 
     #[test]
     fn only_grows_the_window() {
-        assert_eq!(grown_size((120, 30), OWN_CONSOLE_SIZE), Some((120, 40)));
-        assert_eq!(grown_size((80, 25), OWN_CONSOLE_SIZE), Some((120, 40)));
-        assert_eq!(grown_size((200, 30), OWN_CONSOLE_SIZE), Some((200, 40)));
-        assert_eq!(grown_size((120, 40), OWN_CONSOLE_SIZE), None);
-        assert_eq!(grown_size((200, 60), OWN_CONSOLE_SIZE), None);
+        let target = OWN_CONSOLE_SIZES[0];
+        assert_eq!(grown_size((120, 30), target), Some((140, 45)));
+        assert_eq!(grown_size((80, 25), target), Some((140, 45)));
+        assert_eq!(grown_size((200, 30), target), Some((200, 45)));
+        assert_eq!(grown_size((140, 45), target), None);
+        assert_eq!(grown_size((200, 60), target), None);
+    }
+
+    #[test]
+    fn sizes_run_largest_first() {
+        assert!(OWN_CONSOLE_SIZES
+            .windows(2)
+            .all(|pair| pair[0].0 >= pair[1].0 && pair[0].1 > pair[1].1));
     }
 }

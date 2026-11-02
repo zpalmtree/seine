@@ -382,7 +382,6 @@ fn export_autotune_showcase() {
             },
             tag: tag.into(),
             message: format!("{prefix}{reason}{action}"),
-            count: 1,
         });
         html.push_str(&format!("<section><h2>{title}</h2><div class='desktop'>{}</div><div class='mobile'>{}</div></section>", capture_log(&state, 120, 5), capture_log(&state, 48, 10)));
     }
@@ -394,7 +393,7 @@ fn export_autotune_showcase() {
         assert!(live.contains(reason));
         let mut state = TuiStateInner::new();
         let threads = if reason == "waiting for RAM" { 0 } else { 2 };
-        state.push_log(LogEntry { elapsed_secs: 0.0, level: LogLevel::Info, tag: "MINER".into(), message: format!("cpu-autotune | starting with {threads} threads ({reason}); tuning while mining, capacity=4, worker slots=4, currently available={threads}"), count: 1 });
+        state.push_log(LogEntry { elapsed_secs: 0.0, level: LogLevel::Info, tag: "MINER".into(), message: format!("cpu-autotune | starting with {threads} threads ({reason}); tuning while mining, capacity=4, worker slots=4, currently available={threads}") });
         html.push_str(&format!("<section><h2>CPU / {reason}</h2><div class='desktop'>{}</div><div class='mobile'>{}</div></section>", capture_log(&state, 120, 5), capture_log(&state, 48, 12)));
     }
     html.push_str("</html>");
@@ -535,7 +534,6 @@ fn export_exchange_payout_showcase() {
                 tag: "AUTH".into(),
                 message: "pool did not acknowledge the payout memo; no shares will be submitted"
                     .into(),
-                count: 1,
             });
         }
         html.push_str(&format!("<section id='{slug}'><h2>{title}</h2><div class='desktop'>{}</div><div class='mobile'>{}</div></section>", capture(&state, 120, 30), capture(&state, 40, 18)));
@@ -642,9 +640,9 @@ fn capture_full(state: &TuiStateInner, width: u16, height: u16) -> String {
     html_from_buffer(terminal.backend().buffer(), width, height)
 }
 
-fn dashboard_fixture(state_label: &str, log: &[(LogLevel, &str, &str, u32, f64)]) -> TuiStateInner {
+fn dashboard_fixture(state_label: &str, log: &[(LogLevel, &str, &str, f64)]) -> TuiStateInner {
     // Long enough ago that the oldest fixture line fits inside the uptime.
-    let uptime = log.iter().map(|entry| entry.4).fold(0.0, f64::max) + 5.0;
+    let uptime = log.iter().map(|entry| entry.3).fold(0.0, f64::max) + 5.0;
     let mut state = TuiStateInner::new();
     state.started_at = Instant::now() - Duration::from_secs_f64(uptime);
     state.mode = "pool".into();
@@ -654,15 +652,14 @@ fn dashboard_fixture(state_label: &str, log: &[(LogLevel, &str, &str, u32, f64)]
     state.pool_worker = "seine-4821".into();
     state.pool_address = "Ab12Cd...Ef34Gh".into();
     state.pool_payout_minimum = Some("1 BNT".into());
-    for (level, tag, message, count, age) in log {
-        let mut entry = LogEntry::new(uptime - age, *level, tag, message);
-        entry.count = *count;
+    for (level, tag, message, age) in log {
+        let entry = LogEntry::new(uptime - age, *level, tag, message);
         state.log_entries.push_back(entry);
     }
     state
 }
 
-fn mining_fixture(state_label: &str, log: &[(LogLevel, &str, &str, u32, f64)]) -> TuiStateInner {
+fn mining_fixture(state_label: &str, log: &[(LogLevel, &str, &str, f64)]) -> TuiStateInner {
     let mut state = dashboard_fixture(state_label, log);
     state.backends_desc = "cpu#1".into();
     state.threads = 16;
@@ -688,74 +685,58 @@ fn mining_fixture(state_label: &str, log: &[(LogLevel, &str, &str, u32, f64)]) -
 #[ignore = "writes the startup dashboard showcase; pass SEINE_SHOWCASE_DIR to choose where"]
 fn export_startup_dashboard_showcase() {
     use LogLevel::{Error, Info, Success, Warn};
-    let tuning: &[(LogLevel, &str, &str, u32, f64)] = &[
+    let tuning: &[(LogLevel, &str, &str, f64)] = &[
         (
             Info,
             "BACKEND",
             "detected 1 NVIDIA GPU(s): GeForce RTX 5090",
-            1,
             3.0,
         ),
-        (
-            Info,
-            "CPU",
-            "finding the best settings while mining",
-            1,
-            3.0,
-        ),
+        (Info, "CPU", "finding the best settings while mining", 3.0),
         (
             Info,
             "BACKEND",
             "cpu: starting 16 threads (~32.0 GiB RAM)",
-            1,
             3.0,
         ),
         (
             Info,
             "CONFIG",
             "settings saved to C:\\Users\\miner\\seine\\seine.config.json",
-            1,
             3.0,
         ),
-        (Success, "CONN", "connected to pool", 1, 2.0),
+        (Success, "CONN", "connected to pool", 2.0),
     ];
-    let steady: &[(LogLevel, &str, &str, u32, f64)] = &[
+    let steady: &[(LogLevel, &str, &str, f64)] = &[
         (
             Info,
             "BACKEND",
             "cpu: starting 16 threads (~32.0 GiB RAM)",
-            1,
             7_500.0,
         ),
-        (Success, "CONN", "connected to pool", 1, 7_500.0),
-        (Success, "CPU", "tuned to 16 threads", 1, 7_200.0),
-        (Success, "SHARE", "share accepted", 96, 2_400.0),
-        (Warn, "SHARE", "rejected (stale share)", 1, 2_380.0),
-        (Success, "SHARE", "share accepted", 115, 4.0),
+        (Success, "CONN", "connected to pool", 7_500.0),
+        (Success, "CPU", "tuned to 16 threads", 7_200.0),
+        (Success, "SHARE", "share accepted", 2_400.0),
+        (Warn, "SHARE", "rejected (stale share)", 2_380.0),
+        (Success, "SHARE", "share accepted", 4.0),
     ];
-    let outage: &[(LogLevel, &str, &str, u32, f64)] = &[
-        (Success, "CONN", "connected to pool", 1, 3_600.0),
-        (Success, "SHARE", "share accepted", 88, 60.0),
+    let outage: &[(LogLevel, &str, &str, f64)] = &[
+        (Success, "CONN", "connected to pool", 3_600.0),
+        (Success, "SHARE", "share accepted", 60.0),
         (
             Warn,
             "CONN",
             "pool connection lost: connection reset by peer",
-            14,
             2.0,
         ),
     ];
-    let rejected: &[(LogLevel, &str, &str, u32, f64)] = &[(
-        Error,
-        "AUTH",
-        "login rejected: unknown payout address",
-        1,
-        1.0,
-    )];
-    let notices: &[(LogLevel, &str, &str, u32, f64)] = &[
-        (Info, "BACKEND", "WSL2 gives this VM 12 GiB of RAM, enough for 5 of 32 CPU threads. For more, set memory=66GB under [wsl2] in %UserProfile%\\.wslconfig and run `wsl --shutdown`, or use the Windows build.", 1, 8.0),
-        (Info, "BACKEND", "memory runs at 4800 MT/s but is rated 6000 MT/s; enable EXPO/XMP in BIOS for more CPU hashrate", 1, 8.0),
-        (Warn, "NVIDIA", "GPU 0: NVRTC could not build the kernel; using the built-in kernel", 1, 6.0),
-        (Success, "CONN", "connected to pool", 1, 5.0),
+    let rejected: &[(LogLevel, &str, &str, f64)] =
+        &[(Error, "AUTH", "login rejected: unknown payout address", 1.0)];
+    let notices: &[(LogLevel, &str, &str, f64)] = &[
+        (Info, "BACKEND", "WSL2 gives this VM 12 GiB of RAM, enough for 5 of 32 CPU threads. For more, set memory=66GB under [wsl2] in %UserProfile%\\.wslconfig and run `wsl --shutdown`, or use the Windows build.", 8.0),
+        (Info, "BACKEND", "memory runs at 4800 MT/s but is rated 6000 MT/s; enable EXPO/XMP in BIOS for more CPU hashrate", 8.0),
+        (Warn, "NVIDIA", "GPU 0: NVRTC could not build the kernel; using the built-in kernel", 6.0),
+        (Success, "CONN", "connected to pool", 5.0),
     ];
 
     let mut starting = dashboard_fixture("checking hardware", &[]);
@@ -856,7 +837,7 @@ fn export_startup_dashboard_showcase() {
         ),
         (
             "Mining",
-            "Hours of shares fold into a counted row, so the log stays readable.",
+            "Each new share refreshes one row; the Accepted count is in the mining panel.",
             &working,
         ),
         (
@@ -866,7 +847,7 @@ fn export_startup_dashboard_showcase() {
         ),
         (
             "Reconnecting",
-            "Repeated errors fold into one counted row.",
+            "A repeated error stays on one row and shows when it last happened.",
             &reconnecting,
         ),
         (
@@ -891,8 +872,8 @@ fn export_startup_dashboard_showcase() {
     section(
         &mut body,
         "Common window sizes",
-        "Mining at 80x24, the smallest common terminal, then 120x40, the size a double-clicked classic console opens at.",
-        format!("{}{}", capture_full(&working, 80, 24), capture_full(&working, 120, 40)),
+        "Mining at 80x24, the smallest common terminal, then 140x45, the size a double-clicked classic console opens at.",
+        format!("{}{}", capture_full(&working, 80, 24), capture_full(&working, 140, 45)),
         capture_full(&working, 80, 24),
     );
     section(
