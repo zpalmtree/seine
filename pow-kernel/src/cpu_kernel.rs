@@ -118,6 +118,31 @@ impl CpuKernel {
     }
 }
 
+impl CpuKernel {
+    /// Raise a kernel's number when a change can make it faster or slower: every
+    /// miner then measures it again, even if it lost before.
+    pub const fn revision(self) -> u32 {
+        match self {
+            Self::Scalar
+            | Self::Avx2
+            | Self::Avx512
+            | Self::Avx512256
+            | Self::Neon
+            | Self::Avx512256Stream
+            | Self::NeonSha3
+            | Self::Avx512256StreamR8D2
+            | Self::Avx512256StreamR64D3
+            | Self::Avx512256StreamR64D4
+            | Self::Avx512256StreamR64D6
+            | Self::Avx2Stream
+            | Self::Avx512Stream
+            | Self::Avx512256StreamL2
+            | Self::Avx512StreamL2
+            | Self::Avx512StreamSkip => 1,
+        }
+    }
+}
+
 impl std::fmt::Display for CpuKernel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())

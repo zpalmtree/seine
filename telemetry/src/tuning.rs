@@ -6,6 +6,7 @@ pub const MAX_TRIALS: usize = 8;
 pub const MAX_SAMPLES: usize = 6;
 pub const MAX_MEMBERS: usize = 8;
 pub const MAX_TUNING_BYTES: usize = 16 * 1024;
+pub const MAX_CURVE_POINTS: usize = 16;
 const MAX_UPTIME_MS: u64 = 315_360_000_000;
 const MAX_TRIAL_MS: u64 = 86_400_000;
 
@@ -183,6 +184,75 @@ pub struct TuningReport {
     pub trials: Vec<RecordedTrial>,
     /// Queue contention, overflow, invalid records, or payload-budget omissions.
     pub dropped_trials: u64,
+    /// The last result the search settled on since the previous report (schema 15).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settled: Option<SettledTuning>,
+}
+
+/// Where the search started from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SeedSource {
+    Estimate,
+    Family,
+    Measured,
+}
+
+/// One setting the search measured.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CurvePoint {
+    pub workers: u32,
+    pub kernel: String,
+    pub hps: f64,
+}
+
+/// What the search settled on, and what it took to get there (schema 15).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SettledTuning {
+    pub workers: u32,
+    pub kernel: String,
+    pub hps: f64,
+    /// From the start of the run to this result.
+    pub settled_ms: u64,
+    pub comparisons: u32,
+    /// Time spent inside comparisons, a subset of `settled_ms`.
+    pub comparing_ms: u64,
+    pub ram_limited: bool,
+    pub seed: SeedSource,
+    /// A new build's changes were being tested.
+    pub after_update: bool,
+    pub curve: Vec<CurvePoint>,
+}
+
+fn valid_kernel_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 48
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
+fn valid_hps(hps: f64) -> bool {
+    hps.is_finite() && (0.0..=1e9).contains(&hps)
+}
+
+impl SettledTuning {
+    pub fn validate(&self) -> bool {
+        (1..=65536).contains(&self.workers)
+            && valid_kernel_name(&self.kernel)
+            && valid_hps(self.hps)
+            && self.settled_ms <= MAX_UPTIME_MS
+            && self.comparing_ms <= self.settled_ms
+            && self.comparisons <= 1_000_000
+            && self.curve.len() <= MAX_CURVE_POINTS
+            && self.curve.iter().all(|point| {
+                (1..=65536).contains(&point.workers)
+                    && valid_kernel_name(&point.kernel)
+                    && valid_hps(point.hps)
+            })
+    }
 }
 
 fn members_valid(members: &[TrialMember]) -> bool {
@@ -289,6 +359,7 @@ impl TuningReport {
         crate::valid_id(&self.run_id)
             && self.trials.len() <= MAX_TRIALS
             && self.dropped_trials <= 1_000_000_000_000
+            && self.settled.as_ref().is_none_or(SettledTuning::validate)
             && self
                 .trials
                 .iter()
@@ -420,5 +491,59 @@ mod tests {
         assert!(!t.validate());
         t.policy.short_minimum_hashes = Some(1_000_000_000_000_001);
         assert!(!t.validate());
+    }
+}
+
+#[cfg(test)]
+mod settled_tests {
+    use super::*;
+
+    fn settled() -> SettledTuning {
+        SettledTuning {
+            workers: 12,
+            kernel: "avx2-stream".into(),
+            hps: 10.4,
+            settled_ms: 400_000,
+            comparisons: 5,
+            comparing_ms: 300_000,
+            ram_limited: false,
+            seed: SeedSource::Family,
+            after_update: false,
+            curve: vec![CurvePoint {
+                workers: 12,
+                kernel: "avx2-stream".into(),
+                hps: 10.4,
+            }],
+        }
+    }
+
+    #[test]
+    fn a_settled_result_validates_and_rejects_nonsense() {
+        assert!(settled().validate());
+        let mut bad = settled();
+        bad.hps = f64::NAN;
+        assert!(!bad.validate());
+        let mut bad = settled();
+        bad.workers = 0;
+        assert!(!bad.validate());
+        let mut bad = settled();
+        bad.kernel = "Not A Kernel".into();
+        assert!(!bad.validate());
+        let mut bad = settled();
+        bad.comparing_ms = bad.settled_ms + 1;
+        assert!(!bad.validate());
+        let mut bad = settled();
+        bad.curve = vec![bad.curve[0].clone(); MAX_CURVE_POINTS + 1];
+        assert!(!bad.validate());
+    }
+
+    #[test]
+    fn a_settled_result_is_optional_on_the_wire() {
+        let report: TuningReport = serde_json::from_str(
+            r#"{"run_id":"11111111111111111111111111111111","trials":[],"dropped_trials":0}"#,
+        )
+        .unwrap();
+        assert!(report.settled.is_none());
+        assert!(!serde_json::to_string(&report).unwrap().contains("settled"));
     }
 }

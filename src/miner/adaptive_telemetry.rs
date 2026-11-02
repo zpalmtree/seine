@@ -284,6 +284,55 @@ impl Monitor {
         });
     }
 
+    /// Begin a comparison of two complete settings (thread count and kernel).
+    pub(super) fn begin_settings(
+        &mut self,
+        now: u64,
+        base: super::adaptive_search::Setting,
+        candidate: super::adaptive_search::Setting,
+        policy: TrialPolicy,
+    ) {
+        self.begin(now, base.kernel, candidate.kernel, policy);
+        if let Some(trace) = &mut self.trace {
+            let kind = if base.threads == candidate.threads {
+                TrialKind::CpuKernel
+            } else if base.kernel == candidate.kernel {
+                TrialKind::CpuWorkers
+            } else {
+                TrialKind::CpuJoint
+            };
+            trace.outcome.kind = kind;
+            let set = |members: &mut Vec<TrialMember>, threads: usize| {
+                for member in members {
+                    let lanes = u64::from(member.workers).max(1);
+                    let per_lane = member.backing_mib.map(|mib| mib / lanes);
+                    member.workers = threads.try_into().unwrap_or(member.workers);
+                    member.backing_mib = per_lane.map(|mib| mib * threads as u64);
+                }
+            };
+            set(&mut trace.outcome.baseline, base.threads);
+            set(&mut trace.outcome.candidate, candidate.threads);
+        }
+    }
+
+    /// Report a finished comparison at once; the next one may start immediately.
+    pub(super) fn finish_applied(
+        &mut self,
+        now: u64,
+        decision: TrialDecision,
+        reason: TrialReason,
+        applied: TrialArm,
+    ) {
+        if let Some(mut trace) = self.trace.take() {
+            trace.outcome.decision = decision;
+            trace.outcome.reason = reason;
+            trace.outcome.finished_ms = self.time(now);
+            trace.outcome.context_after = self.context.clone();
+            trace.outcome.applied = Some(applied);
+            self.recorder.record_trial(trace.outcome);
+        }
+    }
+
     pub(super) fn window(&mut self, now: u64) {
         if let Some(trace) = &mut self.trace {
             trace.window = Some(Window {
@@ -323,6 +372,7 @@ impl Monitor {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn finish(
         &mut self,
         now: u64,
@@ -455,6 +505,50 @@ mod tests {
             serde_json::from_str(include_str!("../../telemetry/tuning-fixture.json")).unwrap();
         let policy = fixture.tuning.unwrap().trials.remove(0).outcome.policy;
         (monitor, recorder, snapshot, policy)
+    }
+
+    #[test]
+    fn a_thread_count_comparison_reports_as_a_worker_trial() {
+        use super::super::adaptive_search::Setting;
+        let (mut m, recorder, mut s, policy) = setup();
+        let base = Setting {
+            threads: 1,
+            kernel: CpuKernel::Avx2,
+        };
+        let candidate = Setting {
+            threads: 2,
+            kernel: CpuKernel::Avx2,
+        };
+        m.begin_settings(0, base, candidate, policy);
+        let mut now = 1;
+        for arm in [1usize, 2, 1] {
+            s.threads = arm;
+            s.warmed = arm;
+            s.resident_bytes = arm as u64 * 2 * 1024 * 1024 * 1024;
+            s.committed_bytes = s.resident_bytes;
+            s.backing_bytes[3] = s.resident_bytes;
+            m.observe(now, &[s], resources());
+            m.window(now);
+            now += 10;
+            s.hashes += 100;
+            m.observe(now, &[s], resources());
+            m.sample(100, 10);
+            now += 1;
+        }
+        m.finish_applied(
+            now,
+            TrialDecision::NoConfirmedGain,
+            TrialReason::Completed,
+            TrialArm::Baseline,
+        );
+        let report = recorder.test_tuning_report().unwrap();
+        assert_eq!(report.trials.len(), 1, "{report:?}");
+        let outcome = &report.trials[0].outcome;
+        assert_eq!(outcome.kind, TrialKind::CpuWorkers);
+        assert_eq!(outcome.baseline[0].workers, 1);
+        assert_eq!(outcome.candidate[0].workers, 2);
+        assert_eq!(outcome.samples.len(), 3);
+        assert_eq!(outcome.applied, Some(TrialArm::Baseline));
     }
 
     #[test]

@@ -46,6 +46,7 @@ def main():
         ('telemetry', REMOTE_SQL, Path(__file__).with_suffix('.sql').read_text()),
         ('diagnostics', REMOTE_SQL, Path(__file__).with_name('diagnostics.sql').read_text()),
         ('tuning', REMOTE_SQL, Path(__file__).with_name('tuning_report.sql').read_text()),
+        ('settled', REMOTE_SQL, Path(__file__).with_name('settled_report.sql').read_text()),
         ('release_health', REMOTE_SQL, Path(__file__).with_name('release_health.sql').read_text()),
     ):
         try:
@@ -53,7 +54,7 @@ def main():
             if result.returncode:
                 briefing[key] = {'status': 'error', 'detail': (result.stderr or result.stdout).strip()[:1000]}
                 failed = True
-            elif key in ('telemetry', 'data_quality', 'diagnostics', 'tuning', 'release_health'):
+            elif key in ('telemetry', 'data_quality', 'diagnostics', 'tuning', 'settled', 'release_health'):
                 briefing[key] = json.loads(result.stdout)
             else:
                 briefing[key] = {'status': 'ok', 'detail': result.stdout.strip()}

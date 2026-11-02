@@ -69,6 +69,18 @@ fn main() {
         "SEINE_SOURCE_FINGERPRINT",
         source_fingerprint(&source_roots),
     );
+    // Everything that can change CPU hashing speed. Other changes keep tuning results.
+    emit_env(
+        "SEINE_HASH_PATH_FINGERPRINT",
+        source_fingerprint(&[
+            PathBuf::from("Cargo.lock"),
+            PathBuf::from("rust-toolchain.toml"),
+            PathBuf::from("src/backend/cpu.rs"),
+            PathBuf::from("src/backend/cpu"),
+            PathBuf::from("pow-kernel"),
+            PathBuf::from("pow-spec"),
+        ]),
+    );
 }
 
 fn emit_env(key: &str, value: Option<String>) {

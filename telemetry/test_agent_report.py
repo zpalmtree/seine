@@ -20,6 +20,7 @@ class BriefingTests(unittest.TestCase):
                             stderr='query failed' if query_failure else ''),
             SimpleNamespace(returncode=0, stdout=json.dumps({'status': diagnostic_status}), stderr=''),
             SimpleNamespace(returncode=0, stdout=json.dumps(tuning or {'status': 'unavailable', 'ranked_hints': []}), stderr=''),
+            SimpleNamespace(returncode=0, stdout=json.dumps({'status': 'ok', 'cohorts': []}), stderr=''),
             SimpleNamespace(returncode=0, stdout=json.dumps(release or {'status': 'unavailable'}), stderr=''),
         ]
         output = io.StringIO()

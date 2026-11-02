@@ -4339,18 +4339,15 @@ fn nvidia_autotune_key_change(
     lhs: &NvidiaAutotuneKey,
     rhs: &NvidiaAutotuneKey,
 ) -> Option<&'static str> {
+    // A new miner build alone keeps the result: the kernel and its compiler decide
+    // what a GPU tuning result is worth.
     if !same_nvidia_device(lhs, rhs) {
         Some("GPU configuration changed")
-    } else if lhs.build_fingerprint != rhs.build_fingerprint {
-        Some("miner build changed")
     } else if lhs.cuda_kernel_fingerprint != rhs.cuda_kernel_fingerprint {
         Some("CUDA kernel changed")
     } else if lhs.nvrtc_version != rhs.nvrtc_version {
         Some("CUDA compiler changed")
-    } else if lhs.os != rhs.os
-        || lhs.kernel_version != rhs.kernel_version
-        || lhs.runtime_environment != rhs.runtime_environment
-    {
+    } else if lhs.os != rhs.os || lhs.runtime_environment != rhs.runtime_environment {
         Some("operating system or runtime changed")
     } else if lhs.m_cost_kib != rhs.m_cost_kib
         || lhs.t_cost != rhs.t_cost
@@ -5317,7 +5314,7 @@ mod tests {
     }
 
     #[test]
-    fn nvidia_autotune_compatibility_does_not_cross_build_or_runtime() {
+    fn nvidia_autotune_result_survives_a_new_build_but_not_a_new_runtime() {
         let key = NvidiaAutotuneKey {
             device_name: "NVIDIA GeForce RTX 5090".to_string(),
             memory_total_mib: 32_768,
@@ -5345,7 +5342,7 @@ mod tests {
             ..key.clone()
         };
 
-        assert!(!nvidia_autotune_key_compatible(&key, &different_build));
+        assert!(nvidia_autotune_key_compatible(&key, &different_build));
         assert!(!nvidia_autotune_key_compatible(&key, &different_runtime));
 
         let path = unique_temp_file("cache-diagnostics");
@@ -5377,10 +5374,7 @@ mod tests {
         )
         .unwrap();
         assert!(load_nvidia_cached_tuning(&path, &key).is_ok());
-        assert_eq!(
-            load_nvidia_cached_tuning(&path, &different_build).unwrap_err(),
-            "miner build changed"
-        );
+        assert!(load_nvidia_cached_tuning(&path, &different_build).is_ok());
         assert_eq!(
             load_nvidia_cached_tuning(&path, &different_runtime).unwrap_err(),
             "operating system or runtime changed"

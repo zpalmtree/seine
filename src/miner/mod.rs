@@ -1,5 +1,6 @@
 mod adaptive_cpu;
 mod adaptive_kernel;
+mod adaptive_search;
 pub(crate) use adaptive_kernel::{
     cohort_side_cache_blocks, cohort_skip_store_permille, fixed_count_trials_wanted,
 };
@@ -246,6 +247,9 @@ struct CpuAutotuneRecord {
     memory_limited: bool,
     #[serde(default)]
     mining_measurement: bool,
+    /// The live search's result. Older records stay useful as a starting count.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    search: Option<adaptive_search::Saved>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -788,6 +792,10 @@ fn run_with_thread_control_inner(
                     let threads = backend_spec.cpu_threads.unwrap_or(cfg.threads);
                     let affinity = backend_spec.cpu_affinity.unwrap_or(cfg.cpu_affinity);
                     let backend = Arc::new(if cfg.cpu_autotune_threads {
+                        let tuning = CpuBackendTuning {
+                            kernel: adaptive_cpu::initial_kernel(cfg, threads),
+                            ..tuning
+                        };
                         CpuBackend::adaptive(
                             threads,
                             cfg.cpu_autotune_worker_slots
@@ -1209,6 +1217,7 @@ fn run_with_thread_control_inner(
         tui_state.clone(),
         telemetry,
         live_thread_rx,
+        Arc::clone(&history),
     ) {
         Ok(controller) => controller,
         Err(err) => {
@@ -2284,6 +2293,7 @@ fn persist_cpu_autotune_record(
             .unwrap_or(0),
         measurements: measurements.clone(),
         memory_limited: max_threads < adaptive_cpu::limits(cfg, 0).1,
+        search: None,
         mining_measurement: false,
     };
     let payload = serde_json::to_string_pretty(&record)?;
@@ -4336,6 +4346,7 @@ pub(crate) mod tests {
             measurements: BTreeMap::new(),
             memory_limited: false,
             mining_measurement: false,
+            search: None,
         };
 
         assert!(cpu_autotune_record_matches_config(

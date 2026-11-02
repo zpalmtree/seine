@@ -82,7 +82,7 @@ The Linux builds run on glibc 2.31 or newer: Ubuntu 20.04, Debian 11 and later.
 ```
 
 **3. Enter your Blocknet address** (or `@shortname`) when prompted, and accept the
-default pool. That's it: seine starts hashing straight away and keeps tuning
+default pool. That's it: seine starts hashing straight away and tunes
 itself as it goes.
 
 Each CPU thread needs about 2 GB of RAM. Seine sizes itself to your machine

@@ -69,6 +69,11 @@ algorithms never share a cohort. Deploy the schema-11 collector before
 releasing schema-11 miners; schemas 1-10 remain accepted, with no SQL storage
 migration.
 
+Schema 15 adds the search's settled result under `tuning.settled` and
+`diagnostics.previous_run_oom`; see [TUNING.md](TUNING.md). Deploy the schema-15
+collector before releasing schema-15 miners; schemas 1-14 remain accepted, with no
+SQL storage migration.
+
 Schema 10 adds `hardware.memory_setup`: the populated memory module count, DDR
 type, whether the modules are registered, and the lowest rated and configured
 speed in MT/s, read from SMBIOS (Windows always, Linux only as root; absent
@@ -193,7 +198,7 @@ The strict upload schema is in [src/lib.rs](src/lib.rs), with an example in
 
 The [reliability fixture](reliability-fixture.json) demonstrates schema 5; the
 [diagnostic fixture](diagnostics-fixture.json) retains schema-4 compatibility coverage.
-The collector accepts schemas 1–14. Deploy schema-14 support before schema-14 miners.
+The collector accepts schemas 1–15. Deploy schema-15 support before schema-15 miners.
 The recorder starts after configuration parsing, before address resolution,
 backend initialization and tuning. UI warnings/errors identify their original
 call site through `track_caller`; backend error and quarantine paths also report

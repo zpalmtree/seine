@@ -1,5 +1,14 @@
 # Paired CPU trial telemetry
 
+Schema 15 adds `tuning.settled`, the result the search settled on: workers, kernel,
+H/s, time to settle, comparisons, time in comparisons, whether RAM held the count back,
+where the search started, whether a new build was being tested, and up to 16 measured
+settings. `diagnostics.previous_run_oom` is true when the previous run ended uncleanly
+and the kernel's OOM-kill count rose since its last checkpoint: likely, not proof. It
+is absent where the count cannot be read, and after a reboot. Comparisons report as
+`cpu_kernel`, `cpu_workers` or `cpu_joint` trials under policy revision 2.
+Deploy the schema-15 collector before releasing schema-15 miners.
+
 Schema 6 adds bounded, typed evidence from a miner's own baseline/candidate
 comparisons. The contract is [src/tuning.rs](src/tuning.rs); the complete synthetic
 example is [tuning-fixture.json](tuning-fixture.json). Fleet averages do not become
@@ -9,8 +18,7 @@ automatic defaults.
 
 `Recorder::trial_elapsed_ms()` supplies a common run-relative monotonic clock.
 `Recorder::record_trial(TrialOutcome)` accepts completed, inconclusive and aborted
-CPU kernel, worker-count and joint trials. The productive CPU kernel producer
-landed in `334b827`; worker-count and joint producers remain pending. Kernel
+CPU kernel, worker-count and joint trials. Kernel
 records include fresh measured allowed-CPU and topology context on supported
 Linux and single-processor-group Windows hosts. Complete stable observations can
 qualify comparisons; unknown or changed context remains coverage-only. Collector

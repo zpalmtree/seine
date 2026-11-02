@@ -44,6 +44,7 @@ pub(crate) struct Recorder {
     nvidia_software: Mutex<Option<seine_telemetry::NvidiaSoftware>>,
     checkpoint_store: Mutex<Option<(Weak<Store>, String)>>,
     previous_run: Mutex<Option<PreviousRun>>,
+    previous_oom: Mutex<Option<bool>>,
     first_hashes: Mutex<BTreeMap<u64, (String, u64)>>,
 }
 
@@ -97,6 +98,7 @@ pub(crate) fn context(cfg: &Config) -> Diagnostics {
         nvidia_software: None,
         phase: None,
         previous_run: None,
+        previous_run_oom: None,
         build_commit: fingerprint(option_env!("SEINE_GIT_COMMIT").unwrap_or("unknown")),
         source_fingerprint: fingerprint(crate::runtime_identity::source_fingerprint()),
         mode: match cfg.mode {
@@ -385,6 +387,7 @@ pub(crate) fn install(context: Diagnostics) -> Guard {
         nvidia_software: Mutex::new(None),
         checkpoint_store: Mutex::new(None),
         previous_run: Mutex::new(None),
+        previous_oom: Mutex::new(None),
         first_hashes: Mutex::new(BTreeMap::new()),
     });
     if let Ok(mut active) = ACTIVE.lock() {
@@ -812,6 +815,7 @@ impl Recorder {
     pub(crate) fn checkpoint(&self) -> PreviousRun {
         let recent = self.recent.lock().unwrap_or_else(|e| e.into_inner());
         PreviousRun {
+            oom_kills: oom_kill_count(),
             shutdown_request: self
                 .shutdown_request
                 .lock()
@@ -833,6 +837,14 @@ impl Recorder {
     }
 
     pub(crate) fn set_previous_run(&self, previous: Option<PreviousRun>) {
+        *self.previous_oom.lock().unwrap_or_else(|e| e.into_inner()) =
+            previous.as_ref().and_then(|run| {
+                oom_likely(
+                    self.previous_unclean.load(Ordering::Relaxed),
+                    run.oom_kills,
+                    oom_kill_count(),
+                )
+            });
         *self.previous_run.lock().unwrap_or_else(|e| e.into_inner()) = previous;
     }
 
@@ -856,6 +868,11 @@ impl Recorder {
         result.cleanup_stage = checkpoint.cleanup_stage;
         result.nvidia_software = checkpoint.nvidia_software;
         result.previous_run_unclean = self.previous_unclean.swap(false, Ordering::Relaxed);
+        result.previous_run_oom = self
+            .previous_oom
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
         result.previous_run = self
             .previous_run
             .lock()
@@ -1103,6 +1120,7 @@ pub(crate) fn test_context() -> Diagnostics {
         nvidia_software: None,
         phase: None,
         previous_run: None,
+        previous_run_oom: None,
         build_commit: "abcdef123456".into(),
         source_fingerprint: "1234abcd".into(),
         mode: "pool".into(),
@@ -1125,8 +1143,54 @@ pub(crate) fn test_context() -> Diagnostics {
     }
 }
 
+/// OOM kills the kernel has made since boot, where it reports them.
+pub(crate) fn oom_kill_count() -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        parse_oom_kills(&std::fs::read_to_string("/proc/vmstat").ok()?)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn parse_oom_kills(vmstat: &str) -> Option<u64> {
+    vmstat
+        .lines()
+        .find_map(|line| line.strip_prefix("oom_kill "))
+        .and_then(|count| count.trim().parse().ok())
+}
+
+/// An unclean end while the count rose suggests the OOM killer. A lower count means
+/// the machine rebooted, which says nothing either way.
+fn oom_likely(unclean: bool, saved: Option<u64>, now: Option<u64>) -> Option<bool> {
+    let (saved, now) = (saved?, now?);
+    (now >= saved).then_some(unclean && now > saved)
+}
+
 #[cfg(test)]
 mod tests {
+    use super::{oom_likely, parse_oom_kills};
+
+    #[test]
+    fn oom_kills_are_read_from_vmstat() {
+        assert_eq!(parse_oom_kills("pgfault 12\noom_kill 3\nx 1\n"), Some(3));
+        assert_eq!(parse_oom_kills("pgfault 12\n"), None);
+    }
+
+    #[test]
+    fn oom_is_only_suspected_after_an_unclean_end_with_a_higher_count() {
+        assert_eq!(oom_likely(true, Some(1), Some(2)), Some(true));
+        assert_eq!(oom_likely(true, Some(1), Some(1)), Some(false));
+        assert_eq!(oom_likely(false, Some(1), Some(2)), Some(false));
+        // The machine rebooted, or the count is unavailable: unknown.
+        assert_eq!(oom_likely(true, Some(5), Some(0)), None);
+        assert_eq!(oom_likely(true, None, Some(1)), None);
+        assert_eq!(oom_likely(true, Some(1), None), None);
+    }
+
     use super::*;
 
     #[test]
@@ -1263,6 +1327,7 @@ mod tests {
             nvidia_software: Mutex::new(None),
             checkpoint_store: Mutex::new(None),
             previous_run: Mutex::new(None),
+            previous_oom: Mutex::new(None),
             first_hashes: Mutex::new(BTreeMap::new()),
         }
     }
@@ -1673,6 +1738,7 @@ mod tests {
         store.checkpoint(
             &report.installation_id,
             PreviousRun {
+                oom_kills: None,
                 shutdown_request: None,
                 cleanup_stage: None,
                 nvidia_software: None,
@@ -1727,6 +1793,7 @@ mod tests {
         store.checkpoint(
             id,
             PreviousRun {
+                oom_kills: None,
                 shutdown_request: None,
                 cleanup_stage: None,
                 nvidia_software: None,
@@ -1752,6 +1819,7 @@ mod tests {
         store.checkpoint(
             id,
             PreviousRun {
+                oom_kills: None,
                 shutdown_request: None,
                 cleanup_stage: None,
                 nvidia_software: None,

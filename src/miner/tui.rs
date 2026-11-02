@@ -140,6 +140,8 @@ pub struct TuiStateInner {
     pub thread_control: Option<ThreadControl>,
     pub thread_change_pending: bool,
     pub thread_notice: Option<String>,
+    /// Short status of automatic tuning, shown beside the thread count.
+    pub tuning_status: Option<String>,
     /// The notice on screen and when it appeared, so it can make way for the log.
     thread_notice_shown: Option<(String, Instant)>,
     thread_reply: Option<crossbeam_channel::Receiver<String>>,
@@ -209,6 +211,7 @@ impl TuiStateInner {
             thread_control: None,
             thread_change_pending: false,
             thread_notice: None,
+            tuning_status: None,
             thread_notice_shown: None,
             thread_reply: None,
             refresh_secs: 0,
@@ -552,7 +555,7 @@ fn draw_dashboard(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner)
     // Pending devices are always 1-per-line (not paired in wide mode)
     let device_rows = active_rows + pending_count;
     let devices_height: u16 = if device_rows > 0 { 2 + device_rows } else { 0 };
-    let runtime_panel_height: u16 = 4;
+    let runtime_panel_height = runtime_panel_height(state);
     let wallet_panel_height = wallet_panel_height(state, area.width);
     let config_height: u16 = if config_two_columns {
         runtime_panel_height.max(wallet_panel_height)
@@ -588,6 +591,13 @@ fn draw_dashboard(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner)
     }
     draw_config(frame, chunks[3], state);
     draw_log(frame, chunks[4], state);
+}
+
+fn tuning_line(status: &str) -> Line<'static> {
+    Line::from(vec![
+        Span::styled("Tuning: ", LABEL_STYLE),
+        Span::styled(status.to_string(), VALUE_STYLE),
+    ])
 }
 
 fn thread_line(state: &TuiStateInner) -> Line<'static> {
@@ -652,6 +662,9 @@ fn draw_compact_dashboard(frame: &mut ratatui::Frame, area: Rect, state: &TuiSta
             format!("Update {latest} available"),
             UPDATE_STYLE,
         )));
+    }
+    if let Some(status) = &state.tuning_status {
+        lines.insert(1, tuning_line(status));
     }
     let summary_height = (lines.len() as u16).min(area.height);
     frame.render_widget(
@@ -1117,10 +1130,21 @@ fn draw_config(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
 
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(4), Constraint::Length(wallet_height)])
+        .constraints([
+            Constraint::Length(runtime_panel_height(state)),
+            Constraint::Length(wallet_height),
+        ])
         .split(area);
     draw_config_runtime_panel(frame, rows[0], state);
     draw_config_wallet_panel(frame, rows[1], state);
+}
+
+fn runtime_panel_height(state: &TuiStateInner) -> u16 {
+    if state.tuning_status.is_some() {
+        5
+    } else {
+        4
+    }
 }
 
 fn config_uses_two_columns(width: u16) -> bool {
@@ -1188,7 +1212,13 @@ fn draw_config_runtime_panel(frame: &mut ratatui::Frame, area: Rect, state: &Tui
         .title(Span::styled(" CONFIG ", TITLE_STYLE))
         .borders(Borders::ALL)
         .border_style(BORDER_STYLE);
-    let config = Paragraph::new(vec![line1, line2]).block(config_block);
+    let mut lines = vec![line1, line2];
+    if let Some(status) = &state.tuning_status {
+        let mut line = tuning_line(status);
+        line.spans.insert(0, Span::raw("  "));
+        lines.push(line);
+    }
+    let config = Paragraph::new(lines).block(config_block);
     frame.render_widget(config, area);
 }
 

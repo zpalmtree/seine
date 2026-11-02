@@ -2,7 +2,7 @@
 use serde::{Deserialize, Serialize};
 pub mod tuning;
 
-pub const SCHEMA_VERSION: u32 = 14;
+pub const SCHEMA_VERSION: u32 = 15;
 pub const MAX_BODY_BYTES: usize = 32 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -207,6 +207,9 @@ impl FailureDetail {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PreviousRun {
+    /// The kernel's OOM-kill count when this checkpoint was saved (schema 15).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oom_kills: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cleanup_stage: Option<CleanupStage>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -345,6 +348,11 @@ impl DiagnosticEvent {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Diagnostics {
+    /// The previous run ended uncleanly and the kernel's OOM-kill count rose since
+    /// its last checkpoint: likely, not certain, that it was the process killed.
+    /// Absent where the count cannot be read (schema 15).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_run_oom: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cleanup_stage: Option<CleanupStage>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -809,6 +817,7 @@ impl Report {
             && self.tuning.as_ref().is_none_or(|t| {
                 self.schema_version >= 6
                     && t.validate()
+                    && (self.schema_version >= 15 || t.settled.is_none())
                     && self.diagnostics.as_ref().is_some_and(|d| {
                         t.trials.iter().all(|trial| {
                             trial.outcome.finished_ms

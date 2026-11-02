@@ -181,6 +181,7 @@ struct TrialRecorder {
     run_id: String,
     started: Instant,
     queue: Mutex<(u64, Vec<RecordedTrial>)>,
+    settled: Mutex<Option<seine_telemetry::tuning::SettledTuning>>,
     dropped: AtomicU64,
 }
 
@@ -191,6 +192,7 @@ impl TrialRecorder {
             run_id,
             started: Instant::now(),
             queue: Mutex::new((0, Vec::new())),
+            settled: Mutex::new(None),
             dropped: AtomicU64::new(0),
         }
     }
@@ -236,6 +238,13 @@ impl Recorder {
         self.2.started.elapsed().as_millis().min(u64::MAX as u128) as u64
     }
 
+    /// Keep the latest result the search settled on for the next report.
+    pub(crate) fn record_settled(&self, settled: seine_telemetry::tuning::SettledTuning) {
+        if self.trials_enabled() && settled.validate() {
+            *self.2.settled.lock().unwrap_or_else(|e| e.into_inner()) = Some(settled);
+        }
+    }
+
     /// Emit once per completed/aborted trial. Never blocks or serializes on the
     /// mining thread; FIFO overflow loses telemetry, never productive mining.
     #[allow(dead_code)]
@@ -269,6 +278,12 @@ impl Recorder {
             run_id: self.2.run_id.clone(),
             trials: std::mem::take(&mut queue.1),
             dropped_trials: self.2.dropped.swap(0, Ordering::Relaxed),
+            settled: self
+                .2
+                .settled
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .take(),
         };
         drop(queue);
         // Only the reporting thread performs serialization/budget work. Keep
@@ -279,7 +294,8 @@ impl Recorder {
             report.trials.pop();
             report.dropped_trials += 1;
         }
-        (!report.trials.is_empty() || report.dropped_trials > 0).then_some(report)
+        (!report.trials.is_empty() || report.dropped_trials > 0 || report.settled.is_some())
+            .then_some(report)
     }
 
     #[cfg(test)]

@@ -88,8 +88,8 @@ See [collection fields and self-hosting](../telemetry/README.md).
 | `--disable-cpu-autotune-threads` | bool flag | Disables CPU thread autotune and runtime worker adjustment. |
 | `--cpu-autotune-min-threads` | integer `>=1`, default `1` | Lower performance-search bound; memory pressure can temporarily reduce the count below it, including to zero. |
 | `--cpu-autotune-max-threads` | integer `>=1` | Upper bound for CPU autotune thread search. |
-| `--cpu-autotune-secs` | integer `>=1`, default `6` | Offline sample window. Mining uses `max(30, 5 × value)` seconds per productive A/B/A window, with at least 20 hashes; warming and interrupted windows are excluded. |
-| `--cpu-autotune-config` | path | CPU autotune cache file (default under `--data-dir`); mining reuses compatible seeds across changes in available RAM and records subsequent progress. |
+| `--cpu-autotune-secs` | integer `>=1`, default `6` | Sample window of the offline benchmark search. Mining sizes its comparison windows from your hashrate. |
+| `--cpu-autotune-config` | path | CPU tuning result file (default under `--data-dir`); it carries over between versions and changes in available RAM. |
 
 ## NVIDIA Backend Tuning
 

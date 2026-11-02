@@ -68,6 +68,18 @@ pub(crate) fn build_fingerprint() -> String {
     )
 }
 
+/// Changes only when a build can hash at a different speed on the CPU.
+pub(crate) fn hash_path_fingerprint() -> String {
+    format!(
+        "source={};target={};opt={};rustc={};rustflags={}",
+        option_env!("SEINE_HASH_PATH_FINGERPRINT").unwrap_or("unknown"),
+        build_target(),
+        build_opt_level(),
+        rustc_version(),
+        build_rustflags(),
+    )
+}
+
 fn classify_runtime_environment(
     os: &str,
     kernel_release: &str,
