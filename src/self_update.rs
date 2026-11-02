@@ -9,8 +9,10 @@
 //! (`SHA256SUMS.txt.sig`, raw 64 bytes over the file's exact bytes) that verifies
 //! against the release signing key embedded below, and the downloaded archive's
 //! SHA-256 must match that signed list. A release without a valid signature is
-//! refused, so control of the GitHub account or a tampered download cannot push
-//! a binary; only the holder of the signing key can.
+//! refused, so a tampered download or a replaced release file cannot push a
+//! binary. The release workflow signs from a GitHub environment that needs an
+//! approval, so anyone who can approve or reconfigure that environment, or who
+//! holds the key, can sign.
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};

@@ -256,6 +256,7 @@ jobs:
   release:
     needs: [build, mining-os]
     runs-on: ubuntu-latest
+    environment: release
     permissions:
       contents: write
     steps:
