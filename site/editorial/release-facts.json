@@ -1,23 +1,25 @@
 {
   "repository": "zpalmtree/seine",
-  "tag": "v0.2.45",
-  "commit": "2c40c7b725f4ff1464205c09763149efe895e3e7",
-  "publishedAt": "2026-10-28T19:45:27Z",
-  "checkedAt": "2026-10-28T15:47:24.721224-04:00",
+  "tag": "v0.3.0",
+  "commit": "38b7d765a12b0b9646e28ae2b3ab3a668c97385c",
+  "publishedAt": "2026-11-02T06:47:04Z",
+  "checkedAt": "2026-11-02T01:48:41.442685-05:00",
   "bntpoolMinerFeePercent": 2,
   "otherPoolMinerFeePercent": 2,
   "assets": [
+    "seine-hiveos-0.3.0.tar.gz",
     "seine-linux-aarch64.tar.gz",
     "seine-linux-x86_64.tar.gz",
     "seine-macos-aarch64.tar.gz",
     "seine-macos-x86_64.tar.gz",
+    "seine-mmpos-0.3.0.tar.gz",
     "seine-windows-x86_64.zip"
   ],
   "sourceHashes": {
     "src/dev_fee.rs": "eb4021358fbc6fcec861e854611fb69b19490bda120ea44502dd445de13a76f5",
-    "docs/guides/nvidia.md": "8059e84e4f5f65b8ffd0bcb25786b51a582effda9df8cd9c8400084abe90b372",
-    ".github/workflows/release.yml": "8274299f91ef7db5b495538096ff8ab745ffece0b337c074c5eccf3ae8546f72",
-    "docs/guides/configuration.md": "68a7c873809bc67fed28e6562df6ab0e4b324c91ec7232c76ab165b032585359"
+    "docs/guides/nvidia.md": "6ccccce2de560205421ec71b50c24e2dab9a315e1f1d6da478b70d2bdd9c91c2",
+    ".github/workflows/release.yml": "a7603c4b09f0b89c5031ecd600659f05b16f94e26d00a9d5549bed99f6199895",
+    "docs/guides/configuration.md": "0f8079e2011ebd26f3ef3a7b69be349d95eb148f29dfd47fdb07abb7d0aa67ef"
   },
   "reviewOnChange": [
     "site/editorial/fact-sheet.md",
