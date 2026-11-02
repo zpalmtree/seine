@@ -114,6 +114,26 @@ mod tests {
         assert_ne!(options_key("src", &a), options_key("src2", &a));
     }
 
+    /// Meaningful in release builds, which embed the objects exported on Linux:
+    /// each platform's own source must produce the keys in that manifest.
+    #[test]
+    fn embedded_kernels_match_this_builds_source() {
+        if CODE_OBJECTS.is_empty() {
+            return;
+        }
+        let params = blocknet_pow_spec::pow_params().expect("valid Argon2 parameters");
+        let (m_blocks, t_cost) = (params.block_count() as u32, params.t_cost());
+        for target in EXPORT_TARGETS {
+            let skip_from = skip_from_block(target, m_blocks, t_cost);
+            let options = build_hiprtc_options(target, 32, m_blocks, t_cost, skip_from);
+            let key = options_key(HIP_KERNEL_SRC, &options);
+            assert!(
+                find("argon2", target, key).is_some(),
+                "no built-in Argon2 kernel for {target}"
+            );
+        }
+    }
+
     #[test]
     fn lookup_matches_the_base_architecture() {
         assert_eq!(base_arch("gfx90a:sramecc+:xnack-"), "gfx90a");

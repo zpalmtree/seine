@@ -120,6 +120,7 @@ jobs:
           if [ -f amd-code-objects/manifest.tsv ]; then
             # Native path on Windows (pwd -W), for build.rs.
             export SEINE_AMD_CODE_OBJECTS="$(pwd -W 2>/dev/null || pwd)/amd-code-objects"
+            echo "SEINE_AMD_CODE_OBJECTS=$SEINE_AMD_CODE_OBJECTS" >> "$GITHUB_ENV"
           fi
           cargo build --release --locked --target ${{ matrix.target }} ${{ matrix.features || '' }}
 
@@ -128,6 +129,13 @@ jobs:
         run: |
           cargo test --release --locked --target ${{ matrix.target }} -p blocknet-pow-kernel
           cargo run --release --locked --target ${{ matrix.target }} -p blocknet-pow-kernel --example verify_cpu_kernels
+
+      - name: Test built-in AMD kernels
+        if: contains(matrix.features, 'amd')
+        shell: bash
+        run: |
+          cargo test --release --locked --target ${{ matrix.target }} ${{ matrix.features || '' }} backend::amd::code_objects::tests::embedded_kernels_match_this_builds_source -- --exact --test-threads=1 2>&1 | tee built-in-kernels.log
+          grep -q 'test result: ok. 1 passed' built-in-kernels.log
 
       - name: Test updater installation and restart
         shell: bash
