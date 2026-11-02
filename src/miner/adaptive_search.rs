@@ -1612,6 +1612,7 @@ impl Search {
                         let near = self.keep.saturating_sub(self.step).max(self.min - 1);
                         self.lo = worse_below.map_or(near, |worse| worse.max(near));
                         self.lo_measured = worse_below == Some(self.lo);
+                        self.reopen_below(gain);
                         self.stage = Stage::Refine;
                     }
                 } else if verdict == Verdict::Tie {
