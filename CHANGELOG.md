@@ -9,9 +9,6 @@ supported hardware only.
 
 ## Unreleased
 
-- Mine solo through pools that support it: put `solo:` in front of your address (`-u solo:ADDRESS`) and the pool pays you the full reward of every block you find, less its fee.
-- Pool Pending balance now includes estimated rewards from unmatured blocks alongside confirmed rewards awaiting payout.
-
 ## v0.3.1
 
 - **Up to 2.5x faster on NVIDIA GPUs** (GTX 1660 Ti, RTX 2070, RTX 2080 Ti, RTX 3060, RTX 4060, RTX 4090, RTX 5060 Ti)
@@ -21,6 +18,7 @@ supported hardware only.
 - **Up to 3% higher CPU hashrate with default settings, often on less RAM** (Ryzen 9 5900X, Ryzen 9 9900X, Core i5-12400F, Core i7-14700K)
 - **AMD GPU support** (RX 6000, RX 7000, RX 9000, Radeon PRO): [setup](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/amd.md)
 - **Exchange mining support** (mine straight to your exchange deposit address; `--payout-memo` is required): [setup](https://github.com/zpalmtree/seine/blob/master/docs/EXCHANGE_PAYOUTS.md)
+- **Solo mining through pools that support it**: put `solo:` in front of your address (`-u solo:ADDRESS`) and the pool pays you the full reward of every block you find, less its fee
 - **Tunes faster, then stops**: finds your best thread count and kernel in minutes, keeps the lowest thread count that gets the same hashrate, and stops testing until something changes
 - **A cleaner first run**: the dashboard opens right away, setup happens on screen, and the log only shows what you need, with room to read it and scrollback (↑↓, PgUp, PgDn)
 - **Mining OS packages**
@@ -29,6 +27,9 @@ supported hardware only.
 - **[Farm proxy](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/farm-proxy.md)** (run a whole farm through one pool connection)
 - **Automatic updates that keep your tuning**: a new version starts on your saved settings and only tests what it changed (turn off with `--no-auto-update`)
 - **Shorter `--help`** (lists the flags most miners need; every other flag still works and is in the [flag reference](https://github.com/zpalmtree/seine/blob/master/docs/MINER_FLAGS.md))
+- **Pool Pending balance includes estimated rewards** from blocks that have not matured yet
+
+**Upgrading from v0.2.45 on Linux with `--auto-update`:** v0.2.45 installs this version but then exits instead of restarting. Start seine again once; setups that restart seine automatically, such as systemd, need nothing.
 
 ## v0.3.0
 
