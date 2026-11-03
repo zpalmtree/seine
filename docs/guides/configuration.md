@@ -92,7 +92,9 @@ Press `+` or `-` directly in the mining dashboard to add or remove one thread
 per CPU backend. The hint appears beside the thread count; `=` also increases
 the count without requiring Shift. The change applies to the running CPU workers:
 GPUs, the pool connection and the dashboard keep running. The chosen count replaces
-automatic thread tuning for that run and is not saved as a new default. If you started
+automatic thread tuning for that run and is not saved as a new default. While tuning is
+still picking the thread count, the keys leave it alone and say how long tuning has left;
+the hint appears once it is done. If you started
 with a fixed `--threads`, the change restarts mining instead, and your session
 statistics are kept.
 Increases are limited to the automatic CPU/RAM cap; use `--threads` for explicit

@@ -996,6 +996,12 @@ impl Search {
         }
     }
 
+    /// True while the count is still this search's to choose, as opposed to a
+    /// count fixed by the user or by equal limits.
+    pub(super) fn picks_count(&self) -> bool {
+        !self.manual && self.min < self.max
+    }
+
     /// The user picked a count: only kernels may still change.
     pub(super) fn set_manual(&mut self, threads: usize) {
         self.cancel_trial();
@@ -2772,6 +2778,21 @@ mod tests {
             }
         }
         assert!(began, "the limit rose, so a higher count is worth a look");
+    }
+
+    #[test]
+    fn only_a_free_count_belongs_to_the_search() {
+        assert!(Search::new(params(8, 16)).picks_count());
+        // --threads with kernel trials fixes the count through equal limits.
+        let pinned = Params {
+            min: 6,
+            max: 6,
+            ..params(6, 6)
+        };
+        assert!(!Search::new(pinned).picks_count());
+        let mut search = Search::new(params(8, 16));
+        search.set_manual(3);
+        assert!(!search.picks_count());
     }
 
     #[test]

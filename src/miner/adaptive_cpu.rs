@@ -809,7 +809,12 @@ impl Controller {
                                 if let Ok(mut state) = tui.lock() {
                                     let threads = search.target_threads();
                                     state.threads = threads * snapshots.len();
-                                    state.tuning_status = status_text(&search.status(cap));
+                                    let status = search.status(cap);
+                                    state.tuning_status = status_text(&status);
+                                    state.threads_locked = search
+                                        .picks_count()
+                                        .then(|| threads_locked_notice(&status))
+                                        .flatten();
                                     if let Some(control) = &mut state.thread_control {
                                         control.current_threads = threads;
                                         control.max_threads = cap.max(threads);
@@ -818,6 +823,13 @@ impl Controller {
                             }
                             if let Some(reply) = manual.and_then(|change| change.reply) {
                                 let _ = reply.try_send(format!("CPU threads: {}", search.target_threads()));
+                            }
+                        }
+                        // Nothing tunes after this point, so the keys must not stay locked.
+                        if let Some(tui) = &tui {
+                            if let Ok(mut state) = tui.lock() {
+                                state.tuning_status = None;
+                                state.threads_locked = None;
                             }
                         }
                     })?,
@@ -866,15 +878,31 @@ pub(super) fn status_text(status: &Status) -> Option<String> {
             }
         }
         Status::Rechecking { current, candidate } if current == candidate => {
-            "rechecking kernels".to_string()
+            "done, one more look at kernels".to_string()
         }
         Status::Rechecking { current, candidate } => {
-            format!("rechecking {current} vs {candidate} threads")
+            format!("done, one more look at {current} vs {candidate}")
         }
         Status::Settled { .. } => "done".to_string(),
         Status::LimitedByRam { best, .. } => format!("low on RAM, best is {best} threads"),
         Status::WaitingForRam => "waiting for RAM".to_string(),
     })
+}
+
+/// What the thread keys say while tuning picks the count. They work again once
+/// it is done (including another look at a close result) and while RAM is short.
+pub(super) fn threads_locked_notice(status: &Status) -> Option<String> {
+    const SET_IT: &str = "To set it yourself, start with --threads N.";
+    match status {
+        Status::Checking => Some(format!(
+            "Tuning is checking the saved thread count. {SET_IT}"
+        )),
+        Status::Tuning { secs_left, .. } => Some(format!(
+            "Tuning is picking the thread count, about {} min left. {SET_IT}",
+            secs_left.div_ceil(60).max(1)
+        )),
+        _ => None,
+    }
 }
 
 fn settled_report(summary: &SettledSummary, now: u64) -> seine_telemetry::tuning::SettledTuning {
@@ -1668,5 +1696,41 @@ mod tests {
             seed_miss_reason(&changed, &cfg, &host),
             Some("tuning settings changed")
         );
+    }
+
+    #[test]
+    fn thread_keys_wait_only_while_tuning_picks_the_count() {
+        use super::super::adaptive_search::Comparing;
+        let tuning = Status::Tuning {
+            threads: 8,
+            kernel: CpuKernel::Avx2Stream,
+            done: 1,
+            left: 3,
+            secs_left: 250,
+            testing_update: false,
+            comparing: Comparing::Threads(8, 10),
+        };
+        let notice = threads_locked_notice(&tuning).unwrap();
+        assert!(notice.contains("about 5 min left"), "{notice}");
+        assert!(notice.contains("--threads N"), "{notice}");
+        assert!(threads_locked_notice(&Status::Checking).is_some());
+        for open in [
+            Status::Settled {
+                threads: 8,
+                kernel: CpuKernel::Avx2Stream,
+                hps: 7.0,
+            },
+            Status::Rechecking {
+                current: 8,
+                candidate: 9,
+            },
+            Status::LimitedByRam {
+                threads: 4,
+                best: 8,
+            },
+            Status::WaitingForRam,
+        ] {
+            assert_eq!(threads_locked_notice(&open), None, "{open:?}");
+        }
     }
 }

@@ -142,6 +142,9 @@ pub struct TuiStateInner {
     pub thread_notice: Option<String>,
     /// Short status of automatic tuning, shown beside the thread count.
     pub tuning_status: Option<String>,
+    /// Set while tuning picks the thread count: the thread keys show this
+    /// notice and leave the count unchanged.
+    pub threads_locked: Option<String>,
     /// The notice on screen and when it appeared, so it can make way for the log.
     thread_notice_shown: Option<(String, Instant)>,
     thread_reply: Option<crossbeam_channel::Receiver<String>>,
@@ -212,6 +215,7 @@ impl TuiStateInner {
             thread_change_pending: false,
             thread_notice: None,
             tuning_status: None,
+            threads_locked: None,
             thread_notice_shown: None,
             thread_reply: None,
             refresh_secs: 0,
@@ -371,6 +375,10 @@ impl TuiStateInner {
                 Some("Thread controls unavailable: no active CPU backend.".to_string());
             return false;
         };
+        if let Some(notice) = &self.threads_locked {
+            self.thread_notice = Some(notice.clone());
+            return false;
+        }
         if self.thread_change_pending {
             self.thread_notice = Some("Thread change in progress; please wait.".to_string());
             return false;
@@ -601,7 +609,7 @@ fn tuning_line(status: &str) -> Line<'static> {
 }
 
 fn thread_line(state: &TuiStateInner) -> Line<'static> {
-    let hint = if state.thread_control.is_some() {
+    let hint = if state.thread_control.is_some() && state.threads_locked.is_none() {
         "  [+] [-]"
     } else {
         ""
@@ -1724,6 +1732,31 @@ mod tests {
             assert!(press(&mut state, KeyCode::Char('q')));
             assert!(request.quit_requested.load(Ordering::SeqCst));
         }
+    }
+
+    #[test]
+    fn thread_keys_explain_and_wait_while_tuning_picks_the_count() {
+        let notice = "Tuning is picking the thread count, about 4 min left. \
+                      To set it yourself, start with --threads N.";
+        let (mut state, receiver) = controlled_state();
+        state.threads_locked = Some(notice.to_string());
+        assert!(render_text(&state, 120, 34).contains("Threads: 2"));
+        assert!(!render_text(&state, 120, 34).contains("[+] [-]"));
+        for key in ['+', '=', '-'] {
+            press(&mut state, KeyCode::Char(key));
+            assert!(receiver.is_empty(), "{key} must not change the count");
+            assert!(!state.thread_change_pending);
+            assert_eq!(state.thread_notice.as_deref(), Some(notice));
+        }
+        for (width, height) in [(46, 36), (120, 34)] {
+            let text = render_text(&state, width, height);
+            assert!(text.contains("--threads N"), "{width}x{height}:\n{text}");
+        }
+        // Once tuning is done the keys work again.
+        state.threads_locked = None;
+        assert!(render_text(&state, 120, 34).contains("Threads: 2  [+] [-]"));
+        press(&mut state, KeyCode::Char('+'));
+        assert_eq!(receiver.try_recv().unwrap().threads, 3);
     }
 
     #[test]

@@ -32,3 +32,6 @@ backends start. If memory disappears during teardown, the replacement fails
 with an explanation instead of forcing the allocation. The checks are best
 effort, not an OS memory reservation; other processes can still create pressure
 after admission. Manual thread selection continues to disable autotuning.
+While automatic tuning is still picking the count, the keys leave it alone and
+say how long tuning has left and that `--threads N` sets a count at start; that
+state is in the tuning showcase (`docs/showcases/autotune-startup`).

@@ -149,7 +149,7 @@ fn export_autotune_showcase() {
         r#"<!DOCTYPE html><html lang="en"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Seine tuning in the dashboard</title>
 <style>body{margin:16px;background:#101318;color:#b4bec8;font:14px system-ui}h1{font-size:22px}h2{font-size:17px;margin:28px 0 8px}pre{background:#0a0d12;padding:6px;margin:0 0 12px;font:12px/1.2 ui-monospace,Menlo,monospace;width:max-content}p{max-width:70ch}@media(max-width:700px){.desktop{display:none}}</style>
-<h1>Seine tuning in the dashboard</h1><p>Real dashboard renderer with synthetic data, at 120 and 46 columns. Tuning has one row under the thread count, and the log only says what changed. Each comparison goes to plain logs and the control API, not the dashboard log.</p>"#,
+<h1>Seine tuning in the dashboard</h1><p>Real dashboard renderer with synthetic data, at 120 and 46 columns. Tuning has one row under the thread count, and the log only says what changed. Each comparison goes to plain logs and the control API, not the dashboard log. The [+] [-] keys show once the count is settled; while tuning picks it, pressing them explains why they wait.</p>"#,
     );
     let revision = std::process::Command::new("git")
         .args(["hash-object", "src/miner/adaptive_search.rs"])
@@ -207,7 +207,7 @@ fn export_autotune_showcase() {
         ),
         ("Tuned", 12, settled.clone(), vec![start_note, tuned]),
         (
-            "Later: another look at a close result",
+            "Tuned, then one more look at a close result",
             16,
             Status::Rechecking {
                 current: 12,
@@ -271,10 +271,37 @@ fn export_autotune_showcase() {
             )],
         ),
     ];
+    let cases = {
+        let mut cases = cases;
+        cases.insert(
+            2,
+            (
+                "First run: someone presses + or - (the keys wait and say why)",
+                16,
+                tuning(3, false, Comparing::Threads(12, 16)),
+                vec![start_note],
+            ),
+        );
+        cases
+    };
     for (name, threads, status, log) in cases {
+        let (sender, _requests) = crossbeam_channel::bounded(1);
         let mut state = mining_fixture("Working", &log);
         state.threads = threads as usize;
         state.tuning_status = status_text(&status);
+        state.thread_control = Some(ThreadControl {
+            live: None,
+            run_id: 1,
+            sender,
+            max_threads: 16,
+            current_threads: threads as usize,
+            memory: None,
+            quit_requested: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        });
+        state.threads_locked = super::super::adaptive_cpu::threads_locked_notice(&status);
+        if name.contains("presses") {
+            state.handle_key(KeyEvent::new(KeyCode::Char('+'), KeyModifiers::NONE));
+        }
         html.push_str(&format!("<h2>{name}</h2><div class=desktop>"));
         html.push_str(&capture_full(&state, 120, 30));
         html.push_str("</div>");
