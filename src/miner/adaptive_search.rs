@@ -69,12 +69,6 @@ const BACKING_SHIFT: f64 = 0.1;
 const MAX_RETESTS: u32 = 24;
 /// Above this standard error a final result is noise, not evidence of a tie.
 const CONTAMINATED_ERROR: f64 = 0.01;
-/// A higher count that measured faster by more than a tie, with an error at most
-/// this, is worth a long look rather than more short comparisons.
-const LEAN_ERROR: f64 = 0.005;
-/// A gain a long look had to decide, below this, marks counts that short
-/// comparisons cannot tell apart.
-const SMALL_GAIN: f64 = 0.01;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Setting {
@@ -631,11 +625,6 @@ pub(super) struct Search {
     climbing: bool,
     /// The next upward look goes straight to everything that fits.
     top_first: bool,
-    /// The count tested by the look straight to everything that fits.
-    top_look: Option<usize>,
-    /// Counts here differ by less than short comparisons can show: once settled,
-    /// only long looks move the count, one step at a time.
-    small_gains: bool,
     upper_ties: u8,
     requeued: u8,
     queue: VecDeque<CpuKernel>,
@@ -721,8 +710,6 @@ impl Search {
             tested_above: 0,
             climbing: true,
             top_first: false,
-            top_look: None,
-            small_gains: false,
             upper_ties: 0,
             requeued: 0,
             queue: VecDeque::new(),
@@ -804,7 +791,6 @@ impl Search {
         };
         self.queue = self.challengers(seed.kernel, seed.threads);
         self.stage = Stage::Kernels;
-        self.small_gains = false;
         self.top_first = self.quality != SeedQuality::Measured;
         self.search_reason =
             Some("finding the best settings: the thread count will change for a few minutes");
@@ -1582,15 +1568,6 @@ impl Search {
         let fewer = trial.candidate.threads < trial.base.threads;
         let band = if fewer { self.down_band } else { TIE_BAND };
         let close = matches!(verdict, Verdict::Undecided | Verdict::Tie);
-        let lean = matches!(trial.purpose, Purpose::Up | Purpose::UpRefine)
-            && verdict == Verdict::Undecided
-            && gain > TIE_BAND
-            && error <= LEAN_ERROR;
-        if lean {
-            // More short steps up would read the same: the long look decides once settled.
-            self.climbing = false;
-            self.small_gains = true;
-        }
         let looks = trial.prior.looks + 1;
         let evidence = Pooled::summary(looks, gain, error, trial.base);
         match trial.purpose {
@@ -1636,9 +1613,6 @@ impl Search {
                     self.step = self.step.saturating_mul(2);
                     if self.stalls >= 2 {
                         self.climbing = false;
-                    }
-                    if lean {
-                        self.hi = trial.base.threads;
                     }
                 }
             },
@@ -1688,7 +1662,6 @@ impl Search {
                         self.hi = self.peak.threads;
                     }
                 }
-                _ if lean => self.hi = trial.base.threads,
                 _ => self.hi = trial.candidate.threads,
             },
             Purpose::Restore => {
@@ -1697,11 +1670,6 @@ impl Search {
                 let accepted = trusted
                     && (verdict == Verdict::Better || (fewer && fewer_holds(gain, error, band)));
                 if accepted {
-                    // Only a long look could show this gain: short comparisons will not
-                    // settle the counts around it either.
-                    if !fewer && trial.prior.looks > 0 && gain < SMALL_GAIN {
-                        self.small_gains = true;
-                    }
                     self.keep = trial.candidate.threads;
                     if fewer {
                         self.look_between(now, trial.candidate, trial.base.threads);
@@ -1712,22 +1680,9 @@ impl Search {
                     }
                     self.unloaded_best = None;
                     self.recovery_secs = RECOVERY_PROBE_SECS;
-                    if self.small_gains && self.stage == Stage::Settled {
-                        // Short comparisons cannot help here: keep the long look's answer
-                        // and give the count halfway back a long look of its own.
-                        out.save = !self.manual;
-                        if !fewer {
-                            let below = Setting {
-                                threads: trial.base.threads,
-                                kernel: trial.candidate.kernel,
-                            };
-                            self.look_between(now, below, trial.candidate.threads);
-                        }
-                    } else if trial.candidate.threads > trial.base.threads
-                        && self.stage == Stage::Settled
+                    if trial.candidate.threads > trial.base.threads && self.stage == Stage::Settled
                     {
-                        // The count was too low: see whether the climb goes on. The
-                        // long look measured this count, so only higher ones are open.
+                        // The count was too low: see whether the climb goes on.
                         self.started_search = now;
                         self.deadline = None;
                         self.lo = trial.base.threads;
@@ -1781,10 +1736,6 @@ impl Search {
             // A kernel can change every count's result, so it goes first.
             let first = trial.candidate.kernel != trial.base.kernel;
             self.queue_retest(now, trial.candidate, evidence, first);
-            // A small gain at everything that fits is usually a bigger one in between.
-            if lean && self.top_look == Some(trial.candidate.threads) {
-                self.look_between(now, trial.base, trial.candidate.threads);
-            }
         }
         self.target = self.operating();
         self.events.push(TrialEvent::End {
@@ -1964,7 +1915,6 @@ impl Search {
                         // A big step shows clearly what small ones cannot, and most
                         // machines end at or near everything that fits.
                         let candidate = if self.top_first {
-                            self.top_look = Some(top);
                             top
                         } else {
                             self.peak.threads.saturating_add(self.step).min(top)
@@ -2039,7 +1989,6 @@ impl Search {
 
     fn settle(&mut self, now: u64, out: &mut Output, limit: usize) {
         self.stage = Stage::Settled;
-        self.top_look = None;
         self.target = self.operating();
         self.deadline = None;
         self.watch.open = None;
@@ -2347,69 +2296,6 @@ mod tests {
         // Equal, measured well.
         assert!(fewer_holds(0.0, 0.001, TIE_BAND));
         assert!(!fewer_holds(0.0, f64::INFINITY, TIE_BAND));
-    }
-
-    #[test]
-    fn a_small_lean_up_gets_a_long_look_instead_of_more_short_steps() {
-        let mut search = Search::new(params(8, 16));
-        search.keep = 8;
-        search.peak = setting(8, STREAM);
-        search.top_look = Some(16);
-        let mut out = Output::default();
-        // Everything that fits measured a little faster, too close to call.
-        search.start_trial(100, Purpose::Up, setting(8, STREAM), setting(16, STREAM));
-        search.finish_trial(400, Verdict::Undecided, 0.006, 0.003, &mut out);
-        assert!(!search.climbing);
-        assert_eq!(search.hi, 8, "no more short steps up");
-        let queued: Vec<usize> = search.undecided.iter().map(|(s, _)| s.threads).collect();
-        assert_eq!(queued, [12, 16], "halfway first, then the count itself");
-        // A noisy lean is no reason to stop climbing.
-        let mut noisy = Search::new(params(8, 16));
-        noisy.keep = 8;
-        noisy.peak = setting(8, STREAM);
-        noisy.start_trial(100, Purpose::Up, setting(8, STREAM), setting(16, STREAM));
-        noisy.finish_trial(400, Verdict::Undecided, 0.006, 0.01, &mut out);
-        assert!(noisy.climbing);
-    }
-
-    #[test]
-    fn a_gain_only_a_long_look_could_show_is_kept_without_short_steps() {
-        let mut search = Search::new(params(8, 16));
-        search.keep = 8;
-        search.peak = setting(8, STREAM);
-        search.stage = Stage::Settled;
-        let mut out = Output::default();
-        search.start_trial(
-            2000,
-            Purpose::Restore,
-            setting(8, STREAM),
-            setting(12, STREAM),
-        );
-        search.trial.as_mut().unwrap().prior = Pooled::summary(1, 0.007, 0.004, setting(8, STREAM));
-        search.finish_trial(2900, Verdict::Better, 0.007, 0.002, &mut out);
-        assert_eq!(search.keep, 12);
-        assert_eq!(search.stage, Stage::Settled, "no short-window climb");
-        assert!(out.save);
-        let queued: Vec<usize> = search.undecided.iter().map(|(s, _)| s.threads).collect();
-        assert_eq!(
-            queued,
-            [10],
-            "the count halfway back gets its own long look"
-        );
-        // A clear gain still climbs on.
-        let mut clear = Search::new(params(8, 16));
-        clear.keep = 8;
-        clear.peak = setting(8, STREAM);
-        clear.stage = Stage::Settled;
-        clear.start_trial(
-            2000,
-            Purpose::Restore,
-            setting(8, STREAM),
-            setting(12, STREAM),
-        );
-        clear.trial.as_mut().unwrap().prior = Pooled::summary(1, 0.03, 0.01, setting(8, STREAM));
-        clear.finish_trial(2900, Verdict::Better, 0.03, 0.004, &mut out);
-        assert_eq!(clear.stage, Stage::CountUp);
     }
 
     #[test]

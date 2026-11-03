@@ -45,9 +45,7 @@ adding threads stops helping, then narrows down. A count that matches the fastes
 one within 0.25% is as good as it, so Seine keeps the lowest such count and the RAM
 stays free for your other programs. It only moves to fewer threads once the
 measurements show little is lost. A result too close to call is checked again straight
-away, then a few more times half an hour apart. When more threads look only slightly
-faster, Seine stops stepping up and gives that count one longer look straight away;
-after that, differences that small only move the count after a longer look.
+away, then a few more times half an hour apart.
 
 Kernels your CPU cannot run are never tried, and kernels known not to win on your CPU
 are skipped. Most machines finish within minutes; a slow or busy machine can take
