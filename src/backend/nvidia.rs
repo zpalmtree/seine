@@ -644,6 +644,8 @@ struct NvidiaShared {
     error_emitted: AtomicBool,
     /// The worker's last batch was BLAKE2b (reported in telemetry).
     blake2b_active: AtomicBool,
+    /// Lanes after the worker grew its engine into freed GPU memory (0 = not grown).
+    grown_lanes: AtomicUsize,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -697,6 +699,7 @@ impl NvidiaShared {
             lane_hash_micros: AtomicU64::new(0),
             error_emitted: AtomicBool::new(false),
             blake2b_active: AtomicBool::new(false),
+            grown_lanes: AtomicUsize::new(0),
         }
     }
 
@@ -850,6 +853,13 @@ struct CudaArgon2Engine {
     fused_target_check: bool,
     cached_header_base: Vec<u8>,
     cached_target: Option<[u8; POW_OUTPUT_LEN]>,
+    device_index: u32,
+    /// Lanes the whole card would hold, after the reserve.
+    full_lanes: usize,
+    lane_bytes: u64,
+    reserve_mib: u64,
+    /// False when the user fixed the lane count.
+    growable: bool,
 }
 
 fn header_base_upload_needed(cached: &[u8], next: &[u8]) -> bool {
@@ -1186,15 +1196,14 @@ impl CudaArgon2Engine {
             ),
         ) = selected
             .ok_or_else(|| anyhow!("failed to allocate CUDA buffers for any lane count"))?;
-        if max_lanes_override.is_none() {
-            let full_budget = derive_memory_budget_mib(
-                memory_total_mib,
-                None,
-                headless_linux_device(device_index),
-            );
-            let full_lanes = usize::try_from(full_budget.saturating_mul(1024 * 1024) / lane_bytes)
-                .unwrap_or(usize::MAX)
-                .min(MAX_LANES_HARD_LIMIT);
+        let full_budget =
+            derive_memory_budget_mib(memory_total_mib, None, headless_linux_device(device_index));
+        let reserve_mib = memory_total_mib.saturating_sub(full_budget);
+        let full_lanes = usize::try_from(full_budget.saturating_mul(1024 * 1024) / lane_bytes)
+            .unwrap_or(usize::MAX)
+            .min(MAX_LANES_HARD_LIMIT);
+        let growable = max_lanes_override.is_none();
+        if growable {
             if let Some(notice) = vram_limited_notice(device_index, max_lanes, full_lanes) {
                 crate::miner::ui::warn("NVIDIA", notice);
             }
@@ -1226,11 +1235,30 @@ impl CudaArgon2Engine {
             found_index,
             host_completed_iters: vec![0u32; max_lanes.max(1)],
             host_found_index: [u32::MAX; 1],
+            device_index,
+            full_lanes,
+            lane_bytes,
+            reserve_mib,
+            growable,
             host_last_blocks: Vec::new(),
             fused_target_check,
             cached_header_base: Vec::new(),
             cached_target: None,
         })
+    }
+
+    /// More lanes that would fit in the GPU memory free right now, after the reserve.
+    fn room_for_lanes(&self) -> usize {
+        if !self.growable || self.max_lanes >= self.full_lanes {
+            return 0;
+        }
+        let Ok((free, _)) = self.stream.context().mem_get_info() else {
+            return 0;
+        };
+        let spare = (free as u64).saturating_sub(self.reserve_mib.saturating_mul(1024 * 1024));
+        usize::try_from(spare / self.lane_bytes.max(1))
+            .unwrap_or(0)
+            .min(self.full_lanes - self.max_lanes)
     }
 
     fn max_lanes(&self) -> usize {
@@ -2066,7 +2094,10 @@ impl PowBackend for NvidiaBackend {
     }
 
     fn lanes(&self) -> usize {
-        self.max_lanes.load(Ordering::Acquire).max(1)
+        self.max_lanes
+            .load(Ordering::Acquire)
+            .max(self.shared.grown_lanes.load(Ordering::Acquire))
+            .max(1)
     }
 
     fn device_memory_bytes(&self) -> Option<u64> {
@@ -2183,6 +2214,7 @@ impl PowBackend for NvidiaBackend {
             .store(discovered_hashes_per_launch.max(1), Ordering::Release);
 
         self.shared.error_emitted.store(false, Ordering::Release);
+        self.shared.grown_lanes.store(0, Ordering::Release);
         self.shared.hashes.store(0, Ordering::Release);
         self.shared.active_lanes.store(0, Ordering::Release);
         self.shared.pending_work.store(0, Ordering::Release);
@@ -2218,19 +2250,32 @@ impl PowBackend for NvidiaBackend {
         let rebuild = {
             let selected = selected.clone();
             let fused_target_check = self.tuning_options.fused_target_check;
+            let forced_lanes = self.tuning_options.max_lanes_override.filter(|v| *v > 0);
             let cubin_cache_dir = self.cubin_cache_dir.clone();
             let interrupt_slot = Arc::clone(&self.interrupt_controller);
-            Box::new(move || {
+            // After growing, later rebuilds keep the grown size, not the start-time one.
+            let mut grown: Option<usize> = None;
+            Box::new(move |fresh: bool| {
+                let (free_mib, lanes_hint) = if fresh {
+                    (None, forced_lanes)
+                } else if grown.is_some() {
+                    (None, grown)
+                } else {
+                    (selected.memory_free_mib, tuning.max_lanes_hint)
+                };
                 let engine = CudaArgon2Engine::new(
                     selected.index,
                     selected.memory_total_mib,
-                    selected.memory_free_mib,
+                    free_mib,
                     tuning,
-                    tuning.max_lanes_hint,
+                    lanes_hint,
                     tuning.hashes_per_launch_per_lane,
                     fused_target_check,
                     &cubin_cache_dir,
                 )?;
+                if fresh {
+                    grown = Some(engine.max_lanes());
+                }
                 if let Ok(mut slot) = interrupt_slot.write() {
                     *slot = Some(engine.interrupt_controller());
                 }
@@ -2697,10 +2742,11 @@ impl BenchBackend for NvidiaBackend {
 }
 
 /// The worker's Argon2 engine. BLAKE2b work drops it to free its lane memory;
-/// Argon2 work after that rebuilds it with the start-time parameters.
+/// Argon2 work after that rebuilds it with the start-time parameters. Freed GPU
+/// memory lets it rebuild larger (`rebuild(true)` sizes from memory free now).
 struct Argon2EngineSlot {
     engine: Option<CudaArgon2Engine>,
-    rebuild: Box<dyn FnMut() -> Result<CudaArgon2Engine> + Send>,
+    rebuild: Box<dyn FnMut(bool) -> Result<CudaArgon2Engine> + Send>,
 }
 
 impl Argon2EngineSlot {
@@ -2729,12 +2775,78 @@ impl Argon2EngineSlot {
         }
     }
 
+    /// Rebuilds the engine sized from the GPU memory free now. On failure the
+    /// previous size is rebuilt.
+    fn regrow(&mut self) -> Result<usize> {
+        self.release();
+        match (self.rebuild)(true) {
+            Ok(engine) => {
+                let lanes = engine.max_lanes();
+                self.engine = Some(engine);
+                Ok(lanes)
+            }
+            Err(_) => {
+                let engine = (self.rebuild)(false)?;
+                let lanes = engine.max_lanes();
+                self.engine = Some(engine);
+                Ok(lanes)
+            }
+        }
+    }
+
     fn ensure(&mut self) -> Result<&mut CudaArgon2Engine> {
         if self.engine.is_none() {
-            self.engine = Some((self.rebuild)()?);
+            self.engine = Some((self.rebuild)(false)?);
         }
         Ok(self.engine.as_mut().expect("engine present"))
     }
+}
+
+/// How often the worker looks for freed GPU memory, and how long room for more
+/// lanes must last before it grows.
+const LANE_GROWTH_CHECK: Duration = Duration::from_secs(30);
+const LANE_GROWTH_HOLD: Duration = Duration::from_secs(60);
+
+/// Grows the engine once freed GPU memory has had room for more lanes for a while.
+struct LaneGrowth {
+    next_check: Instant,
+    room_since: Option<Instant>,
+}
+
+impl LaneGrowth {
+    fn new(now: Instant) -> Self {
+        Self {
+            next_check: now + LANE_GROWTH_CHECK,
+            room_since: None,
+        }
+    }
+
+    fn check_due(&mut self, now: Instant) -> bool {
+        if now < self.next_check {
+            return false;
+        }
+        self.next_check = now + LANE_GROWTH_CHECK;
+        true
+    }
+
+    /// True once there has been room for more lanes for `LANE_GROWTH_HOLD`.
+    fn observe(&mut self, now: Instant, room: bool) -> bool {
+        if !room {
+            self.room_since = None;
+            return false;
+        }
+        let since = *self.room_since.get_or_insert(now);
+        if now.saturating_duration_since(since) >= LANE_GROWTH_HOLD {
+            self.room_since = None;
+            return true;
+        }
+        false
+    }
+}
+
+/// A rebuild pauses hashing briefly, so it needs a real gain.
+fn worth_growing(lanes: usize, room: usize) -> bool {
+    room >= (lanes / 4).max(2)
 }
 
 fn worker_loop(
@@ -2755,6 +2867,7 @@ fn worker_loop(
     let mut running = true;
     let mut adaptive_pressure = 0u32;
     let mut transient_retries: u32 = 0;
+    let mut growth = LaneGrowth::new(Instant::now());
     // A worker started for BLAKE2b has no Argon2 engine yet; its sizes are
     // read when the engine is first built.
     let mut argon2_sized = argon2.engine.is_some();
@@ -3035,6 +3148,44 @@ fn worker_loop(
         }
 
         shared.blake2b_active.store(false, Ordering::Release);
+        // Between batches nothing is in flight, so the engine can be rebuilt larger.
+        if argon2_sized {
+            let now = Instant::now();
+            let room = match argon2.engine.as_ref() {
+                Some(engine) if growth.check_due(now) => Some((
+                    engine.room_for_lanes(),
+                    engine.max_lanes(),
+                    engine.device_index,
+                )),
+                _ => None,
+            };
+            if let Some((room, lanes, device)) = room {
+                if growth.observe(now, worth_growing(lanes, room)) {
+                    match argon2.regrow() {
+                        Ok(grown) => {
+                            argon2_sized = false;
+                            shared.grown_lanes.store(grown, Ordering::Release);
+                            if grown > lanes {
+                                crate::miner::ui::info(
+                                    "NVIDIA",
+                                    format!(
+                                        "GPU {device}: now {grown} lanes: more GPU memory is free"
+                                    ),
+                                );
+                            }
+                        }
+                        Err(err) => {
+                            emit_worker_error(
+                                &shared,
+                                &instance_id,
+                                format!("failed to rebuild the CUDA Argon2 engine: {err:#}"),
+                            );
+                            break;
+                        }
+                    }
+                }
+            }
+        }
         let engine = match argon2.ensure() {
             Ok(engine) => engine,
             Err(err) => {
@@ -3896,7 +4047,7 @@ fn vram_limited_notice(device_index: u32, lanes: usize, full_lanes: usize) -> Op
     (lanes.saturating_mul(4) < full_lanes.saturating_mul(3)).then(|| {
         format!(
             "GPU {device_index}: Hashrate could be higher. Other programs are using GPU memory, \
-             so it runs {lanes} of {full_lanes} lanes; close them and restart Seine."
+             so it runs {lanes} of {full_lanes} lanes for now and adds lanes when memory frees up."
         )
     })
 }
@@ -5636,10 +5787,32 @@ mod tests {
     }
 
     #[test]
+    fn lanes_grow_only_after_lasting_room_worth_a_rebuild() {
+        assert!(!worth_growing(3, 1));
+        assert!(worth_growing(3, 2));
+        assert!(!worth_growing(16, 3));
+        assert!(worth_growing(16, 4));
+        let start = Instant::now();
+        let mut growth = LaneGrowth::new(start);
+        assert!(!growth.check_due(start));
+        let at = |secs| start + Duration::from_secs(secs);
+        assert!(growth.check_due(at(30)));
+        assert!(!growth.observe(at(30), true));
+        assert!(!growth.observe(at(60), true));
+        // Room that goes away starts the wait again.
+        assert!(!growth.observe(at(75), false));
+        assert!(!growth.observe(at(90), true));
+        assert!(!growth.observe(at(120), true));
+        assert!(growth.observe(at(150), true));
+        // Once grown, the wait starts over.
+        assert!(!growth.observe(at(160), true));
+    }
+
+    #[test]
     fn a_gpu_short_of_memory_says_why_it_runs_fewer_lanes() {
         let notice = vram_limited_notice(0, 3, 15).unwrap();
         assert!(notice.contains("3 of 15 lanes"), "{notice}");
-        assert!(notice.contains("restart Seine"), "{notice}");
+        assert!(notice.contains("adds lanes"), "{notice}");
         // Close to full, or a full card: nothing to say.
         assert_eq!(vram_limited_notice(0, 12, 15), None);
         assert_eq!(vram_limited_notice(0, 15, 15), None);
@@ -5739,6 +5912,7 @@ mod tests {
             lane_hash_micros: AtomicU64::new(0),
             error_emitted: AtomicBool::new(false),
             blake2b_active: AtomicBool::new(false),
+            grown_lanes: AtomicUsize::new(0),
         };
         let (event_tx, _event_rx) = crossbeam_channel::bounded(1);
         if let Ok(mut slot) = shared.event_sink.write() {
