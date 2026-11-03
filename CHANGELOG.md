@@ -9,6 +9,7 @@ supported hardware only.
 
 ## Unreleased
 
+- **Up to 13% higher CPU hashrate in containers with a CPU limit** (Ryzen 7 9800X3D; about 4% on Ryzen 5 7600X)
 - **Up to 3% higher CPU hashrate with default settings, often on less RAM** (Ryzen 9 5900X, Ryzen 9 9900X, Core i5-12400F, Core i7-14700K)
 - **Tunes faster, then stops**: finds your best thread count and kernel in minutes, keeps the lowest thread count that gets the same hashrate, and stops testing until something changes
 - **Updates keep your tuning**: a new version starts on your saved settings and only tests what it changed
