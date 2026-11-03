@@ -94,7 +94,12 @@ stride remains fixed. Raising a RAM limit can activate more provisioned workers;
 raising a task limit requires restarting to provision additional slots. A task
 budget too small for the CPU and supporting threads reports a startup error.
 Only active arenas count against the refreshed memory allowance. Failed allocation
-attempts back off, starting at five minutes.
+attempts back off, starting at five minutes. A thread that is shed again within
+five minutes of coming back marks the edge of the machine's RAM: Seine stays one
+below it and retries after five minutes, then ten, twenty and forty, without a
+dashboard line for each try. A higher count that runs out of RAM as soon as it starts
+marks the edge too. Either way, Seine moves back up at once when a full thread's worth
+of RAM comes free.
 
 
 ## What tuning never interrupts

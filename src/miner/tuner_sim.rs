@@ -48,6 +48,14 @@ pub(super) struct Scenario {
     /// (second, usable threads) RAM limit changes. Starts at `max_threads`.
     #[serde(default)]
     pub cap_events: Vec<(u64, usize)>,
+    /// A machine at the edge of its RAM until a second: running this many threads
+    /// makes reclaim stalls report room for one fewer, which goes once one is shed.
+    #[serde(default)]
+    pub ram_edge: Option<(usize, u64)>,
+    /// One thread below that edge the reading wavers, a third of the time showing
+    /// no room for the thread that is already running.
+    #[serde(default)]
+    pub ram_waver: bool,
     /// (second, multiplier) sustained load steps on every count.
     #[serde(default)]
     pub load_events: Vec<(u64, f64)>,
@@ -139,7 +147,13 @@ impl Scenario {
 
     /// Best reachable rate at the final RAM limit and load.
     fn oracle(&self) -> (f64, usize) {
-        let cap = self.cap_at(self.hours * 3600).min(self.max_threads);
+        let cap = self
+            .cap_at(self.hours * 3600)
+            .min(self.max_threads)
+            .min(match self.ram_edge {
+                Some((edge, until)) if until >= self.hours * 3600 => edge - 1,
+                _ => usize::MAX,
+            });
         let mut best = 0.0_f64;
         for name in &self.candidates {
             let kernel = Self::kernel(name);
@@ -445,7 +459,27 @@ fn drive(scenario: &Scenario, driver: &mut dyn Driver) -> Score {
         } else {
             over_for = 0;
         }
-        let step = driver.tick(now, machine.snapshot, cap, machine.rig_hashes(scenario));
+        let reported = match scenario.ram_edge {
+            Some((edge, until)) if now < until && machine.snapshot.threads >= edge => {
+                cap.min(edge - 1)
+            }
+            Some((edge, until))
+                if now < until
+                    && scenario.ram_waver
+                    && machine.snapshot.threads + 1 == edge
+                    && (now / 40 + scenario.seed) % 3 == 0 =>
+            {
+                cap.min(edge - 1)
+            }
+            Some((edge, until)) if now < until => cap.min(edge),
+            _ => cap,
+        };
+        let step = driver.tick(
+            now,
+            machine.snapshot,
+            reported,
+            machine.rig_hashes(scenario),
+        );
         if let Some(kernel) = step.kernel {
             machine.set_kernel(now, kernel);
         }
@@ -595,6 +629,8 @@ pub(super) fn built_in() -> Vec<Scenario> {
         gpu: None,
         gpu_starved_above: None,
         cap_events: Vec::new(),
+        ram_edge: None,
+        ram_waver: false,
         load_events: Vec::new(),
         warm_secs: default_warm_secs(),
         hours: default_hours(),
@@ -702,6 +738,61 @@ pub(super) fn built_in() -> Vec<Scenario> {
             max_threads: 16,
             cap_events: vec![(0, 6)],
             rates: rates(&[(6, 5.0), (16, 8.0)], &[(6, 6.5), (16, 10.0)]),
+            ..base.clone()
+        },
+        // 12 threads fill the RAM: running them brings reclaim stalls, 11 is calm.
+        Scenario {
+            name: "ram-edge-12-of-24".into(),
+            start_threads: 12,
+            max_threads: 24,
+            ram_edge: Some((12, u64::MAX)),
+            warm_secs: 20,
+            rates: rates(
+                &[(6, 4.5), (12, 5.2), (24, 5.0)],
+                &[(6, 6.0), (8, 6.6), (12, 6.8), (16, 6.7), (24, 6.5)],
+            ),
+            ..base.clone()
+        },
+        // The same on a quiet machine, until the program holding RAM exits after two hours.
+        Scenario {
+            name: "ram-edge-freed-after-2h".into(),
+            start_threads: 12,
+            max_threads: 24,
+            ram_edge: Some((12, 7200)),
+            noise: 0.004,
+            bursts: None,
+            warm_secs: 20,
+            // The 12th thread is worth 2%, so this checks the recovery, not how small a
+            // gain the search can resolve.
+            rates: rates(
+                &[(6, 4.5), (12, 5.2), (24, 5.0)],
+                &[(6, 6.0), (11, 6.67), (12, 6.8), (16, 6.7), (24, 6.5)],
+            ),
+            ..base.clone()
+        },
+        // The best count is one below the RAM edge, and the reading there wavers
+        // between room for the next thread and none.
+        Scenario {
+            name: "ram-edge-wavering-14-of-32".into(),
+            start_threads: 13,
+            max_threads: 32,
+            start_kernel: "avx2-stream".into(),
+            ram_edge: Some((14, u64::MAX)),
+            ram_waver: true,
+            noise: 0.004,
+            bursts: None,
+            warm_secs: 20,
+            rates: rates(
+                &[(6, 11.0), (13, 12.5), (32, 11.0)],
+                &[
+                    (6, 14.2),
+                    (9, 15.6),
+                    (12, 16.1),
+                    (13, 16.35),
+                    (14, 16.4),
+                    (32, 14.0),
+                ],
+            ),
             ..base.clone()
         },
         // Another program takes half the RAM for four hours, then frees it.
@@ -851,6 +942,8 @@ pub(super) fn update_cases() -> Vec<UpdateCase> {
                 gpu: None,
                 gpu_starved_above: None,
                 cap_events: Vec::new(),
+                ram_edge: None,
+                ram_waver: false,
                 load_events: Vec::new(),
                 warm_secs: default_warm_secs(),
                 hours: 12,
@@ -1095,7 +1188,11 @@ fn scoreboard_targets_hold_on_every_seed() {
     let mut problems = Vec::new();
     for mut scenario in built_in() {
         scenario.hours = 24;
-        let event_driven = !scenario.cap_events.is_empty() || !scenario.load_events.is_empty();
+        let event_driven = !scenario.cap_events.is_empty()
+            || !scenario.load_events.is_empty()
+            || scenario
+                .ram_edge
+                .is_some_and(|(_, until)| until < scenario.hours * 3600);
         for seed in seeds() {
             scenario.seed = seed;
             let score = run_new(&scenario);

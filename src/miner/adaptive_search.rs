@@ -44,6 +44,8 @@ const HEADROOM_HOLD_SECS: u64 = 30;
 const CONSTRAINED_SEARCH_WAIT_SECS: u64 = 300;
 const ALLOCATION_RETRY_SECS: u64 = 300;
 const ALLOCATION_RETRY_MAX_SECS: u64 = 2400;
+/// Room that goes again this soon after growing into it is the machine's edge.
+const RAM_EDGE_SECS: u64 = 300;
 
 const WATCH_WINDOW_SECS: u64 = 300;
 /// Sustained H/s change that means the machine is not the one we tuned on.
@@ -671,6 +673,11 @@ pub(super) struct Search {
     allocation_limit: Option<usize>,
     allocation_retry_at: u64,
     allocation_backoff: u64,
+    /// When the count last grew back into free RAM.
+    grew_at: Option<u64>,
+    /// The last thread keeps being shed soon after it returns: retries back off
+    /// and stay quiet until one holds.
+    at_ram_edge: bool,
     headroom_since: Option<u64>,
     last_limit: usize,
     constrained_since: Option<u64>,
@@ -758,6 +765,8 @@ impl Search {
             allocation_limit: None,
             allocation_retry_at: 0,
             allocation_backoff: ALLOCATION_RETRY_SECS,
+            grew_at: None,
+            at_ram_edge: false,
             headroom_since: None,
             last_limit: max.max(1),
             constrained_since: None,
@@ -1301,6 +1310,8 @@ impl Search {
             };
             self.cancel_trial();
             if candidate > limit && base <= limit {
+                // The reading had room for the candidate until it ran: the edge.
+                self.at_ram_edge = true;
                 self.allocation_retry_at = now + self.allocation_backoff;
                 self.allocation_limit = Some(limit);
                 self.allocation_backoff =
@@ -1314,8 +1325,37 @@ impl Search {
             }
         }
         if self.target.threads > limit {
+            if self
+                .grew_at
+                .is_some_and(|grew| now.saturating_sub(grew) < RAM_EDGE_SECS)
+            {
+                // Shed again right after growing back: hold here, longer each time.
+                self.at_ram_edge = true;
+                self.allocation_limit = Some(limit);
+                self.allocation_retry_at = now + self.allocation_backoff;
+                self.allocation_backoff =
+                    (self.allocation_backoff * 2).min(ALLOCATION_RETRY_MAX_SECS);
+            }
+            self.grew_at = None;
             self.target.threads = limit;
             self.note_ram_limit();
+        }
+        if self.at_ram_edge
+            && self.target.threads == self.keep
+            && self
+                .grew_at
+                .is_some_and(|grew| now.saturating_sub(grew) >= RAM_EDGE_SECS)
+        {
+            // A retry held: the room is real again.
+            self.at_ram_edge = false;
+            self.allocation_backoff = ALLOCATION_RETRY_SECS;
+            if self.limited_note {
+                self.limited_note = false;
+                self.pending_notes.push(Note {
+                    text: format!("back to {} threads: RAM is free", self.target.threads),
+                    success: false,
+                });
+            }
         }
         // Short of RAM for the best known count: wait for it, then search with what
         // there is if it stays short.
@@ -1353,9 +1393,11 @@ impl Search {
             && limit > self.target.threads
         {
             self.target.threads = self.keep.min(limit);
+            self.grew_at = Some(now);
             self.pending_details
                 .push(format!("{} threads: RAM is free", self.target.threads));
-            if self.limited_note && self.target.threads == self.keep {
+            // At the edge, the note waits until a retry holds.
+            if self.limited_note && self.target.threads == self.keep && !self.at_ram_edge {
                 self.limited_note = false;
                 self.pending_notes.push(Note {
                     text: format!("back to {} threads: RAM is free", self.target.threads),
@@ -2048,7 +2090,13 @@ impl Search {
         self.watch.high = 0;
         self.watch.next_allowed = now + SHIFT_RETRY_SECS;
         // RAM held the count back only if the peak sits at a limit below the maximum.
-        self.ram_limit = (self.peak.threads >= limit && limit < self.max).then_some(limit);
+        // At the edge the reading shows one more thread than holds.
+        self.ram_limit = if self.at_ram_edge && self.peak.threads + 1 >= limit {
+            Some(self.keep)
+        } else {
+            self.at_ram_edge = false;
+            (self.peak.threads >= limit && limit < self.max).then_some(limit)
+        };
         if self.unloaded_best.is_some_and(|best| best <= self.keep) {
             self.unloaded_best = None;
         }
@@ -2132,11 +2180,15 @@ impl Search {
     fn watch_settled(&mut self, now: u64, view: &View, cap: usize, out: &mut Output) {
         let limit = self.limit(now, cap);
         // RAM that was holding the count back has come free.
-        if self.ram_limit.is_some_and(|held| limit > held)
+        // At the edge the reading always shows one more thread than holds.
+        let edge = usize::from(self.at_ram_edge);
+        if self.ram_limit.is_some_and(|held| limit > held + edge)
             && self.keep < self.max
             && self.ready_to_grow(now)
         {
             self.ram_limit = None;
+            self.at_ram_edge = false;
+            self.allocation_backoff = ALLOCATION_RETRY_SECS;
             self.pending_details
                 .push("more RAM is free; checking a higher count".into());
             self.search_reason = Some("more RAM is free: trying more threads");
@@ -2484,6 +2536,28 @@ mod tests {
         let (gain, error) = estimate(&windows);
         assert_eq!(judge(gain, error, 0.25, true), Verdict::Tie);
         assert_eq!(judge(gain, error, TIE_BAND, true), Verdict::Worse);
+    }
+
+    #[test]
+    fn room_that_goes_again_after_growing_back_is_retried_ever_less_often() {
+        let mut search = Search::new(params(12, 24));
+        let (mut threads, mut hashes, mut regrows) = (12usize, 0u64, 0);
+        let mut notes = Vec::new();
+        for now in 0..3600 {
+            hashes += threads as u64;
+            // Running 12 brings reclaim stalls; 11 is calm.
+            let cap = if threads >= 12 { 11 } else { 12 };
+            let out = search.tick(now, &[snapshot(threads, STREAM, hashes)], cap, false);
+            if let Some(next) = out.threads {
+                regrows += usize::from(next >= 12 && threads < 12);
+                threads = next;
+            }
+            notes.extend(out.notes);
+        }
+        assert!(regrows <= 3, "{regrows} returns to the edge in an hour");
+        let ram_notes = notes.iter().filter(|n| n.text.contains("RAM")).count();
+        assert!(ram_notes <= 4, "{notes:?}");
+        assert_eq!(threads, 11);
     }
 
     #[test]
