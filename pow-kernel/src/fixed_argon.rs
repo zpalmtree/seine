@@ -116,6 +116,7 @@ const fn kernel_isa(kernel: CpuKernel) -> u8 {
         CpuKernel::Avx512256StreamL2 => ISA_AVX512_256_STREAM_L2,
         CpuKernel::Avx512StreamL2 => ISA_AVX512_STREAM_L2,
         CpuKernel::Avx512StreamSkip => ISA_AVX512_STREAM,
+        CpuKernel::Avx2StreamSkip => ISA_AVX2_STREAM,
     }
 }
 
@@ -163,11 +164,12 @@ pub struct FixedArgon2id {
     /// First block whose odd-indexed successors skip the arena store
     /// (`usize::MAX` = store everything). See `set_skip_store_permille`.
     skip_from: usize,
-    /// `CpuKernel::Avx512StreamSkip` is active: skip from `KERNEL_SKIP_PERMILLE`.
+    /// A skipped-store kernel (`Avx512StreamSkip`, `Avx2StreamSkip`) is active: skip
+    /// from `KERNEL_SKIP_PERMILLE`.
     kernel_skip: bool,
 }
 
-/// Skip boundary used by `CpuKernel::Avx512StreamSkip`.
+/// Skip boundary used by the skipped-store kernels.
 const KERNEL_SKIP_PERMILLE: usize = 600;
 
 const NO_SLOT: u16 = u16::MAX;
@@ -272,7 +274,7 @@ impl FixedArgon2id {
             return Err(Error::UnsupportedKernel);
         }
         let mut fixed = Self::new_for_isa(requested_memory_kib, kernel_isa(kernel));
-        fixed.kernel_skip = kernel == CpuKernel::Avx512StreamSkip;
+        fixed.kernel_skip = kernel.skips_stores();
         Ok(fixed)
     }
 
@@ -283,7 +285,7 @@ impl FixedArgon2id {
             return Err(Error::UnsupportedKernel);
         }
         self.isa = kernel_isa(kernel);
-        self.kernel_skip = kernel == CpuKernel::Avx512StreamSkip;
+        self.kernel_skip = kernel.skips_stores();
         Ok(())
     }
 
@@ -350,7 +352,9 @@ impl FixedArgon2id {
     }
 
     pub const fn isa_label(&self) -> &'static str {
-        if self.kernel_skip {
+        if self.kernel_skip && self.isa == ISA_AVX2_STREAM {
+            CpuKernel::Avx2StreamSkip.as_str()
+        } else if self.kernel_skip {
             CpuKernel::Avx512StreamSkip.as_str()
         } else {
             isa_label(self.isa)
@@ -667,7 +671,11 @@ impl FixedArgon2id {
         let cache = ring.as_mut_ptr();
         debug_assert_eq!(arena as usize % 64, 0);
         debug_assert_eq!(cache as usize % 64, 0);
-        let skip_from = self.skip_from;
+        let skip_from = if self.kernel_skip {
+            self.block_count * KERNEL_SKIP_PERMILLE / 1000
+        } else {
+            self.skip_from
+        };
         let last = memory.len() - 1;
         let mut rebuilt = std::mem::MaybeUninit::<PowBlock>::uninit();
         for slice in 0..SYNC_POINTS {
@@ -3683,7 +3691,16 @@ mod tests {
 
     #[test]
     fn skip_kernel_matches_reference_with_and_without_side_cache() {
-        if !super::CpuKernel::Avx512StreamSkip.is_supported() {
+        for kernel in [
+            super::CpuKernel::Avx512StreamSkip,
+            super::CpuKernel::Avx2StreamSkip,
+        ] {
+            skip_kernel_matches_reference(kernel);
+        }
+    }
+
+    fn skip_kernel_matches_reference(kernel: super::CpuKernel) {
+        if !kernel.is_supported() {
             return;
         }
         let memory_kib = 4096u32;
@@ -3691,8 +3708,7 @@ mod tests {
         let reference = Argon2::new(Algorithm::Argon2id, Version::V0x13, params.clone());
         let mut reference_memory = vec![argon2::Block::default(); params.block_count()];
         for side_cache in [0usize, 512] {
-            let mut fixed =
-                FixedArgon2id::with_kernel(memory_kib, super::CpuKernel::Avx512StreamSkip).unwrap();
+            let mut fixed = FixedArgon2id::with_kernel(memory_kib, kernel).unwrap();
             fixed.set_side_cache_blocks(side_cache);
             assert!(fixed.kernel_skip);
             let mut fixed_memory =
@@ -3718,8 +3734,20 @@ mod tests {
                     .unwrap();
                 assert_eq!(actual, expected, "side cache {side_cache} nonce {nonce}");
             }
+            // Skipped blocks are never written: the fill pattern survives.
+            let skipped = (fixed.block_count() * super::KERNEL_SKIP_PERMILLE / 1000) | 1;
+            assert_eq!(
+                fixed_memory[skipped].0[0], 0x5a5a_5a5a_5a5a_5a5a,
+                "{kernel:?} wrote block {skipped}"
+            );
+            assert_ne!(fixed_memory[skipped - 1].0[0], 0x5a5a_5a5a_5a5a_5a5a);
             // Switching back to the plain path stops skipping.
-            fixed.set_kernel(super::CpuKernel::Avx512Stream).unwrap();
+            let plain = if kernel == super::CpuKernel::Avx2StreamSkip {
+                super::CpuKernel::Avx2Stream
+            } else {
+                super::CpuKernel::Avx512Stream
+            };
+            fixed.set_kernel(plain).unwrap();
             assert!(!fixed.kernel_skip);
         }
     }

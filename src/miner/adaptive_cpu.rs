@@ -260,7 +260,7 @@ fn initial_threads(
 // Cold start for CPUs whose cohort mines on a streaming kernel. Zen 4/5, Intel
 // Xeons with an AVX-512 streaming default and Intel AVX2 desktops start at every
 // allowed logical CPU that fits in RAM, as do Broadwell-EP Xeons; Zen 2/3 (AVX2
-// streaming) start at the physical core count.
+// streaming, with or without skipped stores) start at the physical core count.
 // Count trials still decide afterwards.
 fn cohort_cold_start(
     cfg: &Config,
@@ -285,7 +285,7 @@ fn cohort_cold_start(
         {
             Some(max)
         }
-        CpuKernel::Avx2Stream => host.physical_cores,
+        CpuKernel::Avx2Stream | CpuKernel::Avx2StreamSkip => host.physical_cores,
         _ => Some(max),
     }
     .filter(|&workers| workers > 0)

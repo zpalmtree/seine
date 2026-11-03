@@ -40,10 +40,14 @@ fn candidates_for(
     // ISA/OS support check remains mandatory, and repeated-win trials can still
     // replace it.
     if let Some(stream) = cohort_stream_kernel(identity, supported) {
-        if stream == CpuKernel::Avx512StreamSkip {
+        if stream.skips_stores() {
             // The plain path stays a challenger so the tuner can turn skipping off.
             paths.push(stream);
-            paths.push(CpuKernel::Avx512Stream);
+            paths.push(if stream == CpuKernel::Avx2StreamSkip {
+                CpuKernel::Avx2Stream
+            } else {
+                CpuKernel::Avx512Stream
+            });
         } else if stream == CpuKernel::Avx512256Stream && identity.model == Some(0x02) {
             // Turin: test the high-concurrency challenger before AVX2.
             // Ordering changes discovery cost, never the repeated-win gate.
@@ -142,6 +146,15 @@ fn cohort_stream_kernel(
         }
         Some(0x19 | 0x1a) if supported.contains(&CpuKernel::Avx512256Stream) => {
             Some(CpuKernel::Avx512256Stream)
+        }
+        // Ryzen 5000 desktops (19h 21h) on Linux start with skipped stores; the plain
+        // path is compared against it while mining.
+        Some(0x19)
+            if cfg!(any(target_os = "linux", test))
+                && identity.model == Some(0x21)
+                && supported.contains(&CpuKernel::Avx2StreamSkip) =>
+        {
+            Some(CpuKernel::Avx2StreamSkip)
         }
         Some(0x19) if AVX2_STREAM_OS && supported.contains(&CpuKernel::Avx2Stream) => {
             Some(CpuKernel::Avx2Stream)
@@ -280,7 +293,7 @@ fn fixed_count_trials_wanted_for(
     workers: usize,
 ) -> bool {
     match cohort_stream_kernel(identity, supported) {
-        Some(CpuKernel::Avx512StreamSkip) => true,
+        Some(kernel) if kernel.skips_stores() => true,
         Some(_) => workers < startup_stream_min_workers(identity),
         None => candidates_for(identity, supported)
             .iter()
@@ -325,8 +338,8 @@ pub(crate) fn cohort_side_cache_blocks(
 /// Skipped-store permille for this host (see `set_skip_store_permille` in the
 /// kernel crate), or 0. On for Zen 5 desktops at 8 or more workers on Linux and
 /// Windows, and on Linux for Zen 4c EPYC at 128 or more, Zen 3 EPYC at 24 or more,
-/// and Zen 4 and Zen 3 desktops, Zen 2 EPYC and Threadripper 3000 at 12 or more;
-/// off elsewhere.
+/// and Zen 4 desktops, Zen 2 EPYC and Threadripper 3000 at 12 or more; off
+/// elsewhere. Ryzen 5000 desktops use the skipped-store kernel instead.
 pub(crate) fn cohort_skip_store_permille(workers: usize) -> u16 {
     let linux = cfg!(target_os = "linux");
     if !(linux || cfg!(windows)) {
@@ -373,16 +386,6 @@ pub(crate) fn cohort_skip_store_permille(workers: usize) -> u16 {
                 && identity.family == Some(0x19)
                 && identity.model == Some(0x01)
                 && workers >= 24 =>
-        {
-            600
-        }
-        // Vermeer (Ryzen 5000 desktop), Linux.
-        Some("AuthenticAMD")
-            if linux
-                && CpuKernel::Avx2Stream.is_supported()
-                && identity.family == Some(0x19)
-                && identity.model == Some(0x21)
-                && workers >= 12 =>
         {
             600
         }
@@ -1271,6 +1274,57 @@ mod tests {
         assert_eq!(field_start_for(&amd(0x19, 0x61), 16), Some(14));
         assert_eq!(field_start_for(&amd(0x19, 0x61), 1), Some(1));
         assert_eq!(field_start_for(&amd(0x19, 0x11), 16), None);
+    }
+
+    #[test]
+    fn ryzen_5000_desktops_compare_skipped_stores_on_each_machine() {
+        use crate::runtime_identity::CpuIdentity;
+        let zen3_desktop = CpuIdentity {
+            vendor: Some("AuthenticAMD".into()),
+            family: Some(0x19),
+            model: Some(0x21),
+            ..CpuIdentity::default()
+        };
+        let supported = [
+            CpuKernel::Avx2,
+            CpuKernel::Avx2Stream,
+            CpuKernel::Avx2StreamSkip,
+        ];
+        assert_eq!(
+            cohort_stream_kernel(&zen3_desktop, &supported),
+            Some(CpuKernel::Avx2StreamSkip)
+        );
+        let plan = plan_for(&zen3_desktop, &supported);
+        for workers in [6, 16] {
+            let candidates = plan.candidates_at(workers);
+            assert!(
+                candidates.contains(&CpuKernel::Avx2StreamSkip),
+                "{candidates:?}"
+            );
+            assert!(
+                candidates.contains(&CpuKernel::Avx2Stream),
+                "{candidates:?}"
+            );
+            // A set --threads count still compares the two.
+            assert!(fixed_count_trials_wanted_for(
+                &zen3_desktop,
+                &supported,
+                workers
+            ));
+        }
+        assert_eq!(
+            plan.start_for(&[snapshot_with(6)]),
+            Some(CpuKernel::Avx2StreamSkip)
+        );
+        // Zen 3 EPYC keeps the plain path.
+        let milan = CpuIdentity {
+            model: Some(0x01),
+            ..zen3_desktop
+        };
+        assert_eq!(
+            cohort_stream_kernel(&milan, &supported),
+            Some(CpuKernel::Avx2Stream)
+        );
     }
 
     #[test]
