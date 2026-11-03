@@ -575,8 +575,10 @@ impl Hub {
     /// Blocknet address and there is room, otherwise --address.
     fn payout_address(&self, requested: &str) -> String {
         let requested = requested.trim();
-        let valid = !requested.is_empty()
-            && !requested.starts_with(['@', '$'])
+        // A rig may log in as solo:<address>; it gets its own solo upstream.
+        let destination = crate::shortname::split_solo(requested).1;
+        let valid = !destination.is_empty()
+            && !destination.starts_with(['@', '$'])
             && crate::shortname::validate_destination(requested).is_ok();
         if !valid {
             return self.address.clone();

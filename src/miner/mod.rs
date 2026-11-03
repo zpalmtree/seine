@@ -282,9 +282,18 @@ fn resolve_mining_config(
 ) -> Result<Config> {
     let mut resolved = cfg.clone();
     if let Some(destination) = cfg.mining_address.as_deref() {
-        let address = resolver.resolve(destination)?;
+        let mut address = resolver.resolve(destination)?;
         if address != destination.trim() {
             info("ADDRESS", format!("resolved {destination} to {address}"));
+        }
+        // Daemon mining is already solo: the block template pays the address.
+        let (solo, bare) = crate::shortname::split_solo(&address);
+        if solo && cfg.mode == MiningMode::Daemon {
+            info(
+                "ADDRESS",
+                "daemon mining is always solo; ignoring the solo: prefix",
+            );
+            address = bare.to_string();
         }
         resolved.mining_address = Some(address);
     }
@@ -4178,6 +4187,24 @@ pub(crate) mod tests {
                     .mining_address,
                 resolved.mining_address
             );
+        }
+    }
+
+    #[test]
+    fn solo_prefix_is_kept_for_pools_and_dropped_for_daemons() {
+        use crate::shortname::tests::{mock_resolver, ADDRESS};
+        for (mode, expected) in [
+            (MiningMode::Pool, format!("solo:{ADDRESS}")),
+            (MiningMode::Daemon, ADDRESS.to_string()),
+        ] {
+            let mut cfg = test_config();
+            cfg.mode = mode;
+            cfg.mining_address = Some("Solo:$Alice".into());
+            let (resolver, task) = mock_resolver(ADDRESS);
+            let resolved = resolve_mining_config(&cfg, &resolver).unwrap();
+            task.join().unwrap();
+            assert_eq!(resolved.mining_address.as_deref(), Some(expected.as_str()));
+            assert_eq!(cfg.mining_address.as_deref(), Some("Solo:$Alice"));
         }
     }
 

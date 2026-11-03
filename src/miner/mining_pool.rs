@@ -26,8 +26,8 @@ use super::block_latency;
 use super::mining::MiningRuntimeBackends;
 use super::mining_tui::{
     init_tui_display, render_tui_now, set_tui_dev_fee_active, set_tui_pending_gpus,
-    set_tui_pool_balance_overview, set_tui_pool_payout_minimum, set_tui_state_label,
-    set_tui_wallet_overview, update_tui, RoundUiView, TuiDisplay,
+    set_tui_pool_balance_overview, set_tui_pool_payout_minimum, set_tui_pool_solo,
+    set_tui_state_label, set_tui_wallet_overview, update_tui, RoundUiView, TuiDisplay,
 };
 use super::runtime::{maybe_print_stats, seed_backend_weights, work_distribution_weights};
 use super::scheduler::NonceReservation;
@@ -97,8 +97,19 @@ struct PoolConnectionConfig {
     mode: PoolConnectionMode,
     pool_url: String,
     proxy: Option<crate::pool::SocksProxy>,
+    /// Payout address without any `solo:` prefix.
     address: String,
+    /// Log in as `solo:<address>`: the pool pays this connection only for
+    /// blocks it finds.
+    solo: bool,
     worker: String,
+}
+
+impl PoolConnectionConfig {
+    /// The address sent in the Stratum login.
+    fn login_address(&self) -> String {
+        crate::shortname::with_solo(self.solo, &self.address)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -702,10 +713,11 @@ fn build_pool_connection_configs(
         .pool_url
         .clone()
         .ok_or_else(|| anyhow!("pool mode requires a configured pool URL"))?;
-    let user_address = cfg
+    let user_destination = cfg
         .mining_address
         .clone()
         .ok_or_else(|| anyhow!("pool mode requires a configured address"))?;
+    let (solo, user_address) = crate::shortname::split_solo(&user_destination);
     let user_worker = cfg
         .pool_worker
         .clone()
@@ -716,7 +728,8 @@ fn build_pool_connection_configs(
         mode: PoolConnectionMode::User,
         pool_url: user_pool_url,
         proxy: cfg.pool_proxy.clone(),
-        address: user_address,
+        address: user_address.to_string(),
+        solo,
         worker: user_worker,
     };
     let dev = PoolConnectionConfig {
@@ -725,6 +738,7 @@ fn build_pool_connection_configs(
         pool_url: dev_pool_urls(&user.pool_url),
         proxy: cfg.pool_proxy.clone(),
         address: DEV_ADDRESS.to_string(),
+        solo: false,
         worker: cfg.dev_fee_pool_worker.clone(),
     };
     Ok((user, dev))
@@ -744,7 +758,7 @@ fn connect_pool_session(
     let pool_client = PoolClient::connect_via_with_memo(
         &connection.pool_url,
         connection.proxy.as_ref(),
-        connection.address.clone(),
+        connection.login_address(),
         connection.worker.clone(),
         connection.payout_memo.clone(),
         shutdown,
@@ -754,11 +768,12 @@ fn connect_pool_session(
         super::ui::detail(
             "CONN",
             format!(
-                "connecting ({}) to {} as {}.{}{}",
+                "connecting ({}) to {} as {}.{}{}{}",
                 connection.mode.as_str(),
                 connection.pool_url,
                 compact_address,
                 connection.worker,
+                if connection.solo { " to mine solo" } else { "" },
                 connection
                     .proxy
                     .as_ref()
@@ -788,6 +803,7 @@ fn connect_pool_session(
     }
     if update_ui {
         set_tui_pool_balance_overview(tui, &connection.address, "---", "---");
+        set_tui_pool_solo(tui, connection.solo);
     }
     Ok((pool_client, telemetry))
 }
@@ -3260,6 +3276,26 @@ fn compact_pool_address_for_log(address: &str) -> String {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn solo_logins_keep_the_bare_address_for_balances() {
+        use crate::shortname::tests::ADDRESS;
+        let mut cfg = crate::miner::tests::test_config();
+        cfg.pool_url = Some("stratum+tcp://bntpool.com:3333".into());
+        cfg.pool_worker = Some("rig".into());
+        cfg.mining_address = Some(format!("solo:{ADDRESS}"));
+        let (user, dev) = super::build_pool_connection_configs(&cfg).unwrap();
+        assert!(user.solo);
+        assert_eq!(user.address, ADDRESS);
+        assert_eq!(user.login_address(), format!("solo:{ADDRESS}"));
+        assert!(!dev.solo);
+        assert_eq!(dev.login_address(), dev.address);
+
+        cfg.mining_address = Some(ADDRESS.into());
+        let (user, _) = super::build_pool_connection_configs(&cfg).unwrap();
+        assert!(!user.solo);
+        assert_eq!(user.login_address(), ADDRESS);
+    }
+
+    #[test]
     fn dev_fee_rounds_fall_back_to_the_users_pools() {
         assert_eq!(
             super::dev_pool_urls("stratum+ssl://1.2.3.4:3443,stratum+tcp://bntpool.com:3333"),
@@ -3757,6 +3793,7 @@ mod tests {
                     .into(),
                 proxy: None,
                 address: "address".into(),
+                solo: false,
                 worker: "rig".into(),
             },
             client,

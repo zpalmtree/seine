@@ -33,10 +33,39 @@ pub(crate) fn normalize_shortname(input: &str) -> Result<Option<String>, String>
     Ok(Some(handle))
 }
 
+/// Login prefix that asks the pool to mine solo for this destination.
+pub(crate) const SOLO_PREFIX: &str = "solo:";
+
+/// Splits an optional `solo:` prefix (any letter case) off a destination,
+/// returning whether it was present and the trimmed remainder.
+pub(crate) fn split_solo(input: &str) -> (bool, &str) {
+    let trimmed = input.trim();
+    match trimmed.get(..SOLO_PREFIX.len()) {
+        Some(prefix) if prefix.eq_ignore_ascii_case(SOLO_PREFIX) => {
+            (true, trimmed[SOLO_PREFIX.len()..].trim())
+        }
+        _ => (false, trimmed),
+    }
+}
+
+/// `destination` with the canonical `solo:` prefix when `solo` is set.
+pub(crate) fn with_solo(solo: bool, destination: &str) -> String {
+    if solo {
+        format!("{SOLO_PREFIX}{destination}")
+    } else {
+        destination.to_string()
+    }
+}
+
+/// Accepts an address or shortname, optionally prefixed with `solo:`.
 pub(crate) fn validate_destination(input: &str) -> Result<(), String> {
-    match normalize_shortname(input)? {
+    let (solo, destination) = split_solo(input);
+    if solo && destination.is_empty() {
+        return Err("solo: must be followed by an address or shortname".to_string());
+    }
+    match normalize_shortname(destination)? {
         Some(_) => Ok(()),
-        None => validate_address(input),
+        None => validate_address(destination),
     }
 }
 
@@ -77,8 +106,14 @@ struct SigningKey {
 
 impl ShortnameResolver {
     // Blocking HTTP: call from a mining thread or Tokio's blocking pool.
+    /// Resolves a shortname to its address, keeping a `solo:` prefix.
     pub(crate) fn resolve(&self, input: &str) -> Result<String> {
         validate_destination(input).map_err(|err| anyhow!(err))?;
+        let (solo, destination) = split_solo(input);
+        Ok(with_solo(solo, &self.resolve_destination(destination)?))
+    }
+
+    fn resolve_destination(&self, input: &str) -> Result<String> {
         let Some(handle) = normalize_shortname(input).map_err(|err| anyhow!(err))? else {
             return Ok(input.trim().to_string());
         };
@@ -276,6 +311,35 @@ pub(crate) mod tests {
             assert_eq!(resolver.resolve(name).unwrap(), ADDRESS);
             task.join().unwrap();
         }
+    }
+
+    #[test]
+    fn solo_prefix_wraps_addresses_and_shortnames() {
+        assert_eq!(split_solo(" SOLO: @Alice "), (true, "@Alice"));
+        assert_eq!(split_solo(ADDRESS), (false, ADDRESS));
+        for ok in [
+            format!("solo:{ADDRESS}"),
+            "Solo:@alice".into(),
+            "solo: $ALICE".into(),
+        ] {
+            assert!(validate_destination(&ok).is_ok(), "{ok}");
+        }
+        for bad in ["solo:", "solo: ", "solo:alice", "solo:solo:@alice"] {
+            assert!(validate_destination(bad).is_err(), "{bad}");
+        }
+        let offline = ShortnameResolver {
+            base_url: "http://127.0.0.1:1".into(),
+        };
+        assert_eq!(
+            offline.resolve(&format!("SOLO:{ADDRESS}")).unwrap(),
+            format!("solo:{ADDRESS}")
+        );
+        let (resolver, task) = mock_resolver(ADDRESS);
+        assert_eq!(
+            resolver.resolve("solo:@Alice").unwrap(),
+            format!("solo:{ADDRESS}")
+        );
+        task.join().unwrap();
     }
 
     #[test]

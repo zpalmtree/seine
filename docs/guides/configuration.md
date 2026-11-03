@@ -136,6 +136,18 @@ run, including reconnects; saved shortnames are resolved again on the next run.
 Unknown names, resolver failures, invalid signatures and invalid addresses stop
 startup. Full addresses work without contacting the resolver.
 
+## Solo mining on a pool
+
+Put `solo:` in front of your address or shortname to mine solo through a pool
+that supports it, for example `-u solo:ADDRESS` or `-u solo:@name`. The pool pays
+you only for the blocks you find: the whole block reward, less the pool fee,
+through its normal payouts. You get nothing from blocks other miners find. The
+dashboard's balance panel labels the account **Solo**.
+
+`solo:` works anywhere an address does: the first-run prompt, saved config, the
+control API's `mining_address` and farm proxy rigs. In daemon mode the prefix is
+ignored, because mining against your own node is already solo.
+
 ## Dev fee
 
 Seine's dev fee is a flat **2% of mining time**, on every pool and in solo mode.

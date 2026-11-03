@@ -119,6 +119,8 @@ pub struct TuiStateInner {
     /// Resubmits after retryable ("server busy, retry") pool rejects.
     pub share_retries: u64,
     pub pool_address: String,
+    /// The pool account mines solo (`solo:` login).
+    pub pool_solo: bool,
     pub pool_pending: String,
     pub pool_paid: String,
     pub pool_payout_minimum: Option<String>,
@@ -195,6 +197,7 @@ impl TuiStateInner {
             accepted: 0,
             share_retries: 0,
             pool_address: "---".to_string(),
+            pool_solo: false,
             pool_pending: "---".to_string(),
             pool_paid: "---".to_string(),
             pool_payout_minimum: None,
@@ -1259,6 +1262,7 @@ fn wallet_line_fitted(
 fn draw_config_wallet_panel(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
     let inner_width = area.width.saturating_sub(2) as usize;
     let pool_address = compact_wallet_address(&state.pool_address);
+    let pool_account_label = if state.pool_solo { "Solo" } else { "Miner" };
     let wallet_address = compact_wallet_address(&state.wallet_address);
     let (title, mut wallet_lines) = if state.mode == "pool" && state.wallet_visible {
         (
@@ -1267,7 +1271,7 @@ fn draw_config_wallet_panel(frame: &mut ratatui::Frame, area: Rect, state: &TuiS
                 wallet_line_fitted(
                     "P.Pending",
                     &state.pool_pending,
-                    "Miner",
+                    pool_account_label,
                     &pool_address,
                     inner_width,
                 ),
@@ -1289,7 +1293,7 @@ fn draw_config_wallet_panel(frame: &mut ratatui::Frame, area: Rect, state: &TuiS
                 wallet_line_fitted(
                     "Pending",
                     &state.pool_pending,
-                    "Miner",
+                    pool_account_label,
                     &pool_address,
                     inner_width,
                 ),

@@ -358,7 +358,7 @@ struct Cli {
     pool_url: Option<String>,
 
     /// Where your rewards go: an address or Blocknet ID (@name or $name). ADDRESS.WORKER
-    /// also sets the worker name.
+    /// also sets the worker name. Prefix solo: to mine solo on the pool.
     #[arg(
         long = "address",
         short = 'u',
@@ -2762,7 +2762,10 @@ impl Cli {
 /// addresses are split.
 fn split_address_worker(value: &str) -> Option<(&str, &str)> {
     let value = value.trim();
-    if value.starts_with(['@', '$']) {
+    if crate::shortname::split_solo(value)
+        .1
+        .starts_with(['@', '$'])
+    {
         return None;
     }
     let (address, worker) = value.split_once('.')?;
@@ -2794,7 +2797,7 @@ fn validate_payout_memo_config(cli: &Cli) -> Result<()> {
             bail!("payout memos require a direct pool connection; solo mode and farm proxy hosting are not supported");
         }
         if let Some(address) = &cli.mining_address {
-            crate::address::validate_mining_address(address)
+            crate::address::validate_mining_address(crate::shortname::split_solo(address).1)
                 .map_err(anyhow::Error::msg)
                 .context("use the full exchange deposit address with --payout-memo")?;
         }
@@ -4129,6 +4132,17 @@ mod tests {
     use super::*;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn solo_logins_split_workers_only_from_addresses() {
+        assert_eq!(
+            split_address_worker("solo:ADDR.rig"),
+            Some(("solo:ADDR", "rig"))
+        );
+        assert_eq!(split_address_worker("solo:@a.b"), None);
+        assert_eq!(split_address_worker("SOLO:$a.b"), None);
+        assert_eq!(split_address_worker("@a.b"), None);
+    }
 
     #[test]
     fn pid_headroom_uses_tightest_ancestor_and_fails_closed_on_bad_usage() {

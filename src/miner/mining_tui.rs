@@ -461,6 +461,16 @@ pub(super) fn set_tui_pool_balance_overview(
     }
 }
 
+/// Marks the pool account as mined solo (`solo:` login).
+pub(super) fn set_tui_pool_solo(tui: &mut Option<TuiDisplay>, solo: bool) {
+    if let Some(display) = tui.as_mut() {
+        if let Ok(mut s) = display.state.lock() {
+            s.pool_solo = solo;
+        }
+        display.request_render();
+    }
+}
+
 pub(super) fn set_tui_wallet_overview(
     tui: &mut Option<TuiDisplay>,
     address: &str,

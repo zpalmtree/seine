@@ -9,6 +9,7 @@ supported hardware only.
 
 ## Unreleased
 
+- Mine solo through pools that support it: put `solo:` in front of your address (`-u solo:ADDRESS`) and the pool pays you the full reward of every block you find, less its fee.
 - Pool Pending balance now includes estimated rewards from unmatured blocks alongside confirmed rewards awaiting payout.
 
 ## v0.3.1
