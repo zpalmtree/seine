@@ -421,8 +421,15 @@ jobs:
           fi
 
           # Keep the comparison link without publishing the generated commit list.
+          # Compare against the latest full release, so the link also covers any
+          # pre-release published since then.
+          notes_args=(-f tag_name="$GITHUB_REF_NAME")
+          previous_tag=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.tag_name' 2>/dev/null || true)
+          if [ -n "$previous_tag" ] && [ "$previous_tag" != "$GITHUB_REF_NAME" ]; then
+            notes_args+=(-f previous_tag_name="$previous_tag")
+          fi
           gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
-            -f tag_name="$GITHUB_REF_NAME" --jq '.body' > GENERATED_NOTES.md
+            "${notes_args[@]}" --jq '.body' > GENERATED_NOTES.md
           printf '\n' >> RELEASE_NOTES.md
           sed -n '/^\*\*Full Changelog\*\*:/p' GENERATED_NOTES.md >> RELEASE_NOTES.md
 
