@@ -266,6 +266,8 @@ pub struct SubmitTiming {
 #[derive(Debug)]
 pub struct PoolClient {
     submit_tx: Sender<PoolSubmit>,
+    /// Wakes the client loop for queued submits and refill/reconnect requests.
+    wake: Arc<tokio::sync::Notify>,
     event_rx: Receiver<PoolEvent>,
     reconnect_requested: Arc<AtomicBool>,
     refill_requested: Arc<Mutex<Option<String>>>,
@@ -314,6 +316,8 @@ impl PoolClient {
         }
         let (submit_tx, submit_rx) = bounded::<PoolSubmit>(CHANNEL_CAPACITY);
         let (event_tx, event_rx) = bounded::<PoolEvent>(CHANNEL_CAPACITY);
+        let wake = Arc::new(tokio::sync::Notify::new());
+        let wake_for_thread = Arc::clone(&wake);
         let reconnect_requested = Arc::new(AtomicBool::new(false));
         let reconnect_requested_for_thread = Arc::clone(&reconnect_requested);
         let refill_requested = Arc::new(Mutex::new(None));
@@ -330,6 +334,7 @@ impl PoolClient {
                     address,
                     worker,
                     submit_rx,
+                    wake_for_thread,
                     event_tx,
                     process_shutdown,
                     reconnect_requested_for_thread,
@@ -341,6 +346,7 @@ impl PoolClient {
 
         Ok(Self {
             submit_tx,
+            wake,
             event_rx,
             reconnect_requested,
             refill_requested,
@@ -387,7 +393,9 @@ impl PoolClient {
                 timing,
                 worker: None,
             })
-            .map_err(|_| anyhow!("pool submit channel closed"))
+            .map_err(|_| anyhow!("pool submit channel closed"))?;
+        self.wake.notify_one();
+        Ok(())
     }
 
     /// Submits a share credited to `worker`, for pools that accept
@@ -410,7 +418,14 @@ impl PoolClient {
                 timing: None,
                 worker: Some(worker.to_string()),
             })
-            .map_err(|_| anyhow!("pool submit channel closed"))
+            .map_err(|_| anyhow!("pool submit channel closed"))?;
+        self.wake.notify_one();
+        Ok(())
+    }
+
+    /// The pool event channel, for callers that wait on several channels.
+    pub fn event_receiver(&self) -> &Receiver<PoolEvent> {
+        &self.event_rx
     }
 
     pub fn recv_event_timeout(&self, timeout: Duration) -> Option<PoolEvent> {
@@ -435,10 +450,12 @@ impl PoolClient {
     /// reached a terminal response. This must not discard queued/in-flight shares.
     pub fn request_nonce_refill(&self, job_id: &str) {
         *self.refill_requested.lock().expect("refill lock") = Some(job_id.to_string());
+        self.wake.notify_one();
     }
 
     pub fn request_reconnect(&self) {
         self.reconnect_requested.store(true, Ordering::Relaxed);
+        self.wake.notify_one();
     }
 }
 
@@ -649,6 +666,7 @@ fn run_pool_client_thread(
     address: String,
     worker: String,
     submit_rx: Receiver<PoolSubmit>,
+    wake: Arc<tokio::sync::Notify>,
     event_tx: Sender<PoolEvent>,
     process_shutdown: Arc<AtomicBool>,
     reconnect_requested: Arc<AtomicBool>,
@@ -675,6 +693,7 @@ fn run_pool_client_thread(
         address,
         worker,
         submit_rx,
+        wake,
         event_tx,
         process_shutdown,
         reconnect_requested,
@@ -690,6 +709,7 @@ async fn run_pool_client_loop(
     address: String,
     worker: String,
     submit_rx: Receiver<PoolSubmit>,
+    wake: Arc<tokio::sync::Notify>,
     event_tx: Sender<PoolEvent>,
     process_shutdown: Arc<AtomicBool>,
     reconnect_requested: Arc<AtomicBool>,
@@ -930,7 +950,14 @@ async fn run_pool_client_loop(
                             next_primary_probe = Instant::now() + failover.primary_recheck;
                             primary_back = matches!(probe, Ok(true));
                         }
-                        _ = submit_tick.tick() => {
+                        // Queued submits go out as soon as they arrive; the
+                        // tick still drives keepalives and due retries.
+                        _ = async {
+                            tokio::select! {
+                                _ = submit_tick.tick() => {}
+                                _ = wake.notified() => {}
+                            }
+                        } => {
                             let mut reconnect_now = false;
                             if login_confirmed {
                                 if pending_submits.is_empty()
@@ -2592,6 +2619,7 @@ mod tests {
                     "test-address".into(),
                     "test-worker".into(),
                     submit_rx,
+                    Arc::new(tokio::sync::Notify::new()),
                     event_tx,
                     Arc::new(AtomicBool::new(false)),
                     Arc::new(AtomicBool::new(false)),

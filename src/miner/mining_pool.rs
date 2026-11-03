@@ -1573,7 +1573,24 @@ pub(super) fn run_pool_mining_loop(
         );
 
         if !processed_pool_event {
-            std::thread::sleep(POOL_EVENT_IDLE_SLEEP);
+            let mut inputs = crossbeam_channel::Select::new();
+            inputs.recv(backend_events);
+            inputs.recv(user_session.client.event_receiver());
+            inputs.recv(dev_session.client.event_receiver());
+            inputs.recv(&telemetry_result_rx);
+            if let Some(deferred) = deferred_rx
+                .as_ref()
+                .filter(|_| !deferred_remaining.is_empty())
+            {
+                inputs.recv(deferred);
+            }
+            wait_for_pool_loop_input(inputs, POOL_EVENT_IDLE_SLEEP, || {
+                backend_events.is_empty()
+                    && user_session.client.event_receiver().is_empty()
+                    && dev_session.client.event_receiver().is_empty()
+                    && telemetry_result_rx.is_empty()
+                    && deferred_rx.as_ref().is_none_or(Receiver::is_empty)
+            });
         }
     }
 
@@ -3133,6 +3150,19 @@ fn fetch_local_daemon_wallet_snapshot(
     }
 }
 
+/// Waits up to `idle` for a message on any of `inputs`. A closed channel
+/// always reports ready, so a wake with nothing queued sleeps out the rest.
+fn wait_for_pool_loop_input(
+    mut inputs: crossbeam_channel::Select<'_>,
+    idle: Duration,
+    all_empty: impl FnOnce() -> bool,
+) {
+    let started = Instant::now();
+    if inputs.ready_timeout(idle).is_ok() && all_empty() {
+        std::thread::sleep(idle.saturating_sub(started.elapsed()));
+    }
+}
+
 fn join_telemetry_fetch<T>(handle: std::thread::ScopedJoinHandle<'_, Result<T>>) -> Result<T> {
     handle
         .join()
@@ -3329,6 +3359,32 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn idle_wait_wakes_on_a_message_and_not_on_a_closed_channel() {
+        let idle = Duration::from_secs(5);
+        let (tx, rx) = crossbeam_channel::unbounded::<u8>();
+        let sender = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(20));
+            tx.send(1).unwrap();
+        });
+        let started = Instant::now();
+        let mut inputs = crossbeam_channel::Select::new();
+        inputs.recv(&rx);
+        super::wait_for_pool_loop_input(inputs, idle, || rx.is_empty());
+        assert!(started.elapsed() < idle / 2);
+        assert_eq!(rx.try_recv(), Ok(1));
+        sender.join().unwrap();
+
+        let idle = Duration::from_millis(50);
+        let (tx, closed) = crossbeam_channel::unbounded::<u8>();
+        drop(tx);
+        let started = Instant::now();
+        let mut inputs = crossbeam_channel::Select::new();
+        inputs.recv(&closed);
+        super::wait_for_pool_loop_input(inputs, idle, || closed.is_empty());
+        assert!(started.elapsed() >= idle);
+    }
 
     use crate::backend::MiningSolution;
     use crate::daemon_api::ApiClient;
