@@ -1105,6 +1105,11 @@ impl Search {
         self.unloaded_best = None;
         self.undecided.clear();
         self.ram_limit = None;
+        // The dashboard checked RAM for this count; RAM limits apply from here on.
+        self.allocation_limit = None;
+        self.allocation_backoff = ALLOCATION_RETRY_SECS;
+        self.at_ram_edge = false;
+        self.grew_at = None;
         self.watch.open = None;
         self.watch.reference = None;
         self.queue = self.challengers(self.peak.kernel, threads);
@@ -1177,6 +1182,15 @@ impl Search {
 
     pub(super) fn target_threads(&self) -> usize {
         self.target.threads
+    }
+
+    /// The count dashboard keys step from: the settled count while a recheck
+    /// runs another count for a while, otherwise the running count.
+    pub(super) fn control_threads(&self) -> usize {
+        match (self.stage, self.trial.as_ref()) {
+            (Stage::Settled, Some(trial)) => trial.base.threads,
+            _ => self.target.threads,
+        }
     }
 
     #[cfg(test)]
@@ -1380,6 +1394,14 @@ impl Search {
         }
         if self.target.threads == 0 {
             if self.ready_to_grow(now) && limit > 0 {
+                if self.keep == 0 {
+                    // Started with no RAM free: what fits now is the first
+                    // known count, and the search starts from it.
+                    let threads = limit.max(self.min).min(self.max);
+                    self.keep = threads;
+                    self.peak.threads = threads;
+                    self.kernels_tested_at = threads;
+                }
                 self.target.threads = self.keep.min(limit).max(1);
                 self.limited_note = false;
                 self.pending_notes.push(Note {
@@ -2593,6 +2615,36 @@ mod tests {
     }
 
     #[test]
+    fn a_picked_count_held_back_by_ram_returns_when_ram_is_free() {
+        let mut search = Search::new(params(8, 16));
+        let mut threads = 8;
+        run(&mut search, 0, 5, &mut threads, 16);
+        search.set_manual(9);
+        run(&mut search, 5, 60, &mut threads, 7);
+        assert_eq!(threads, 7);
+        assert_eq!(search.control_threads(), 7);
+        run(&mut search, 60, 400, &mut threads, 16);
+        assert_eq!(threads, 9);
+    }
+
+    #[test]
+    fn a_cold_start_without_ram_searches_once_ram_is_free() {
+        let mut search = Search::new(params(0, 4));
+        let mut threads = 0;
+        run(&mut search, 0, 5, &mut threads, 0);
+        assert_eq!(threads, 0);
+        let notes = run(&mut search, 5, 1800, &mut threads, 4);
+        let resumed = notes.iter().filter(|n| n.text.contains("resumed")).count();
+        assert_eq!(resumed, 1, "{notes:?}");
+        assert_eq!(threads, 4);
+        assert!(
+            matches!(search.status(1800), Status::Settled { .. }),
+            "{:?}",
+            search.status(1800)
+        );
+    }
+
+    #[test]
     fn an_allocation_failure_backs_off_even_when_ram_looks_free() {
         let mut search = Search::new(params(4, 8));
         let snap = |threads, hashes| snapshot(threads, STREAM, hashes);
@@ -2742,6 +2794,32 @@ mod tests {
         assert!(added.contains("adds a kernel"), "{added}");
         let hashing = reason("other", &before, all()).unwrap();
         assert!(hashing.contains("changed CPU hashing"), "{hashing}");
+    }
+
+    #[test]
+    fn keys_step_from_the_settled_count_during_one_more_look() {
+        let revisions = [("avx2-stream", 1)];
+        let mut search = Search::new(resume_params(
+            saved(12, STREAM, &revisions),
+            "hot",
+            &revisions,
+            vec![STREAM],
+        ));
+        let evidence = Pooled::summary(1, 0.004, 0.003, setting(12, STREAM));
+        search.queue_retest(0, setting(14, STREAM), evidence, false);
+        let (mut threads, mut hashes, mut seen) = (12usize, 0u64, false);
+        for now in 0..4000 {
+            hashes += 12;
+            let out = search.tick(now, &[snapshot(threads, STREAM, hashes)], 16, false);
+            if let Some(next) = out.threads {
+                threads = next;
+            }
+            if let Status::Rechecking { current, candidate } = search.status(16) {
+                assert_eq!(search.control_threads(), current);
+                seen |= threads == candidate && candidate != current;
+            }
+        }
+        assert!(seen, "never ran the other count");
     }
 
     #[test]

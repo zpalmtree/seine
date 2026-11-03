@@ -456,12 +456,17 @@ struct MemoryPressure {
 #[derive(Default)]
 struct PressureBackoff {
     consecutive: u8,
+    /// The count the pressure level shed to while it has stayed raised.
+    level_ceiling: Option<usize>,
 }
 
 /// Seconds of sustained memory stalls (one tick per second) before shedding a worker.
 /// Faulting in new arenas and reclaiming page cache stalls for a few seconds even
 /// when the new count fits.
 const PRESSURE_TICKS: u8 = 10;
+/// Seconds the pressure level must stay raised after a shed before the next one.
+/// The level can stay raised for minutes while the system reclaims memory.
+const LEVEL_RESHED_TICKS: u8 = 60;
 
 impl PressureBackoff {
     /// `available` is the RAM-based arena capacity and `slots` the worker limit.
@@ -510,6 +515,25 @@ impl PressureBackoff {
             available
         };
         let cap = room.min(slots).min(max);
+        if level_decides {
+            if !pressure {
+                self.level_ceiling = None;
+            }
+            let needed = if self.level_ceiling.is_none() {
+                PRESSURE_TICKS
+            } else {
+                LEVEL_RESHED_TICKS
+            };
+            if self.consecutive < needed {
+                // No growth back while the level stays raised.
+                return self.level_ceiling.map_or(cap, |ceiling| cap.min(ceiling));
+            }
+            // One worker per wait, and the level alone never stops the last one.
+            self.consecutive = 0;
+            let ceiling = current.saturating_sub(1).max(1);
+            self.level_ceiling = Some(ceiling);
+            return cap.min(ceiling);
+        }
         if self.consecutive >= PRESSURE_TICKS {
             cap.min(current.saturating_sub(1))
         } else {
@@ -755,7 +779,9 @@ impl Controller {
                                 }
                             }
                             if let Some(change) = &manual {
-                                search.set_manual(change.threads.min(cap).max(1));
+                                // Pin what was asked for; a passing RAM limit holds
+                                // it lower only until the RAM is free again.
+                                search.set_manual(change.threads.min(slots).min(max).max(1));
                             }
                             search.observe_parallelism(now, resources.parallelism);
                             let rig_hashes = has_other_backends.then(|| history.stats.snapshot().hashes);
@@ -816,8 +842,9 @@ impl Controller {
                                         .then(|| threads_locked_notice(&status))
                                         .flatten();
                                     if let Some(control) = &mut state.thread_control {
-                                        control.current_threads = threads;
-                                        control.max_threads = cap.max(threads);
+                                        let base = search.control_threads();
+                                        control.current_threads = base;
+                                        control.max_threads = cap.max(base);
                                     }
                                 }
                             }
@@ -1293,6 +1320,38 @@ mod tests {
         // Elsewhere the arithmetic is the limit.
         let mut backoff = PressureBackoff::default();
         assert_eq!(backoff.cap_on(false, false, 10, 16, 11, 16), 10);
+    }
+
+    #[test]
+    fn a_pressure_level_that_stays_raised_sheds_slowly_and_keeps_one_worker() {
+        let mut backoff = PressureBackoff::default();
+        let mut current = 8;
+        let mut sheds = Vec::new();
+        for tick in 0..1200u32 {
+            let cap = backoff.cap_on(true, true, 16, 16, current, 16);
+            assert!(
+                sheds.is_empty() || cap <= current,
+                "grew back to {cap} under pressure at {tick}"
+            );
+            if cap < current {
+                sheds.push(tick);
+                current = cap;
+            }
+        }
+        assert_eq!(current, 1);
+        assert_eq!(sheds[0], u32::from(PRESSURE_TICKS) - 1);
+        for pair in sheds.windows(2) {
+            assert!(
+                pair[1] - pair[0] >= u32::from(LEVEL_RESHED_TICKS),
+                "{sheds:?}"
+            );
+        }
+        // Once the level is normal again, the next shed waits the short time.
+        assert_eq!(backoff.cap_on(true, false, 16, 16, 4, 16), 16);
+        for _ in 0..PRESSURE_TICKS - 1 {
+            assert_eq!(backoff.cap_on(true, true, 16, 16, 4, 16), 16);
+        }
+        assert_eq!(backoff.cap_on(true, true, 16, 16, 4, 16), 3);
     }
 
     #[test]
