@@ -526,13 +526,22 @@ impl PowBackend for AmdBackend {
         // Idempotent: config-time detection usually did this and printed the
         // notice; explicit --amd-devices skips that probe, so do it here too.
         let _ = dpm::raise_performance_level(&selected.pci_address, &selected.gcn_arch_name);
-        let mut engine = self.build_engine(&selected)?;
+        // A GPU joining a BLAKE2b network skips the Argon2 engine (kernel build
+        // and lanes); the worker builds it if Argon2 work arrives.
+        let mut engine = if network_pow_at_start() == Some(crate::backend::PowAlgorithm::Blake2b512)
+        {
+            None
+        } else {
+            Some(self.build_engine(&selected)?)
+        };
         drop(native_call);
         let mut blake2b_state = engine::blake2b::Blake2bWorkerState::new(selected.clone());
 
-        let discovered_lanes = engine.max_lanes().max(1);
-        let discovered_depth = engine.max_hashes_per_launch_per_lane().max(1) as u64;
-        let interrupt_controller = engine.interrupt_controller();
+        let discovered_lanes = engine.as_ref().map_or(1, |engine| engine.max_lanes().max(1));
+        let discovered_depth = engine
+            .as_ref()
+            .map_or(1, |engine| engine.max_hashes_per_launch_per_lane().max(1) as u64);
+        let interrupt_controller = engine.as_ref().map(HipArgon2Engine::interrupt_controller);
         self.max_lanes.store(discovered_lanes, Ordering::Release);
         self.max_hashes_per_launch_per_lane
             .store(discovered_depth, Ordering::Release);
@@ -549,7 +558,7 @@ impl PowBackend for AmdBackend {
             *slot = None;
         }
         if let Ok(mut slot) = self.interrupt_controller.write() {
-            *slot = Some(interrupt_controller);
+            *slot = interrupt_controller;
         }
         self.clear_nonblocking_control_state();
 
@@ -557,14 +566,25 @@ impl PowBackend for AmdBackend {
         let (control_tx, control_rx) = bounded::<WorkerCommand>(CONTROL_CHANNEL_CAPACITY);
         let shared = Arc::clone(&self.shared);
         let instance_id = Arc::clone(&self.instance_id);
+        let argon2_device = selected.clone();
+        let max_lanes_override = self.tuning_options.max_lanes_override;
+        let hashes_per_launch_per_lane = self.tuning_options.hashes_per_launch_per_lane;
         let handle = thread::Builder::new()
             .name(format!(
                 "seine-amd-worker-{}",
                 self.instance_id.load(Ordering::Acquire)
             ))
             .spawn(move || {
+                let build_argon2 = || {
+                    HipArgon2Engine::new(
+                        &argon2_device,
+                        max_lanes_override,
+                        hashes_per_launch_per_lane,
+                    )
+                };
                 worker_loop(
                     &mut engine,
+                    &build_argon2,
                     &mut blake2b_state,
                     assignment_rx,
                     control_rx,
@@ -947,15 +967,39 @@ impl LaunchesToWorking {
     }
 }
 
+/// Longest wait at start for the first template, so the backend can skip the
+/// Argon2 engine on a BLAKE2b network.
+const NETWORK_POW_WAIT: Duration = Duration::from_secs(10);
+
+/// The network's PoW when this backend starts. While the network loop is
+/// already running, waits up to `NETWORK_POW_WAIT` for the first template.
+fn network_pow_at_start() -> Option<crate::backend::PowAlgorithm> {
+    if let Some(pow) = crate::backend::network_pow() {
+        return Some(pow);
+    }
+    if !crate::backend::network_pow_expected() {
+        return None;
+    }
+    let deadline = Instant::now() + NETWORK_POW_WAIT;
+    while Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(100));
+        if let Some(pow) = crate::backend::network_pow() {
+            return Some(pow);
+        }
+    }
+    None
+}
+
 fn worker_loop(
-    engine: &mut HipArgon2Engine,
+    engine: &mut Option<HipArgon2Engine>,
+    build_argon2: &dyn Fn() -> Result<HipArgon2Engine>,
     blake2b: &mut engine::blake2b::Blake2bWorkerState,
     assignment_rx: Receiver<WorkerCommand>,
     control_rx: Receiver<WorkerCommand>,
     shared: Arc<AmdShared>,
     instance_id: Arc<AtomicU64>,
 ) {
-    if let Err(err) = engine.bind_thread() {
+    if let Err(err) = engine.as_ref().map_or(Ok(()), HipArgon2Engine::bind_thread) {
         emit_worker_error(
             &shared,
             &instance_id,
@@ -970,7 +1014,7 @@ fn worker_loop(
     let mut assignment_open = true;
     let mut control_open = true;
     let mut running = true;
-    let mut nonce_buf = vec![0u64; engine.max_hashes_per_launch()];
+    let mut nonce_buf = vec![0u64; engine.as_ref().map_or(0, HipArgon2Engine::max_hashes_per_launch)];
     let mut launches_to_working = LaunchesToWorking(crash_guard::LAUNCHES_BEFORE_WORKING);
 
     while running {
@@ -1162,9 +1206,10 @@ fn worker_loop(
 
         if current.work.template.pow == crate::backend::PowAlgorithm::Blake2b512 {
             shared.blake2b_active.store(true, Ordering::Release);
-            shared
-                .active_lanes
-                .store(engine.max_lanes().max(1) as u64, Ordering::Release);
+            shared.active_lanes.store(
+                engine.as_ref().map_or(1, |engine| engine.max_lanes().max(1)) as u64,
+                Ordering::Release,
+            );
             let target_snapshot = current.work.template.target_snapshot();
             let native_call = launches_to_working
                 .is_pending()
@@ -1235,6 +1280,23 @@ fn worker_loop(
         }
         shared.blake2b_active.store(false, Ordering::Release);
 
+        if engine.is_none() {
+            // Argon2 work on a backend that started on a BLAKE2b network.
+            match build_argon2().and_then(|built| built.bind_thread().map(|()| built)) {
+                Ok(built) => *engine = Some(built),
+                Err(err) => {
+                    emit_worker_error(
+                        &shared,
+                        &instance_id,
+                        format!("failed to initialize the HIP Argon2 engine: {err:#}"),
+                    );
+                    break;
+                }
+            }
+        }
+        let Some(engine) = engine.as_mut() else {
+            break;
+        };
         let max_hashes_for_launch = engine.max_hashes_per_launch().max(1);
         let hashes_per_batch = max_hashes_for_launch.min(current.remaining as usize).max(1);
         if nonce_buf.len() < hashes_per_batch {

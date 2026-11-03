@@ -516,4 +516,64 @@ mod tests {
         assert_eq!(hashes, count);
         assert_eq!(found, expected);
     }
+
+    #[test]
+    #[ignore = "requires AMD GPU + HIP runtime"]
+    fn amd_backend_started_on_blake2b_builds_argon2_on_demand() {
+        use crate::backend::amd::{AmdBackend, AmdBackendTuningOptions};
+        use crate::backend::{NonceChunk, PowAlgorithm, PowBackend, WorkAssignment, WorkTemplate};
+
+        // A backend that starts on a BLAKE2b network skips the Argon2 engine.
+        crate::backend::note_network_pow(PowAlgorithm::Blake2b512);
+        let backend = AmdBackend::new(
+            Some(first_device().index),
+            AmdBackendTuningOptions {
+                max_lanes_override: Some(1),
+                ..AmdBackendTuningOptions::default()
+            },
+        );
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        backend.set_instance_id(1);
+        backend.set_event_sink(tx);
+        let started = Instant::now();
+        backend.start().expect("AMD backend starts");
+        println!("blake2b-only start {:.2}s", started.elapsed().as_secs_f64());
+        let assign = |pow: PowAlgorithm, header_len: usize, count: u64, work_id: u64| {
+            backend
+                .assign_work(WorkAssignment {
+                    template: Arc::new(WorkTemplate {
+                        work_id,
+                        epoch: work_id,
+                        header_base: Arc::from(vec![7u8; header_len]),
+                        pow,
+                        target: [0u8; 32],
+                        dynamic_share_target: None,
+                        pause_on_solution: false,
+                        stop_at: Instant::now() + Duration::from_secs(120),
+                    }),
+                    nonce_chunk: NonceChunk {
+                        start_nonce: 0,
+                        nonce_count: count,
+                    },
+                })
+                .expect("assignment accepted");
+        };
+        let drain = |want: u64| {
+            let until = Instant::now() + Duration::from_secs(120);
+            let mut hashes = 0u64;
+            while hashes < want && Instant::now() < until {
+                hashes += backend.take_hashes();
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            hashes
+        };
+        let blake2b_count = 1u64 << 24;
+        assign(PowAlgorithm::Blake2b512, FARADAY_HEADER_BASE_LEN, blake2b_count, 1);
+        assert_eq!(drain(blake2b_count), blake2b_count);
+        // Argon2 work after a BLAKE2b-only start builds the engine on demand.
+        assign(PowAlgorithm::Argon2id, blocknet_pow_spec::POW_HEADER_BASE_LEN, 8, 2);
+        assert_eq!(drain(8), 8);
+        backend.stop();
+        crate::backend::note_network_pow(PowAlgorithm::Argon2id);
+    }
 }
