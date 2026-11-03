@@ -49,8 +49,11 @@ const UPSTREAM_REFILL_RETRY: Duration = Duration::from_secs(15);
 /// Refills per session and template before opening another session; pools
 /// cap live assignments per connection.
 const MAX_REFILLS_PER_TEMPLATE: usize = 200;
-/// Distinct payout addresses served at once; more fall back to --address.
+/// Distinct payout addresses served at once; rigs paying another address are
+/// turned away until an address's last rig leaves and its sessions close.
 const MAX_ADDRESSES: usize = 16;
+/// How long rigs paying an address the pool rejected are turned away.
+const REJECTED_ADDRESS_HOLD: Duration = Duration::from_secs(5 * 60);
 /// Upstream sessions per payout address.
 const MAX_SESSIONS_PER_ADDRESS: usize = 64;
 /// Shortest gap between opening upstream sessions.
@@ -456,6 +459,8 @@ struct Hub {
     /// Addresses a rig could not get a slice for since capacity was last
     /// checked; other addresses are checked on the tick.
     short_of_range: HashSet<String>,
+    /// Addresses the pool rejected at login, with its message and when.
+    rejected: HashMap<String, (String, Instant)>,
     window: Window,
     last_summary: Instant,
 }
@@ -475,6 +480,7 @@ impl Hub {
             pending_acks: HashMap::new(),
             waiting: VecDeque::new(),
             short_of_range: HashSet::new(),
+            rejected: HashMap::new(),
             window: Window::default(),
             last_summary: Instant::now(),
         };
@@ -572,8 +578,9 @@ impl Hub {
     }
 
     /// The payout address a rig's login maps to: its own when it is a valid
-    /// Blocknet address and there is room, otherwise --address.
-    fn payout_address(&self, requested: &str) -> String {
+    /// Blocknet address, otherwise --address. `None` when every address slot
+    /// is taken by other addresses.
+    fn payout_address(&self, requested: &str) -> Option<String> {
         let requested = requested.trim();
         // A rig may log in as solo:<address>; it gets its own solo upstream.
         let destination = crate::shortname::split_solo(requested).1;
@@ -581,14 +588,10 @@ impl Hub {
             && !destination.starts_with(['@', '$'])
             && crate::shortname::validate_destination(requested).is_ok();
         if !valid {
-            return self.address.clone();
+            return Some(self.address.clone());
         }
         let known: HashSet<&str> = self.sessions.values().map(|s| s.address.as_str()).collect();
-        if known.contains(requested) || known.len() < MAX_ADDRESSES {
-            requested.to_string()
-        } else {
-            self.address.clone()
-        }
+        (known.contains(requested) || known.len() < MAX_ADDRESSES).then(|| requested.to_string())
     }
 
     /// Range one template holds and the range `address`'s rigs want per
@@ -621,6 +624,10 @@ impl Hub {
     /// every rig mining to it.
     fn session_target(&self, address: &str) -> usize {
         let (range, demand) = self.demand(address);
+        if demand == 0 {
+            // No rig pays this address: its idle sessions can all close.
+            return 0;
+        }
         let wanted = demand.saturating_mul(CAPACITY_HEADROOM_PCT) / 100;
         (wanted.div_ceil(range) as usize).clamp(1, MAX_SESSIONS_PER_ADDRESS)
     }
@@ -694,6 +701,34 @@ impl Hub {
         }
     }
 
+    /// The pool refused `address`: close its sessions and send its rigs away
+    /// so they see the reason at their next login instead of waiting for work.
+    fn drop_rejected_address(&mut self, address: String, message: String) {
+        let ids = self.sessions_for(&address);
+        for id in ids {
+            if let Some(session) = self.sessions.remove(&id) {
+                session.stop.store(true, Ordering::Relaxed);
+                self.local_jobs.retain(|_, local| local.session != id);
+                self.pending_acks
+                    .retain(|(session, _, _), _| *session != id);
+            }
+        }
+        let rigs: Vec<u64> = self
+            .rigs
+            .iter()
+            .filter(|(_, rig)| rig.logged_in && rig.address == address)
+            .map(|(conn, _)| *conn)
+            .collect();
+        for conn in &rigs {
+            // Dropping the rig's sender closes its connection.
+            self.rigs.remove(conn);
+        }
+        self.waiting.retain(|waiter| match waiter {
+            Waiter::Job(conn) | Waiter::Refill(conn, _) => !rigs.contains(conn),
+        });
+        self.rejected.insert(address, (message, Instant::now()));
+    }
+
     fn close_idle_sessions(&mut self) {
         let in_use: HashSet<usize> = self
             .rigs
@@ -765,6 +800,10 @@ impl Hub {
                         compact_address(&session.address)
                     ),
                 );
+                if !session.permanent {
+                    let address = session.address.clone();
+                    self.drop_rejected_address(address, message);
+                }
             }
             PoolEvent::Disconnected(message) => {
                 session.logged_in = false;
@@ -1213,8 +1252,21 @@ impl Hub {
                     .collect::<String>()
             })
             .filter(|worker| !worker.trim().is_empty());
-        let address =
-            self.payout_address(params.get("address").and_then(Value::as_str).unwrap_or(""));
+        let Some(address) =
+            self.payout_address(params.get("address").and_then(Value::as_str).unwrap_or(""))
+        else {
+            return self.reply_error(
+                conn,
+                id,
+                "this proxy is mining to as many payout addresses as it can; try again later",
+            );
+        };
+        self.rejected
+            .retain(|_, (_, at)| at.elapsed() < REJECTED_ADDRESS_HOLD);
+        if let Some((message, _)) = self.rejected.get(&address) {
+            let message = format!("pool rejected this payout address: {message}");
+            return self.reply_error(conn, id, &message);
+        }
         if self.sessions_for(&address).is_empty() {
             self.open_session(&address);
         }
@@ -1727,6 +1779,14 @@ mod tests {
     /// own range; `refill` is offered only when `refill` is true. Every
     /// message is reported with the address its session logged in with.
     fn multi_pool(refill: bool) -> (u16, std_mpsc::Receiver<(String, Value)>) {
+        multi_pool_rejecting(refill, None)
+    }
+
+    /// `multi_pool` that refuses logins for `reject`.
+    fn multi_pool_rejecting(
+        refill: bool,
+        reject: Option<&'static str>,
+    ) -> (u16, std_mpsc::Receiver<(String, Value)>) {
         let listener = StdTcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let (seen_tx, seen_rx) = std_mpsc::channel();
@@ -1752,6 +1812,14 @@ mod tests {
                                     .as_str()
                                     .unwrap_or("")
                                     .to_string();
+                                if reject == Some(address.as_str()) {
+                                    replies.push(json!({"id": 1, "error": "address not allowed"}));
+                                    let _ = seen_tx.send((address.clone(), message));
+                                    for reply in replies {
+                                        let _ = writeln!(writer, "{reply}");
+                                    }
+                                    continue;
+                                }
                                 let caps: Vec<&str> = if refill {
                                     vec!["submit_claimed_hash", "nonce_refill_v1"]
                                 } else {
@@ -1870,6 +1938,42 @@ mod tests {
             "job_id": job["params"]["job_id"], "nonce": job["params"]["nonce_start"],
             "claimed_hash": "00".repeat(32)}}));
         assert_eq!(next_from(&seen, "submit").0, "farmaddr");
+        shutdown.store(true, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn rigs_paying_an_address_the_pool_rejects_are_told_why() {
+        let dev = crate::dev_fee::DEV_ADDRESS;
+        let (pool_port, seen) = multi_pool_rejecting(true, Some(dev));
+        let (proxy_port, shutdown) = start_proxy_on(pool_port, "farmaddr");
+        next_from(&seen, "login");
+        let login = |rig: &mut TestRig| {
+            rig.send(json!({"id": 1, "method": "login", "params": {
+                "address": dev, "worker": "rig", "protocol_version": 2,
+                "capabilities": ["submit_claimed_hash", "nonce_refill_v1"]}}));
+        };
+        let connect = || {
+            let stream = StdTcpStream::connect(("127.0.0.1", proxy_port)).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(10)))
+                .unwrap();
+            TestRig {
+                writer: stream.try_clone().unwrap(),
+                reader: StdBufReader::new(stream),
+            }
+        };
+        let mut rig = connect();
+        login(&mut rig);
+        assert_eq!(rig.recv()["status"], "ok");
+        // The pool refuses the address: the proxy closes the rig instead of
+        // leaving it waiting for work.
+        let mut line = String::new();
+        assert_eq!(rig.reader.read_line(&mut line).unwrap(), 0, "{line}");
+        let mut again = connect();
+        login(&mut again);
+        let reply = again.recv();
+        let error = reply["error"].as_str().unwrap_or_default();
+        assert!(error.contains("address not allowed"), "{reply}");
         shutdown.store(true, Ordering::Relaxed);
     }
 
