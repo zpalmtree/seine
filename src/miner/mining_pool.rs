@@ -1156,35 +1156,41 @@ pub(super) fn run_pool_mining_loop(
                 let spawn_result = std::thread::Builder::new()
                     .name("pool-telemetry-user".to_string())
                     .spawn(move || {
-                        let mut errors = Vec::new();
-                        let hashrate = if let Some(telemetry) = telemetry.as_ref() {
-                            match telemetry.fetch_pool_hashrate() {
-                                Ok(value) => Some(value),
-                                Err(err) => {
-                                    errors.push(format!("global hashrate: {err:#}"));
-                                    None
-                                }
-                            }
-                        } else {
-                            None
-                        };
-                        let balances = if let Some(telemetry) = telemetry.as_ref() {
-                            match telemetry.fetch_pool_balances() {
-                                Ok(value) => Some(value),
-                                Err(err) => {
-                                    errors.push(format!("balance: {err:#}"));
-                                    None
-                                }
-                            }
-                        } else {
-                            None
-                        };
-                        let local_wallet = local_daemon_client.as_ref().and_then(|client| {
-                            fetch_local_daemon_wallet_snapshot(
-                                client,
-                                local_daemon_cookie_path.as_ref(),
+                        // The three sources are independent; fetch them together.
+                        let (hashrate, balances, local_wallet) = std::thread::scope(|scope| {
+                            let hashrate = telemetry
+                                .as_ref()
+                                .map(|telemetry| scope.spawn(|| telemetry.fetch_pool_hashrate()));
+                            let balances = telemetry
+                                .as_ref()
+                                .map(|telemetry| scope.spawn(|| telemetry.fetch_pool_balances()));
+                            let local_wallet = local_daemon_client.as_ref().and_then(|client| {
+                                fetch_local_daemon_wallet_snapshot(
+                                    client,
+                                    local_daemon_cookie_path.as_ref(),
+                                )
+                                .ok()
+                            });
+                            (
+                                hashrate.map(join_telemetry_fetch),
+                                balances.map(join_telemetry_fetch),
+                                local_wallet,
                             )
-                            .ok()
+                        });
+                        let mut errors = Vec::new();
+                        let hashrate = hashrate.and_then(|result| match result {
+                            Ok(value) => Some(value),
+                            Err(err) => {
+                                errors.push(format!("global hashrate: {err:#}"));
+                                None
+                            }
+                        });
+                        let balances = balances.and_then(|result| match result {
+                            Ok(value) => Some(value),
+                            Err(err) => {
+                                errors.push(format!("balance: {err:#}"));
+                                None
+                            }
                         });
                         let _ = tx.send(PoolTelemetryRefreshResult {
                             request_id,
@@ -3127,11 +3133,22 @@ fn fetch_local_daemon_wallet_snapshot(
     }
 }
 
+fn join_telemetry_fetch<T>(handle: std::thread::ScopedJoinHandle<'_, Result<T>>) -> Result<T> {
+    handle
+        .join()
+        .unwrap_or_else(|_| Err(anyhow!("telemetry fetch panicked")))
+}
+
 fn fetch_local_daemon_wallet_snapshot_once(
     client: &ApiClient,
 ) -> Result<LocalDaemonWalletSnapshot> {
-    let address = client.get_wallet_address()?.address;
-    let balance = client.get_wallet_balance()?;
+    let (address, balance) = std::thread::scope(|scope| {
+        let address = scope.spawn(|| client.get_wallet_address());
+        let balance = client.get_wallet_balance();
+        (join_telemetry_fetch(address), balance)
+    });
+    let address = address?.address;
+    let balance = balance?;
     Ok(LocalDaemonWalletSnapshot {
         address,
         pending: format_atomic_units_bnt(balance.pending),

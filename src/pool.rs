@@ -1,9 +1,9 @@
 use std::collections::{HashMap, HashSet};
 #[cfg(test)]
 use std::io::Write;
+use std::net::SocketAddr;
 #[cfg(test)]
 use std::net::TcpStream;
-use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -44,6 +44,8 @@ const HEALTHY_SESSION: Duration = Duration::from_secs(60);
 /// Delay used when a `connection_limit` notice gives none.
 const DEFAULT_CONNECTION_LIMIT_DELAY: Duration = Duration::from_secs(30);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+/// Head start each pool address gets before the next one is also tried.
+const CONNECT_ATTEMPT_DELAY: Duration = Duration::from_millis(250);
 /// Connection attempts without a login before moving to the next pool...
 const FAILOVER_AFTER_FAILED_ATTEMPTS: u32 = 2;
 /// ...once the pool has also been unreachable this long, so a pool restart or
@@ -1609,6 +1611,7 @@ mod pool_tls {
 
 async fn connect_pool_tcp_stream(endpoint: &PoolEndpoint) -> Result<TokioTcpStream> {
     let addrs = resolve_pool_addrs(&endpoint.authority)
+        .await
         .with_context(|| format!("failed to resolve pool endpoint {}", endpoint.display()))?;
     if addrs.is_empty() {
         crate::diagnostics::record_failure(
@@ -1626,50 +1629,96 @@ async fn connect_pool_tcp_stream(endpoint: &PoolEndpoint) -> Result<TokioTcpStre
         );
     }
 
+    match connect_first_reachable(addrs).await {
+        Ok(stream) => {
+            let _ = stream.set_nodelay(true);
+            Ok(stream)
+        }
+        Err((failure, last_err)) => {
+            crate::diagnostics::record_failure(
+                seine_telemetry::DiagnosticCode::Warning,
+                seine_telemetry::DiagnosticKind::Connection,
+                None,
+                failure,
+            );
+            Err(anyhow!(
+                "failed to connect to pool at {}: {}",
+                endpoint.display(),
+                last_err.unwrap_or_else(|| "no addresses available".to_string())
+            ))
+        }
+    }
+}
+
+/// Addresses are tried in order, each starting CONNECT_ATTEMPT_DELAY after
+/// the previous one or as soon as it fails; the first connection wins and
+/// dropping the set cancels the rest.
+async fn connect_first_reachable(
+    addrs: Vec<SocketAddr>,
+) -> std::result::Result<TokioTcpStream, (seine_telemetry::FailureDetail, Option<String>)> {
     let mut last_err: Option<String> = None;
     let mut failure = seine_telemetry::FailureDetail::new(
         seine_telemetry::FailureReason::ConnectionFailed,
         seine_telemetry::DiagnosticOperation::PoolConnect,
     );
-    for addr in addrs {
-        match tokio::time::timeout(CONNECT_TIMEOUT, TokioTcpStream::connect(addr)).await {
-            Ok(Ok(stream)) => {
-                let _ = stream.set_nodelay(true);
-                return Ok(stream);
+    let mut queued = addrs.into_iter();
+    let mut attempts = tokio::task::JoinSet::new();
+    let mut next_attempt_at = tokio::time::Instant::now();
+    let mut more_queued = true;
+    loop {
+        if more_queued && tokio::time::Instant::now() >= next_attempt_at {
+            match queued.next() {
+                Some(addr) => {
+                    attempts.spawn(async move {
+                        (
+                            addr,
+                            tokio::time::timeout(CONNECT_TIMEOUT, TokioTcpStream::connect(addr))
+                                .await,
+                        )
+                    });
+                    next_attempt_at = tokio::time::Instant::now() + CONNECT_ATTEMPT_DELAY;
+                }
+                None => more_queued = false,
             }
-            Ok(Err(err)) => {
-                failure = crate::diagnostics::io_detail(
-                    seine_telemetry::DiagnosticOperation::PoolConnect,
-                    &err,
-                );
-                last_err = Some(err.to_string());
+            continue;
+        }
+        if attempts.is_empty() && !more_queued {
+            break;
+        }
+        tokio::select! {
+            Some(joined) = attempts.join_next(), if !attempts.is_empty() => {
+                let Ok((addr, outcome)) = joined else {
+                    continue;
+                };
+                match outcome {
+                    Ok(Ok(stream)) => return Ok(stream),
+                    Ok(Err(err)) => {
+                        failure = crate::diagnostics::io_detail(
+                            seine_telemetry::DiagnosticOperation::PoolConnect,
+                            &err,
+                        );
+                        last_err = Some(err.to_string());
+                    }
+                    Err(_) => {
+                        failure = seine_telemetry::FailureDetail::new(
+                            seine_telemetry::FailureReason::ConnectionTimedOut,
+                            seine_telemetry::DiagnosticOperation::PoolConnect,
+                        );
+                        last_err = Some(format!("connection timed out to {addr}"));
+                    }
+                }
+                next_attempt_at = tokio::time::Instant::now();
             }
-            Err(_) => {
-                failure = seine_telemetry::FailureDetail::new(
-                    seine_telemetry::FailureReason::ConnectionTimedOut,
-                    seine_telemetry::DiagnosticOperation::PoolConnect,
-                );
-                last_err = Some(format!("connection timed out to {addr}"));
-            }
+            _ = tokio::time::sleep_until(next_attempt_at), if more_queued => {}
         }
     }
 
-    crate::diagnostics::record_failure(
-        seine_telemetry::DiagnosticCode::Warning,
-        seine_telemetry::DiagnosticKind::Connection,
-        None,
-        failure,
-    );
-    Err(anyhow!(
-        "failed to connect to pool at {}: {}",
-        endpoint.display(),
-        last_err.unwrap_or_else(|| "no addresses available".to_string())
-    ))
+    Err((failure, last_err))
 }
 
-fn resolve_pool_addrs(authority: &str) -> Result<Vec<SocketAddr>> {
-    let mut addrs: Vec<SocketAddr> = authority
-        .to_socket_addrs()
+async fn resolve_pool_addrs(authority: &str) -> Result<Vec<SocketAddr>> {
+    let mut addrs: Vec<SocketAddr> = tokio::net::lookup_host(authority)
+        .await
         .inspect_err(|err| {
             crate::diagnostics::record_io(seine_telemetry::DiagnosticOperation::PoolResolve, err);
         })?
@@ -2643,6 +2692,44 @@ mod tests {
         assert_eq!(timeouts.len(), 1);
         assert_eq!(timeouts[0].count, 2);
         drop(submit_tx);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unresponsive_first_address_does_not_delay_the_next() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            // A listener whose accept queue is full drops further SYNs, so a
+            // connect to it hangs.
+            let stalled = tokio::net::TcpSocket::new_v4().unwrap();
+            stalled.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+            let stalled = stalled.listen(0).unwrap();
+            let stalled_addr = stalled.local_addr().unwrap();
+            let mut fillers = Vec::new();
+            while fillers.len() < 8 {
+                match tokio::time::timeout(
+                    Duration::from_millis(200),
+                    TokioTcpStream::connect(stalled_addr),
+                )
+                .await
+                {
+                    Ok(Ok(stream)) => fillers.push(stream),
+                    _ => break,
+                }
+            }
+            let open = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let open_addr = open.local_addr().unwrap();
+
+            let started = Instant::now();
+            let stream = connect_first_reachable(vec![stalled_addr, open_addr])
+                .await
+                .expect("second address should connect");
+            assert_eq!(stream.peer_addr().unwrap(), open_addr);
+            assert!(started.elapsed() < CONNECT_TIMEOUT / 2);
+        });
     }
 
     #[test]
