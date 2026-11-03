@@ -22,6 +22,7 @@ supported hardware only.
 - **AMD GPU support** (RX 6000, RX 7000, RX 9000, Radeon PRO): [setup](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/amd.md)
 - **Exchange mining support** (mine straight to your exchange deposit address; `--payout-memo` is required): [setup](https://github.com/zpalmtree/seine/blob/master/docs/EXCHANGE_PAYOUTS.md)
 - **Tunes faster, then stops**: finds your best thread count and kernel in minutes, keeps the lowest thread count that gets the same hashrate, and stops testing until something changes
+- **NVIDIA GPUs take back memory other apps free**: if another program held GPU memory when Seine started, it adds lanes once that memory frees up, without a restart
 - **A cleaner first run**: the dashboard opens right away, setup happens on screen, and the log only shows what you need, with room to read it and scrollback (↑↓, PgUp, PgDn)
 - **Mining OS packages**
   - HiveOS: [seine-hiveos-0.3.1.tar.gz](https://github.com/zpalmtree/seine/releases/download/v0.3.1/seine-hiveos-0.3.1.tar.gz) ([guide](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/hiveos.md))
