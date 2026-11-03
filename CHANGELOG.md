@@ -9,6 +9,8 @@ supported hardware only.
 
 ## Unreleased
 
+- Pool Pending balance now includes estimated rewards from unmatured blocks alongside confirmed rewards awaiting payout.
+
 ## v0.3.1
 
 - **Up to 2.5x faster on NVIDIA GPUs** (GTX 1660 Ti, RTX 2070, RTX 2080 Ti, RTX 3060, RTX 4060, RTX 4090, RTX 5060 Ti)

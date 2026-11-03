@@ -2843,10 +2843,10 @@ impl PoolUiTelemetryClient {
                 balance_url.path_segments_mut().ok()?.push("balance");
                 miner_url
                     .query_pairs_mut()
-                    .append_pair("include_pending_estimate", "false");
+                    .append_pair("include_pending_estimate", "true");
                 balance_url
                     .query_pairs_mut()
-                    .append_pair("include_pending_estimate", "false");
+                    .append_pair("include_pending_estimate", "true");
                 Some(PoolTelemetryEndpoint {
                     stats_url: format!("{base_url}/api/stats"),
                     miner_balance_url: balance_url.to_string(),
@@ -3053,6 +3053,13 @@ impl PoolUiTelemetryClient {
         let (Some(pending), Some(paid)) = (pending, paid) else {
             bail!("missing balance fields");
         };
+        let estimated = body
+            .pointer("/pending_estimate/estimated_pending")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let pending = pending
+            .checked_add(estimated)
+            .ok_or_else(|| anyhow!("pool pending balance overflow"))?;
         Ok((
             format_atomic_units_bnt(pending),
             format_atomic_units_bnt(paid),
@@ -3274,7 +3281,7 @@ mod tests {
     use crate::daemon_api::ApiClient;
     use crate::miner::stats::Stats;
     use httpmock::prelude::*;
-    use serde_json::json;
+    use serde_json::{json, Value};
 
     use super::{
         advance_pool_nonce_cursor, compact_pool_address_for_log,
@@ -3698,7 +3705,7 @@ mod tests {
         let account = format!("address?memo={memo}");
         assert_eq!(client.expected_account.as_deref(), Some(account.as_str()));
         let url = &client.endpoints[0].miner_balance_url;
-        assert_eq!(url, "https://longhornpool.net/api/miner/address%3Fmemo=ID0001%252F%3Fx=a&b=%23/balance?include_pending_estimate=false");
+        assert_eq!(url, "https://longhornpool.net/api/miner/address%3Fmemo=ID0001%252F%3Fx=a&b=%23/balance?include_pending_estimate=true");
         assert!(!super::pool_telemetry_url_for_log(url).contains("ID0001"));
         let standard = PoolUiTelemetryClient::for_destination(
             "stratum+tcp://bntpool.com:3333",
@@ -3813,23 +3820,90 @@ mod tests {
     }
 
     #[test]
-    fn telemetry_balance_url_skips_pending_estimate_query() {
+    fn telemetry_balance_url_includes_pending_estimate() {
         let client = PoolUiTelemetryClient::new("stratum+tcp://bntpool.com:3333", "addr")
             .expect("telemetry client should be created");
         assert_eq!(
             client.endpoints[0].miner_balance_url,
-            "https://bntpool.com/api/miner/addr/balance?include_pending_estimate=false"
+            "https://bntpool.com/api/miner/addr/balance?include_pending_estimate=true"
         );
     }
 
     #[test]
-    fn telemetry_miner_fallback_url_skips_pending_estimate_query() {
+    fn telemetry_miner_fallback_url_includes_pending_estimate() {
         let client = PoolUiTelemetryClient::new("stratum+tcp://bntpool.com:3333", "addr")
             .expect("telemetry client should be created");
         assert_eq!(
             client.endpoints[0].miner_url,
-            "https://bntpool.com/api/miner/addr?include_pending_estimate=false"
+            "https://bntpool.com/api/miner/addr?include_pending_estimate=true"
         );
+    }
+
+    #[test]
+    fn telemetry_pending_includes_estimated_rewards() {
+        for (balance, estimate, expected) in [
+            (
+                json!({"pending_confirmed": 0, "paid": 200000000}),
+                json!({"estimated_pending": 10958365}),
+                "0.1096 BNT",
+            ),
+            (
+                json!({"pending_confirmed": 100000000, "pending_queued": 50000000, "paid": 200000000}),
+                json!({"estimated_pending": 10958365}),
+                "1.1096 BNT",
+            ),
+            (
+                json!({"pending_confirmed": 100000000, "paid": 200000000}),
+                Value::Null,
+                "1 BNT",
+            ),
+            (
+                json!({"pending": 100000000, "paid": 200000000}),
+                Value::Null,
+                "1 BNT",
+            ),
+            (
+                json!({"pending_confirmed": 0, "paid": 200000000}),
+                json!({"estimated_pending": 0}),
+                "0 BNT",
+            ),
+        ] {
+            let server = MockServer::start();
+            let response = server.mock(|when, then| {
+                when.method(GET)
+                    .path("/api/miner/addr/balance")
+                    .query_param("include_pending_estimate", "true");
+                then.status(200).json_body(json!({
+                    "balance": balance,
+                    "pending_estimate": estimate,
+                }));
+            });
+            let client = PoolUiTelemetryClient::new(&server.url(""), "addr").unwrap();
+            assert_eq!(
+                client.fetch_pool_balances().unwrap(),
+                (expected.into(), "2 BNT".into())
+            );
+            response.assert_hits(1);
+        }
+    }
+
+    #[test]
+    fn telemetry_pending_rejects_overflow() {
+        let server = MockServer::start();
+        let response = server.mock(|when, then| {
+            when.method(GET).path("/api/miner/addr/balance");
+            then.status(200).json_body(json!({
+                "balance": {"pending_confirmed": u64::MAX, "paid": 0},
+                "pending_estimate": {"estimated_pending": 1},
+            }));
+        });
+        let client = PoolUiTelemetryClient::new(&server.url(""), "addr").unwrap();
+        assert!(client
+            .fetch_pool_balances()
+            .unwrap_err()
+            .to_string()
+            .contains("overflow"));
+        response.assert_hits(1);
     }
 
     #[test]
@@ -3838,7 +3912,7 @@ mod tests {
         let balance_mock = server.mock(|when, then| {
             when.method(GET)
                 .path("/api/miner/addr/balance")
-                .query_param("include_pending_estimate", "false");
+                .query_param("include_pending_estimate", "true");
             then.status(429)
                 .header("retry-after", "5")
                 .json_body(json!({ "error": "rate limit exceeded" }));
@@ -3846,7 +3920,7 @@ mod tests {
         let fallback_mock = server.mock(|when, then| {
             when.method(GET)
                 .path("/api/miner/addr")
-                .query_param("include_pending_estimate", "false");
+                .query_param("include_pending_estimate", "true");
             then.status(200).json_body(json!({
                 "balance": {
                     "pending_confirmed": 1u64,
@@ -3939,10 +4013,13 @@ mod tests {
         let fallback = server.mock(|when, then| {
             when.method(GET).path("/api/miner/addr");
             then.status(200)
-                .json_body(json!({"balance": {"pending": 1, "paid": 2}}));
+                .json_body(json!({"balance": {"pending": 100000000, "paid": 200000000}, "pending_estimate": {"estimated_pending": 10958365}}));
         });
         let client = PoolUiTelemetryClient::new(&server.url(""), "addr").unwrap();
-        assert!(client.fetch_pool_balances().is_ok());
+        assert_eq!(
+            client.fetch_pool_balances().unwrap(),
+            ("1.1096 BNT".into(), "2 BNT".into())
+        );
         balance.assert_hits(1);
         fallback.assert_hits(1);
     }

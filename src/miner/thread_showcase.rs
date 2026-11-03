@@ -846,3 +846,107 @@ fn export_startup_dashboard_showcase() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(std::path::Path::new(&dir).join("index.html"), html).unwrap();
 }
+
+#[test]
+#[ignore = "exports pool balances using the real terminal renderer"]
+fn export_pool_balance_showcase() {
+    let mut html = String::from(
+        r#"<!doctype html><html lang="en"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Seine pool balance</title>
+<style>body{margin:16px;background:#101318;color:#b4bec8;font:14px system-ui}h1{font-size:22px}h2{font-size:16px}pre{background:#080b10;padding:8px;font:12px/1.25 monospace;width:max-content;max-width:100%;overflow:auto}section{margin:24px 0}.mobile{display:none}@media(max-width:700px){body{margin:12px}.desktop{display:none}.mobile{display:block}}</style>
+<h1>Seine pool balance</h1><p>Pending includes estimated rewards from unmatured blocks plus confirmed rewards awaiting payout. Estimates can change before maturity. Paid shows completed payouts.</p>
+<p>Real terminal renderer with synthetic balances, at desktop and mobile widths.</p>"#,
+    );
+    for source in [
+        "src/miner/mining_pool.rs",
+        "src/miner/tui.rs",
+        "src/miner/thread_showcase.rs",
+    ] {
+        let revision = std::process::Command::new("git")
+            .args(["hash-object", source])
+            .output()
+            .unwrap();
+        html.push_str(&format!(
+            "<p>{source}: <code>{}</code></p>",
+            String::from_utf8_lossy(&revision.stdout).trim()
+        ));
+    }
+    for (title, pending, paid, status) in [
+        (
+            "Loading / waiting for balances",
+            "---",
+            "---",
+            "pool-connected",
+        ),
+        ("Empty / no rewards yet", "0 BNT", "0 BNT", "hashing"),
+        (
+            "Estimated rewards / none confirmed yet",
+            "0.1096 BNT",
+            "123,456.789 BNT",
+            "hashing",
+        ),
+        (
+            "Estimated plus confirmed rewards",
+            "1.1096 BNT",
+            "123,456.789 BNT",
+            "hashing",
+        ),
+        (
+            "Legacy pool / confirmed rewards only",
+            "1 BNT",
+            "2 BNT",
+            "hashing",
+        ),
+        (
+            "Error / telemetry unavailable at startup",
+            "---",
+            "---",
+            "pool-connected",
+        ),
+        (
+            "Reconnecting / balances cleared",
+            "---",
+            "---",
+            "pool-disconnected",
+        ),
+        (
+            "Mining disabled / login rejected",
+            "---",
+            "---",
+            "pool-login-rejected",
+        ),
+    ] {
+        let mut state = TuiStateInner::new();
+        state.mode = "pool".into();
+        state.state = status.into();
+        state.pool_address = "demo-miner-address".into();
+        state.pool_pending = pending.into();
+        state.pool_paid = paid.into();
+        let panel = |width| {
+            let mut terminal = Terminal::new(TestBackend::new(width, 4)).unwrap();
+            terminal
+                .draw(|frame| draw_config_wallet_panel(frame, frame.area(), &state))
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            let mut rendered = String::from("<pre>");
+            for y in 0..4 {
+                for x in 0..width {
+                    let cell = &buffer[(x, y)];
+                    rendered.push_str(&format!(
+                        "<span style='color:{}'>{}</span>",
+                        color(cell.fg),
+                        escape(cell.symbol())
+                    ));
+                }
+                rendered.push('\n');
+            }
+            rendered.push_str("</pre>");
+            rendered
+        };
+        html.push_str(&format!("<section><h2>{title}</h2><div class='desktop'>{}</div><div class='mobile'>{}</div></section>", panel(80), panel(40)));
+    }
+    html.push_str("</html>");
+    let path = std::path::Path::new("docs/showcases/pool-balance");
+    std::fs::create_dir_all(path).unwrap();
+    std::fs::write(path.join("index.html"), html).unwrap();
+}
