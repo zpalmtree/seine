@@ -111,6 +111,16 @@ impl Scenario {
         self.rate(kernel, threads) + self.gpu_rate(threads)
     }
 
+    /// How much the best setting beats the best kernel at the starting count.
+    fn gain_over_start(&self) -> f64 {
+        let at_start = self
+            .candidates
+            .iter()
+            .map(|name| self.rig_rate(Self::kernel(name), self.start_threads))
+            .fold(0.0_f64, f64::max);
+        self.oracle().0 / at_start.max(1e-9) - 1.0
+    }
+
     fn cap_at(&self, now: u64) -> usize {
         self.cap_events
             .iter()
@@ -1074,11 +1084,7 @@ fn required_frac(scenario: &Scenario) -> f64 {
 }
 
 /// Open: these still settle after the time target on some seeds.
-const SETTLES_LATE: &[&str] = &[
-    "server-small-real-gain",
-    "busy-desktop",
-    "rig-cpu-starves-gpu",
-];
+const SETTLES_LATE: &[&str] = &["busy-desktop", "rig-cpu-starves-gpu"];
 
 fn seeds() -> Vec<u64> {
     (0..6u64).map(|i| 0x5eed ^ (i * 0x9e37_79b9)).collect()
@@ -1136,8 +1142,16 @@ fn scoreboard_targets_hold_on_every_seed() {
                     scenario.noise > 0.002 || score.within_1pct_secs <= budget,
                     format!("within 1% only after {} s", score.within_1pct_secs),
                 );
+                // 30 min; 45 when the best beats the start by under 1%, which takes
+                // long comparisons to see; 60 for slow hosts.
                 let best = scenario.oracle().0;
-                let settle_budget = if best < 4.0 { 3600 } else { 1800 };
+                let settle_budget = if best < 4.0 {
+                    3600
+                } else if scenario.gain_over_start() < 0.01 {
+                    2700
+                } else {
+                    1800
+                };
                 check(
                     score.settled_secs <= settle_budget
                         || SETTLES_LATE.contains(&scenario.name.as_str()),
