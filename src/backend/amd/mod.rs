@@ -537,10 +537,12 @@ impl PowBackend for AmdBackend {
         drop(native_call);
         let mut blake2b_state = engine::blake2b::Blake2bWorkerState::new(selected.clone());
 
-        let discovered_lanes = engine.as_ref().map_or(1, |engine| engine.max_lanes().max(1));
-        let discovered_depth = engine
+        let discovered_lanes = engine
             .as_ref()
-            .map_or(1, |engine| engine.max_hashes_per_launch_per_lane().max(1) as u64);
+            .map_or(1, |engine| engine.max_lanes().max(1));
+        let discovered_depth = engine.as_ref().map_or(1, |engine| {
+            engine.max_hashes_per_launch_per_lane().max(1) as u64
+        });
         let interrupt_controller = engine.as_ref().map(HipArgon2Engine::interrupt_controller);
         self.max_lanes.store(discovered_lanes, Ordering::Release);
         self.max_hashes_per_launch_per_lane
@@ -1014,7 +1016,12 @@ fn worker_loop(
     let mut assignment_open = true;
     let mut control_open = true;
     let mut running = true;
-    let mut nonce_buf = vec![0u64; engine.as_ref().map_or(0, HipArgon2Engine::max_hashes_per_launch)];
+    let mut nonce_buf = vec![
+        0u64;
+        engine
+            .as_ref()
+            .map_or(0, HipArgon2Engine::max_hashes_per_launch)
+    ];
     let mut launches_to_working = LaunchesToWorking(crash_guard::LAUNCHES_BEFORE_WORKING);
 
     while running {
@@ -1207,7 +1214,9 @@ fn worker_loop(
         if current.work.template.pow == crate::backend::PowAlgorithm::Blake2b512 {
             shared.blake2b_active.store(true, Ordering::Release);
             shared.active_lanes.store(
-                engine.as_ref().map_or(1, |engine| engine.max_lanes().max(1)) as u64,
+                engine
+                    .as_ref()
+                    .map_or(1, |engine| engine.max_lanes().max(1)) as u64,
                 Ordering::Release,
             );
             let target_snapshot = current.work.template.target_snapshot();
