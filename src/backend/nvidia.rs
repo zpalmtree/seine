@@ -1186,6 +1186,19 @@ impl CudaArgon2Engine {
             ),
         ) = selected
             .ok_or_else(|| anyhow!("failed to allocate CUDA buffers for any lane count"))?;
+        if max_lanes_override.is_none() {
+            let full_budget = derive_memory_budget_mib(
+                memory_total_mib,
+                None,
+                headless_linux_device(device_index),
+            );
+            let full_lanes = usize::try_from(full_budget.saturating_mul(1024 * 1024) / lane_bytes)
+                .unwrap_or(usize::MAX)
+                .min(MAX_LANES_HARD_LIMIT);
+            if let Some(notice) = vram_limited_notice(device_index, max_lanes, full_lanes) {
+                crate::miner::ui::warn("NVIDIA", notice);
+            }
+        }
 
         Ok(Self {
             stream,
@@ -3877,6 +3890,17 @@ fn parse_nvidia_smi_query_output(raw: &str) -> Result<Vec<NvidiaDeviceInfo>> {
 
 /// Memory left for lanes after the reserve: a sixty-fourth of the device (at
 /// least the floor), or only the floor on a headless device.
+/// Lanes are sized once, from free GPU memory at start. Say so when other programs
+/// held enough of it to leave the GPU well short of its full count.
+fn vram_limited_notice(device_index: u32, lanes: usize, full_lanes: usize) -> Option<String> {
+    (lanes.saturating_mul(4) < full_lanes.saturating_mul(3)).then(|| {
+        format!(
+            "GPU {device_index}: Hashrate could be higher. Other programs are using GPU memory, \
+             so it runs {lanes} of {full_lanes} lanes; close them and restart Seine."
+        )
+    })
+}
+
 fn derive_memory_budget_mib(
     memory_total_mib: u64,
     memory_free_mib: Option<u64>,
@@ -5609,6 +5633,17 @@ mod tests {
         assert_eq!(plans[0].0, 6);
         assert!(plans[0].1 < m_blocks);
         assert!(plans.contains(&(6, m_blocks)));
+    }
+
+    #[test]
+    fn a_gpu_short_of_memory_says_why_it_runs_fewer_lanes() {
+        let notice = vram_limited_notice(0, 3, 15).unwrap();
+        assert!(notice.contains("3 of 15 lanes"), "{notice}");
+        assert!(notice.contains("restart Seine"), "{notice}");
+        // Close to full, or a full card: nothing to say.
+        assert_eq!(vram_limited_notice(0, 12, 15), None);
+        assert_eq!(vram_limited_notice(0, 15, 15), None);
+        assert_eq!(vram_limited_notice(0, 17, 15), None);
     }
 
     #[test]
