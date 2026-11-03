@@ -1664,7 +1664,11 @@ impl Config {
                 )
             }),
             cpu_skip_store_permille: cli.cpu_skip_store_permille.unwrap_or_else(|| {
-                crate::miner::cohort_skip_store_permille(cli.threads.unwrap_or(auto_threads_cap))
+                crate::miner::cohort_skip_store_permille(
+                    cli.threads.unwrap_or(auto_threads_cap),
+                    sysinfo::System::new().physical_core_count(),
+                    cli.threads.is_some(),
+                )
             }),
             refresh_on_same_height: cli.refresh_on_same_height,
             ui_mode: cli.ui,

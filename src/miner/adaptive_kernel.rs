@@ -325,9 +325,14 @@ pub(crate) fn cohort_side_cache_blocks(
 /// Skipped-store permille for this host (see `set_skip_store_permille` in the
 /// kernel crate), or 0. On for Zen 5 desktops at 8 or more workers on Linux and
 /// Windows, and on Linux for Zen 4c EPYC at 128 or more, Zen 3 EPYC at 24 or more,
-/// and Zen 4 and Zen 3 desktops, Zen 2 EPYC and Threadripper 3000 at 12 or more;
-/// off elsewhere.
-pub(crate) fn cohort_skip_store_permille(workers: usize) -> u16 {
+/// Zen 4 desktops, Zen 2 EPYC and Threadripper 3000 at 12 or more, and Zen 3
+/// desktops at 12 or more when they have 12 or more cores or the count is set by
+/// the user; off elsewhere.
+pub(crate) fn cohort_skip_store_permille(
+    workers: usize,
+    physical_cores: Option<usize>,
+    count_set_by_user: bool,
+) -> u16 {
     let linux = cfg!(target_os = "linux");
     if !(linux || cfg!(windows)) {
         return 0;
@@ -376,12 +381,13 @@ pub(crate) fn cohort_skip_store_permille(workers: usize) -> u16 {
         {
             600
         }
-        // Vermeer (Ryzen 5000 desktop), Linux.
+        // Vermeer (Ryzen 5000 desktop), Linux: 12 or more cores, or a count set by the user.
         Some("AuthenticAMD")
             if linux
                 && CpuKernel::Avx2Stream.is_supported()
                 && identity.family == Some(0x19)
                 && identity.model == Some(0x21)
+                && (count_set_by_user || physical_cores.is_some_and(|cores| cores >= 12))
                 && workers >= 12 =>
         {
             600
