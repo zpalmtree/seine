@@ -838,6 +838,17 @@ pub fn normalize_backend_capabilities(
     capabilities
 }
 
+/// A GPU returned a BLAKE2b candidate whose hash the CPU check does not
+/// reproduce, so some of its hashes are wrong and shares are being lost.
+#[allow(dead_code)]
+pub(crate) fn gpu_mismatch_warning(backend: &str) -> String {
+    format!(
+        "{backend} computed BLAKE2b hashes that fail the CPU check, so some of its work is lost. \
+         This usually means an unstable overclock or undervolt: reduce the core clock offset or \
+         voltage offset until this warning no longer appears"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -99,6 +99,9 @@ pub(super) struct CudaBlake2bEngine {
     sm_count: u32,
     /// Tests: load `FARADAY_PTX` even when NVRTC is available.
     force_prebuilt: bool,
+    /// GPU candidates whose CPU-recomputed hash fails the kernel's own 32-bit
+    /// filter: the GPU computed a wrong hash (an unstable clock or voltage).
+    gpu_mismatches: u64,
 }
 
 impl CudaBlake2bEngine {
@@ -130,6 +133,7 @@ impl CudaBlake2bEngine {
             threads_per_block: THREADS_PER_BLOCK,
             sm_count: u32::try_from(sm_count.max(1)).unwrap_or(1),
             force_prebuilt: false,
+            gpu_mismatches: 0,
         })
     }
 
@@ -177,11 +181,16 @@ impl CudaBlake2bEngine {
         let mut ranges = vec![(start_nonce, count)];
         while let Some((range_start, range_count)) = ranges.pop() {
             match self.launch_range(&kernel, &params, range_start, range_count)? {
-                Some(candidates) => hits.extend(
-                    candidates
-                        .into_iter()
-                        .filter(|&nonce| midstate.target_bytes(nonce) <= *target),
-                ),
+                Some(candidates) => {
+                    for nonce in candidates {
+                        let bytes = midstate.target_bytes(nonce);
+                        if bytes[..4] > target[..4] {
+                            self.gpu_mismatches += 1;
+                        } else if bytes <= *target {
+                            hits.push(nonce);
+                        }
+                    }
+                }
                 None => {
                     let first = range_count / 2;
                     ranges.push((range_start.wrapping_add(first), range_count - first));
@@ -341,6 +350,7 @@ pub(super) struct Blake2bWorkerState {
     engine: Option<CudaBlake2bEngine>,
     midstate: Option<(Arc<[u8]>, Blake2bPowMidstate)>,
     launch_nonces: u64,
+    mismatch_warned: bool,
 }
 
 pub(super) struct Blake2bBatch {
@@ -350,6 +360,18 @@ pub(super) struct Blake2bBatch {
 }
 
 impl Blake2bWorkerState {
+    /// True once, the first time this GPU returns a candidate that fails the
+    /// CPU check of the kernel's own filter.
+    pub(crate) fn take_mismatch_warning(&mut self) -> bool {
+        let mismatched = self
+            .engine
+            .as_ref()
+            .is_some_and(|engine| engine.gpu_mismatches > 0);
+        let warn = mismatched && !self.mismatch_warned;
+        self.mismatch_warned |= mismatched;
+        warn
+    }
+
     pub(super) fn new(device_index: u32, cubin_cache_dir: PathBuf) -> Self {
         Self {
             device_index,
@@ -357,6 +379,7 @@ impl Blake2bWorkerState {
             engine: None,
             midstate: None,
             launch_nonces: 0,
+            mismatch_warned: false,
         }
     }
 
@@ -490,6 +513,8 @@ mod tests {
                 }
             }
         }
+        // A healthy GPU never returns a candidate that fails its own filter.
+        assert_eq!(engine.gpu_mismatches, 0);
     }
 
     #[test]

@@ -67,6 +67,9 @@ pub(crate) struct HipBlake2bEngine {
     candidates: DeviceBuffer,
     candidate_count: DeviceBuffer,
     grid_blocks: u32,
+    /// GPU candidates whose CPU-recomputed hash fails the kernel's own 32-bit
+    /// filter: the GPU computed a wrong hash (an unstable clock or voltage).
+    gpu_mismatches: u64,
 }
 
 impl HipBlake2bEngine {
@@ -101,6 +104,7 @@ impl HipBlake2bEngine {
             candidates,
             candidate_count,
             grid_blocks: compute_units * BLOCKS_PER_CU,
+            gpu_mismatches: 0,
         })
     }
 
@@ -147,11 +151,16 @@ impl HipBlake2bEngine {
         let mut ranges = vec![(start_nonce, count)];
         while let Some((range_start, range_count)) = ranges.pop() {
             match self.launch_range(kernel, &params, range_start, range_count)? {
-                Some(candidates) => hits.extend(
-                    candidates
-                        .into_iter()
-                        .filter(|&nonce| midstate.target_bytes(nonce) <= *target),
-                ),
+                Some(candidates) => {
+                    for nonce in candidates {
+                        let bytes = midstate.target_bytes(nonce);
+                        if bytes[..4] > target[..4] {
+                            self.gpu_mismatches += 1;
+                        } else if bytes <= *target {
+                            hits.push(nonce);
+                        }
+                    }
+                }
                 None => {
                     let first = range_count / 2;
                     ranges.push((range_start.wrapping_add(first), range_count - first));
@@ -276,6 +285,7 @@ pub(crate) struct Blake2bWorkerState {
     engine: Option<HipBlake2bEngine>,
     midstate: Option<(Arc<[u8]>, Blake2bPowMidstate)>,
     launch_nonces: u64,
+    mismatch_warned: bool,
 }
 
 pub(crate) struct Blake2bBatch {
@@ -285,12 +295,25 @@ pub(crate) struct Blake2bBatch {
 }
 
 impl Blake2bWorkerState {
+    /// True once, the first time this GPU returns a candidate that fails the
+    /// CPU check of the kernel's own filter.
+    pub(crate) fn take_mismatch_warning(&mut self) -> bool {
+        let mismatched = self
+            .engine
+            .as_ref()
+            .is_some_and(|engine| engine.gpu_mismatches > 0);
+        let warn = mismatched && !self.mismatch_warned;
+        self.mismatch_warned |= mismatched;
+        warn
+    }
+
     pub(crate) fn new(device: AmdDeviceInfo) -> Self {
         Self {
             device,
             engine: None,
             midstate: None,
             launch_nonces: 0,
+            mismatch_warned: false,
         }
     }
 
@@ -397,6 +420,8 @@ mod tests {
                 }
             }
         }
+        // A healthy GPU never returns a candidate that fails its own filter.
+        assert_eq!(engine.gpu_mismatches, 0);
     }
 
     #[test]

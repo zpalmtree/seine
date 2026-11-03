@@ -3119,6 +3119,15 @@ fn worker_loop(
             shared
                 .inflight_assignment_hashes
                 .store(current.hashes_done, Ordering::Release);
+            if blake2b.take_mismatch_warning() {
+                crate::miner::ui::warn(
+                    "BACKEND",
+                    crate::backend::gpu_mismatch_warning(&format!(
+                        "{BACKEND_NAME}#{}",
+                        instance_id.load(Ordering::Acquire)
+                    )),
+                );
+            }
             let mut paused = false;
             for (nonce, hash) in batch.solutions {
                 send_backend_event(
