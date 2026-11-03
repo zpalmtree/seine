@@ -252,16 +252,37 @@ impl CudaBlake2bEngine {
                     "CUDA NVRTC library is unavailable; only Faraday block headers have a prebuilt BLAKE2b kernel"
                 ));
             }
-            let module = self
-                .ctx
-                .load_module(Ptx::from_src(FARADAY_PTX))
-                .map_err(|err| anyhow!("failed to load the prebuilt BLAKE2b kernel: {err:?}"))?;
-            let kernel = module
-                .load_function(KERNEL_NAME)
-                .map_err(|err| anyhow!("failed to load {KERNEL_NAME}: {err:?}"))?;
-            self.kernels.push((shape, kernel.clone()));
-            return Ok(kernel);
+            return self.prebuilt_kernel(shape);
         }
+        match self.nvrtc_kernel(shape) {
+            Ok(kernel) => Ok(kernel),
+            // NVRTC is present but cannot build for this GPU (CUDA 13 NVRTC
+            // dropped compute capability 5.x-7.0): use the prebuilt PTX, which
+            // the driver compiles for any supported GPU.
+            Err(err) if shape == FARADAY_SHAPE => {
+                self.prebuilt_kernel(shape).map_err(|prebuilt_err| {
+                    anyhow!("{err:#}; the prebuilt BLAKE2b kernel also failed: {prebuilt_err:#}")
+                })
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    /// Loads the prebuilt Faraday PTX through the driver.
+    fn prebuilt_kernel(&mut self, shape: KernelShape) -> Result<CudaFunction> {
+        let module = self
+            .ctx
+            .load_module(Ptx::from_src(FARADAY_PTX))
+            .map_err(|err| anyhow!("failed to load the prebuilt BLAKE2b kernel: {err:?}"))?;
+        let kernel = module
+            .load_function(KERNEL_NAME)
+            .map_err(|err| anyhow!("failed to load {KERNEL_NAME}: {err:?}"))?;
+        self.kernels.push((shape, kernel.clone()));
+        Ok(kernel)
+    }
+
+    /// Builds the kernel for `shape` with NVRTC (cached cubin, else cubin or PTX).
+    fn nvrtc_kernel(&mut self, shape: KernelShape) -> Result<CudaFunction> {
         let common = vec![
             "--std=c++14".to_string(),
             "--restrict".to_string(),
