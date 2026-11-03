@@ -8,7 +8,7 @@ use std::ffi::{c_int, c_void};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use blocknet_pow_kernel::{Blake2bPowMidstate, Blake2bPowSingleBlock};
 
 use super::{
@@ -45,6 +45,15 @@ struct KernelShape {
     message_words: usize,
     pre_columns: u8,
 }
+
+/// Layout of the Faraday header base (156 bytes), the shape release builds
+/// carry a built-in code object for.
+const FARADAY_SHAPE: KernelShape = KernelShape {
+    nonce_word: 3,
+    nonce_shift: 32,
+    message_words: 5,
+    pre_columns: 0b1001,
+};
 
 impl KernelShape {
     fn of(layout: &Blake2bPowSingleBlock) -> Self {
@@ -256,26 +265,63 @@ impl HipBlake2bEngine {
         if let Some((_, _, kernel)) = self.kernels.iter().find(|(known, ..)| *known == shape) {
             return Ok(*kernel);
         }
-        let wavefront_flag = if self.wavefront_size == 64 {
-            "-mwavefrontsize64"
-        } else {
-            "-mno-wavefrontsize64"
+        let options = kernel_options(&self.gcn_arch_name, self.wavefront_size, shape);
+        let key = crate::backend::amd::code_objects::options_key(KERNEL_SRC, &options);
+        let builtin =
+            crate::backend::amd::code_objects::find(CODE_OBJECT_KERNEL, &self.gcn_arch_name, key);
+        let prefer_builtin =
+            std::env::var_os("SEINE_AMD_BUILTIN_KERNELS").is_some_and(|value| value == "1");
+        let code = match builtin {
+            Some(code) if prefer_builtin || self.api.hiprtc.is_err() => code.to_vec(),
+            _ => match compile_hip_source(self.api, KERNEL_SRC, PROGRAM_NAME, &options) {
+                Ok(code) => code,
+                Err(err) => match builtin {
+                    Some(code) => code.to_vec(),
+                    None => {
+                        return Err(err.context(format!(
+                            "failed to compile the HIP BLAKE2b kernel with hipRTC (no built-in kernel for {})",
+                            self.gcn_arch_name.trim()
+                        )))
+                    }
+                },
+            },
         };
-        let options = vec![
-            format!("--offload-arch={}", self.gcn_arch_name.trim()),
-            wavefront_flag.to_string(),
-            format!("-DSEINE_B2_NONCE_WORD={}", shape.nonce_word),
-            format!("-DSEINE_B2_NONCE_SHIFT={}", shape.nonce_shift),
-            format!("-DSEINE_B2_MSG_WORDS={}", shape.message_words),
-            format!("-DSEINE_B2_PRE_COLUMNS={}", shape.pre_columns),
-        ];
-        let code = compile_hip_source(self.api, KERNEL_SRC, PROGRAM_NAME, &options)
-            .context("failed to compile the HIP BLAKE2b kernel with hipRTC")?;
         let module = Module::load(self.api, &code)?;
         let kernel = module.function(KERNEL_NAME)?;
         self.kernels.push((shape, module, kernel));
         Ok(kernel)
     }
+}
+
+/// Name of the BLAKE2b kernel in the built-in code object table.
+pub(crate) const CODE_OBJECT_KERNEL: &str = "blake2b";
+
+fn kernel_options(gcn_arch_name: &str, wavefront_size: u32, shape: KernelShape) -> Vec<String> {
+    let wavefront_flag = if wavefront_size == 64 {
+        "-mwavefrontsize64"
+    } else {
+        "-mno-wavefrontsize64"
+    };
+    vec![
+        format!("--offload-arch={}", gcn_arch_name.trim()),
+        wavefront_flag.to_string(),
+        format!("-DSEINE_B2_NONCE_WORD={}", shape.nonce_word),
+        format!("-DSEINE_B2_NONCE_SHIFT={}", shape.nonce_shift),
+        format!("-DSEINE_B2_MSG_WORDS={}", shape.message_words),
+        format!("-DSEINE_B2_PRE_COLUMNS={}", shape.pre_columns),
+    ]
+}
+
+/// hipRTC options and lookup key of the Faraday-layout kernel for a wave32 `target`.
+pub(crate) fn export_options(target: &str) -> (Vec<String>, u64) {
+    let options = kernel_options(target, 32, FARADAY_SHAPE);
+    let key = crate::backend::amd::code_objects::options_key(KERNEL_SRC, &options);
+    (options, key)
+}
+
+/// Compiles the BLAKE2b kernel with `options`, for `--amd-export-code-objects`.
+pub(crate) fn compile_for_export(api: &'static HipApi, options: &[String]) -> Result<Vec<u8>> {
+    compile_hip_source(api, KERNEL_SRC, PROGRAM_NAME, options)
 }
 
 /// One worker's BLAKE2b engine (created on first use), template midstate and
@@ -377,6 +423,16 @@ impl Blake2bWorkerState {
 mod tests {
     use super::*;
     use blocknet_pow_spec::{BLAKE2B_POW_PERSONAL_MAINNET, FARADAY_HEADER_BASE_LEN};
+
+    #[test]
+    fn built_in_shape_is_the_faraday_header_layout() {
+        let header: Vec<u8> = (0..FARADAY_HEADER_BASE_LEN).map(|i| i as u8).collect();
+        let layout = Blake2bPowMidstate::new(&BLAKE2B_POW_PERSONAL_MAINNET, &header)
+            .unwrap()
+            .single_block_layout()
+            .expect("the Faraday header fits one final block");
+        assert_eq!(KernelShape::of(&layout), FARADAY_SHAPE);
+    }
 
     fn first_device() -> AmdDeviceInfo {
         super::super::query_amd_devices()
@@ -568,10 +624,20 @@ mod tests {
             hashes
         };
         let blake2b_count = 1u64 << 24;
-        assign(PowAlgorithm::Blake2b512, FARADAY_HEADER_BASE_LEN, blake2b_count, 1);
+        assign(
+            PowAlgorithm::Blake2b512,
+            FARADAY_HEADER_BASE_LEN,
+            blake2b_count,
+            1,
+        );
         assert_eq!(drain(blake2b_count), blake2b_count);
         // Argon2 work after a BLAKE2b-only start builds the engine on demand.
-        assign(PowAlgorithm::Argon2id, blocknet_pow_spec::POW_HEADER_BASE_LEN, 8, 2);
+        assign(
+            PowAlgorithm::Argon2id,
+            blocknet_pow_spec::POW_HEADER_BASE_LEN,
+            8,
+            2,
+        );
         assert_eq!(drain(8), 8);
         backend.stop();
         crate::backend::note_network_pow(PowAlgorithm::Argon2id);

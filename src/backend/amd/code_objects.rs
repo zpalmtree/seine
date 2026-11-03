@@ -8,6 +8,7 @@ use std::path::Path;
 
 use anyhow::{anyhow, bail, Context, Result};
 
+use super::engine::blake2b as blake2b_kernel;
 use super::engine::{
     build_hiprtc_options, compile_hip_source_for_export, skip_from_block, HIP_KERNEL_SRC,
 };
@@ -58,9 +59,9 @@ pub(crate) fn find(kernel: &str, gcn_arch_name: &str, key: u64) -> Option<&'stat
         .map(|entry| entry.3)
 }
 
-/// Compiles the Argon2 kernel for every export target with hipRTC and writes the
-/// code objects plus `manifest.tsv` into `dir` (read by build.rs through
-/// SEINE_AMD_CODE_OBJECTS).
+/// Compiles the Argon2 and Faraday BLAKE2b kernels for every export target with
+/// hipRTC and writes the code objects plus `manifest.tsv` into `dir` (read by
+/// build.rs through SEINE_AMD_CODE_OBJECTS).
 pub fn export_code_objects(dir: &Path) -> Result<()> {
     let api = HipApi::load()?;
     if let Err(err) = &api.hiprtc {
@@ -95,6 +96,19 @@ pub fn export_code_objects(dir: &Path) -> Result<()> {
             manifest.push_str(&format!("argon2\t{target}\t{key:016x}\t{file}\n"));
             println!("{file}: {} bytes", code.len());
         }
+        let (options, key) = blake2b_kernel::export_options(target);
+        let mut compile_options = options;
+        compile_options.push(EXPORT_CODE_OBJECT_VERSION.to_string());
+        let code = blake2b_kernel::compile_for_export(api, &compile_options)
+            .with_context(|| format!("compile the BLAKE2b kernel for {target}"))?;
+        let file = format!("blake2b-{target}.co");
+        std::fs::write(dir.join(&file), &code)
+            .with_context(|| format!("write {}", dir.join(&file).display()))?;
+        manifest.push_str(&format!(
+            "{}\t{target}\t{key:016x}\t{file}\n",
+            blake2b_kernel::CODE_OBJECT_KERNEL
+        ));
+        println!("{file}: {} bytes", code.len());
     }
     std::fs::write(dir.join("manifest.tsv"), manifest)?;
     Ok(())
@@ -130,6 +144,11 @@ mod tests {
             assert!(
                 find("argon2", target, key).is_some(),
                 "no built-in Argon2 kernel for {target}"
+            );
+            let (_, key) = blake2b_kernel::export_options(target);
+            assert!(
+                find(blake2b_kernel::CODE_OBJECT_KERNEL, target, key).is_some(),
+                "no built-in BLAKE2b kernel for {target}"
             );
         }
     }
