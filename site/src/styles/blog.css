@@ -41,7 +41,6 @@
 .prose table { border-collapse: collapse; display: block; overflow-x: auto; font-size: 0.95rem; margin: 1.4em 0; }
 .prose th, .prose td { border-bottom: 1px solid var(--rule); padding-block: 10px; padding-inline: 0 16px; text-align: start; }
 .prose th { color: var(--ink); font-weight: 600; border-bottom-color: var(--ink-3); }
-.prose h2[id], .prose h3[id] { scroll-margin-top: 84px; }
 
 /* <Answer>, <Note>, <Warning>: a rule at the start edge, no fill */
 .block { margin: 1.6em 0; padding-block: 2px; padding-inline: 20px 0; border-inline-start: 3px solid var(--rule); }
@@ -77,7 +76,7 @@
 .topic-nav a:hover { color: var(--ink); }
 .topic-nav .topic-sibling { color: var(--ink-3); font-size: .9rem; }
 .topic-section { padding-block: 0; }
-.topic-section > h2 { margin: 0 0 18px; font-size: 1.6rem; scroll-margin-top: 90px; }
+.topic-section > h2 { margin: 0 0 18px; font-size: 1.6rem; }
 .topic-section > h2:target { text-decoration: underline; text-underline-offset: 6px; text-decoration-thickness: 1px; }
 .topic-section .posts { padding-bottom: 56px; }
 .crumbs { line-height: 1.6; }
@@ -85,4 +84,3 @@
 .benchmark-jumps { margin-block: 24px; padding: 16px 20px; border-block: 1px solid var(--rule); }
 .benchmark-jumps ul { margin-bottom: 0; }
 .benchmark-jumps a { text-underline-offset: 3px; }
-#benchmark-results, .prose h2 { scroll-margin-top: 100px; }

@@ -33,7 +33,7 @@
 :lang(ar) :is(.crumbs, .meta, .block-label, .posts time, .langs, .downloads .size, .bar .who span) { font-family: var(--sans); letter-spacing: 0; }
 
 * { box-sizing: border-box; }
-html { scroll-behavior: smooth; }
+html { scroll-behavior: smooth; scroll-padding-top: 84px; } /* link targets land below the sticky 64 px nav */
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
 body { margin: 0; background: var(--paper); color: var(--ink); font: 17px/1.6 var(--sans); -webkit-font-smoothing: antialiased; }
 a { color: inherit; }
