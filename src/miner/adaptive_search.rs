@@ -48,6 +48,8 @@ const ALLOCATION_RETRY_MAX_SECS: u64 = 2400;
 const WATCH_WINDOW_SECS: u64 = 300;
 /// Sustained H/s change that means the machine is not the one we tuned on.
 const SHIFT: f64 = 0.07;
+/// How far a rig's other backends must move with a candidate before they count.
+const OTHER_BACKENDS_MOVED: f64 = 0.01;
 const SHIFT_WINDOWS: u8 = 2;
 const SHIFT_RETRY_SECS: u64 = 3600;
 const SHIFT_RETRY_MAX_SECS: u64 = 24 * 3600;
@@ -301,6 +303,42 @@ pub(super) fn estimate(windows: &[Sample]) -> (f64, f64) {
     (weighted / weights, variance.sqrt())
 }
 
+/// On a rig with GPUs, the CPU's own hashes decide unless the other backends' rate
+/// clearly moved with the candidate, either way; then the whole rig's change decides.
+fn rig_estimate(
+    windows: &[Sample],
+    others: &[Option<u64>],
+    gain: f64,
+    error: f64,
+) -> (f64, f64, bool) {
+    if others.len() != windows.len() || others.iter().any(Option::is_none) {
+        return (gain, error, false);
+    }
+    let other: Vec<Sample> = windows
+        .iter()
+        .zip(others)
+        .map(|(window, hashes)| Sample {
+            hashes: hashes.unwrap_or(0),
+            secs: window.secs,
+            threads: 1,
+        })
+        .collect();
+    let cpu: u64 = windows.iter().map(|w| w.hashes).sum();
+    let rest: u64 = other.iter().map(|w| w.hashes).sum();
+    let share = cpu as f64 / (cpu + rest).max(1) as f64;
+    let (other_gain, other_error) = estimate(&other);
+    let moved = other_error.is_finite()
+        && other_gain.abs() - WIN_SIGMAS * other_error > OTHER_BACKENDS_MOVED;
+    if !moved {
+        return (gain, error, false);
+    }
+    (
+        share * gain + (1.0 - share) * other_gain,
+        ((share * error).powi(2) + ((1.0 - share) * other_error).powi(2)).sqrt(),
+        true,
+    )
+}
+
 /// Decide from complete cycles. `down_band` is how far below the incumbent still
 /// counts as equal. On the last cycle an unproven result inside the band reports as a
 /// tie; a lower count also has to pass `fewer_holds`.
@@ -399,7 +437,10 @@ struct Trial {
     base: Setting,
     candidate: Setting,
     windows: Vec<Sample>,
+    /// Other backends' hashes in each window, on rigs with GPUs.
+    others: Vec<Option<u64>>,
     open: Option<(u64, u64)>,
+    open_other: Option<u64>,
     generations: Vec<u64>,
     /// Page backing of the incumbent: its windows only compare if this holds.
     base_backing: Option<Vec<[u64; 5]>>,
@@ -495,7 +536,10 @@ enum Stage {
 struct View {
     members: Vec<usize>,
     threads: usize,
+    /// CPU hashes only.
     hashes: u64,
+    /// Hashes from the rig's other backends, when there are any.
+    other_hashes: Option<u64>,
     hashing: bool,
     warm: bool,
     kernel: Option<CpuKernel>,
@@ -516,6 +560,7 @@ impl View {
                 .collect(),
             threads: running.iter().map(|s| s.threads).min().unwrap_or(0),
             hashes: running.iter().map(|s| s.hashes).sum(),
+            other_hashes: None,
             hashing: !running.is_empty() && running.iter().all(|s| s.hashing),
             warm: !running.is_empty()
                 && running.iter().all(|s| {
@@ -1101,7 +1146,8 @@ impl Search {
         self.tick_rig(now, snapshots, cap, allocation_failed, None)
     }
 
-    /// `rig_hashes` counts every backend on rigs with GPUs, so a thread count that
+    /// `rig_hashes` counts every backend on rigs with GPUs. Comparisons are decided on
+    /// CPU hashes unless the other backends' rate clearly moved, so a thread count that
     /// slows a GPU does not win on CPU hashes alone.
     pub(super) fn tick_rig(
         &mut self,
@@ -1112,8 +1158,15 @@ impl Search {
         rig_hashes: Option<u64>,
     ) -> Output {
         let mut view = View::of(snapshots);
-        if let Some(hashes) = rig_hashes {
+        view.other_hashes = rig_hashes.map(|hashes| hashes.saturating_sub(view.hashes));
+        // Simulator comparison with judging on the whole rig's hashes.
+        #[cfg(test)]
+        if let (Some(hashes), true) = (
+            rig_hashes,
+            std::env::var("SEINE_TUNER_SIM_RIG_TOTAL").is_ok(),
+        ) {
             view.hashes = hashes;
+            view.other_hashes = None;
         }
         let mut out = Output::default();
         self.observe_members(now, &view);
@@ -1349,6 +1402,7 @@ impl Search {
                 }
             }
             trial.open = Some((now, view.hashes));
+            trial.open_other = view.other_hashes;
             trial.generations = view.generations.clone();
             self.events.push(TrialEvent::Open);
             return None;
@@ -1382,6 +1436,11 @@ impl Search {
             threads: arm.threads,
         };
         trial.windows.push(sample);
+        let other = match (trial.open_other, view.other_hashes) {
+            (Some(first), Some(last)) if last >= first => Some(last - first),
+            _ => None,
+        };
+        trial.others.push(other);
         trial.open = None;
         let measured = self
             .measured
@@ -1396,6 +1455,7 @@ impl Search {
         let rate = sample.rate();
         if trial.windows.len() % 3 == 0 {
             let (gain, error) = estimate(&trial.windows);
+            let (gain, error, gpu_moved) = rig_estimate(&trial.windows, &trial.others, gain, error);
             let prior = trial.prior;
             let (gain, error) = if prior.looks > 0 {
                 prior.add(gain, error).estimate()
@@ -1426,6 +1486,7 @@ impl Search {
                 let (base, candidate) = (trial.base, trial.candidate);
                 trial.retries += 1;
                 trial.windows.clear();
+                trial.others.clear();
                 trial.need = first_window(hottest);
                 trial.base_backing = None;
                 self.events.push(TrialEvent::Abort { idle: false });
@@ -1439,6 +1500,10 @@ impl Search {
                     let floor = trial.need.secs.max(FIRST_WINDOW_SECS);
                     trial.need = second_window(gain, hottest, rate, floor);
                 }
+            }
+            if gpu_moved {
+                self.pending_details
+                    .push("the GPU's rate moved with the CPU count; counting it".into());
             }
         }
         Some(rate)
@@ -1759,7 +1824,9 @@ impl Search {
             base,
             candidate,
             windows: Vec::with_capacity(6),
+            others: Vec::with_capacity(6),
             open: None,
+            open_other: None,
             generations: Vec::new(),
             base_backing: None,
             idle_since: None,
@@ -1976,16 +2043,18 @@ impl Search {
             self.watch.open = None;
             return None;
         }
+        // The saved rate and the rate watch cover the whole rig.
+        let hashes = view.hashes + view.other_hashes.unwrap_or(0);
         let Some((start, first)) = self.watch.open else {
-            self.watch.open = Some((now, view.hashes));
+            self.watch.open = Some((now, hashes));
             return None;
         };
         let secs = now.saturating_sub(start);
-        if secs < WATCH_WINDOW_SECS || view.hashes < first {
+        if secs < WATCH_WINDOW_SECS || hashes < first {
             return None;
         }
-        self.watch.open = Some((now, view.hashes));
-        Some((view.hashes - first) as f64 / secs.max(1) as f64)
+        self.watch.open = Some((now, hashes));
+        Some((hashes - first) as f64 / secs.max(1) as f64)
     }
 
     fn watch_settled(&mut self, now: u64, view: &View, cap: usize, out: &mut Output) {
@@ -2778,6 +2847,34 @@ mod tests {
             }
         }
         assert!(began, "the limit rose, so a higher count is worth a look");
+    }
+
+    #[test]
+    fn a_rig_is_judged_on_cpu_hashes_unless_the_gpu_moves() {
+        let window = |hashes| Sample {
+            hashes,
+            secs: 100,
+            threads: 16,
+        };
+        // CPU +2% on the candidate.
+        let cpu = [window(1000), window(1020), window(1000)];
+        let (gain, error) = estimate(&cpu);
+        // GPU noise that does not follow the candidate: the CPU decides.
+        let steady = [Some(1500), Some(1490), Some(1505)];
+        let (rig_gain, rig_error, moved) = rig_estimate(&cpu, &steady, gain, error);
+        assert!(!moved);
+        assert_eq!((rig_gain, rig_error), (gain, error));
+        // The candidate costs the GPU 8%: the whole rig decides, and it is a loss.
+        let starved = [Some(1500), Some(1380), Some(1500)];
+        let (rig_gain, _, moved) = rig_estimate(&cpu, &starved, gain, error);
+        assert!(moved);
+        assert!(rig_gain < 0.0, "{rig_gain}");
+        // Fewer threads that free the GPU count the other way.
+        let freed = [Some(1380), Some(1500), Some(1380)];
+        let (rig_gain, _, moved) = rig_estimate(&cpu, &freed, gain, error);
+        assert!(moved && rig_gain > gain, "{rig_gain}");
+        // Without other backends nothing changes.
+        assert_eq!(rig_estimate(&cpu, &[], gain, error), (gain, error, false));
     }
 
     #[test]

@@ -38,6 +38,13 @@ pub(super) struct Scenario {
     /// Other programs: (bursts per hour, share of hashrate taken, seconds each).
     #[serde(default)]
     pub bursts: Option<(f64, f64, u64)>,
+    /// A GPU mining beside the CPU: (H/s, slow wander like `noise`). The tuner judges
+    /// the whole rig, so the GPU's swings land in every comparison.
+    #[serde(default)]
+    pub gpu: Option<(f64, f64)>,
+    /// (CPU threads, share of the GPU's rate lost per thread above that count).
+    #[serde(default)]
+    pub gpu_starved_above: Option<(usize, f64)>,
     /// (second, usable threads) RAM limit changes. Starts at `max_threads`.
     #[serde(default)]
     pub cap_events: Vec<(u64, usize)>,
@@ -88,6 +95,22 @@ impl Scenario {
         points.last().unwrap().1
     }
 
+    /// The GPU's rate beside this many CPU threads.
+    fn gpu_rate(&self, threads: usize) -> f64 {
+        let Some((hps, _)) = self.gpu else {
+            return 0.0;
+        };
+        let lost = self.gpu_starved_above.map_or(0.0, |(above, per)| {
+            threads.saturating_sub(above) as f64 * per
+        });
+        hps * (1.0 - lost).max(0.0)
+    }
+
+    /// What the miner is judged on: CPU plus any GPU.
+    fn rig_rate(&self, kernel: CpuKernel, threads: usize) -> f64 {
+        self.rate(kernel, threads) + self.gpu_rate(threads)
+    }
+
     fn cap_at(&self, now: u64) -> usize {
         self.cap_events
             .iter()
@@ -111,16 +134,28 @@ impl Scenario {
         for name in &self.candidates {
             let kernel = Self::kernel(name);
             for threads in 1..=cap {
-                best = best.max(self.rate(kernel, threads));
+                best = best.max(self.rig_rate(kernel, threads));
             }
         }
-        // Smallest count within the tie band of that best, on any kernel.
+        // Smallest count within the tie band of that best, on any kernel. Rigs judge
+        // ties on the CPU's own rate, so their band is a share of the CPU's best.
+        let cpu_best = self
+            .candidates
+            .iter()
+            .flat_map(|name| (1..=cap).map(move |threads| (name, threads)))
+            .map(|(name, threads)| self.rate(Self::kernel(name), threads))
+            .fold(0.0_f64, f64::max);
+        let band = if self.gpu.is_some() {
+            TIE_BAND * cpu_best
+        } else {
+            TIE_BAND * best
+        };
         let mut smallest = cap;
         for threads in (1..=cap).rev() {
             if self
                 .candidates
                 .iter()
-                .any(|name| self.rate(Self::kernel(name), threads) >= best * (1.0 - TIE_BAND))
+                .any(|name| self.rig_rate(Self::kernel(name), threads) >= best - band)
             {
                 smallest = threads;
             }
@@ -189,6 +224,11 @@ struct Machine {
     carry: f64,
     wander: f64,
     burst_until: u64,
+    gpu_carry: f64,
+    gpu_wander: f64,
+    gpu_hashes: u64,
+    /// Separate from the CPU's draws, so adding a GPU leaves the CPU's noise as it was.
+    gpu_rng: Rng,
     rng: Rng,
 }
 
@@ -218,6 +258,10 @@ impl Machine {
             carry: 0.0,
             wander: 0.0,
             burst_until: 0,
+            gpu_carry: 0.0,
+            gpu_wander: 0.0,
+            gpu_hashes: 0,
+            gpu_rng: Rng((scenario.seed ^ 0x6770_7500) | 1),
             rng: Rng(scenario.seed | 1),
         }
     }
@@ -279,7 +323,19 @@ impl Machine {
         let whole = (self.carry + spread).floor().max(0.0);
         self.carry -= whole;
         self.snapshot.hashes += whole as u64;
-        rate
+        if let Some((_, noise)) = scenario.gpu {
+            self.gpu_wander = 0.995 * self.gpu_wander + 0.0999 * noise * self.gpu_rng.normal();
+            self.gpu_carry += (scenario.gpu_rate(working) * (1.0 + self.gpu_wander)).max(0.0);
+            let whole = self.gpu_carry.floor();
+            self.gpu_carry -= whole;
+            self.gpu_hashes += whole as u64;
+        }
+        rate + scenario.gpu_rate(working)
+    }
+
+    /// Hashes from every backend on a rig with a GPU, as the miner counts them.
+    fn rig_hashes(&self, scenario: &Scenario) -> Option<u64> {
+        scenario.gpu.map(|_| self.snapshot.hashes + self.gpu_hashes)
     }
 }
 
@@ -294,7 +350,13 @@ struct Step {
 }
 
 trait Driver {
-    fn tick(&mut self, now: u64, snapshot: CpuAdaptiveSnapshot, cap: usize) -> Step;
+    fn tick(
+        &mut self,
+        now: u64,
+        snapshot: CpuAdaptiveSnapshot,
+        cap: usize,
+        rig_hashes: Option<u64>,
+    ) -> Step;
 }
 
 struct NewDriver {
@@ -303,8 +365,16 @@ struct NewDriver {
 }
 
 impl Driver for NewDriver {
-    fn tick(&mut self, now: u64, snapshot: CpuAdaptiveSnapshot, cap: usize) -> Step {
-        let out = self.search.tick(now, &[snapshot], cap, false);
+    fn tick(
+        &mut self,
+        now: u64,
+        snapshot: CpuAdaptiveSnapshot,
+        cap: usize,
+        rig_hashes: Option<u64>,
+    ) -> Step {
+        let out = self
+            .search
+            .tick_rig(now, &[snapshot], cap, false, rig_hashes);
         if self.trace {
             for line in &out.details {
                 println!("  {now:>6}s {line}");
@@ -365,7 +435,7 @@ fn drive(scenario: &Scenario, driver: &mut dyn Driver) -> Score {
         } else {
             over_for = 0;
         }
-        let step = driver.tick(now, machine.snapshot, cap);
+        let step = driver.tick(now, machine.snapshot, cap, machine.rig_hashes(scenario));
         if let Some(kernel) = step.kernel {
             machine.set_kernel(now, kernel);
         }
@@ -418,7 +488,7 @@ fn score(
         time_in.iter().max_by_key(|(_, secs)| **secs).unwrap();
     let final_kernel = Scenario::kernel(final_kernel_name);
     let load = scenario.load_at(total as u64);
-    let final_rate = scenario.rate(final_kernel, final_threads) * load;
+    let final_rate = scenario.rig_rate(final_kernel, final_threads) * load;
     let reference = (best * load).max(1e-9);
 
     // Settled: the start of the last stretch on the final configuration that was
@@ -512,6 +582,8 @@ pub(super) fn built_in() -> Vec<Scenario> {
         rates: BTreeMap::new(),
         noise: 0.008,
         bursts: Some((3.0, 0.2, 40)),
+        gpu: None,
+        gpu_starved_above: None,
         cap_events: Vec::new(),
         load_events: Vec::new(),
         warm_secs: default_warm_secs(),
@@ -641,6 +713,54 @@ pub(super) fn built_in() -> Vec<Scenario> {
             rates: rates(&[(8, 7.0), (16, 8.0)], &[(8, 9.0), (16, 10.5)]),
             ..base.clone()
         },
+        // A CPU and GPU rig: a flat top on the CPU, judged with a GPU whose rate
+        // wanders more than the CPU differences being measured. RAM frees up later.
+        Scenario {
+            name: "rig-flat-top-with-gpu".into(),
+            known: true,
+            start_threads: 16,
+            max_threads: 32,
+            cap_events: vec![(0, 27), (1200, 32)],
+            gpu: Some((15.0, 0.03)),
+            rates: rates(
+                &[(8, 4.0), (16, 7.5), (24, 8.6), (32, 8.5)],
+                &[
+                    (8, 5.0),
+                    (16, 9.6),
+                    (20, 10.6),
+                    (24, 11.0),
+                    (27, 11.05),
+                    (28, 11.06),
+                    (32, 10.9),
+                ],
+            ),
+            ..base.clone()
+        },
+        // Past 28 threads the CPU starves the GPU: a little more CPU, much less GPU.
+        Scenario {
+            name: "rig-cpu-starves-gpu".into(),
+            start_threads: 16,
+            max_threads: 32,
+            gpu: Some((15.0, 0.03)),
+            gpu_starved_above: Some((28, 0.02)),
+            rates: rates(
+                &[(8, 4.0), (16, 7.5), (24, 8.6), (32, 8.8)],
+                &[(8, 5.0), (16, 9.6), (24, 11.0), (28, 11.3), (32, 11.5)],
+            ),
+            ..base.clone()
+        },
+        // The same rig where the CPU has a clear best count.
+        Scenario {
+            name: "rig-peak-with-gpu".into(),
+            start_threads: 8,
+            max_threads: 24,
+            gpu: Some((15.0, 0.03)),
+            rates: rates(
+                &[(8, 9.0), (12, 10.0), (16, 9.8), (24, 9.0)],
+                &[(8, 11.0), (12, 12.0), (16, 11.8), (24, 11.2)],
+            ),
+            ..base.clone()
+        },
         // A slow host: one hash is a large share of any short sample.
         Scenario {
             name: "slow-4-threads".into(),
@@ -718,6 +838,8 @@ pub(super) fn update_cases() -> Vec<UpdateCase> {
                 rates,
                 noise: 0.008,
                 bursts: Some((3.0, 0.2, 40)),
+                gpu: None,
+                gpu_starved_above: None,
                 cap_events: Vec::new(),
                 load_events: Vec::new(),
                 warm_secs: default_warm_secs(),
@@ -951,6 +1073,13 @@ fn required_frac(scenario: &Scenario) -> f64 {
     }
 }
 
+/// Open: these still settle after the time target on some seeds.
+const SETTLES_LATE: &[&str] = &[
+    "server-small-real-gain",
+    "busy-desktop",
+    "rig-cpu-starves-gpu",
+];
+
 fn seeds() -> Vec<u64> {
     (0..6u64).map(|i| 0x5eed ^ (i * 0x9e37_79b9)).collect()
 }
@@ -1006,6 +1135,13 @@ fn scoreboard_targets_hold_on_every_seed() {
                 check(
                     scenario.noise > 0.002 || score.within_1pct_secs <= budget,
                     format!("within 1% only after {} s", score.within_1pct_secs),
+                );
+                let best = scenario.oracle().0;
+                let settle_budget = if best < 4.0 { 3600 } else { 1800 };
+                check(
+                    score.settled_secs <= settle_budget
+                        || SETTLES_LATE.contains(&scenario.name.as_str()),
+                    format!("settled only after {} s", score.settled_secs),
                 );
             }
             if scenario.known {

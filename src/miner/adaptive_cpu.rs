@@ -856,7 +856,8 @@ impl Drop for Controller {
 pub(super) fn status_text(status: &Status) -> Option<String> {
     let minutes = |secs: u64| secs.div_ceil(60).max(1);
     Some(match status {
-        Status::Checking => "checking saved settings".to_string(),
+        // Mining on the saved result; a different rate starts tuning, with a log line.
+        Status::Checking => "done".to_string(),
         Status::Tuning {
             secs_left,
             testing_update,
@@ -889,16 +890,14 @@ pub(super) fn status_text(status: &Status) -> Option<String> {
     })
 }
 
-/// What the thread keys say while tuning picks the count. They work again once
-/// it is done (including another look at a close result) and while RAM is short.
+/// What the thread keys say while tuning picks the count. They work whenever the
+/// count is not moving: done, another look at a close result, on a saved result,
+/// and while RAM is short.
 pub(super) fn threads_locked_notice(status: &Status) -> Option<String> {
-    const SET_IT: &str = "To set it yourself, start with --threads N.";
     match status {
-        Status::Checking => Some(format!(
-            "Tuning is checking the saved thread count. {SET_IT}"
-        )),
         Status::Tuning { secs_left, .. } => Some(format!(
-            "Tuning is picking the thread count, about {} min left. {SET_IT}",
+            "Tuning is picking the thread count, about {} min left. \
+             To set it yourself, start with --threads N.",
             secs_left.div_ceil(60).max(1)
         )),
         _ => None,
@@ -1713,8 +1712,8 @@ mod tests {
         let notice = threads_locked_notice(&tuning).unwrap();
         assert!(notice.contains("about 5 min left"), "{notice}");
         assert!(notice.contains("--threads N"), "{notice}");
-        assert!(threads_locked_notice(&Status::Checking).is_some());
         for open in [
+            Status::Checking,
             Status::Settled {
                 threads: 8,
                 kernel: CpuKernel::Avx2Stream,

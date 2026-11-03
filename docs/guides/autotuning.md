@@ -17,14 +17,15 @@ The dashboard's `Tuning:` row says where things stand:
 | `trying kernels, about 4 min left` | Comparing CPU kernels while mining |
 | `12 vs 16 threads, about 3 min left` | Comparing thread counts: the thread count moves between the two while it measures |
 | `update: 12 vs 14 threads, ~2 min` | A new version changed something for your CPU |
-| `checking saved settings` | Confirming last run's result still holds |
 | `done` | Tuned. The thread count stays put unless something changes |
 | `done, one more look at 12 vs 16` | Tuned; one more look at a result that was too close to call, so the thread count moves between the two for a while |
 | `low on RAM, best is 12 threads` | Running fewer threads until RAM is free |
 | `waiting for RAM` | Not enough free RAM for one thread yet |
 
 The log has one line when tuning starts and says why, and one when it finishes, for
-example `tuned to 12 threads`. Plain logs (`--ui plain`) and the control API also list
+example `tuned to 12 threads`. On a restart Seine goes straight back to the saved result
+and the row says `done`; if the hashrate differs from last time, it tunes again and the
+log says why. Plain logs (`--ui plain`) and the control API also list
 each comparison.
 
 The `+` and `-` keys wait while tuning picks the thread count and say how long it has

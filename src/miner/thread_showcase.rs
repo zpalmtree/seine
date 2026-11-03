@@ -216,7 +216,7 @@ fn export_autotune_showcase() {
             vec![start_note, tuned],
         ),
         (
-            "Next start: checking saved settings",
+            "Next start: back on the saved settings",
             12,
             Status::Checking,
             vec![],
