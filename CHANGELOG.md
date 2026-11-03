@@ -9,12 +9,22 @@ supported hardware only.
 
 ## Unreleased
 
+## v0.3.1
+
+- **Up to 2.5x faster on NVIDIA GPUs** (GTX 1660 Ti, RTX 2070, RTX 2080 Ti, RTX 3060, RTX 4060, RTX 4090, RTX 5060 Ti)
+- **Up to 33% faster on CPUs** (12th Gen Intel Core, 3rd Gen Xeon, Ryzen 5000, 7000 and 9000)
+- **Much faster with fewer than 8 threads**: about 90% higher hashrate on Ryzen 5 5600, 40% on Skylake Xeon servers and 25% on Ice Lake Xeons and EPYC 9754 when `--threads` is set, and full speed from the first minutes without it
 - **Up to 13% higher CPU hashrate in containers with a CPU limit** (Ryzen 7 9800X3D; about 4% on Ryzen 5 7600X)
 - **Up to 3% higher CPU hashrate with default settings, often on less RAM** (Ryzen 9 5900X, Ryzen 9 9900X, Core i5-12400F, Core i7-14700K)
+- **AMD GPU support** (RX 6000, RX 7000, RX 9000, Radeon PRO): [setup](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/amd.md)
+- **Exchange mining support** (mine straight to your exchange deposit address; `--payout-memo` is required): [setup](https://github.com/zpalmtree/seine/blob/master/docs/EXCHANGE_PAYOUTS.md)
 - **Tunes faster, then stops**: finds your best thread count and kernel in minutes, keeps the lowest thread count that gets the same hashrate, and stops testing until something changes
-- **Updates keep your tuning**: a new version starts on your saved settings and only tests what it changed
-- **Much faster with fewer than 8 threads**: about 90% higher hashrate on Ryzen 5 5600, 40% on Skylake Xeon servers and 25% on Ice Lake Xeons and EPYC 9754 when `--threads` is set, and full speed from the first minutes without it
 - **A cleaner first run**: the dashboard opens right away, setup happens on screen, and the log only shows what you need, with room to read it and scrollback (↑↓, PgUp, PgDn)
+- **Mining OS packages**
+  - HiveOS: [seine-hiveos-0.3.1.tar.gz](https://github.com/zpalmtree/seine/releases/download/v0.3.1/seine-hiveos-0.3.1.tar.gz) ([guide](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/hiveos.md))
+  - mmpOS: [seine-mmpos-0.3.1.tar.gz](https://github.com/zpalmtree/seine/releases/download/v0.3.1/seine-mmpos-0.3.1.tar.gz) ([guide](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/mmpos.md))
+- **[Farm proxy](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/farm-proxy.md)** (run a whole farm through one pool connection)
+- **Automatic updates that keep your tuning**: a new version starts on your saved settings and only tests what it changed (turn off with `--no-auto-update`)
 - **Shorter `--help`** (lists the flags most miners need; every other flag still works and is in the [flag reference](https://github.com/zpalmtree/seine/blob/master/docs/MINER_FLAGS.md))
 
 ## v0.3.0
