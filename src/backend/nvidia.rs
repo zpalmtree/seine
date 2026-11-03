@@ -1833,33 +1833,13 @@ impl NvidiaBackend {
         }
     }
 
-    /// Whether resolving tuning would run the Argon2 autotune: no explicit
-    /// register cap, no tuning resolved earlier and no cached result.
-    fn needs_autotune(&self, selected: &NvidiaDeviceInfo) -> bool {
-        if self.tuning_options.max_rregcount_override.is_some() || !fill_v1_requested() {
-            return false;
-        }
-        if matches!(self.kernel_tuning.read().as_deref(), Ok(Some(_))) {
-            return false;
-        }
-        let key = build_nvidia_autotune_key(
-            selected,
-            self.tuning_options.hashes_per_launch_per_lane.max(1),
-        );
-        load_nvidia_cached_tuning(&self.autotune_config_path, &key).is_err()
-    }
-
-    /// The network's PoW when this backend starts. Before an autotune, and
-    /// while the network loop is already running, waits up to
-    /// `NETWORK_POW_WAIT` for the first template.
-    fn network_pow_at_start(
-        &self,
-        selected: &NvidiaDeviceInfo,
-    ) -> Option<crate::backend::PowAlgorithm> {
+    /// The network's PoW when this backend starts. While the network loop is
+    /// already running, waits up to `NETWORK_POW_WAIT` for the first template.
+    fn network_pow_at_start(&self) -> Option<crate::backend::PowAlgorithm> {
         if let Some(pow) = crate::backend::network_pow() {
             return Some(pow);
         }
-        if !crate::backend::network_pow_expected() || !self.needs_autotune(selected) {
+        if !crate::backend::network_pow_expected() {
             return None;
         }
         let deadline = Instant::now() + NETWORK_POW_WAIT;
@@ -2172,31 +2152,43 @@ impl PowBackend for NvidiaBackend {
         }
         // A GPU joining a BLAKE2b network skips the Argon2 autotune and engine;
         // the worker builds the engine if Argon2 work arrives.
-        let blake2b_only = !argon2_supported
-            || self.network_pow_at_start(&selected)
-                == Some(crate::backend::PowAlgorithm::Blake2b512);
+        let network_pow = self.network_pow_at_start();
+        let blake2b_only =
+            !argon2_supported || network_pow == Some(crate::backend::PowAlgorithm::Blake2b512);
         let tuning = self.resolve_kernel_tuning(&selected, blake2b_only);
         let engine = if blake2b_only {
             None
         } else {
-            Some(
-                CudaArgon2Engine::new(
-                    selected.index,
-                    selected.memory_total_mib,
-                    selected.memory_free_mib,
-                    tuning,
-                    tuning.max_lanes_hint,
-                    tuning.hashes_per_launch_per_lane,
-                    self.tuning_options.fused_target_check,
-                    &self.cubin_cache_dir,
-                )
-                .with_context(|| {
-                    format!(
+            match CudaArgon2Engine::new(
+                selected.index,
+                selected.memory_total_mib,
+                selected.memory_free_mib,
+                tuning,
+                tuning.max_lanes_hint,
+                tuning.hashes_per_launch_per_lane,
+                self.tuning_options.fused_target_check,
+                &self.cubin_cache_dir,
+            ) {
+                Ok(engine) => Some(engine),
+                // The network's PoW is not known yet: BLAKE2b work needs no
+                // Argon2 engine, and Argon2 work retries the build.
+                Err(err) if network_pow.is_none() => {
+                    crate::miner::ui::warn(
+                        "NVIDIA",
+                        format!(
+                            "device {} ({}): Argon2 engine unavailable for now ({err:#}); starting ready for BLAKE2b work",
+                            selected.index, selected.name
+                        ),
+                    );
+                    None
+                }
+                Err(err) => {
+                    return Err(err.context(format!(
                         "failed to initialize CUDA engine on NVIDIA device {} ({})",
                         selected.index, selected.name
-                    )
-                })?,
-            )
+                    )))
+                }
+            }
         };
 
         let (discovered_lanes, discovered_hashes_per_launch) =
