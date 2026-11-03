@@ -339,6 +339,19 @@ fn rig_estimate(
     )
 }
 
+/// The log line for a new build, saying what it changed for this CPU.
+fn update_reason(incumbent_improved: bool, new_kernel: bool, other_kernel: bool) -> &'static str {
+    if incumbent_improved {
+        "new seine version improves your CPU kernel: checking the thread count for a few minutes"
+    } else if new_kernel {
+        "new seine version adds a kernel that may suit this CPU: trying it for a few minutes"
+    } else if other_kernel {
+        "new seine version improves another kernel for this CPU: trying it for a few minutes"
+    } else {
+        "new seine version changed CPU hashing: checking your settings for a few minutes"
+    }
+}
+
 /// Decide from complete cycles. `down_band` is how far below the incumbent still
 /// counts as equal. On the last cycle an unproven result inside the band reports as a
 /// tie; a lower count also has to pass `fewer_holds`.
@@ -866,9 +879,17 @@ impl Search {
         self.announced = Some(self.peak);
         self.testing_update = tested_anything_new || hot_changed || incumbent_improved;
         if self.testing_update {
-            self.search_reason = Some(
-                "new seine version: testing what changed, the thread count may change for a few minutes",
-            );
+            let new_kernel = self.queue.iter().any(|kernel| {
+                !saved
+                    .kernels
+                    .iter()
+                    .any(|result| result.kernel == kernel.as_str())
+            });
+            self.search_reason = Some(update_reason(
+                incumbent_improved,
+                new_kernel,
+                tested_anything_new,
+            ));
         }
         self.stage = if self.testing_update {
             Stage::Kernels
@@ -2499,6 +2520,40 @@ mod tests {
             vec![AVX2, STREAM],
         );
         assert_eq!(first_comparison(params), None);
+    }
+
+    #[test]
+    fn a_new_build_says_what_it_changed_for_this_cpu() {
+        let before = [("avx2", 1), ("avx2-stream", 1)];
+        let reason = |hot: &str, after: &[(&str, u32)], candidates: Vec<CpuKernel>| {
+            Search::new(resume_params(
+                saved(8, STREAM, &before),
+                hot,
+                after,
+                candidates,
+            ))
+            .search_reason
+        };
+        let all = || vec![AVX2, STREAM];
+        assert_eq!(reason("hot", &before, all()), None);
+        let incumbent = reason("hot", &[("avx2", 1), ("avx2-stream", 2)], all()).unwrap();
+        assert!(
+            incumbent.contains("improves your CPU kernel"),
+            "{incumbent}"
+        );
+        let other = reason("hot", &[("avx2", 2), ("avx2-stream", 1)], all()).unwrap();
+        assert!(other.contains("improves another kernel"), "{other}");
+        let mut with_new = before.to_vec();
+        with_new.push(("avx512-stream", 1));
+        let added = reason(
+            "hot",
+            &with_new,
+            vec![AVX2, STREAM, CpuKernel::Avx512Stream],
+        )
+        .unwrap();
+        assert!(added.contains("adds a kernel"), "{added}");
+        let hashing = reason("other", &before, all()).unwrap();
+        assert!(hashing.contains("changed CPU hashing"), "{hashing}");
     }
 
     #[test]

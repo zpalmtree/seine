@@ -182,7 +182,7 @@ fn export_autotune_showcase() {
     let update_note = (
         LogLevel::Info,
         "CPU",
-        "new seine version: testing what changed, the thread count may change for a few minutes",
+        "new seine version improves your CPU kernel: checking the thread count for a few minutes",
         120.0,
     );
     let tuned = (LogLevel::Success, "CPU", "tuned to 12 threads", 12.0);
@@ -222,7 +222,7 @@ fn export_autotune_showcase() {
             vec![],
         ),
         (
-            "After an update: testing what changed",
+            "After an update that improved this CPU's kernel: checking the thread count",
             14,
             tuning(2, true, Comparing::Threads(12, 14)),
             vec![update_note],

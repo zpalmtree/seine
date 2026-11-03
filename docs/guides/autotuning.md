@@ -60,7 +60,8 @@ Once tuned, Seine runs no scheduled tests. It looks again only when:
 - **A new version changes something that affects speed.** It starts on your saved
   result, tests what changed (a new kernel, an improved kernel even if it lost before,
   or another change that could move the best thread count) and skips everything else.
-  A version that changes nothing about hashing runs no tests at all.
+  The log line says which of these it is. A version that changes nothing about hashing
+  runs no tests at all.
 - **Hashrate moves by more than 7% for 10 minutes**, for example when another program
   starts or stops using the CPU. If fewer threads then win, Seine checks now and then
   whether it can go back.
