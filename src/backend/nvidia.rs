@@ -2127,7 +2127,8 @@ impl PowBackend for NvidiaBackend {
         let selected = self.validate_or_select_device()?;
         // Without NVRTC, Argon2 runs from the prebuilt PTX where one fits this
         // GPU and the network's parameters; otherwise the backend stays idle on
-        // Argon2 work (`supports_pow`) and mines BLAKE2b.
+        // Argon2 work (`supports_pow`) and mines BLAKE2b, or fails to start in a
+        // build that does not mine BLAKE2b.
         note_gpu_telemetry(
             selected.index,
             query_cuda_compute_capability(selected.index),
@@ -2148,6 +2149,14 @@ impl PowBackend for NvidiaBackend {
         self.argon2_supported
             .store(argon2_supported, Ordering::Release);
         if !argon2_supported {
+            if !crate::miner::mines_blake2b() {
+                require_cuda_libraries()?;
+                bail!(
+                    "NVIDIA device {} ({}) has no Argon2 kernel; install the CUDA NVRTC libraries",
+                    selected.index,
+                    selected.name
+                );
+            }
             note_nvrtc_unavailable(selected.index);
         }
         // A GPU joining a BLAKE2b network skips the Argon2 autotune and engine;
