@@ -9,11 +9,11 @@ faq:
     a: 'Profil kieruje strojenie ku mniejszej liczbie wątków utrzymującej część zmierzonego szczytowego hashrate. Nie jest procentowym limitem CPU w systemie ani celem zmierzonego poboru mocy. Sprawdź responsywność i pamięć przy otwartych zwykłych aplikacjach.'
   - q: 'Czy zmiana wątków w panelu pozostaje po restarcie?'
     a: 'Obowiązuje w bieżącej sesji i wyłącza w niej automatyczne strojenie CPU. Nie zapisuje nowej wartości startowej. Aby powtarzać stałą liczbę, dodaj opcję wątków do zwykłego polecenia lub skrótu i sprawdź następne uruchomienie.'
-sourceHash: 'a32a9b2fd540'
+sourceHash: 'a2d0ccecf27b'
 translation: draft
 ---
 
-Dopasuj seine do używanych aplikacji. Poradnik dla seine v0.2.38 obejmuje wybór urządzeń, wolną pamięć, mniej wątków CPU i powtarzalny start. Zacznij od działającego zestawu, zachowując adres, pulę i katalog roboczy.
+Dopasuj seine do używanych aplikacji. Poradnik dla seine v0.3.1 obejmuje wybór urządzeń, wolną pamięć, mniej wątków CPU i powtarzalny start. Zacznij od działającego zestawu, zachowując adres, pulę i katalog roboczy.
 
 ## Czy można używać komputera podczas kopania?
 
@@ -39,7 +39,7 @@ Obsługiwana konfiguracja NVIDIA może użyć `--backend nvidia`, wyłączając 
 
 Przy automatycznym strojeniu rozważ `--cpu-profile efficiency`. Preferuje mniej wątków blisko swojego celu hashrate; nie mierzy watów ani nie ustala czasu reakcji pulpitu. `--cpu-autotune-max-threads 2` to przykład ograniczenia poszukiwań. Dobierz wartość i przeczytaj [poradnik strojenia](/pl/blog/seine-automatic-cpu-tuning/) przed łączeniem nadpisań.
 
-Do stałego porównania `--threads 2` wybiera dwa wątki na backend CPU i zwykle wyłącza autotuning. To wartość testowa, nie uniwersalna rada. W panelu `-` usuwa jeden wątek na backend CPU. Ręczna zmiana restartuje backendy i połączenie z pulą, zachowując statystyki sesji. Zaczekaj na zakończenie przed oceną.
+Do stałego porównania `--threads 2` wybiera dwa wątki na backend CPU i zwykle wyłącza autotuning. To wartość testowa, nie uniwersalna rada. W panelu `-` usuwa jeden wątek na backend CPU. Zmiana dotyczy działających wątków CPU, a GPU i połączenie z pulą działają dalej. Gdy automatyczne strojenie wciąż wybiera liczbę wątków, panel pokazuje pozostały czas i nie zmienia tej liczby. Jeśli uruchomiono kopanie ze stałym `--threads`, zmiana zamiast tego restartuje kopanie i zachowuje statystyki sesji. Zaczekaj, aż wynik się ustabilizuje, zanim go ocenisz.
 
 ## Zostaw pamięć pozostałym aplikacjom
 

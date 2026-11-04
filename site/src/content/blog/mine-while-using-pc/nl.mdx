@@ -9,11 +9,11 @@ faq:
     a: 'Het profiel stuurt de afstelling naar minder threads die een deel van de gemeten piekhashrate behouden. Het is geen CPU-percentagegrens van het besturingssysteem of doel voor gemeten stroomverbruik. Controleer respons en geheugen met je normale apps open.'
   - q: 'Blijft een threadwijziging in het dashboard na herstart bestaan?'
     a: 'De wijziging geldt voor de huidige sessie en schakelt daarin CPU-autotuning uit. Ze wordt niet als nieuwe startwaarde opgeslagen. Zet voor een herhaalbaar vast aantal de threadoptie in je normale startopdracht of snelkoppeling en controleer de volgende start.'
-sourceHash: 'a32a9b2fd540'
+sourceHash: 'a2d0ccecf27b'
 translation: draft
 ---
 
-Stem seine af op de toepassingen die je gebruikt. Deze gids voor seine v0.2.38 behandelt apparaatkeuze, vrij geheugen, minder CPU-threads en een herhaalbare start. Begin met een werkende miningconfiguratie en behoud adres, pool en werkmap.
+Stem seine af op de toepassingen die je gebruikt. Deze gids voor seine v0.3.1 behandelt apparaatkeuze, vrij geheugen, minder CPU-threads en een herhaalbare start. Begin met een werkende miningconfiguratie en behoud adres, pool en werkmap.
 
 ## Kun je de computer gebruiken tijdens het minen?
 
@@ -39,7 +39,7 @@ Een ondersteunde NVIDIA-installatie kan `--backend nvidia` gebruiken om CPU-mini
 
 Overweeg voor automatisch CPU-tunen `--cpu-profile efficiency`. Het profiel kiest liever minder threads dicht bij zijn hashratedoel; het meet geen watts en stelt geen desktopresponstijd vast. `--cpu-autotune-max-threads 2` is een voorbeeld van een zoeklimiet. Kies een passende waarde en lees de [autotuninggids](/nl/blog/seine-automatic-cpu-tuning/) voordat je opties combineert.
 
-Voor een vaste vergelijking kiest `--threads 2` twee threads per CPU-backend en schakelt gewoonlijk autotuning uit. Dit is een testinstelling, geen algemene aanbeveling. In het dashboard haalt `-` één thread per CPU-backend weg. De handmatige wijziging herstart backends en verbindt opnieuw met de pool, met behoud van sessiestatistieken. Wacht tot dat klaar is.
+Voor een vaste vergelijking kiest `--threads 2` twee threads per CPU-backend en schakelt gewoonlijk autotuning uit. Dit is een testinstelling, geen algemene aanbeveling. In het dashboard haalt `-` één thread per CPU-backend weg. De wijziging geldt voor de lopende CPU-threads, terwijl GPU's en de poolverbinding blijven draaien. Kiest de automatische afstemming nog een aantal, dan toont het dashboard hoe lang dat nog duurt en blijft het aantal ongewijzigd. Ben je gestart met een vaste `--threads`, dan herstart de wijziging juist het minen en blijven de sessiestatistieken behouden. Wacht tot het stabiel is.
 
 ## Houd geheugen vrij voor de rest van de desktop
 

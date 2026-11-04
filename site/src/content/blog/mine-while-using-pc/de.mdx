@@ -9,11 +9,11 @@ faq:
     a: 'Das Profil bevorzugt beim Tuning weniger Threads, die einen bestimmten Anteil der gemessenen Spitzenhashrate halten. Es ist weder eine prozentuale CPU-Grenze des Betriebssystems noch ein gemessenes Leistungsziel in Watt. Prüfe Reaktionsfähigkeit und Speicherbedarf mit deinen üblichen Anwendungen.'
   - q: 'Bleibt eine Threadänderung im Dashboard nach einem Neustart erhalten?'
     a: 'Dashboard-Änderungen gelten für den aktuellen Lauf und deaktivieren darin das CPU-Autotuning. Sie werden nicht als neuer Startwert gespeichert. Trage eine feste Threadzahl in deinen normalen Startbefehl oder die Verknüpfung ein und überprüfe den nächsten Start.'
-sourceHash: 'a32a9b2fd540'
+sourceHash: 'a2d0ccecf27b'
 translation: draft
 ---
 
-Richte seine passend zu deinen Anwendungen ein. Diese Anleitung für seine v0.2.38 behandelt Gerätewahl, freien Speicher, weniger CPU-Threads und einen wiederholbaren Start. Beginne mit einem funktionierenden Mining-Setup und behalte Adresse, Pool und Arbeitsverzeichnis bei.
+Richte seine passend zu deinen Anwendungen ein. Diese Anleitung für seine v0.3.1 behandelt Gerätewahl, freien Speicher, weniger CPU-Threads und einen wiederholbaren Start. Beginne mit einem funktionierenden Mining-Setup und behalte Adresse, Pool und Arbeitsverzeichnis bei.
 
 ## Kannst du den Computer während des Minings benutzen?
 
@@ -39,7 +39,7 @@ Eine unterstützte NVIDIA-Konfiguration kann mit `--backend nvidia` das CPU-Mini
 
 Für automatisches CPU-Tuning bietet sich `--cpu-profile efficiency` an. Das Profil bevorzugt kleinere Threadzahlen nahe seinem Hashrateziel; es misst weder Watt noch garantiert es Desktop-Reaktionszeiten. `--cpu-autotune-max-threads 2` zeigt beispielhaft eine Suchobergrenze. Wähle einen passenden Wert und lies vor kombinierten Overrides die [Autotuning-Anleitung](/de/blog/seine-automatic-cpu-tuning/).
 
-Für einen festen Vergleich wählt `--threads 2` zwei Threads je CPU-Backend und deaktiviert normalerweise Autotuning. Das ist ein Testwert, keine allgemeine Empfehlung. Im Dashboard entfernt `-` einen Thread je CPU-Backend. Diese manuelle Änderung startet Mining-Backends neu und verbindet den Pool erneut, während Sitzungsstatistiken erhalten bleiben. Warte auf den Abschluss.
+Für einen festen Vergleich wählt `--threads 2` zwei Threads je CPU-Backend und deaktiviert normalerweise Autotuning. Das ist ein Testwert, keine allgemeine Empfehlung. Im Dashboard entfernt `-` einen Thread je CPU-Backend. Die Änderung gilt für die laufenden CPU-Threads, während GPUs und die Pool-Verbindung weiterlaufen. Solange die automatische Abstimmung noch eine Anzahl wählt, zeigt das Dashboard die verbleibende Zeit und lässt die Anzahl unverändert. Wenn du mit einem festen `--threads` gestartet hast, startet die Änderung stattdessen das Mining neu und behält die Sitzungsstatistiken. Warte, bis sich das Ergebnis eingependelt hat.
 
 ## Speicher für den übrigen Desktop freihalten
 

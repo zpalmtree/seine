@@ -9,11 +9,11 @@ faq:
     a: 'Il profilo favorisce meno thread che mantengano una frazione dell’hashrate massimo misurato. Non impone una percentuale di utilizzo al sistema né un obiettivo di potenza misurata. Controlla reattività e memoria con le applicazioni abituali aperte.'
   - q: 'Una modifica dei thread nella dashboard resta dopo il riavvio?'
     a: 'Vale per la sessione attuale e ne disattiva l’autotuning CPU. Non viene salvata come nuovo valore iniziale. Per ripetere un numero fisso, inserisci l’opzione thread nel comando o collegamento abituale e verifica il lancio successivo.'
-sourceHash: 'a32a9b2fd540'
+sourceHash: 'a2d0ccecf27b'
 translation: draft
 ---
 
-Configura seine attorno alle applicazioni che usi. Questa guida per seine v0.2.38 tratta dispositivi, memoria disponibile, meno thread CPU e un avvio ripetibile. Parti da un setup funzionante e mantieni indirizzo, pool e directory di lavoro.
+Configura seine attorno alle applicazioni che usi. Questa guida per seine v0.3.1 tratta dispositivi, memoria disponibile, meno thread CPU e un avvio ripetibile. Parti da un setup funzionante e mantieni indirizzo, pool e directory di lavoro.
 
 ## Puoi usare il computer mentre mini?
 
@@ -39,7 +39,7 @@ Un setup NVIDIA supportato può usare `--backend nvidia` per disattivare il mini
 
 Per l’autotuning valuta `--cpu-profile efficiency`. Favorisce meno thread vicino al proprio obiettivo di hashrate; non misura watt né impone tempi di risposta al desktop. `--cpu-autotune-max-threads 2` è un esempio di limite alla ricerca. Scegli un valore adatto e leggi la [guida all’autotuning](/it/blog/seine-automatic-cpu-tuning/) prima di combinare opzioni.
 
-Per un confronto fisso, `--threads 2` seleziona due thread per backend CPU e normalmente disattiva l’autotuning. È un valore di prova, non una raccomandazione universale. Nella dashboard, `-` toglie un thread per backend CPU; la modifica riavvia i backend e riconnette il pool mantenendo le statistiche. Attendi il completamento prima di giudicare.
+Per un confronto fisso, `--threads 2` seleziona due thread per backend CPU e normalmente disattiva l’autotuning. È un valore di prova, non una raccomandazione universale. Nella dashboard, `-` toglie un thread per backend CPU; la modifica si applica ai thread CPU in esecuzione, mentre le GPU e la connessione al pool continuano a funzionare. Se la regolazione automatica sta ancora scegliendo il numero, la dashboard mostra il tempo rimanente e lascia il numero invariato. Se hai avviato con un `--threads` fisso, la modifica riavvia invece il mining e mantiene le statistiche della sessione. Attendi che si stabilizzi prima di giudicare.
 
 ## Lascia memoria al resto del desktop
 

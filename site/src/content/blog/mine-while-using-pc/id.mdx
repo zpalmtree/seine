@@ -9,11 +9,11 @@ faq:
     a: 'Profil ini mengarahkan penyetelan ke jumlah thread lebih sedikit yang mempertahankan sebagian hashrate puncak terukur. Ini bukan batas persentase CPU sistem operasi atau target daya terukur. Periksa respons desktop dan memori dengan aplikasi biasa terbuka.'
   - q: 'Apakah perubahan thread di dasbor tersimpan setelah mulai ulang?'
     a: 'Perubahan berlaku untuk sesi saat ini dan menonaktifkan penyetelan CPU otomatis pada sesi tersebut. Nilainya tidak disimpan sebagai bawaan awal. Untuk mengulang jumlah tetap, masukkan opsi thread ke perintah atau pintasan biasa, lalu periksa peluncuran berikutnya.'
-sourceHash: 'a32a9b2fd540'
+sourceHash: 'a2d0ccecf27b'
 translation: draft
 ---
 
-Atur seine agar penambangan berjalan bersama aplikasi yang Anda gunakan. Panduan seine v0.2.38 ini membahas pemilihan perangkat, ruang memori, pengurangan thread CPU, dan peluncuran yang dapat diulang. Mulailah dari konfigurasi yang sudah berfungsi, dengan alamat, pool, dan direktori kerja tetap.
+Atur seine agar penambangan berjalan bersama aplikasi yang Anda gunakan. Panduan seine v0.3.1 ini membahas pemilihan perangkat, ruang memori, pengurangan thread CPU, dan peluncuran yang dapat diulang. Mulailah dari konfigurasi yang sudah berfungsi, dengan alamat, pool, dan direktori kerja tetap.
 
 ## Bisakah komputer digunakan sambil menambang?
 
@@ -39,7 +39,7 @@ Konfigurasi NVIDIA yang didukung dapat memakai `--backend nvidia` untuk menonakt
 
 Untuk penyetelan CPU otomatis, pertimbangkan `--cpu-profile efficiency`. Profil ini mengutamakan jumlah lebih kecil dekat target hashrate, bukan mengukur watt atau menetapkan waktu respons desktop. `--cpu-autotune-max-threads 2` adalah contoh batas pencarian. Sesuaikan nilainya dan baca [panduan penyetelan](/id/blog/seine-automatic-cpu-tuning/) sebelum menggabungkan opsi.
 
-Untuk perbandingan tetap, `--threads 2` memilih dua thread per backend CPU dan biasanya mematikan penyetelan otomatis. Ini nilai uji, bukan anjuran universal. Di dasbor, `-` mengurangi satu thread per backend CPU. Perubahan manual ini memulai ulang backend dan menyambungkan kembali pool sambil mempertahankan statistik sesi. Tunggu sampai selesai sebelum menilai.
+Untuk perbandingan tetap, `--threads 2` memilih dua thread per backend CPU dan biasanya mematikan penyetelan otomatis. Ini nilai uji, bukan anjuran universal. Di dasbor, `-` mengurangi satu thread per backend CPU. Perubahan berlaku untuk thread CPU yang sedang berjalan, sementara GPU dan koneksi pool tetap berjalan. Jika penyetelan otomatis masih memilih jumlahnya, dasbor menampilkan sisa waktunya dan tidak mengubah jumlah itu. Jika Anda memulai dengan `--threads` tetap, perubahan justru memulai ulang penambangan dan mempertahankan statistik sesi. Tunggu sampai stabil sebelum menilai.
 
 ## Sisakan memori untuk desktop lainnya
 

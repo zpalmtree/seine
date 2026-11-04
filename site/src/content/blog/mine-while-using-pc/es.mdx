@@ -9,11 +9,11 @@ faq:
     a: 'El perfil orienta el ajuste hacia menos hilos conservando una fracción del hashrate máximo medido. No impone un porcentaje de uso de CPU ni un objetivo de potencia medida. Comprueba la respuesta del escritorio y la memoria con tus aplicaciones habituales abiertas.'
   - q: '¿Se conserva un cambio de hilos del panel al reiniciar?'
     a: 'El cambio se aplica a la sesión actual y desactiva su ajuste automático de CPU. No se guarda como valor de inicio. Para repetir un número fijo, añade la opción de hilos al comando o acceso directo habitual y verifica el siguiente arranque.'
-sourceHash: 'a32a9b2fd540'
+sourceHash: 'a2d0ccecf27b'
 translation: draft
 ---
 
-Configura seine para que la minería conviva con tus aplicaciones. Esta guía de seine v0.2.38 cubre la elección de dispositivos, la memoria disponible, la reducción de hilos y un inicio reproducible. Parte de una instalación que ya funcione y conserva dirección, pool y directorio de trabajo.
+Configura seine para que la minería conviva con tus aplicaciones. Esta guía de seine v0.3.1 cubre la elección de dispositivos, la memoria disponible, la reducción de hilos y un inicio reproducible. Parte de una instalación que ya funcione y conserva dirección, pool y directorio de trabajo.
 
 ## ¿Puedes usar el ordenador mientras minas?
 
@@ -39,7 +39,7 @@ En una instalación NVIDIA compatible, `--backend nvidia` desactiva la minería 
 
 Para el ajuste automático, considera `--cpu-profile efficiency`. Favorece menos hilos cerca de su objetivo de hashrate; no mide vatios ni garantiza un tiempo de respuesta. `--cpu-autotune-max-threads 2` ilustra cómo limitar la búsqueda. Elige un límite apropiado y consulta la [guía de ajuste](/es/blog/seine-automatic-cpu-tuning/) antes de combinar opciones.
 
-Para una comparación fija, `--threads 2` selecciona dos hilos por backend CPU y normalmente desactiva el ajuste automático. Es un ejemplo de prueba, no una recomendación universal. En el panel, `-` quita un hilo por backend CPU; el cambio reinicia los backends y reconecta el pool conservando estadísticas. Espera a que termine antes de evaluar.
+Para una comparación fija, `--threads 2` selecciona dos hilos por backend CPU y normalmente desactiva el ajuste automático. Es un ejemplo de prueba, no una recomendación universal. En el panel, `-` quita un hilo por backend CPU; el cambio se aplica a los hilos de CPU en marcha mientras las GPU y la conexión al pool siguen funcionando. Si el ajuste automático aún está eligiendo el número, el panel muestra cuánto le falta y deja el número como está. Si iniciaste con un `--threads` fijo, el cambio reinicia la minería y conserva las estadísticas de la sesión. Espera a que se estabilice antes de evaluar.
 
 ## Deja memoria para el resto del escritorio
 

@@ -14,7 +14,7 @@ related: [mining-electricity-use, miner-cpu-usage, seine-automatic-cpu-tuning, h
 image: /assets/blog/mine-while-using-pc.svg
 ---
 
-Set up seine so that mining fits around the applications you actually use. This guide covers sharing a desktop in seine v0.2.38: choosing devices, leaving memory available, trying a smaller CPU thread count and keeping a repeatable launch. Begin with a working mining setup and keep its address, pool and working directory unchanged.
+Set up seine so that mining fits around the applications you actually use. This guide covers sharing a desktop in seine v0.3.1: choosing devices, leaving memory available, trying a smaller CPU thread count and keeping a repeatable launch. Begin with a working mining setup and keep its address, pool and working directory unchanged.
 
 ## Can you use your computer while mining?
 
@@ -40,7 +40,7 @@ A supported NVIDIA setup can instead use `--backend nvidia` when you want to lea
 
 For automatic CPU tuning, consider `--cpu-profile efficiency`. This profile favors a smaller count near its hashrate target; it does not measure watts or enforce a desktop response-time target. You can bound the search with `--cpu-autotune-max-threads 2` as an illustrative ceiling. Choose a count appropriate to your own machine and read the [autotuning guide](/blog/seine-automatic-cpu-tuning/) before combining overrides.
 
-For a deliberately fixed comparison, `--threads 2` selects two CPU threads per CPU backend and ordinarily disables CPU autotuning. It is a test setting, not a universal recommendation. In the dashboard, `-` removes one thread per CPU backend; that manual adjustment restarts mining backends and reconnects the pool while keeping session statistics. Wait for the change to finish before judging the result.
+For a deliberately fixed comparison, `--threads 2` selects two CPU threads per CPU backend and ordinarily disables CPU autotuning. It is a test setting, not a universal recommendation. In the dashboard, `-` removes one thread per CPU backend; the change applies to the running CPU threads while GPUs and the pool connection keep running. While automatic tuning is still choosing a count, the dashboard shows how long it has left and leaves the count alone. If you started with a fixed `--threads`, the change restarts mining instead and keeps your session statistics. Wait for the change to settle before judging the result.
 
 ## Leave memory available for the rest of the desktop
 

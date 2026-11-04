@@ -9,11 +9,11 @@ faq:
     a: 'Cấu hình này hướng việc tinh chỉnh đến ít luồng hơn nhưng vẫn giữ một phần tốc độ băm đỉnh đã đo. Đây không phải giới hạn phần trăm CPU của hệ điều hành hay mục tiêu điện năng đo được. Kiểm tra độ phản hồi và bộ nhớ khi mở ứng dụng thường dùng.'
   - q: 'Đổi số luồng trong bảng điều khiển có được giữ sau khởi động lại không?'
     a: 'Thay đổi chỉ áp dụng cho phiên hiện tại và tắt tinh chỉnh CPU tự động trong phiên đó. Nó không lưu thành mặc định khởi chạy. Muốn lặp lại số cố định, thêm tùy chọn luồng vào lệnh hoặc lối tắt thường dùng rồi kiểm tra lần chạy sau.'
-sourceHash: 'a32a9b2fd540'
+sourceHash: 'a2d0ccecf27b'
 translation: draft
 ---
 
-Thiết lập seine để việc đào cùng hoạt động với ứng dụng bạn dùng. Hướng dẫn cho seine v0.2.38 này gồm chọn thiết bị, chừa bộ nhớ, giảm luồng CPU và lưu cách khởi chạy lặp lại được. Bắt đầu từ cấu hình đang hoạt động, giữ nguyên địa chỉ, pool và thư mục làm việc.
+Thiết lập seine để việc đào cùng hoạt động với ứng dụng bạn dùng. Hướng dẫn cho seine v0.3.1 này gồm chọn thiết bị, chừa bộ nhớ, giảm luồng CPU và lưu cách khởi chạy lặp lại được. Bắt đầu từ cấu hình đang hoạt động, giữ nguyên địa chỉ, pool và thư mục làm việc.
 
 ## Có thể sử dụng máy tính trong khi đào không?
 
@@ -39,7 +39,7 @@ Cấu hình NVIDIA được hỗ trợ có thể dùng `--backend nvidia` để 
 
 Với tinh chỉnh CPU tự động, cân nhắc `--cpu-profile efficiency`. Nó ưu tiên ít luồng hơn gần mục tiêu tốc độ băm, không đo watt hay đặt mục tiêu thời gian phản hồi. `--cpu-autotune-max-threads 2` minh họa trần tìm kiếm. Chọn số phù hợp với máy và đọc [hướng dẫn tự tinh chỉnh](/vi/blog/seine-automatic-cpu-tuning/) trước khi kết hợp tùy chọn.
 
-Để so sánh cố định, `--threads 2` chọn hai luồng cho mỗi backend CPU và thường tắt tự tinh chỉnh. Đây là giá trị thử, không phải lời khuyên chung. Trong bảng điều khiển, `-` giảm một luồng mỗi backend CPU. Thay đổi thủ công khởi động lại các backend và kết nối pool, giữ thống kê phiên. Đợi hoàn tất rồi đánh giá.
+Để so sánh cố định, `--threads 2` chọn hai luồng cho mỗi backend CPU và thường tắt tự tinh chỉnh. Đây là giá trị thử, không phải lời khuyên chung. Trong bảng điều khiển, `-` giảm một luồng mỗi backend CPU. Thay đổi áp dụng cho các luồng CPU đang chạy, trong khi GPU và kết nối pool vẫn tiếp tục chạy. Nếu tính năng tự tinh chỉnh vẫn đang chọn số luồng, bảng điều khiển hiển thị thời gian còn lại và giữ nguyên số luồng. Nếu bạn khởi động với `--threads` cố định, thay đổi sẽ khởi động lại việc đào và giữ thống kê phiên. Đợi kết quả ổn định rồi đánh giá.
 
 ## Chừa bộ nhớ cho các ứng dụng khác
 

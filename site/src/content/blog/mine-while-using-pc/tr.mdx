@@ -9,11 +9,11 @@ faq:
     a: 'Profil, ölçülen en yüksek hash gücünün bir bölümünü koruyan daha az iş parçacığına yönelir. İşletim sisteminde CPU yüzdesi sınırı veya ölçülmüş güç hedefi değildir. Normal uygulamalarınız açıkken masaüstü tepkisini ve belleği kontrol edin.'
   - q: 'Paneldeki iş parçacığı değişikliği yeniden başlatmada kalır mı?'
     a: 'Değişiklik mevcut oturuma uygulanır ve bu oturumda otomatik CPU ayarını kapatır. Yeni başlangıç varsayılanı olarak kaydedilmez. Sabit sayıyı tekrarlamak için iş parçacığı seçeneğini normal komuta veya kısayola ekleyip sonraki açılışı doğrulayın.'
-sourceHash: 'a32a9b2fd540'
+sourceHash: 'a2d0ccecf27b'
 translation: draft
 ---
 
-seine ayarlarını kullandığınız uygulamalara göre düzenleyin. seine v0.2.38 rehberi aygıt seçimini, boş belleği, daha az CPU iş parçacığını ve tekrarlanabilir başlangıcı kapsar. Çalışan madencilik kurulumunuzla başlayın; adresi, havuzu ve çalışma dizinini koruyun.
+seine ayarlarını kullandığınız uygulamalara göre düzenleyin. seine v0.3.1 rehberi aygıt seçimini, boş belleği, daha az CPU iş parçacığını ve tekrarlanabilir başlangıcı kapsar. Çalışan madencilik kurulumunuzla başlayın; adresi, havuzu ve çalışma dizinini koruyun.
 
 ## Madencilik sırasında bilgisayarı kullanabilir misiniz?
 
@@ -39,7 +39,7 @@ Desteklenen NVIDIA kurulumu, CPU madenciliğini kapatmak için `--backend nvidia
 
 Otomatik CPU ayarı için `--cpu-profile efficiency` düşünülebilir. Profil, hash gücü hedefine yakın daha küçük sayıyı tercih eder; watt ölçmez veya masaüstü tepki süresi belirlemez. `--cpu-autotune-max-threads 2` örnek arama tavanıdır. Makinenize uygun sayıyı seçin ve seçenekleri birleştirmeden [otomatik ayar rehberini](/tr/blog/seine-automatic-cpu-tuning/) okuyun.
 
-Sabit karşılaştırma için `--threads 2`, CPU arka ucu başına iki iş parçacığı seçer ve normalde otomatik ayarı kapatır. Evrensel tavsiye değil, test değeridir. Panelde `-` CPU arka ucu başına bir iş parçacığını kaldırır. Bu elle değişiklik arka uçları ve havuz bağlantısını yeniden başlatırken oturum istatistiklerini korur. Sonucu değerlendirmeden tamamlanmasını bekleyin.
+Sabit karşılaştırma için `--threads 2`, CPU arka ucu başına iki iş parçacığı seçer ve normalde otomatik ayarı kapatır. Evrensel tavsiye değil, test değeridir. Panelde `-` CPU arka ucu başına bir iş parçacığını kaldırır. Değişiklik çalışan CPU iş parçacıklarına uygulanır; GPU'lar ve havuz bağlantısı çalışmaya devam eder. Otomatik ayar hâlâ sayıyı seçiyorsa pano kalan süreyi gösterir ve sayıyı değiştirmez. Sabit bir `--threads` ile başlattıysanız değişiklik bunun yerine madenciliği yeniden başlatır ve oturum istatistiklerini korur. Sonucu değerlendirmeden önce oturmasını bekleyin.
 
 ## Masaüstünün kalanı için bellek bırakın
 

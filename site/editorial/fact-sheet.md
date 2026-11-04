@@ -291,8 +291,8 @@ Initial research checked 2026-10-25; release, platform and pool facts rechecked 
 
 ## 4. seine (the miner)
 - Seine is the external miner for Blocknet. License BSD-3-Clause. Repo: github.com/zpalmtree/seine.
-  - Latest reviewed release **v0.2.45**, published October 28, 2026 at 3:45:27 PM EDT.
-  - Source: GitHub latest-release API and `seine@v0.2.45:Cargo.toml`; rechecked October 28, 2026. `release-facts.json` records the immutable source and release assets.
+  - Latest reviewed release **v0.3.1**, published November 4, 2026 at 5:25:42 PM EST.
+  - Source: GitHub latest-release API and `seine@v0.3.1:Cargo.toml`; rechecked November 4, 2026. `release-facts.json` records the immutable source and release assets.
 - Name styling: the wordmark is always lowercase, `seine.` with a lime full stop. README prose capitalizes "Seine" at sentence start.
   - Source: `seine@master:docs/BRAND.md:43-44`, `README.md:24` (checked 2026-10-25)
 - **Historical released miner fee (v0.2.26):** 1% of mining time on bntpool.com and its subdomains; 2.5% on other pools and in solo mode. The current calculator now uses v0.2.36's 2% fee and names that version.
@@ -774,5 +774,5 @@ Checked against the published v0.3.0 Linux and Windows archives and `seine@v0.3.
 - **Linux NVIDIA:** the driver is enough. NVRTC is used when installed; otherwise seine loads built-in kernels for GeForce GTX 10 series and newer. Source: `docs/guides/nvidia.md`.
 - **Linux glibc:** the v0.3.0 binary needs symbols up to GLIBC_2.30; the README states 2.31 or newer (Ubuntu 20.04, Debian 11). Source: `objdump -T` on the release binary; `README.md`. This supersedes the 2.39 requirement in earlier notes.
 - **Backends:** `--backend` takes `cpu`, `nvidia`, `amd` and `metal`, comma-separated. `--nvidia-devices` needs `nvidia` in `--backend`, or seine stops with an error naming the flag. A `--threads` count larger than memory allows stops with `configured CPU lanes need ~N GiB RAM`. `--backend amd` with no runtime stops with `all GPU backends failed to start`. Source: runs of the v0.3.0 Linux binary against an unreachable pool, November 2, 2026.
-- **Thread keys:** `-` and `+` change the count for the current run only. `--threads` turns thread tuning off. Source: `docs/guides/configuration.md`; v0.3.0 log line `cpu-autotune | disabled; using configured thread count`.
+- **Thread keys (v0.3.1):** `-` and `+` remove or add one thread per CPU backend for the current run only; the count is not saved. The change applies to the running CPU threads while GPUs and the pool connection keep running. While tuning is still choosing a count, the keys leave it alone and the dashboard shows how long tuning has left. With a fixed `--threads`, the change restarts mining and keeps session statistics. In v0.3.0 and earlier every change restarted the mining backends and reconnected the pool. `--threads` turns thread tuning off. Source: `seine@v0.3.1:docs/guides/configuration.md` (Dashboard controls); v0.3.0 log line `cpu-autotune | disabled; using configured thread count`.
 - **Saved settings:** `seine.config.json` holds the mode, address, pool, worker name and dev fee worker name. Backend and thread flags are not saved. Automatic updates restart with the same arguments. Source: first-run file from the v0.3.0 binary; `docs/guides/configuration.md`.

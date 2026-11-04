@@ -9,11 +9,11 @@ faq:
     a: 'Il oriente le réglage vers moins de threads conservant une fraction du hashrate maximal mesuré. Ce n’est ni une limite d’utilisation imposée au système ni une cible de puissance mesurée. Vérifiez la réactivité et la mémoire avec vos applications habituelles ouvertes.'
   - q: 'Un changement de threads dans le tableau de bord survit-il au redémarrage ?'
     a: 'Il s’applique à la session et désactive son réglage automatique CPU. Il n’est pas enregistré comme nouvelle valeur de démarrage. Pour retrouver un nombre fixe, ajoutez l’option de threads à votre commande ou raccourci habituel et vérifiez le lancement suivant.'
-sourceHash: 'a32a9b2fd540'
+sourceHash: 'a2d0ccecf27b'
 translation: draft
 ---
 
-Adaptez seine aux applications que vous utilisez. Ce guide pour seine v0.2.38 couvre les appareils, la mémoire disponible, un nombre réduit de threads et un lancement reproductible. Partez d’une installation fonctionnelle en conservant adresse, pool et répertoire de travail.
+Adaptez seine aux applications que vous utilisez. Ce guide pour seine v0.3.1 couvre les appareils, la mémoire disponible, un nombre réduit de threads et un lancement reproductible. Partez d’une installation fonctionnelle en conservant adresse, pool et répertoire de travail.
 
 ## Peut-on utiliser son ordinateur pendant le minage ?
 
@@ -39,7 +39,7 @@ Une installation NVIDIA compatible peut utiliser `--backend nvidia` pour désact
 
 Pour le réglage automatique, envisagez `--cpu-profile efficiency`. Il favorise moins de threads près de sa cible de hashrate, sans mesurer les watts ni imposer une réactivité du bureau. `--cpu-autotune-max-threads 2` illustre un plafond de recherche. Adaptez ce nombre et lisez le [guide d’ajustement](/fr/blog/seine-automatic-cpu-tuning/) avant de combiner les options.
 
-Pour une comparaison fixe, `--threads 2` sélectionne deux threads par backend CPU et désactive normalement l’ajustement automatique. C’est un exemple de test, pas une recommandation universelle. Dans le tableau de bord, `-` retire un thread par backend CPU : ce changement redémarre les backends et reconnecte le pool en conservant les statistiques. Attendez la fin.
+Pour une comparaison fixe, `--threads 2` sélectionne deux threads par backend CPU et désactive normalement l’ajustement automatique. C’est un exemple de test, pas une recommandation universelle. Dans le tableau de bord, `-` retire un thread par backend CPU : le changement s'applique aux threads CPU en cours, tandis que les GPU et la connexion au pool continuent de tourner. Si le réglage automatique choisit encore le nombre, le tableau de bord indique le temps restant et ne modifie pas le nombre. Si vous avez lancé avec un `--threads` fixe, le changement redémarre le minage et conserve les statistiques de session. Attendez qu'il se stabilise.
 
 ## Laissez de la mémoire aux autres applications
 
