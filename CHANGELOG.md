@@ -29,7 +29,9 @@ supported hardware only.
 - **Shorter `--help`** (lists the flags most miners need; every other flag still works and is in the [flag reference](https://github.com/zpalmtree/seine/blob/master/docs/MINER_FLAGS.md))
 - **Pool Pending balance includes estimated rewards** from blocks that have not matured yet
 
-**Upgrading from v0.2.45 on Linux with `--auto-update`:** v0.2.45 installs this version but then exits instead of restarting. Start seine again once; setups that restart seine automatically, such as systemd, need nothing.
+**Upgrading from v0.2.45 with `--auto-update`:**
+- **Linux:** v0.2.45 installs this version but then exits instead of restarting. Start seine again once; setups that restart seine automatically, such as systemd, need nothing.
+- **Windows:** v0.2.45 starts this version and then exits. If a script or service restarts seine when it exits, stop it once after the update so only one seine keeps running.
 
 ## v0.3.0
 
