@@ -75,13 +75,7 @@ impl Guard {
         failed_starts = failed_starts.saturating_add(collect_ended_calls(data_dir, version));
         let instance = instance_id();
         let lock_path = data_dir.join(format!("{LOCK_PREFIX}{instance}.lock"));
-        let lock = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(&lock_path)
-            .ok()
-            .filter(|file| file.try_lock().is_ok());
+        let lock = hold_lock(data_dir, &instance, &lock_path);
         let guard = Self {
             path,
             call_path: data_dir.join(format!("{CALL_PREFIX}{instance}")),
@@ -155,6 +149,23 @@ impl Guard {
             let _ = fs::write(&self.path, bytes);
         }
     }
+}
+
+/// Locks a new file and only then gives it its lock name, so another process
+/// never finds this one's lock file unlocked.
+fn hold_lock(data_dir: &Path, instance: &str, lock_path: &Path) -> Option<File> {
+    let pending = data_dir.join(format!(".{LOCK_PREFIX}{instance}.pending"));
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&pending)
+        .ok()?;
+    if file.try_lock().is_err() || fs::rename(&pending, lock_path).is_err() {
+        let _ = fs::remove_file(&pending);
+        return None;
+    }
+    Some(file)
 }
 
 /// A name no other live process uses.
