@@ -672,7 +672,14 @@ impl Controller {
                         let saved = record.as_ref().and_then(|r| r.search.clone());
                         // This machine's own earlier choice outranks the family's start.
                         let mut has_start = record.is_some();
-                        let quality = if record.is_some() {
+                        // A count from an older version without its search
+                        // result, or from a run with other thread limits, is
+                        // only a starting point, so the search looks as widely
+                        // as on a new install.
+                        let resumable = saved.as_ref().is_some_and(|saved| {
+                            saved.bounds.is_none_or(|bounds| bounds == (min.max(1).min(max.max(1)), max.max(1)))
+                        });
+                        let quality = if resumable {
                             SeedQuality::Measured
                         } else if family_start(&cfg, &host, max, available) {
                             SeedQuality::Family
@@ -1028,6 +1035,18 @@ fn save_result(
     max: usize,
     saved: Saved,
 ) -> Result<()> {
+    // A run pinned to one count (--threads) keeps an automatic run's result.
+    let pinned = |bounds: Option<(usize, usize)>| bounds.is_some_and(|(lo, hi)| lo == hi);
+    if pinned(saved.bounds)
+        && read_seed(cfg).is_ok_and(|existing| {
+            existing
+                .search
+                .as_ref()
+                .is_some_and(|search| !pinned(search.bounds))
+        })
+    {
+        return Ok(());
+    }
     let record = CpuAutotuneRecord {
         schema_version: CPU_AUTOTUNE_RECORD_SCHEMA_VERSION,
         profile: cpu_profile_label(cfg.cpu_profile).into(),
