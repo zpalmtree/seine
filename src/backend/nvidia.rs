@@ -3203,6 +3203,8 @@ fn worker_loop(
             nonce_buf = vec![0u64; engine.max_hashes_per_launch()];
             max_launch_depth = engine.max_hashes_per_launch_per_lane().max(1);
             argon2_lanes = engine.max_lanes().max(1);
+            // An engine built after start (or rebuilt) sets the lanes reported.
+            shared.grown_lanes.store(argon2_lanes, Ordering::Release);
             shared
                 .active_hashes_per_launch_per_lane
                 .store(max_launch_depth as u32, Ordering::Release);
