@@ -134,6 +134,12 @@ ok "mmp-launch: TLS pool, NVIDIA plus AMD from gpu-info.json, API port, GPU-only
 run_launch "./mmp-launch.sh --coin BNT tcp --pool bntpool.com:3333 --user @miner.one.rig02 --password x --api-port 0 --backend nvidia,cpu --threads 2"
 diff -u "$data/extra-args.args" <(launched_args) || fail "extra arguments"
 ok "mmp-launch: shortname keeps its dots and mines as the rig name, user backends win"
+run_launch "./mmp-launch.sh --coin BNT tcp --pool bntpool.com:3333 --user solo:@miner.one.rig02 --password x --api-port 0"
+launched_args | grep -A1 -x -- --address | grep -qx solo:@miner.one || fail "solo shortname keeps the rig name"
+launched_args | grep -A1 -x -- --pool-worker | grep -qx rig02 || fail "solo shortname worker"
+run_launch "./mmp-launch.sh --coin BNT tcp --pool bntpool.com:3333 --user @miner.one.rig02 --password x --api-port 0 --rig-id mine"
+launched_args | grep -qx -- --pool-worker && fail "--rig-id should replace the rig name"
+ok "mmp-launch: solo: shortname splits off the rig name, --rig-id wins"
 
 if command -v script >/dev/null; then
 	# mmpOS runs the miner in screen, so its output is a terminal.

@@ -58,15 +58,17 @@ seine_hiveos_config() {
 			echo "seine: set \"Wallet and worker template\" in the flight sheet to your Blocknet address, e.g. %WAL%.%WORKER_NAME%" >&2
 			return 1
 		fi
-		# Seine reads a shortname login (@name, $name) whole, dots included, so
-		# split off the rig name that %WAL%.%WORKER_NAME% appends.
-		if [[ $template == [@\$]* && -n $worker && $template == *."$worker" ]]; then
+		# Seine reads a shortname login (@name, $name, also after solo:) whole,
+		# dots included, so split off the rig name that %WAL%.%WORKER_NAME% appends.
+		local bare=$template
+		[[ ${bare:0:5} == [Ss][Oo][Ll][Oo]: ]] && bare=${bare:5}
+		if [[ $bare == [@\$]* && -n $worker && $template == *."$worker" ]]; then
 			template=${template%."$worker"}
 		fi
 		args+=(--address "$template")
 		# ADDRESS.WORKER already names the worker; otherwise use the rig name.
-		if [[ ($template != *.* || $template == [@\$]*) && -n $worker ]] &&
-			! seine_hiveos_has_flag --pool-worker --worker; then
+		if [[ ($template != *.* || $bare == [@\$]*) && -n $worker ]] &&
+			! seine_hiveos_has_flag --pool-worker --worker --rig-id; then
 			args+=(--pool-worker "$worker")
 		fi
 	fi

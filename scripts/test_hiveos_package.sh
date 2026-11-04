@@ -121,6 +121,12 @@ run_config "CUSTOM_TEMPLATE=@miner.one.rig03" WORKER_NAME=rig03 FAKE_NVIDIA=1 ||
 generated_args | grep -A1 -x -- --address | grep -qx @miner.one || fail "shortname template keeps the rig name"
 generated_args | grep -A1 -x -- --pool-worker | grep -qx rig03 || fail "shortname template worker"
 ok "h-config: shortname wallet keeps its dots and mines as the rig name"
+run_config "CUSTOM_TEMPLATE=solo:@miner.one.rig03" WORKER_NAME=rig03 FAKE_NVIDIA=1 || fail "solo shortname"
+generated_args | grep -A1 -x -- --address | grep -qx solo:@miner.one || fail "solo shortname keeps the rig name"
+generated_args | grep -A1 -x -- --pool-worker | grep -qx rig03 || fail "solo shortname worker"
+run_config "CUSTOM_TEMPLATE=@miner.one" WORKER_NAME=rig03 FAKE_NVIDIA=1 "CUSTOM_USER_CONFIG=--rig-id mine" || fail "rig-id"
+generated_args | grep -qx -- --pool-worker && fail "--rig-id in extra config should replace the rig name"
+ok "h-config: solo: shortname splits off the rig name, --rig-id wins"
 
 run_config "CUSTOM_TEMPLATE=$address.r" FAKE_NVIDIA=1 FAKE_AMD=2 || fail "mixed rig"
 generated_args | grep -qx -- --gpu-only || fail "mixed rig should let seine pick the GPUs"

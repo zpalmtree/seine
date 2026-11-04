@@ -112,16 +112,18 @@ seine_mmpos_launch() {
 			return 1
 		fi
 		# %user% is %wallet_address%.%rig_name%%miner_id%. Seine splits a plain
-		# address at the first dot itself, but reads a shortname (@name)
-		# whole, dots included, so split the rig name off here.
-		if [[ $user == [@\$]*.* ]]; then
+		# address at the first dot itself, but reads a shortname (@name, also
+		# after solo:) whole, dots included, so split the rig name off here.
+		local bare=$user
+		[[ ${bare:0:5} == [Ss][Oo][Ll][Oo]: ]] && bare=${bare:5}
+		if [[ $bare == [@\$]*.* ]]; then
 			worker=${user##*.}
 			user=${user%.*}
 		elif [[ $user != *.* ]]; then
 			worker=${HOSTNAME:-$(uname -n)}
 		fi
 		args+=(--address "$user")
-		if [[ -n $worker ]] && ! seine_mmpos_has_flag --pool-worker --worker; then
+		if [[ -n $worker ]] && ! seine_mmpos_has_flag --pool-worker --worker --rig-id; then
 			args+=(--pool-worker "$worker")
 		fi
 	fi
