@@ -295,6 +295,12 @@ fn resolve_mining_config(
             );
             address = bare.to_string();
         }
+        // A shortname or the API can reach an exchange address the startup checks never saw.
+        crate::payout_destination::ensure_exchange_memo(
+            &address,
+            cfg.payout_memo.as_deref(),
+            cfg.mode == MiningMode::Pool,
+        )?;
         resolved.mining_address = Some(address);
     }
     Ok(resolved)
@@ -4187,6 +4193,22 @@ pub(crate) mod tests {
                     .mining_address,
                 resolved.mining_address
             );
+        }
+    }
+
+    #[test]
+    fn shortname_to_an_exchange_address_needs_a_memo() {
+        use crate::shortname::tests::mock_resolver;
+        const EXCHANGE: &str = "ZJZqGfDPCVg78CRH5Z33CtHafg911Dp5Bauf1Dnxg5jgXx7Whqsvqka96FCV8W6QZXNDKzJefkFU6bwDEGBewqPrTWjij";
+        for (memo, ok) in [(None, false), (Some("ID001"), true)] {
+            let mut cfg = test_config();
+            cfg.mode = MiningMode::Pool;
+            cfg.mining_address = Some("solo:$Alice".into());
+            cfg.payout_memo = memo.map(str::to_string);
+            let (resolver, task) = mock_resolver(EXCHANGE);
+            let resolved = resolve_mining_config(&cfg, &resolver);
+            task.join().unwrap();
+            assert_eq!(resolved.is_ok(), ok);
         }
     }
 

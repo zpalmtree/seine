@@ -86,6 +86,7 @@ pub fn run(cfg: &Config, shutdown: Arc<AtomicBool>) -> Result<()> {
     if address != destination.trim() {
         info("ADDRESS", format!("resolved {destination} to {address}"));
     }
+    crate::payout_destination::ensure_exchange_memo(&address, None, false)?;
     let worker = cfg
         .pool_worker
         .clone()

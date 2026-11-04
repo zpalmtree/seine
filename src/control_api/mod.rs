@@ -1997,6 +1997,16 @@ fn apply_start_patch(cfg: &mut Config, patch: &StartRequest) -> Result<()> {
         }
         validate_destination(mining_address)
             .map_err(|err| anyhow!("invalid mining_address: {err}"))?;
+        // A memo belongs to the address it was set for.
+        if cfg.mining_address.as_deref().map(str::trim) != Some(mining_address) {
+            cfg.payout_memo = None;
+        }
+        crate::payout_destination::ensure_exchange_memo(
+            mining_address,
+            cfg.payout_memo.as_deref(),
+            cfg.mode == MiningMode::Pool,
+        )
+        .map_err(|err| anyhow!("invalid mining_address: {err:#}"))?;
         cfg.mining_address = Some(mining_address.to_string());
     }
     if let Some(pool_url) = patch.pool_url.as_ref() {
@@ -2885,6 +2895,28 @@ mod tests {
         assert!(build_cors_layer("").unwrap().is_none());
         assert!(build_cors_layer("  ").unwrap().is_none());
         assert!(build_cors_layer("http://localhost:3000").unwrap().is_some());
+    }
+
+    #[test]
+    fn api_address_change_drops_the_memo_and_refuses_exchange_addresses_without_one() {
+        const EXCHANGE: &str = "ZJZqGfDPCVg78CRH5Z33CtHafg911Dp5Bauf1Dnxg5jgXx7Whqsvqka96FCV8W6QZXNDKzJefkFU6bwDEGBewqPrTWjij";
+        let patch = |address: &str| StartRequest {
+            mining_address: Some(address.to_string()),
+            ..StartRequest::default()
+        };
+        let mut cfg = crate::miner::tests::test_config();
+        cfg.mode = MiningMode::Pool;
+        cfg.mining_address = Some(EXCHANGE.into());
+        cfg.payout_memo = Some("ID001".into());
+        apply_start_patch(&mut cfg, &patch(EXCHANGE)).unwrap();
+        assert_eq!(cfg.payout_memo.as_deref(), Some("ID001"));
+        let other = crate::shortname::tests::ADDRESS;
+        apply_start_patch(&mut cfg, &patch(other)).unwrap();
+        assert_eq!(cfg.payout_memo, None);
+        for address in [EXCHANGE.to_string(), format!("solo:{EXCHANGE}")] {
+            assert!(apply_start_patch(&mut cfg, &patch(&address)).is_err());
+        }
+        assert_eq!(cfg.mining_address.as_deref(), Some(other));
     }
 
     #[test]
