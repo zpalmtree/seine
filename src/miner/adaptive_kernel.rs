@@ -233,22 +233,23 @@ pub(super) fn intel_server_full_count_start() -> bool {
     is_intel_model(&crate::runtime_identity::cpu_identity(), &[0x4f])
 }
 
-/// Share of the threads that fit to start on, for these CPUs. The search still checks.
-const START_TABLE: &[(&str, u32, u32, u32, u32)] = &[
-    // vendor, family, model, share of the room (numerator, denominator)
-    ("AuthenticAMD", 0x19, 0x61, 7, 8),
-    ("AuthenticAMD", 0x1a, 0x44, 3, 4),
+/// Share of the threads that fit to start on, for these CPUs, and the most threads to
+/// start on (0 for no limit). The search still checks.
+const START_TABLE: &[(&str, u32, u32, u32, u32, usize)] = &[
+    // vendor, family, model, share of the room (numerator, denominator), most threads
+    ("AuthenticAMD", 0x19, 0x61, 7, 8, 16),
+    ("AuthenticAMD", 0x1a, 0x44, 3, 4, 0),
 ];
 
-fn start_share(identity: &crate::runtime_identity::CpuIdentity) -> Option<(u32, u32)> {
+fn start_share(identity: &crate::runtime_identity::CpuIdentity) -> Option<(u32, u32, usize)> {
     START_TABLE
         .iter()
-        .find(|(vendor, family, model, _, _)| {
+        .find(|(vendor, family, model, _, _, _)| {
             identity.vendor.as_deref() == Some(*vendor)
                 && identity.family == Some(*family)
                 && identity.model == Some(*model)
         })
-        .map(|&(_, _, _, numerator, denominator)| (numerator, denominator))
+        .map(|&(_, _, _, numerator, denominator, most)| (numerator, denominator, most))
 }
 
 /// Starting count from the table, for `room` threads that fit.
@@ -257,12 +258,10 @@ pub(super) fn field_start(room: usize) -> Option<usize> {
 }
 
 fn field_start_for(identity: &crate::runtime_identity::CpuIdentity, room: usize) -> Option<usize> {
-    let (numerator, denominator) = start_share(identity)?;
-    Some(
-        (room * numerator as usize)
-            .div_ceil(denominator as usize)
-            .max(1),
-    )
+    let (numerator, denominator, most) = start_share(identity)?;
+    let start = (room * numerator as usize).div_ceil(denominator as usize);
+    let start = if most > 0 { start.min(most) } else { start };
+    Some(start.max(1))
 }
 
 /// The cohort kernel regardless of worker count, for the worker-count search:
@@ -1273,6 +1272,8 @@ mod tests {
         assert_eq!(field_start_for(&amd(0x1a, 0x44), 16), Some(12));
         assert_eq!(field_start_for(&amd(0x19, 0x61), 16), Some(14));
         assert_eq!(field_start_for(&amd(0x19, 0x61), 1), Some(1));
+        assert_eq!(field_start_for(&amd(0x19, 0x61), 29), Some(16));
+        assert_eq!(field_start_for(&amd(0x1a, 0x44), 28), Some(21));
         assert_eq!(field_start_for(&amd(0x19, 0x11), 16), None);
     }
 
