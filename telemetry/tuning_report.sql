@@ -1,6 +1,6 @@
 -- Paired CPU trial screening. No 24-hour residence requirement; no automatic defaults.
 BEGIN READ ONLY;
-SET LOCAL statement_timeout = '15s';
+SET LOCAL statement_timeout = '45s';
 SET LOCAL lock_timeout = '2s';
 -- JSON array estimates overstate trial expansion and understate qualification.
 -- Keep relational joins from rescanning the trial sets; lateral JSON expansion

@@ -148,20 +148,49 @@ class ReleaseHealthSQLTests(unittest.TestCase):
         ]
         for detection in variants:
             value = copy.deepcopy(base)
+            # A CPU without built-in graphics (Ryzen 5000 desktop).
+            value['hardware'].update(cpu_family=25, cpu_model_id=33)
             value['diagnostics']['amd_detection'] = detection
             self.insert(value)
         self.insert(base)  # Mining on one of two AMD GPUs.
         result = self.report()
-        self.assertEqual(result['amd']['amd_gpu_not_mining_installations'], 2)
+        # The skipped integrated GPU is not an idle AMD GPU.
+        self.assertEqual(result['amd']['amd_gpu_not_mining_installations'], 1)
         cohort, = result['amd']['detection']
         self.assertEqual(cohort['installations'], 5)
         self.assertEqual(cohort['amd_present'], 3)
         self.assertEqual(cohort['mining_on_amd'], 1)
         self.assertEqual(cohort['not_mining_hip_unavailable'], 1)
-        self.assertEqual(cohort['not_mining_none_selected'], 1)
+        self.assertEqual(cohort['not_mining_none_selected'], 0)
         self.assertEqual(cohort['pci_unknown'], 1)
         self.assertEqual(cohort['hip_unavailable_any'], 3)
         self.assertEqual(cohort['installations_skipping_integrated'], 2)
+
+    def test_built_in_ryzen_graphics_are_not_idle_amd_gpus(self):
+        base = self.fixture()
+        no_hip = {'hip_unavailable': True, 'found': 0, 'selected': 0, 'integrated_skipped': 0,
+                  'unsupported_skipped': 0, 'pci_devices': 1}
+        # Before schema 15 a Ryzen 7000 desktop counts its own graphics.
+        legacy = copy.deepcopy(base)
+        legacy['hardware'].update(cpu_model='AMD Ryzen 9 7950X 16-Core Processor',
+                                  cpu_family=25, cpu_model_id=97)
+        legacy['diagnostics']['amd_detection'] = dict(no_hip)
+        self.insert(legacy)
+        # Brand strings naming Radeon graphics are APUs.
+        apu = copy.deepcopy(legacy)
+        apu['hardware'].update(cpu_model='AMD Ryzen 7 5800H with Radeon Graphics',
+                               cpu_family=25, cpu_model_id=80)
+        self.insert(apu)
+        # From schema 15 the count already excludes built-in graphics.
+        current = copy.deepcopy(legacy)
+        current['schema_version'] = 15
+        self.insert(current)
+        # A Ryzen 7000 with a discrete card on top still counts it.
+        both = copy.deepcopy(legacy)
+        both['diagnostics']['amd_detection']['pci_devices'] = 2
+        self.insert(both)
+        result = self.report()
+        self.assertEqual(result['amd']['amd_gpu_not_mining_installations'], 2)
 
     def test_gpu_kernel_sources_and_perf_levels_use_latest_report_per_installation(self):
         base = self.fixture()

@@ -1,5 +1,5 @@
 BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
-SET LOCAL statement_timeout = '15s';
+SET LOCAL statement_timeout = '45s';
 SET LOCAL lock_timeout = '2s';
 SET LOCAL TIME ZONE 'America/New_York';
 -- Schema-14 operational fields: self-update, fork readiness, AMD detection,
@@ -11,6 +11,10 @@ WITH reports AS MATERIALIZED (
     SELECT installation_id, received_at,
            payload->>'miner_version' AS version,
            payload #>> '{hardware,os}' AS os,
+           payload #>> '{hardware,cpu_vendor}' AS cpu_vendor,
+           payload #>> '{hardware,cpu_model}' AS cpu_model,
+           (payload #>> '{hardware,cpu_family}')::int AS cpu_family,
+           (payload #>> '{hardware,cpu_model_id}')::int AS cpu_model_id,
            (payload->>'schema_version')::int AS schema_version,
            NULLIF(payload->'diagnostics', 'null'::jsonb) AS d,
            payload->'backends' AS backends
@@ -76,8 +80,14 @@ unsupported_events AS (
 ),
 -- AMD detection. Most non-AMD machines report hip_unavailable with no AMD
 -- devices; only pci_devices > 0 shows an AMD GPU that is not being mined.
-amd AS (
-    SELECT DISTINCT ON (installation_id) installation_id, version, os,
+-- Schema 15 leaves graphics built into the CPU out of pci_devices. Older
+-- reports count them, so those devices are discounted: the ones HIP skipped as
+-- integrated, or one on Ryzen CPUs that carry graphics ("Radeon" in the brand
+-- string, Ryzen 7000 desktops at family 25 model 97 and Ryzen 9000 desktops
+-- at family 26 model 68).
+amd_latest AS (
+    SELECT DISTINCT ON (installation_id) installation_id, version, os, schema_version,
+           cpu_vendor, cpu_model, cpu_family, cpu_model_id,
            (d #>> '{amd_detection,hip_unavailable}')::boolean AS hip_unavailable,
            (d #>> '{amd_detection,found}')::int AS found,
            (d #>> '{amd_detection,selected}')::int AS selected,
@@ -86,6 +96,21 @@ amd AS (
            (d #>> '{amd_detection,pci_devices}')::int AS pci_devices
     FROM reports WHERE d->'amd_detection' IS NOT NULL
     ORDER BY installation_id, received_at DESC
+), amd AS (
+    SELECT installation_id, version, os, hip_unavailable, found, selected,
+           integrated_skipped, unsupported_skipped,
+           CASE
+               WHEN schema_version < 15 AND pci_devices > 0
+               THEN GREATEST(pci_devices - GREATEST(
+                        coalesce(integrated_skipped, 0),
+                        CASE WHEN cpu_vendor = 'AuthenticAMD'
+                                  AND (cpu_model ILIKE '%radeon%'
+                                       OR (cpu_family = 25 AND cpu_model_id = 97)
+                                       OR (cpu_family = 26 AND cpu_model_id = 68))
+                             THEN 1 ELSE 0 END), 0)
+               ELSE pci_devices
+           END AS pci_devices
+    FROM amd_latest
 ), amd_cohorts AS (
     SELECT version, os,
            count(*) AS installations,

@@ -1982,8 +1982,8 @@ fn init_amd_crash_guard(data_dir: &Path) {
 #[cfg(not(all(feature = "amd", any(target_os = "linux", windows))))]
 fn init_amd_crash_guard(_data_dir: &Path) {}
 
-/// AMD display devices (vendor 0x1002, PCI class 0x03), integrated or
-/// discrete, as the OS lists them whether or not HIP can use them. Linux only.
+/// Discrete AMD display devices (vendor 0x1002, PCI class 0x03) as the OS lists
+/// them, whether or not HIP can use them. Linux only.
 #[cfg(all(feature = "amd", any(target_os = "linux", windows)))]
 fn amd_pci_display_devices() -> Option<u32> {
     if !cfg!(target_os = "linux") {
@@ -2000,9 +2000,37 @@ fn amd_pci_display_devices() -> Option<u32> {
         .filter(|entry| {
             read(entry.path().join("vendor")) == "0x1002"
                 && read(entry.path().join("class")).starts_with("0x03")
+                && !u16::from_str_radix(
+                    read(entry.path().join("device")).trim_start_matches("0x"),
+                    16,
+                )
+                .is_ok_and(amd_integrated_gpu_device)
         })
         .count();
     Some(count.min(64) as u32)
+}
+
+/// AMD display devices built into a CPU (APU or Ryzen desktop graphics),
+/// which Seine never mines on.
+#[cfg(all(feature = "amd", any(target_os = "linux", windows)))]
+fn amd_integrated_gpu_device(device: u16) -> bool {
+    matches!(
+        device,
+        0x1304..=0x131d // Kaveri
+            | 0x9830..=0x983f // Kabini
+            | 0x9850..=0x985f // Mullins
+            | 0x9870..=0x9877 // Carrizo
+            | 0x98e4 // Stoney
+            | 0x15d8 | 0x15dd // Picasso, Raven
+            | 0x15e7 | 0x1636 | 0x1638 | 0x164c // Barcelo, Renoir, Cezanne, Lucienne
+            | 0x163f // Van Gogh
+            | 0x13fe | 0x143f // Cyan Skillfish
+            | 0x164d | 0x1681 // Rembrandt
+            | 0x164e | 0x13c0 // Raphael, Granite Ridge
+            | 0x1506 // Mendocino
+            | 0x15bf | 0x15c8 | 0x1900 | 0x1901 // Phoenix, Hawk Point
+            | 0x150e | 0x1114 | 0x1586 // Strix Point, Krackan Point, Strix Halo
+    )
 }
 
 #[cfg(not(all(feature = "amd", any(target_os = "linux", windows))))]
@@ -5317,6 +5345,18 @@ HugePages_Rsvd:          0
     fn human_bytes_formats_units() {
         assert_eq!(human_bytes(1024 * 1024), "1.00 MiB");
         assert_eq!(human_bytes(1024 * 1024 * 1024), "1.00 GiB");
+    }
+
+    #[cfg(all(feature = "amd", any(target_os = "linux", windows)))]
+    #[test]
+    fn integrated_amd_graphics_are_not_counted_as_gpus() {
+        assert!(amd_integrated_gpu_device(0x164e), "Ryzen 7000 graphics");
+        assert!(amd_integrated_gpu_device(0x13c0), "Ryzen 9000 graphics");
+        assert!(amd_integrated_gpu_device(0x15bf), "Phoenix");
+        assert!(!amd_integrated_gpu_device(0x744c), "RX 7900 XTX");
+        assert!(!amd_integrated_gpu_device(0x73bf), "RX 6800 XT");
+        assert!(!amd_integrated_gpu_device(0x74a1), "MI300X");
+        assert!(!amd_integrated_gpu_device(0x7550), "RX 9070 XT");
     }
 
     #[test]

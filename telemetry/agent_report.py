@@ -18,7 +18,7 @@ REMOTE_SQL = (
 def remote(host, command, data=None):
     return subprocess.run(
         ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '--', host, command],
-        input=data, text=True, capture_output=True, timeout=60,
+        input=data, text=True, capture_output=True, timeout=90,
     )
 
 
@@ -142,7 +142,8 @@ def main():
         'AMD detection and GPU kernel sources use each installation\'s latest report. '
         'install_failure_stages records only the last failed stage per report window. '
         'amd_gpu_not_mining counts installations whose OS lists an AMD display device (pci_devices > 0, '
-        'Linux only) while HIP is unavailable or no AMD GPU was selected, usually missing ROCm; '
+        'Linux only, excluding graphics built into the CPU) while HIP is unavailable or no AMD GPU was '
+        'selected, usually missing ROCm; '
         'hip_unavailable alone is normal on machines without AMD GPUs. nvrtc_failed_prebuilt_ptx means '
         'NVRTC was installed but failed. Pool counts are booleans and counts, never hosts or memos. '
         'startup.first_hash counts each run once, so cold starts stay visible; first_hash_ms includes any '

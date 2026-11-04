@@ -46,7 +46,8 @@ GPU performance level found at startup and which proof of work the backend was
 mining. Reports count the backends of each type a run expected and record how long
 each took to produce its first hash. They also count the AMD GPUs found, selected
 and left out (integrated or unsupported), whether the AMD GPU runtime could be
-loaded, and how many AMD display devices the operating system lists.
+loaded, and how many AMD display devices the operating system lists, not
+counting graphics built into the CPU.
 
 Paired CPU tuning evidence can include baseline and candidate worker/kernel
 settings, per-window hashes and durations, resource snapshots, outcome and fixed

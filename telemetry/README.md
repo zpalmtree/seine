@@ -21,6 +21,8 @@ counts and enums:
   found and selected, integrated GPUs and unsupported-wavefront GPUs skipped,
   and `pci_devices`, the AMD display devices the OS lists (Linux sysfs, vendor
   0x1002) whether or not HIP can use them; absent where unknown, such as Windows.
+  From schema 15 the count leaves out graphics built into the CPU; for older
+  reports `release_health.sql` discounts them.
 - `diagnostics.unsupported_work_paused_secs`: seconds in the window that mining
   was paused on work this build cannot mine, with the diagnostic reason
   `unsupported_work` and operation `receive_work`. This measures readiness for
