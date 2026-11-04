@@ -578,6 +578,12 @@ pub fn payout_account_for_pool(
     }
 }
 
+/// True when a pool error only reflects transient load (such as `server busy,
+/// retry`) rather than a refusal of the request itself.
+pub(crate) fn is_transient_pool_error(message: &str) -> bool {
+    submit_retry::is_retryable_submit_reject(message)
+}
+
 pub fn uses_longhorn_memos(pool_url: &str) -> bool {
     parse_pool_endpoint(primary_pool_url(pool_url))
         .is_ok_and(|endpoint| endpoint.memo_protocol() == MemoProtocol::LonghornAddress)

@@ -801,7 +801,12 @@ impl Hub {
                         compact_address(&session.address)
                     ),
                 );
-                if !session.permanent {
+                // A busy pool is retried by the session's client. Only a
+                // refusal of the address turns its rigs away; --address is
+                // every rig's fallback, so its sessions stay.
+                if session.address != self.address
+                    && !crate::pool::is_transient_pool_error(&message)
+                {
                     let address = session.address.clone();
                     self.drop_rejected_address(address, message);
                 }
@@ -1788,6 +1793,17 @@ mod tests {
         refill: bool,
         reject: Option<&'static str>,
     ) -> (u16, std_mpsc::Receiver<(String, Value)>) {
+        multi_pool_answering(refill, reject, "address not allowed", usize::MAX)
+    }
+
+    /// `multi_pool` that answers the first `times` logins for `reject` with `error`.
+    fn multi_pool_answering(
+        refill: bool,
+        reject: Option<&'static str>,
+        error: &'static str,
+        times: usize,
+    ) -> (u16, std_mpsc::Receiver<(String, Value)>) {
+        let refused = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let listener = StdTcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let (seen_tx, seen_rx) = std_mpsc::channel();
@@ -1795,6 +1811,7 @@ mod tests {
             for (session, stream) in listener.incoming().enumerate() {
                 let Ok(stream) = stream else { break };
                 let seen_tx = seen_tx.clone();
+                let refused = Arc::clone(&refused);
                 std::thread::spawn(move || {
                     let mut writer = stream.try_clone().unwrap();
                     let mut reader = StdBufReader::new(stream);
@@ -1813,8 +1830,10 @@ mod tests {
                                     .as_str()
                                     .unwrap_or("")
                                     .to_string();
-                                if reject == Some(address.as_str()) {
-                                    replies.push(json!({"id": 1, "error": "address not allowed"}));
+                                if reject == Some(address.as_str())
+                                    && refused.fetch_add(1, Ordering::Relaxed) < times
+                                {
+                                    replies.push(json!({"id": 1, "error": error}));
                                     let _ = seen_tx.send((address.clone(), message));
                                     for reply in replies {
                                         let _ = writeln!(writer, "{reply}");
@@ -1975,6 +1994,19 @@ mod tests {
         let reply = again.recv();
         let error = reply["error"].as_str().unwrap_or_default();
         assert!(error.contains("address not allowed"), "{reply}");
+        shutdown.store(true, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn a_busy_pool_does_not_turn_rigs_away() {
+        let dev = crate::dev_fee::DEV_ADDRESS;
+        let (pool_port, seen) = multi_pool_answering(true, Some(dev), "server busy, retry", 1);
+        let (proxy_port, shutdown) = start_proxy_on(pool_port, "farmaddr");
+        next_from(&seen, "login");
+        // The first upstream login for the rig's address is busy; the session
+        // retries and the rig gets work instead of being closed.
+        let (_rig, job) = login_as(proxy_port, dev);
+        assert_eq!(job["method"], "job");
         shutdown.store(true, Ordering::Relaxed);
     }
 
