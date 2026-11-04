@@ -398,7 +398,8 @@ pub(crate) fn restart_pending() -> bool {
 /// replaces the process image. Windows cannot, so the first process stays as a
 /// small supervisor: it runs the updated executable, relaunches it after each
 /// later update, and exits with its exit code, so whatever started Seine still
-/// sees one process that ends when mining ends.
+/// sees one process that ends when mining ends. The child runs in a job that
+/// ends it if the supervisor is stopped.
 pub(crate) fn restart() -> Result<()> {
     let exe = match UPDATED_EXECUTABLE.get() {
         Some(path) => path.clone(),
@@ -421,12 +422,79 @@ pub(crate) fn restart() -> Result<()> {
         command.env(SUPERVISED_ENV, "1");
         // Console interrupts reach the child too; it stops and returns its code.
         crate::shutdown::supervise_child();
+        let job = windows_job::kill_on_close();
         loop {
-            let status = command
-                .status()
+            let mut child = command
+                .spawn()
                 .with_context(|| format!("restart of {} failed", exe.display()))?;
+            if let Some(job) = &job {
+                job.assign(&child);
+            }
+            {
+                use std::os::windows::io::AsRawHandle;
+                crate::shutdown::set_supervised_child(child.as_raw_handle());
+            }
+            let status = child.wait();
+            crate::shutdown::set_supervised_child(std::ptr::null_mut());
+            let status = status.with_context(|| format!("restart of {} failed", exe.display()))?;
             if status.code() != Some(RESTART_EXIT_CODE) {
                 std::process::exit(status.code().unwrap_or(1));
+            }
+        }
+    }
+}
+
+/// A Windows job that ends its processes when the supervisor's handle closes,
+/// so stopping the supervisor by its process ID also stops the miner.
+#[cfg(not(unix))]
+mod windows_job {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Foundation::HANDLE;
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+
+    pub(super) struct Job(HANDLE);
+
+    /// `None` when the job cannot be created; the child then runs without it.
+    pub(super) fn kill_on_close() -> Option<Job> {
+        // SAFETY: plain Win32 calls on a handle this function owns; the limit
+        // structure is fully initialized before it is passed by pointer.
+        unsafe {
+            let handle = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+            if handle.is_null() {
+                return None;
+            }
+            let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            let set = SetInformationJobObject(
+                handle,
+                JobObjectExtendedLimitInformation,
+                (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            );
+            (set != 0).then_some(Job(handle))
+        }
+    }
+
+    impl Job {
+        pub(super) fn assign(&self, child: &std::process::Child) {
+            // SAFETY: both handles are valid for the duration of the call. A
+            // failure (for example a parent job that forbids nesting) leaves
+            // the child running outside the job, as before.
+            unsafe {
+                AssignProcessToJobObject(self.0, child.as_raw_handle() as HANDLE);
+            }
+        }
+
+        /// What the supervisor's exit does to the job.
+        #[cfg(test)]
+        pub(super) fn close(self) {
+            // SAFETY: this job's own handle, closed once.
+            unsafe {
+                windows_sys::Win32::Foundation::CloseHandle(self.0);
             }
         }
     }
@@ -758,6 +826,28 @@ fn replace_executable(exe: &Path, staged: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(unix))]
+    #[test]
+    fn stopping_the_restart_supervisor_stops_the_miner() {
+        let job = windows_job::kill_on_close().expect("create job");
+        let mut child = std::process::Command::new("cmd")
+            .args(["/c", "ping", "-n", "60", "127.0.0.1"])
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .expect("start child");
+        job.assign(&child);
+        assert!(child.try_wait().unwrap().is_none());
+        job.close();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while child.try_wait().unwrap().is_none() {
+            if std::time::Instant::now() > deadline {
+                let _ = child.kill();
+                panic!("child outlived the supervisor's job");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
 
     #[test]
     fn release_signing_key_is_a_32_byte_ed25519_key() {
