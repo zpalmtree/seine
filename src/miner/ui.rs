@@ -165,6 +165,23 @@ pub(crate) fn warn(tag: &str, message: impl AsRef<str>) {
     log(Level::Warn, Audience::Everyone, tag, message.as_ref());
 }
 
+/// Like `warn`, but records a typed cause instead of classifying the text.
+#[track_caller]
+pub(crate) fn warn_with_detail(
+    tag: &str,
+    message: impl AsRef<str>,
+    kind: seine_telemetry::DiagnosticKind,
+    detail: seine_telemetry::FailureDetail,
+) {
+    crate::diagnostics::record_failure(
+        seine_telemetry::DiagnosticCode::Warning,
+        kind,
+        None,
+        detail,
+    );
+    log(Level::Warn, Audience::Everyone, tag, message.as_ref());
+}
+
 #[track_caller]
 pub(super) fn error(tag: &str, message: impl AsRef<str>) {
     crate::diagnostics::record(

@@ -70,7 +70,10 @@ releasing schema-11 miners; schemas 1-10 remain accepted, with no SQL storage
 migration.
 
 Schema 15 adds the search's settled result under `tuning.settled` and
-`diagnostics.previous_run_oom`; see [TUNING.md](TUNING.md). Deploy the schema-15
+`diagnostics.previous_run_oom`; see [TUNING.md](TUNING.md). It also adds the
+operation `pool_stats` for pool statistics and balance fetches, with the reasons
+`http_status`, `rate_limited` and `invalid_response` alongside the existing
+connection reasons. Deploy the schema-15
 collector before releasing schema-15 miners; schemas 1-14 remain accepted, with no
 SQL storage migration.
 

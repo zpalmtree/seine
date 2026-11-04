@@ -9,6 +9,7 @@ use crossbeam_channel::{unbounded, Receiver};
 use reqwest::blocking::{Client as HttpClient, Response as HttpResponse};
 use reqwest::header::RETRY_AFTER;
 use reqwest::StatusCode;
+use seine_telemetry::FailureReason;
 use serde_json::Value;
 
 use crate::backend::{DynamicShareTarget, MiningSolution, ShareBindingId};
@@ -57,6 +58,9 @@ const POOL_DESYNC_STALE_ACK_THRESHOLD: usize = 3;
 const POOL_DESYNC_STALE_FOR_THRESHOLD: Duration = Duration::from_secs(15);
 const POOL_TELEMETRY_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 const POOL_HASHRATE_CACHE_TTL: Duration = Duration::from_secs(30);
+/// Consecutive failed refreshes before the pool statistics warning is shown.
+const POOL_TELEMETRY_WARN_AFTER_FAILURES: u32 = 3;
+const POOL_TELEMETRY_MAX_BACKOFF: Duration = Duration::from_secs(300);
 const POOL_TELEMETRY_TIMEOUT: Duration = Duration::from_secs(5);
 const POOL_TIMING_SLOW_QUEUE_THRESHOLD: Duration = Duration::from_secs(3);
 const POOL_TIMING_SLOW_ACK_THRESHOLD: Duration = Duration::from_secs(3);
@@ -130,6 +134,8 @@ struct PoolTelemetryRefreshResult {
     balances: Option<(String, String)>,
     local_wallet: Option<LocalDaemonWalletSnapshot>,
     errors: Vec<String>,
+    /// Typed cause of the first error.
+    failure: Option<FailureReason>,
 }
 
 #[derive(Debug, Clone)]
@@ -913,7 +919,8 @@ pub(super) fn run_pool_mining_loop(
     let mut pending_gpus_logged = false;
     let mut pool_network_hashrate = "unknown".to_string();
     let mut next_pool_telemetry_refresh = Instant::now();
-    let mut pool_telemetry_warning_logged = false;
+    let mut pool_telemetry_failures = PoolTelemetryFailures::default();
+    let mut telemetry_spawn_warning_logged = false;
     let (telemetry_result_tx, telemetry_result_rx) = unbounded::<PoolTelemetryRefreshResult>();
     let mut telemetry_next_request_id = 0u64;
     let mut telemetry_inflight_request_id: Option<u64> = None;
@@ -1081,8 +1088,11 @@ pub(super) fn run_pool_mining_loop(
                     }
 
                     pool_network_hashrate = "unknown".to_string();
-                    next_pool_telemetry_refresh = Instant::now();
-                    pool_telemetry_warning_logged = false;
+                    // Dev-fee switches keep the statistics warning state: it
+                    // belongs to the user's pool, which has not changed.
+                    if pool_telemetry_failures.consecutive == 0 {
+                        next_pool_telemetry_refresh = Instant::now();
+                    }
                     telemetry_inflight_request_id = None;
                 }
             }
@@ -1128,19 +1138,26 @@ pub(super) fn run_pool_mining_loop(
             if !current_pool {
                 continue;
             }
+            let pool_url = result.pool_url.as_deref().unwrap_or_default();
             if result.errors.is_empty() {
-                if pool_telemetry_warning_logged {
+                if pool_telemetry_failures.succeeded(pool_url) {
                     info("STATS", "pool telemetry recovered");
-                    pool_telemetry_warning_logged = false;
                 }
-            } else if !pool_telemetry_warning_logged {
+            } else if pool_telemetry_failures.failed(pool_url) {
                 let detail = result
                     .errors
                     .first()
                     .map(String::as_str)
                     .unwrap_or("unknown telemetry error");
-                warn("STATS", format!("failed to fetch pool stats: {detail}"));
-                pool_telemetry_warning_logged = true;
+                super::ui::warn_with_detail(
+                    "STATS",
+                    format!("failed to fetch pool stats: {detail}"),
+                    seine_telemetry::DiagnosticKind::Connection,
+                    seine_telemetry::FailureDetail::new(
+                        result.failure.unwrap_or(FailureReason::InvalidResponse),
+                        seine_telemetry::DiagnosticOperation::PoolStats,
+                    ),
+                );
             }
         }
         if user_telemetry.is_some() || local_daemon_client.is_some() {
@@ -1150,6 +1167,7 @@ pub(super) fn run_pool_mining_loop(
                 telemetry_next_request_id = telemetry_next_request_id.wrapping_add(1).max(1);
                 let request_id = telemetry_next_request_id;
                 let telemetry = user_telemetry.cloned();
+                let shares_wallet_refresh = local_daemon_client.is_some();
                 let local_daemon_client = local_daemon_client.clone();
                 let local_daemon_cookie_path = cfg.token_cookie_path.clone();
                 let tx = telemetry_result_tx.clone();
@@ -1178,9 +1196,11 @@ pub(super) fn run_pool_mining_loop(
                             )
                         });
                         let mut errors = Vec::new();
+                        let mut failure = None;
                         let hashrate = hashrate.and_then(|result| match result {
                             Ok(value) => Some(value),
                             Err(err) => {
+                                failure.get_or_insert_with(|| telemetry_failure_reason(&err));
                                 errors.push(format!("global hashrate: {err:#}"));
                                 None
                             }
@@ -1188,6 +1208,7 @@ pub(super) fn run_pool_mining_loop(
                         let balances = balances.and_then(|result| match result {
                             Ok(value) => Some(value),
                             Err(err) => {
+                                failure.get_or_insert_with(|| telemetry_failure_reason(&err));
                                 errors.push(format!("balance: {err:#}"));
                                 None
                             }
@@ -1199,15 +1220,23 @@ pub(super) fn run_pool_mining_loop(
                             balances,
                             local_wallet,
                             errors,
+                            failure,
                         });
                     });
                 if spawn_result.is_ok() {
                     telemetry_inflight_request_id = Some(request_id);
-                } else if !pool_telemetry_warning_logged {
+                } else if !telemetry_spawn_warning_logged {
                     warn("STATS", "failed to start pool telemetry refresh");
-                    pool_telemetry_warning_logged = true;
+                    telemetry_spawn_warning_logged = true;
                 }
-                next_pool_telemetry_refresh = Instant::now() + pool_telemetry_refresh_delay();
+                // The local daemon wallet shares this refresh, so keep its pace.
+                let backoff = if !shares_wallet_refresh {
+                    pool_telemetry_failure_backoff(pool_telemetry_failures.consecutive)
+                } else {
+                    Duration::ZERO
+                };
+                next_pool_telemetry_refresh =
+                    Instant::now() + pool_telemetry_refresh_delay().max(backoff);
             }
         }
 
@@ -2940,10 +2969,12 @@ impl PoolUiTelemetryClient {
         }
         self.fail_if_rate_limited()?;
         let mut errors = Vec::new();
+        let mut first_reason = None;
         for endpoint in &self.endpoints {
             let response = match self.http.get(&endpoint.stats_url).send() {
                 Ok(response) => response,
                 Err(err) => {
+                    first_reason.get_or_insert_with(|| reqwest_failure_reason(&err));
                     errors.push(format!("GET {} failed: {err}", endpoint.stats_url));
                     continue;
                 }
@@ -2954,6 +2985,7 @@ impl PoolUiTelemetryClient {
                     if self.is_rate_limited() {
                         return Err(err);
                     }
+                    first_reason.get_or_insert_with(|| telemetry_failure_reason(&err));
                     errors.push(format!("GET {} failed: {err}", endpoint.stats_url));
                     continue;
                 }
@@ -2964,6 +2996,7 @@ impl PoolUiTelemetryClient {
                 .and_then(value_as_f64)
                 .or_else(|| body.pointer("/network_hashrate").and_then(value_as_f64));
             let Some(hashrate) = hashrate else {
+                first_reason.get_or_insert(FailureReason::InvalidResponse);
                 errors.push(format!(
                     "GET {} missing network hashrate field",
                     endpoint.stats_url
@@ -2971,6 +3004,7 @@ impl PoolUiTelemetryClient {
                 continue;
             };
             if !hashrate.is_finite() || hashrate < 0.0 {
+                first_reason.get_or_insert(FailureReason::InvalidResponse);
                 errors.push(format!(
                     "GET {} invalid network hashrate value",
                     endpoint.stats_url
@@ -2983,12 +3017,17 @@ impl PoolUiTelemetryClient {
             return Ok(value);
         }
 
-        bail!("pool hashrate telemetry unavailable: {}", errors.join("; "));
+        Err(PoolTelemetryError::new(
+            first_reason.unwrap_or(FailureReason::InvalidResponse),
+            format!("pool hashrate telemetry unavailable: {}", errors.join("; ")),
+        )
+        .into())
     }
 
     fn fetch_pool_balances(&self) -> Result<(String, String)> {
         self.fail_if_rate_limited()?;
         let mut errors = Vec::new();
+        let mut first_reason = None;
         for endpoint in &self.endpoints {
             match self.fetch_balance_from_url(&endpoint.miner_balance_url) {
                 Ok(value) => return Ok(value),
@@ -3005,6 +3044,7 @@ impl PoolUiTelemetryClient {
                                 StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED
                             )
                         });
+                    first_reason.get_or_insert_with(|| telemetry_failure_reason(&err));
                     errors.push(format!(
                         "GET {} failed: {err:#}",
                         pool_telemetry_url_for_log(&endpoint.miner_balance_url)
@@ -3021,6 +3061,7 @@ impl PoolUiTelemetryClient {
                     if self.is_rate_limited() {
                         return Err(err);
                     }
+                    first_reason.get_or_insert_with(|| telemetry_failure_reason(&err));
                     errors.push(format!(
                         "GET {} failed: {err:#}",
                         pool_telemetry_url_for_log(&endpoint.miner_url)
@@ -3029,7 +3070,11 @@ impl PoolUiTelemetryClient {
             }
         }
 
-        bail!("pool balance telemetry unavailable: {}", errors.join("; "))
+        Err(PoolTelemetryError::new(
+            first_reason.unwrap_or(FailureReason::InvalidResponse),
+            format!("pool balance telemetry unavailable: {}", errors.join("; ")),
+        )
+        .into())
     }
 
     fn fail_if_rate_limited(&self) -> Result<()> {
@@ -3037,7 +3082,11 @@ impl PoolUiTelemetryClient {
             return Ok(());
         };
         let secs = remaining.as_secs().max(1);
-        bail!("pool telemetry temporarily rate limited; retry in {secs}s")
+        Err(PoolTelemetryError::new(
+            FailureReason::RateLimited,
+            format!("pool telemetry temporarily rate limited; retry in {secs}s"),
+        )
+        .into())
     }
 
     fn is_rate_limited(&self) -> bool {
@@ -3071,10 +3120,14 @@ impl PoolUiTelemetryClient {
                 .unwrap_or(POOL_TELEMETRY_REFRESH_INTERVAL)
                 .as_secs()
                 .max(1);
-            bail!(
-                "GET {} rate limited; retry in {secs}s",
-                pool_telemetry_url_for_log(url)
-            );
+            return Err(PoolTelemetryError::new(
+                FailureReason::RateLimited,
+                format!(
+                    "GET {} rate limited; retry in {secs}s",
+                    pool_telemetry_url_for_log(url)
+                ),
+            )
+            .into());
         }
         let response = response
             .error_for_status()
@@ -3135,6 +3188,120 @@ fn pool_telemetry_url_for_log(url: &str) -> String {
     } else {
         url.to_string()
     }
+}
+
+/// Consecutive statistics failures for the user's pool. The warning is shown
+/// once per pool after a few failures in a row, so a single dropped request
+/// stays quiet, and again only after a successful fetch or a pool change.
+#[derive(Default)]
+struct PoolTelemetryFailures {
+    pool_url: String,
+    consecutive: u32,
+    warned: bool,
+}
+
+impl PoolTelemetryFailures {
+    fn track(&mut self, pool_url: &str) {
+        if self.pool_url != pool_url {
+            *self = Self {
+                pool_url: pool_url.to_string(),
+                ..Self::default()
+            };
+        }
+    }
+
+    /// Returns true when a shown warning should be followed by a recovery note.
+    fn succeeded(&mut self, pool_url: &str) -> bool {
+        self.track(pool_url);
+        let recovered = self.warned;
+        self.consecutive = 0;
+        self.warned = false;
+        recovered
+    }
+
+    /// Returns true when the warning should be shown now.
+    fn failed(&mut self, pool_url: &str) -> bool {
+        self.track(pool_url);
+        self.consecutive = self.consecutive.saturating_add(1);
+        if self.warned || self.consecutive < POOL_TELEMETRY_WARN_AFTER_FAILURES {
+            return false;
+        }
+        self.warned = true;
+        true
+    }
+}
+
+/// A pool statistics fetch failure with its typed cause for diagnostics.
+#[derive(Debug)]
+struct PoolTelemetryError {
+    reason: FailureReason,
+    message: String,
+}
+
+impl PoolTelemetryError {
+    fn new(reason: FailureReason, message: String) -> Self {
+        Self { reason, message }
+    }
+}
+
+impl std::fmt::Display for PoolTelemetryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for PoolTelemetryError {}
+
+fn telemetry_failure_reason(err: &anyhow::Error) -> FailureReason {
+    if let Some(err) = err.downcast_ref::<PoolTelemetryError>() {
+        return err.reason;
+    }
+    if let Some(err) = err.downcast_ref::<reqwest::Error>() {
+        return reqwest_failure_reason(err);
+    }
+    FailureReason::InvalidResponse
+}
+
+fn reqwest_failure_reason(err: &reqwest::Error) -> FailureReason {
+    if err.is_timeout() {
+        return FailureReason::ConnectionTimedOut;
+    }
+    if err.status().is_some() {
+        return FailureReason::HttpStatus;
+    }
+    if err.is_decode() {
+        return FailureReason::InvalidResponse;
+    }
+    let mut source = std::error::Error::source(err);
+    while let Some(cause) = source {
+        if let Some(io) = cause.downcast_ref::<std::io::Error>() {
+            let operation = if cause.to_string().contains("dns error") {
+                seine_telemetry::DiagnosticOperation::PoolResolve
+            } else {
+                seine_telemetry::DiagnosticOperation::PoolStats
+            };
+            return crate::diagnostics::io_detail(operation, io).reason;
+        }
+        if cause.to_string().contains("dns error") {
+            return FailureReason::DnsFailed;
+        }
+        source = cause.source();
+    }
+    if err.is_connect() {
+        FailureReason::ConnectionFailed
+    } else {
+        FailureReason::IoFailed
+    }
+}
+
+/// Polling slows down after repeated failures, up to five minutes apart,
+/// so an unreachable statistics API is not asked every few seconds.
+fn pool_telemetry_failure_backoff(consecutive_failures: u32) -> Duration {
+    if consecutive_failures < POOL_TELEMETRY_WARN_AFTER_FAILURES {
+        return Duration::ZERO;
+    }
+    let doublings = (consecutive_failures - POOL_TELEMETRY_WARN_AFTER_FAILURES + 1).min(6);
+    (POOL_TELEMETRY_REFRESH_INTERVAL * (1u32 << doublings)).min(POOL_TELEMETRY_MAX_BACKOFF)
 }
 
 fn pool_telemetry_refresh_delay() -> Duration {
@@ -3426,6 +3593,10 @@ mod tests {
         PoolShareSubmitOutcome, PoolUiTelemetryClient, RecentPendingSubmitLookup,
         POOL_DESYNC_STALE_ACK_THRESHOLD, POOL_DESYNC_STALE_ACK_WINDOW, POOL_MAX_INFLIGHT_SUBMITS,
         POOL_SUBMIT_ACK_TIMEOUT,
+    };
+    use super::{
+        pool_telemetry_failure_backoff, telemetry_failure_reason, FailureReason,
+        PoolTelemetryFailures, POOL_TELEMETRY_MAX_BACKOFF,
     };
 
     #[test]
@@ -4041,6 +4212,89 @@ mod tests {
             );
             response.assert_hits(1);
         }
+    }
+
+    #[test]
+    fn pool_stats_warning_waits_for_repeated_failures_and_stays_per_pool() {
+        let mut failures = PoolTelemetryFailures::default();
+        let pool = "stratum+tcp://bntpool.com:3333";
+        assert!(!failures.failed(pool));
+        assert!(!failures.failed(pool));
+        assert!(
+            !failures.succeeded(pool),
+            "no warning shown, so no recovery note"
+        );
+        assert!(!failures.failed(pool));
+        assert!(!failures.failed(pool));
+        assert!(failures.failed(pool), "third failure in a row warns");
+        assert!(!failures.failed(pool), "warned once per outage");
+        assert!(failures.succeeded(pool));
+
+        for _ in 0..3 {
+            failures.failed(pool);
+        }
+        // A different pool starts its own count.
+        let backup = "stratum+tcp://backup.example:3333";
+        assert!(!failures.failed(backup));
+        assert_eq!(failures.consecutive, 1);
+    }
+
+    #[test]
+    fn pool_stats_polling_backs_off_after_repeated_failures() {
+        assert_eq!(pool_telemetry_failure_backoff(0), Duration::ZERO);
+        assert_eq!(pool_telemetry_failure_backoff(2), Duration::ZERO);
+        assert_eq!(pool_telemetry_failure_backoff(3), Duration::from_secs(10));
+        assert_eq!(pool_telemetry_failure_backoff(4), Duration::from_secs(20));
+        assert_eq!(
+            pool_telemetry_failure_backoff(100),
+            POOL_TELEMETRY_MAX_BACKOFF
+        );
+    }
+
+    #[test]
+    fn pool_stats_failures_carry_typed_reasons() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/api/stats");
+            then.status(404);
+        });
+        server.mock(|when, then| {
+            when.method(GET).path("/api/miner/addr/balance");
+            then.status(200).body("not json");
+        });
+        let client = PoolUiTelemetryClient::new(&server.url(""), "addr").unwrap();
+        let err = client.fetch_pool_hashrate().unwrap_err();
+        assert_eq!(telemetry_failure_reason(&err), FailureReason::HttpStatus);
+        let err = client.fetch_pool_balances().unwrap_err();
+        assert_eq!(
+            telemetry_failure_reason(&err),
+            FailureReason::InvalidResponse
+        );
+
+        let limited = MockServer::start();
+        limited.mock(|when, then| {
+            when.method(GET).path("/api/stats");
+            then.status(429).header("Retry-After", "30");
+        });
+        let client = PoolUiTelemetryClient::new(&limited.url(""), "addr").unwrap();
+        let err = client.fetch_pool_hashrate().unwrap_err();
+        assert_eq!(telemetry_failure_reason(&err), FailureReason::RateLimited);
+        let err = client.fetch_pool_balances().unwrap_err();
+        assert_eq!(telemetry_failure_reason(&err), FailureReason::RateLimited);
+
+        // Nothing listens on a port that was just released.
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let client =
+            PoolUiTelemetryClient::new(&format!("http://127.0.0.1:{port}"), "addr").unwrap();
+        let err = client.fetch_pool_hashrate().unwrap_err();
+        assert_eq!(
+            telemetry_failure_reason(&err),
+            FailureReason::ConnectionRefused
+        );
     }
 
     #[test]

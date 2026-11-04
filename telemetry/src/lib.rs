@@ -79,6 +79,12 @@ pub enum FailureReason {
     /// Work used a PoW or header format this build cannot mine; mining paused
     /// until an update (schema 14).
     UnsupportedWork,
+    /// The server answered with an HTTP error status (schema 15).
+    HttpStatus,
+    /// The server asked the client to slow down (schema 15).
+    RateLimited,
+    /// The response was not the expected JSON shape (schema 15).
+    InvalidResponse,
 }
 
 /// An observed session or OS shutdown request, not proof that cleanup finished or the cause
@@ -162,6 +168,8 @@ pub enum DiagnosticOperation {
     BackendFence,
     /// Accepting a job or block template for mining (schema 14).
     ReceiveWork,
+    /// Fetching pool statistics or balances over HTTP (schema 15).
+    PoolStats,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -306,6 +314,17 @@ impl DiagnosticEvent {
         self.detail.as_ref().is_none_or(|d| {
             d.reason != FailureReason::UnsupportedWork
                 && d.operation != DiagnosticOperation::ReceiveWork
+        })
+    }
+
+    fn schema14_compatible(&self) -> bool {
+        self.detail.as_ref().is_none_or(|d| {
+            !matches!(
+                d.reason,
+                FailureReason::HttpStatus
+                    | FailureReason::RateLimited
+                    | FailureReason::InvalidResponse
+            ) && d.operation != DiagnosticOperation::PoolStats
         })
     }
     fn schema6_compatible(&self) -> bool {
@@ -511,7 +530,8 @@ pub struct AmdDetection {
     /// Skipped for an unsupported wavefront size.
     pub unsupported_skipped: u32,
     /// AMD display devices visible to the OS (Linux sysfs, vendor 0x1002),
-    /// whether or not HIP can use them; absent where unknown.
+    /// whether or not HIP can use them; absent where unknown. From schema 15
+    /// the count leaves out graphics built into the CPU.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pci_devices: Option<u32>,
 }
@@ -900,6 +920,13 @@ impl Report {
                             && d.previous_run.as_ref().is_none_or(|r| {
                                 r.shutdown_request
                                     .is_none_or(ShutdownRequest::schema8_compatible)
+                            })))
+                    && (self.schema_version >= 15
+                        || (d.events.iter().all(DiagnosticEvent::schema14_compatible)
+                            && d.previous_run.as_ref().is_none_or(|r| {
+                                r.recent_events
+                                    .iter()
+                                    .all(DiagnosticEvent::schema14_compatible)
                             })))
                     && (self.schema_version >= 14 || d.schema13_compatible())
                     && (self.schema_version >= 13
@@ -1517,6 +1544,35 @@ mod tests {
         assert!(report.validate());
         report.backends[0].settings.pow = Some("argon2id".into());
         assert!(!report.validate(), "Argon2id is reported by omission");
+    }
+
+    #[test]
+    fn pool_stats_failures_require_schema_15() {
+        let base: Report = serde_json::from_str(include_str!("../schema14-fixture.json")).unwrap();
+        for reason in [
+            FailureReason::HttpStatus,
+            FailureReason::RateLimited,
+            FailureReason::InvalidResponse,
+            FailureReason::ConnectionTimedOut,
+        ] {
+            let mut report = base.clone();
+            let d = report.diagnostics.as_mut().unwrap();
+            d.events.push(DiagnosticEvent {
+                detail: Some(FailureDetail::new(reason, DiagnosticOperation::PoolStats)),
+                phase: Some(RunPhase::Mining),
+                code: DiagnosticCode::Warning,
+                kind: DiagnosticKind::Connection,
+                source: "src/miner/mining_pool.rs".into(),
+                line: 1,
+                backend: None,
+                count: 1,
+                first_seen_secs: 0,
+                last_seen_secs: 0,
+            });
+            assert!(!report.validate(), "{reason:?} claimed schema 14");
+            report.schema_version = 15;
+            assert!(report.validate(), "{reason:?} at schema 15");
+        }
     }
 
     #[test]
