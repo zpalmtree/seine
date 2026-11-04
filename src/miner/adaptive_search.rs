@@ -615,6 +615,9 @@ struct Watch {
 pub(super) struct Search {
     min: usize,
     max: usize,
+    /// The thread limits the run started with; a count picked on the
+    /// dashboard narrows `min`/`max` but is saved under these.
+    run_bounds: (usize, usize),
     down_band: f64,
     candidates: Vec<CpuKernel>,
     build: BuildFacts,
@@ -721,6 +724,7 @@ impl Search {
         let mut search = Self {
             min: min.max(1).min(max.max(1)),
             max: max.max(1),
+            run_bounds: bounds,
             down_band: down_band.max(TIE_BAND),
             candidates,
             build,
@@ -1162,7 +1166,7 @@ impl Search {
             kernel_revisions: self.build.kernel_revisions.clone(),
             kernels: self.results.clone(),
             rechecks,
-            bounds: Some((self.min, self.max)),
+            bounds: Some(self.run_bounds),
         }
     }
 
@@ -2663,6 +2667,17 @@ mod tests {
         // Whatever comparisons follow, it ends back on every thread.
         run(&mut search, 40, 1800, &mut threads, 4);
         assert_eq!(threads, 4);
+    }
+
+    #[test]
+    fn a_count_picked_on_the_dashboard_is_saved_under_the_run_limits() {
+        let mut search = Search::new(params(8, 16));
+        let mut threads = 8;
+        run(&mut search, 0, 5, &mut threads, 16);
+        search.set_manual(9);
+        let saved = search.saved();
+        assert_eq!(saved.threads, 9);
+        assert_eq!(saved.bounds, Some((1, 16)));
     }
 
     #[test]
