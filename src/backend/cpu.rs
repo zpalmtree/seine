@@ -549,6 +549,12 @@ impl CpuBackend {
             self.worker_capacity(),
             startup_ready_timeout(self.worker_capacity()),
         ) {
+            if let Some(timed_out) = err.downcast_ref::<StartupTimedOut>() {
+                if let Some(message) = self.continue_after_startup_timeout(timed_out) {
+                    emit_warning(&self.shared, message);
+                    return Ok(());
+                }
+            }
             request_shutdown(&self.shared);
             let handles = match self.worker_handles.lock() {
                 Ok(mut guard) => std::mem::take(&mut *guard),
@@ -913,6 +919,36 @@ impl CpuBackend {
             .desired_workers
             .store(backend.initial_workers, Ordering::Relaxed);
         backend
+    }
+
+    /// Keeps the workers that finished starting when the rest are still
+    /// allocating at the startup deadline. Adaptive backends lower their worker
+    /// target to the ready count, so the late workers release their arenas once
+    /// allocation returns; fixed counts let them join when ready. Returns `None`
+    /// when no active worker is ready, which still fails startup.
+    fn continue_after_startup_timeout(&self, timed_out: &StartupTimedOut) -> Option<String> {
+        let _control = self.shared.work_control.lock().ok()?;
+        let desired = self.shared.desired_workers.load(Ordering::Acquire);
+        // Workers at or above the target park without an arena and report
+        // ready at once, so they are part of the ready count.
+        let parked = timed_out.expected.saturating_sub(desired);
+        let active_ready = timed_out.ready.saturating_sub(parked).min(desired);
+        if active_ready == 0 {
+            return None;
+        }
+        if self.shared.adaptive {
+            self.shared
+                .desired_workers
+                .fetch_min(active_ready, Ordering::AcqRel);
+            self.shared.work_cv.notify_all();
+            Some(format!(
+                "CPU worker startup timed out with {active_ready} of {desired} workers ready; mining with {active_ready}"
+            ))
+        } else {
+            Some(format!(
+                "CPU worker startup timed out with {active_ready} of {desired} workers ready; the rest join when their memory is ready"
+            ))
+        }
     }
 
     pub(crate) fn set_active_threads(&self, count: usize) {
@@ -1604,6 +1640,28 @@ fn startup_ready_timeout(workers: usize) -> Duration {
         .min(STARTUP_READY_TIMEOUT_MAX)
 }
 
+/// Startup reached its deadline before every worker was ready.
+#[derive(Debug)]
+struct StartupTimedOut {
+    ready: usize,
+    expected: usize,
+    late_by: Duration,
+}
+
+impl std::fmt::Display for StartupTimedOut {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "CPU worker startup timed out by {}ms ({}/{} ready)",
+            self.late_by.as_millis(),
+            self.ready,
+            self.expected
+        )
+    }
+}
+
+impl std::error::Error for StartupTimedOut {}
+
 fn mark_worker_ready(shared: &Shared) {
     shared.ready_workers.fetch_add(1, Ordering::AcqRel);
     shared.ready_cv.notify_all();
@@ -1659,11 +1717,12 @@ fn wait_for_workers_ready(
                 Some("cpu"),
                 detail,
             );
-            let timed_out_by = now.saturating_duration_since(deadline);
-            return Err(anyhow!(
-                "CPU worker startup timed out by {}ms ({ready}/{expected_workers} ready)",
-                timed_out_by.as_millis()
-            ));
+            return Err(StartupTimedOut {
+                ready,
+                expected: expected_workers,
+                late_by: now.saturating_duration_since(deadline),
+            }
+            .into());
         }
 
         let wait_for = deadline
@@ -1925,7 +1984,7 @@ mod tests {
     use super::{
         emit_error, forward_event, lane_quota_for_chunk, maybe_finalize_assignment,
         order_core_ids_by_groups, should_flush_hashes, start_assignment, wait_for_workers_ready,
-        BackendEvent, CpuBackend, DEFAULT_HASH_BATCH_SIZE,
+        BackendEvent, CpuBackend, CpuBackendTuning, StartupTimedOut, DEFAULT_HASH_BATCH_SIZE,
     };
     use crate::backend::{MiningSolution, NonceChunk, PowBackend, WorkAssignment, WorkTemplate};
     use crate::config::CpuAffinityMode;
@@ -2294,6 +2353,39 @@ mod tests {
         backend.shared.ready_workers.store(2, Ordering::Release);
         assert!(wait_for_workers_ready(&backend.shared, 2, Duration::from_millis(1)).is_ok());
         assert!(guard.0.snapshot(false).events.is_empty());
+    }
+
+    #[test]
+    fn startup_timeout_keeps_ready_workers() {
+        let backend = CpuBackend::adaptive(3, 4, CpuAffinityMode::Off, CpuBackendTuning::default());
+        // One parked worker plus two of the three active workers are ready.
+        let timed_out = StartupTimedOut {
+            ready: 3,
+            expected: 4,
+            late_by: Duration::ZERO,
+        };
+        assert!(backend.continue_after_startup_timeout(&timed_out).is_some());
+        assert_eq!(backend.shared.desired_workers.load(Ordering::Acquire), 2);
+
+        // Only the parked worker is ready: nothing could hash, so startup fails.
+        let backend = CpuBackend::adaptive(3, 4, CpuAffinityMode::Off, CpuBackendTuning::default());
+        let timed_out = StartupTimedOut {
+            ready: 1,
+            expected: 4,
+            late_by: Duration::ZERO,
+        };
+        assert!(backend.continue_after_startup_timeout(&timed_out).is_none());
+        assert_eq!(backend.shared.desired_workers.load(Ordering::Acquire), 3);
+
+        // A fixed worker count is kept; late workers join when ready.
+        let backend = CpuBackend::new(4, CpuAffinityMode::Off);
+        let timed_out = StartupTimedOut {
+            ready: 2,
+            expected: 4,
+            late_by: Duration::ZERO,
+        };
+        assert!(backend.continue_after_startup_timeout(&timed_out).is_some());
+        assert_eq!(backend.shared.desired_workers.load(Ordering::Acquire), 4);
     }
 
     #[test]
