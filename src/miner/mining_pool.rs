@@ -1672,7 +1672,7 @@ fn handle_active_pool_event(
     stats: &Stats,
     tui: &mut Option<TuiDisplay>,
 ) -> Result<()> {
-    note_pool_requires_update(&event);
+    note_pool_requires_update(mode, &event);
     match event {
         PoolEvent::Connected => {
             *connected = true;
@@ -1995,7 +1995,12 @@ fn force_pool_session_resync(
 /// A pool or farm proxy that turns this miner away until it is updated (for
 /// example a newer Faraday PoW) pauses mining like unsupported work, so the
 /// update installs even when it was skipped or the control API runs the miner.
-fn note_pool_requires_update(event: &PoolEvent) {
+/// Only the user's pool counts: a dev-fee pool asking for an update does not
+/// stop mining on a user pool that still takes this version.
+fn note_pool_requires_update(mode: PoolConnectionMode, event: &PoolEvent) {
+    if !mode.is_user() {
+        return;
+    }
     let message = match event {
         PoolEvent::LoginRejected(message) | PoolEvent::Disconnected(message) => message,
         PoolEvent::Notification(notification) => &notification.message,
@@ -2017,7 +2022,7 @@ fn handle_inactive_pool_event(
     stats: &Stats,
     tui: &mut Option<TuiDisplay>,
 ) {
-    note_pool_requires_update(&event);
+    note_pool_requires_update(mode, &event);
     match event {
         PoolEvent::Connected => {
             if !*connected && mode.is_user() {
@@ -3554,11 +3559,22 @@ mod tests {
 
     #[test]
     fn a_pool_update_notice_pauses_mining_until_supported_work_arrives() {
-        super::note_pool_requires_update(&crate::pool::PoolEvent::Connected);
+        let notice = "this miner cannot mine after the Faraday fork (block 103,680); update seine: https://github.com/zpalmtree/seine/releases/latest";
+        super::note_pool_requires_update(
+            super::PoolConnectionMode::User,
+            &crate::pool::PoolEvent::Connected,
+        );
         assert!(!crate::update_check::mining_blocked());
-        super::note_pool_requires_update(&crate::pool::PoolEvent::LoginRejected(
-            "this miner cannot mine after the Faraday fork (block 103,680); update seine: https://github.com/zpalmtree/seine/releases/latest".into(),
-        ));
+        // A dev-fee pool asking for an update leaves mining alone.
+        super::note_pool_requires_update(
+            super::PoolConnectionMode::Dev,
+            &crate::pool::PoolEvent::LoginRejected(notice.into()),
+        );
+        assert!(!crate::update_check::mining_blocked());
+        super::note_pool_requires_update(
+            super::PoolConnectionMode::User,
+            &crate::pool::PoolEvent::LoginRejected(notice.into()),
+        );
         assert!(crate::update_check::mining_blocked());
         crate::miner::clear_unsupported_work_notice();
         assert!(!crate::update_check::mining_blocked());
