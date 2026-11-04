@@ -14,6 +14,13 @@
       "category": "amd",
       "hps": 16.625,
       "source": "experiments/ryzen-9950x-live-20261102 (default settings, live pool mining, steady rate)"
+    },
+    {
+      "name": "Intel Core i7-14700K",
+      "sub": "14th Gen desktop · 14 threads · Linux",
+      "category": "intel",
+      "hps": 17.117,
+      "source": "experiments/core-i7-14700k-live-20261102 (default settings, live pool mining, steady rate)"
     }
   ],
   "servers": [
