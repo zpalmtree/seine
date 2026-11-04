@@ -1341,6 +1341,7 @@ pub(super) fn run_pool_mining_loop(
             render_tui_now(&mut tui);
             if active_mode == PoolConnectionMode::User {
                 if let Some(event) = user_session.client.recv_event_timeout(POOL_WAIT_POLL) {
+                    update_user_pool_telemetry(&event, &mut user_session, &mut tui);
                     handle_active_pool_event(
                         event,
                         PoolConnectionMode::User,
