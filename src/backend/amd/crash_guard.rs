@@ -9,10 +9,12 @@
 //!
 //! A start only counts as failed when the process died inside a guarded call:
 //! backend errors, a clean exit and waiting for pool work do not count. Failed
-//! starts are forgotten once the GPU has completed a few launches.
+//! starts are forgotten once every AMD card of the run has completed a few
+//! launches or stopped without a crash, and at least one of them worked.
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
@@ -36,6 +38,9 @@ struct Guard {
     version: String,
     failed_starts: u32,
     active_calls: u32,
+    /// Cards in this process that have neither worked nor stopped.
+    unproven_cards: u32,
+    any_card_worked: bool,
 }
 
 impl Guard {
@@ -57,6 +62,8 @@ impl Guard {
             version: version.to_string(),
             failed_starts,
             active_calls: 0,
+            unproven_cards: 0,
+            any_card_worked: false,
         };
         guard.save();
         guard
@@ -80,8 +87,14 @@ impl Guard {
         }
     }
 
-    fn mark_working(&mut self) {
-        if self.failed_starts != 0 {
+    fn card_added(&mut self) {
+        self.unproven_cards += 1;
+    }
+
+    fn card_settled(&mut self, worked: bool) {
+        self.unproven_cards = self.unproven_cards.saturating_sub(1);
+        self.any_card_worked |= worked;
+        if self.unproven_cards == 0 && self.any_card_worked && self.failed_starts != 0 {
             self.failed_starts = 0;
             self.save();
         }
@@ -149,9 +162,35 @@ impl Drop for NativeCall {
     }
 }
 
-/// Forgets earlier failed starts once a GPU has proved it can run kernels.
-pub(crate) fn mark_working() {
-    with_guard(Guard::mark_working);
+/// One AMD card of this process. Earlier failed starts are forgotten only when
+/// every card has worked or gone away, so a working card cannot hide one that
+/// keeps crashing.
+pub(crate) struct Card {
+    settled: AtomicBool,
+}
+
+impl Card {
+    pub(crate) fn new() -> Self {
+        with_guard(Guard::card_added);
+        Self {
+            settled: AtomicBool::new(false),
+        }
+    }
+
+    /// The card has proved it can run kernels.
+    pub(crate) fn mark_working(&self) {
+        if !self.settled.swap(true, Ordering::AcqRel) {
+            with_guard(|guard| guard.card_settled(true));
+        }
+    }
+}
+
+impl Drop for Card {
+    fn drop(&mut self) {
+        if !self.settled.swap(true, Ordering::AcqRel) {
+            with_guard(|guard| guard.card_settled(false));
+        }
+    }
 }
 
 /// The process is exiting on its own, so a call still running is not a failure.
@@ -243,9 +282,33 @@ mod tests {
         assert!(Guard::load(&dir, "v1").skips_automatic_start());
 
         let mut guard = Guard::load(&dir, "v1");
-        guard.mark_working();
+        guard.card_added();
+        guard.card_settled(true);
         assert!(!dir.join(MARKER_FILE).exists());
         assert!(!Guard::load(&dir, "v1").skips_automatic_start());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_working_card_does_not_clear_another_that_has_not_worked() {
+        let dir = temp_dir("cards");
+        crashed_start(&dir, "v1");
+        let mut guard = Guard::load(&dir, "v1");
+        guard.card_added();
+        guard.card_added();
+        guard.card_settled(true);
+        // The second card dies in its first launch.
+        guard.enter();
+        assert!(Guard::load(&dir, "v1").skips_automatic_start());
+
+        // A card that stops cleanly without working does not hold the others back.
+        let mut guard = Guard::load(&dir, "v1");
+        guard.card_added();
+        guard.card_added();
+        guard.card_settled(false);
+        assert_eq!(guard.failed_starts, 2);
+        guard.card_settled(true);
+        assert!(!dir.join(MARKER_FILE).exists());
         let _ = fs::remove_dir_all(&dir);
     }
 

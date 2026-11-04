@@ -101,6 +101,7 @@ struct AmdShared {
     error_emitted: AtomicBool,
     /// The worker's last batch was BLAKE2b (reported in telemetry).
     blake2b_active: AtomicBool,
+    crash_card: crash_guard::Card,
 }
 
 impl AmdShared {
@@ -119,6 +120,7 @@ impl AmdShared {
             cancel_requested: AtomicBool::new(false),
             error_emitted: AtomicBool::new(false),
             blake2b_active: AtomicBool::new(false),
+            crash_card: crash_guard::Card::new(),
         }
     }
 }
@@ -952,9 +954,9 @@ impl BenchBackend for AmdBackend {
 }
 
 /// Counts this card's first launches for the crash guard.
-struct LaunchesToWorking(u32);
+struct LaunchesToWorking<'a>(u32, &'a crash_guard::Card);
 
-impl LaunchesToWorking {
+impl LaunchesToWorking<'_> {
     fn is_pending(&self) -> bool {
         self.0 > 0
     }
@@ -963,7 +965,7 @@ impl LaunchesToWorking {
         if self.0 > 0 {
             self.0 -= 1;
             if self.0 == 0 {
-                crash_guard::mark_working();
+                self.1.mark_working();
             }
         }
     }
@@ -1022,7 +1024,8 @@ fn worker_loop(
             .as_ref()
             .map_or(0, HipArgon2Engine::max_hashes_per_launch)
     ];
-    let mut launches_to_working = LaunchesToWorking(crash_guard::LAUNCHES_BEFORE_WORKING);
+    let mut launches_to_working =
+        LaunchesToWorking(crash_guard::LAUNCHES_BEFORE_WORKING, &shared.crash_card);
 
     while running {
         while control_open {
