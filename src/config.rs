@@ -581,6 +581,10 @@ struct Cli {
     #[arg(long, conflicts_with = "payout_memo", hide = true)]
     no_payout_memo: bool,
 
+    /// Select backends automatically, leaving out the CPU when a GPU is selected.
+    #[arg(long, conflicts_with = "backends", hide = true)]
+    gpu_only: bool,
+
     /// Daemon data directory (used to locate api.cookie when --cookie is unset).
     /// Defaults to the Blocknet wrapper-managed data dir under
     /// ~/.config/bnt/data/{mainnet,testnet}.
@@ -1326,13 +1330,16 @@ impl Config {
             .and_then(|detection| detection.as_ref().ok())
             .map(|devices| !devices.is_empty())
             .unwrap_or(false);
-        let (backends, nvidia_hint) = resolve_backend_selection(
+        let (mut backends, nvidia_hint) = resolve_backend_selection(
             &cli.backends,
             &cli.nvidia_devices,
             nvidia_available,
             &cli.amd_devices,
             amd_available,
         );
+        if cli.gpu_only {
+            drop_cpu_when_a_gpu_is_selected(&mut backends);
+        }
         let auto_nvidia_devices: Vec<u32> =
             if cli.nvidia_devices.is_empty() && backends.contains(&BackendKind::Nvidia) {
                 nvidia_detection
@@ -1839,6 +1846,16 @@ fn resolve_backend_selection(
     let hint = None;
 
     (selected, hint)
+}
+
+/// `--gpu-only`: a rig with no usable GPU still mines on the CPU.
+fn drop_cpu_when_a_gpu_is_selected(backends: &mut Vec<BackendKind>) {
+    if backends
+        .iter()
+        .any(|kind| matches!(kind, BackendKind::Nvidia | BackendKind::Amd))
+    {
+        backends.retain(|kind| *kind != BackendKind::Cpu);
+    }
 }
 
 /// A GPU reported by config-time device enumeration, used to fan out one
@@ -4358,6 +4375,7 @@ mod tests {
             mining_address: None,
             payout_memo: None,
             no_payout_memo: false,
+            gpu_only: false,
             cookie: None,
             daemon_dir: None,
             data_dir: PathBuf::from("./seine-data"),
@@ -4563,7 +4581,7 @@ mod tests {
                 .as_deref(),
             Some("stratum+ssl://pool.example.com:3443")
         );
-        assert_eq!(cli.backends, vec![BackendKind::Nvidia, BackendKind::Amd]);
+        assert!(cli.backends.is_empty() && cli.gpu_only);
         assert_eq!(cli.ui, UiMode::Plain);
         assert!(cli.api_server && cli.no_auto_update);
         assert_eq!(cli.api_bind, "127.0.0.1:4044");
@@ -5710,6 +5728,25 @@ HugePages_Rsvd:          0
             selected,
             auto_selected(vec![BackendKind::Cpu, BackendKind::Amd])
         );
+    }
+
+    #[test]
+    fn gpu_only_leaves_out_the_cpu_only_when_a_gpu_is_selected() {
+        for (mut selected, expected) in [
+            (
+                vec![BackendKind::Cpu, BackendKind::Nvidia, BackendKind::Amd],
+                vec![BackendKind::Nvidia, BackendKind::Amd],
+            ),
+            (
+                vec![BackendKind::Cpu, BackendKind::Amd],
+                vec![BackendKind::Amd],
+            ),
+            (vec![BackendKind::Cpu], vec![BackendKind::Cpu]),
+        ] {
+            drop_cpu_when_a_gpu_is_selected(&mut selected);
+            assert_eq!(selected, expected);
+        }
+        assert!(Cli::try_parse_from(["seine", "--gpu-only", "--backend", "amd"]).is_err());
     }
 
     #[test]

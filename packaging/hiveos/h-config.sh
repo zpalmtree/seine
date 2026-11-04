@@ -83,13 +83,17 @@ seine_hiveos_config() {
 
 	# GPU rigs often have little system RAM and every CPU worker needs 2 GiB,
 	# so mine on the GPUs only unless the user lists backends. A rig without
-	# GPUs mines on the CPU, sized to the free RAM.
+	# GPUs mines on the CPU, sized to the free RAM. With AMD cards, seine picks
+	# the GPUs itself so integrated GPUs and its AMD start checks still apply.
 	if ! seine_hiveos_has_flag --backend; then
 		nvidia=$(seine_hiveos_detect_gpus NVIDIA)
 		amd=$(seine_hiveos_detect_gpus AMD)
 		[[ $nvidia -gt 0 ]] && backends=nvidia
-		[[ $amd -gt 0 ]] && backends=${backends:+$backends,}amd
-		args+=(--backend "${backends:-cpu}")
+		if [[ $amd -gt 0 ]]; then
+			args+=(--gpu-only)
+		else
+			args+=(--backend "${backends:-cpu}")
+		fi
 	fi
 
 	seine_hiveos_has_flag --data-dir || args+=(--data-dir "$SEINE_DATA_DIR")

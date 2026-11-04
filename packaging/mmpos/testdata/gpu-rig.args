@@ -2,8 +2,7 @@
 8yAUM9aprE1ffiEm5KugyGH1TUqXQTuF9j5Mt2ZabBJmM9HAb5bfPkpa5JjgGQHU8bAmsuuJrcJVSXNWt5KLVn7Tv1bVm.rig01
 --pool-url
 stratum+ssl://pool.example.com:3443
---backend
-nvidia,amd
+--gpu-only
 --data-dir
 /opt/mmp/miners/seine-data
 --ui

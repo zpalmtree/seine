@@ -123,7 +123,8 @@ generated_args | grep -A1 -x -- --pool-worker | grep -qx rig03 || fail "shortnam
 ok "h-config: shortname wallet keeps its dots and mines as the rig name"
 
 run_config "CUSTOM_TEMPLATE=$address.r" FAKE_NVIDIA=1 FAKE_AMD=2 || fail "mixed rig"
-generated_args | grep -A1 -x -- --backend | grep -qx nvidia,amd || fail "mixed rig backends"
+generated_args | grep -qx -- --gpu-only || fail "mixed rig should let seine pick the GPUs"
+generated_args | grep -qx -- --backend && fail "mixed rig should not list backends"
 ok "h-config: NVIDIA plus AMD"
 
 run_config "CUSTOM_TEMPLATE=$address.r" FAKE_NVIDIA=1 \

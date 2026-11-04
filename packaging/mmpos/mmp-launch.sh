@@ -147,13 +147,17 @@ seine_mmpos_launch() {
 
 	# GPU rigs often have little system RAM and every CPU worker needs 2 GiB,
 	# so mine on the GPUs only unless the user lists backends. A rig without
-	# GPUs mines on the CPU, sized to the free RAM.
+	# GPUs mines on the CPU, sized to the free RAM. With AMD cards, seine picks
+	# the GPUs itself so integrated GPUs and its AMD start checks still apply.
 	if ! seine_mmpos_has_flag --backend; then
 		nvidia=$(seine_mmpos_gpu_count nvidia_details)
 		amd=$(seine_mmpos_gpu_count amd_sysfs_details)
 		[[ $nvidia -gt 0 ]] && backends=nvidia
-		[[ $amd -gt 0 ]] && backends=${backends:+$backends,}amd
-		args+=(--backend "${backends:-cpu}")
+		if [[ $amd -gt 0 ]]; then
+			args+=(--gpu-only)
+		else
+			args+=(--backend "${backends:-cpu}")
+		fi
 	fi
 
 	[[ $api_port =~ ^[0-9]+$ && $api_port -gt 0 && $api_port -lt 65536 ]] || api_port=$SEINE_API_PORT
