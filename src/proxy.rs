@@ -59,6 +59,9 @@ const REJECTED_ADDRESS_HOLD: Duration = Duration::from_secs(5 * 60);
 const MAX_SESSIONS_PER_ADDRESS: usize = 64;
 /// Shortest gap between opening upstream sessions.
 const SESSION_OPEN_INTERVAL: Duration = Duration::from_millis(500);
+/// A session counts as still connecting for at most this long after it was
+/// opened or lost its connection.
+const SESSION_CONNECT_WAIT: Duration = Duration::from_secs(30);
 /// Range kept per template beyond what rigs' current slices add up to, in
 /// percent, so a new template hands every rig a slice at once.
 const CAPACITY_HEADROOM_PCT: u64 = 125;
@@ -197,7 +200,8 @@ impl Upstreams {
             Arc::clone(&stop),
         )?);
         // A refused refill opens another session here rather than
-        // reconnecting the one rigs are mining on.
+        // reconnecting the one rigs are mining on; at the session cap the
+        // hub asks a session for a fresh range itself.
         client.keep_session_when_refill_refused();
         let bridge_client = Arc::clone(&client);
         let bridge_stop = Arc::clone(&stop);
@@ -339,6 +343,8 @@ struct Template {
     range_size: u64,
     assignments: Vec<Assignment>,
     refill_requested_at: Option<Instant>,
+    /// Upstream job ids named by refill requests for this template.
+    refill_jobs: Vec<String>,
     /// The pool refused a refill for this template on this session.
     refill_closed: bool,
     /// The upstream session this work came from has ended.
@@ -357,6 +363,7 @@ impl Template {
             range_size: job.nonce_count().max(1),
             assignments: vec![Assignment::from_job(job)],
             refill_requested_at: None,
+            refill_jobs: Vec::new(),
             refill_closed: false,
             dead: false,
         }
@@ -384,8 +391,10 @@ struct Session {
     stop: Arc<AtomicBool>,
     logged_in: bool,
     refill: bool,
-    /// The client's refused-refill count when this proxy last looked.
-    refill_refusals_seen: u64,
+    /// When the session was opened or last lost its connection.
+    connect_started: Instant,
+    /// When the hub last asked this session to log in again for a fresh range.
+    fresh_range_requested_at: Option<Instant>,
     /// The most recent upstream job id, which a refill request must name.
     last_upstream_job: Option<String>,
     current: Option<Template>,
@@ -406,6 +415,28 @@ impl Session {
     fn live(&self) -> Option<&Template> {
         self.current.as_ref().filter(|template| !template.dead)
     }
+
+    /// Not logged in with work yet, and within `SESSION_CONNECT_WAIT`.
+    fn connecting(&self) -> bool {
+        (!self.logged_in || self.current.is_none())
+            && self.connect_started.elapsed() < SESSION_CONNECT_WAIT
+    }
+
+    /// Closes refills on the templates whose refill requests the pool
+    /// refused.
+    fn close_refused_refills(&mut self) {
+        for job_id in self.client.take_refused_refills() {
+            for template in [self.current.as_mut(), self.previous.as_mut()]
+                .into_iter()
+                .flatten()
+            {
+                if template.refill_jobs.contains(&job_id) {
+                    template.refill_closed = true;
+                    template.refill_requested_at = None;
+                }
+            }
+        }
+    }
 }
 
 /// A slice of upstream range given to one rig under a proxy job id.
@@ -417,8 +448,8 @@ struct LocalJob {
     assignment: usize,
     start: u64,
     end: u64,
-    /// The upstream job and target the slice was issued under. Shares found
-    /// at an older target go upstream under the job that had it.
+    /// The slice's target and the newest upstream job that carried it.
+    /// Shares found at an older target go upstream under that job.
     upstream_job_id: String,
     target: String,
 }
@@ -561,7 +592,8 @@ impl Hub {
                         stop,
                         logged_in: false,
                         refill: false,
-                        refill_refusals_seen: 0,
+                        connect_started: Instant::now(),
+                        fresh_range_requested_at: None,
                         last_upstream_job: None,
                         current: None,
                         previous: None,
@@ -598,10 +630,9 @@ impl Hub {
     /// is taken by other addresses.
     fn payout_address(&self, requested: &str) -> Option<String> {
         // A rig may log in as solo:<address>; it gets its own solo upstream.
+        // Only one prefix is taken off, so a doubled solo:solo: is invalid.
         let (solo, destination) = crate::shortname::split_solo(requested);
-        let valid = !destination.is_empty()
-            && !destination.starts_with(['@', '$'])
-            && crate::shortname::validate_destination(destination).is_ok();
+        let valid = crate::address::validate_mining_address(destination).is_ok();
         if !valid {
             return Some(self.address.clone());
         }
@@ -660,19 +691,11 @@ impl Hub {
             self.open_session(address);
             return;
         }
-        // A refused refill closes refills on that session's template; more
+        // A refused refill closes refills on the template it was for; more
         // range then comes from another session.
         for id in &ids {
-            let Some(session) = self.sessions.get_mut(id) else {
-                continue;
-            };
-            let refusals = session.client.refill_refusals();
-            if refusals != session.refill_refusals_seen {
-                session.refill_refusals_seen = refusals;
-                if let Some(template) = session.current.as_mut() {
-                    template.refill_closed = true;
-                    template.refill_requested_at = None;
-                }
+            if let Some(session) = self.sessions.get_mut(id) {
+                session.close_refused_refills();
             }
         }
         let (range, demand) = self.demand(address);
@@ -709,16 +732,21 @@ impl Hub {
             {
                 session.client.request_nonce_refill(&job_id);
                 template.refill_requested_at = Some(Instant::now());
+                if !template.refill_jobs.contains(&job_id) {
+                    template.refill_jobs.push(job_id);
+                }
             }
             return;
         }
         // No session can refill: another session brings its own range for
-        // each job. Wait for sessions still connecting first.
-        let connecting = ids.iter().any(|id| {
-            let session = &self.sessions[id];
-            !session.logged_in || session.current.is_none()
-        });
-        if !connecting && paced && ids.len() < MAX_SESSIONS_PER_ADDRESS {
+        // each job. Wait for sessions still connecting first, and open none
+        // while no session has work, since the pool is not answering.
+        let connecting = ids.iter().any(|id| self.sessions[id].connecting());
+        let any_live = ids.iter().any(|id| self.sessions[id].live().is_some());
+        if connecting || !any_live || !paced {
+            return;
+        }
+        if ids.len() < MAX_SESSIONS_PER_ADDRESS {
             if let Some(id) = self.open_session(address) {
                 info(
                     "PROXY",
@@ -730,6 +758,36 @@ impl Hub {
                     ),
                 );
             }
+            return;
+        }
+        self.request_fresh_range(&ids);
+    }
+
+    /// At the session cap: asks the live session with the least range left
+    /// to log in again for a fresh range, one session at a time.
+    fn request_fresh_range(&mut self, ids: &[usize]) {
+        let pending = ids.iter().any(|id| {
+            self.sessions[id]
+                .fresh_range_requested_at
+                .is_some_and(|at| at.elapsed() < SESSION_CONNECT_WAIT)
+        });
+        if pending {
+            return;
+        }
+        let Some(id) = ids
+            .iter()
+            .copied()
+            .filter(|id| self.sessions[id].logged_in)
+            .filter_map(|id| Some((id, self.sessions[&id].live()?.remaining())))
+            .min_by_key(|(_, remaining)| *remaining)
+            .map(|(id, _)| id)
+        else {
+            return;
+        };
+        let session = self.sessions.get_mut(&id).expect("listed session");
+        if let Some(job_id) = session.last_upstream_job.as_deref() {
+            session.client.request_fresh_range(job_id);
+            session.fresh_range_requested_at = Some(Instant::now());
         }
     }
 
@@ -857,6 +915,9 @@ impl Hub {
                 }
             }
             PoolEvent::Disconnected(message) => {
+                if session.logged_in {
+                    session.connect_started = Instant::now();
+                }
                 session.logged_in = false;
                 if session.permanent {
                     warn("PROXY", format!("upstream: {message}"));
@@ -992,6 +1053,8 @@ impl Hub {
             } => {
                 if target_changed {
                     self.reissue_slices(id, generation, index);
+                } else {
+                    self.rebind_local_jobs(id, generation, index);
                 }
                 if retired_others {
                     self.move_rigs_off(id, generation, |assignment| assignment.retired);
@@ -1095,6 +1158,29 @@ impl Hub {
                     rig.current_job = Some(job_id);
                     rig.send(json!({"method": "job", "params": params}));
                 }
+            }
+        }
+    }
+
+    /// Points slices of `assignment` issued at its current target at the
+    /// assignment's newest upstream job.
+    fn rebind_local_jobs(&mut self, session: usize, generation: u64, assignment: usize) {
+        let Some((upstream_job_id, target)) = self
+            .sessions
+            .get(&session)
+            .and_then(|s| s.template(generation))
+            .and_then(|t| t.assignments.get(assignment))
+            .map(|a| (a.upstream_job_id.clone(), a.target.clone()))
+        else {
+            return;
+        };
+        for local in self.local_jobs.values_mut() {
+            if local.session == session
+                && local.generation == generation
+                && local.assignment == assignment
+                && local.target == target
+            {
+                local.upstream_job_id.clone_from(&upstream_job_id);
             }
         }
     }
@@ -1324,11 +1410,6 @@ impl Hub {
             })
             .filter(|worker| !worker.trim().is_empty());
         let requested = params.get("address").and_then(Value::as_str).unwrap_or("");
-        // The proxy has no memo for a rig's own address, so a shared exchange
-        // deposit address would be paid without the memo that identifies it.
-        if let Err(err) = crate::payout_destination::ensure_exchange_memo(requested, None, false) {
-            return self.reply_error(conn, id, &format!("{err:#}"));
-        }
         let Some(address) = self.payout_address(requested) else {
             return self.reply_error(
                 conn,
@@ -1336,6 +1417,11 @@ impl Hub {
                 "this proxy is mining to as many payout addresses as it can; try again later",
             );
         };
+        // The proxy has no memo for a rig's own address, so a shared exchange
+        // deposit address would be paid without the memo that identifies it.
+        if let Err(err) = crate::payout_destination::ensure_exchange_memo(&address, None, false) {
+            return self.reply_error(conn, id, &format!("{err:#}"));
+        }
         self.rejected
             .retain(|_, (_, at)| at.elapsed() < REJECTED_ADDRESS_HOLD);
         if let Some((message, _)) = self.rejected.get(&address) {
@@ -1405,7 +1491,7 @@ impl Hub {
             .map(|assignment| {
                 // A re-issue at the same target keeps the slice valid under
                 // the newest job; one at a new target leaves the slice on the
-                // job it was issued under, which the pool judges.
+                // newest job at its own target, which the pool judges.
                 if assignment.target == local.target {
                     assignment.upstream_job_id.clone()
                 } else {
@@ -2146,6 +2232,68 @@ mod tests {
             "job_id": second["params"]["job_id"], "nonce": start + 1,
             "claimed_hash": "00".repeat(32)}}));
         assert_eq!(next_upstream(&seen, "submit")["params"]["job_id"], "u2");
+        shutdown.store(true, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn shares_after_a_same_target_reissue_use_the_newest_job_at_their_target() {
+        let (pool_port, seen, push) = fake_pool();
+        let (proxy_port, shutdown) = start_proxy(pool_port);
+        next_upstream(&seen, "login");
+        std::thread::sleep(Duration::from_millis(300));
+        let (mut rig, _, first) = TestRig::connect(proxy_port, json!(["submit_claimed_hash"]));
+        let (start, _) = range(&first["params"]);
+
+        // The pool re-issues the range at the same target, which the rig is
+        // not told about, then again at a new target.
+        push.send(job("u2", "t1", 10, 0)).unwrap();
+        let mut harder = job("u3", "t1", 10, 0);
+        harder["params"]["target"] = json!("0f".repeat(32));
+        harder["params"]["difficulty"] = json!(50);
+        push.send(harder).unwrap();
+        let second = rig.recv();
+        assert_eq!(second["method"], "job");
+        assert_eq!(second["params"]["difficulty"], 50);
+
+        // A share from the first slice goes upstream under the newest job
+        // at its own target.
+        rig.send(json!({"id": 7, "method": "submit", "params": {
+            "job_id": first["params"]["job_id"], "nonce": start,
+            "claimed_hash": "00".repeat(32)}}));
+        assert_eq!(next_upstream(&seen, "submit")["params"]["job_id"], "u2");
+        rig.recv();
+        rig.send(json!({"id": 8, "method": "submit", "params": {
+            "job_id": second["params"]["job_id"], "nonce": start + 1,
+            "claimed_hash": "00".repeat(32)}}));
+        assert_eq!(next_upstream(&seen, "submit")["params"]["job_id"], "u3");
+        shutdown.store(true, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn doubled_solo_prefixes_mine_to_the_proxy_address() {
+        let dev = crate::dev_fee::DEV_ADDRESS;
+        let (pool_port, seen) = multi_pool(true);
+        let (proxy_port, shutdown) = start_proxy_on(pool_port, "farmaddr");
+        assert_eq!(next_from(&seen, "login").0, "farmaddr");
+        let mut rigs = Vec::new();
+        for requested in [
+            format!("solo:solo:{dev}"),
+            format!("Solo: SOLO:{dev}"),
+            "solo:solo:@name".to_string(),
+            "solo:@name".to_string(),
+        ] {
+            let (mut rig, job) = login_as(proxy_port, &requested);
+            rig.send(json!({"id": 5, "method": "submit", "params": {
+                "job_id": job["params"]["job_id"], "nonce": job["params"]["nonce_start"],
+                "claimed_hash": "00".repeat(32)}}));
+            let (address, _) = next_from(&seen, "submit");
+            assert_eq!(address, "farmaddr", "{requested}");
+            assert_eq!(rig.recv()["id"], 5);
+            rigs.push(rig);
+        }
+        // One prefix is kept and gets its own solo session.
+        let (_rig, _) = login_as(proxy_port, &format!("Solo:{dev}"));
+        assert_eq!(next_from(&seen, "login").0, format!("solo:{dev}"));
         shutdown.store(true, Ordering::Relaxed);
     }
 

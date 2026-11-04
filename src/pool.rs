@@ -1,10 +1,10 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 #[cfg(test)]
 use std::io::Write;
 use std::net::SocketAddr;
 #[cfg(test)]
 use std::net::TcpStream;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -63,6 +63,8 @@ const PROXIED_TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
 /// How often a backup session checks whether the primary pool is back.
 const PRIMARY_RECHECK_INTERVAL: Duration = Duration::from_secs(5 * 60);
 const MAX_PRIMARY_RECHECK_INTERVAL: Duration = Duration::from_secs(60 * 60);
+/// Longest a switch back to the primary pool waits for submissions to settle.
+const SWITCH_BACK_MAX_WAIT: Duration = Duration::from_secs(30);
 const CHANNEL_CAPACITY: usize = 4096;
 const MAX_SUBMITS_PER_IO_CYCLE: usize = 32;
 const MAX_RETRY_SUBMITS_PER_IO_CYCLE: usize = 4;
@@ -80,6 +82,8 @@ pub(crate) const STRATUM_CAPABILITY_NONCE_REFILL_V1: &str = "nonce_refill_v1";
 const STRATUM_METHOD_REFILL: &str = "refill";
 /// A refill unanswered this long falls back to a fresh session.
 const REFILL_REPLY_TIMEOUT: Duration = Duration::from_secs(10);
+/// Refused refill job ids kept for the owner to take.
+const MAX_RECORDED_REFILL_REFUSALS: usize = 64;
 /// Wait before asking again after a `refill rate limited` reply.
 const REFILL_RATE_LIMIT_RETRY: Duration = Duration::from_secs(1);
 /// The pool credits each share to the worker named on its submit.
@@ -265,13 +269,29 @@ pub struct SubmitTiming {
 /// Refill state a client shares with its owner.
 #[derive(Debug, Default)]
 struct RefillShared {
-    /// Refills the pool refused or left unanswered.
-    refusals: AtomicU64,
     /// The current session takes refills.
     available: AtomicBool,
     /// A refused refill keeps the session instead of reconnecting for a
     /// fresh range; the owner opens another session for more range.
     keep_session: AtomicBool,
+    /// Job ids of refills refused or left unanswered, recorded while
+    /// `keep_session` is set and taken by the owner.
+    refused_jobs: Mutex<VecDeque<String>>,
+    /// The owner asked for a fresh range through a normal login.
+    fresh_range: AtomicBool,
+}
+
+impl RefillShared {
+    fn record_refusal(&self, job_id: &str) {
+        if !self.keep_session.load(Ordering::Acquire) {
+            return;
+        }
+        let mut refused = self.refused_jobs.lock().expect("refused refills lock");
+        if refused.len() >= MAX_RECORDED_REFILL_REFUSALS {
+            refused.pop_front();
+        }
+        refused.push_back(job_id.to_string());
+    }
 }
 
 #[derive(Debug)]
@@ -469,19 +489,33 @@ impl PoolClient {
         self.wake.notify_one();
     }
 
-    /// A refused refill leaves the session in place; see `refill_refusals`.
+    /// A refused refill leaves the session in place; see `take_refused_refills`.
     pub fn keep_session_when_refill_refused(&self) {
         self.refill.keep_session.store(true, Ordering::Release);
-    }
-
-    /// Refills the pool has refused or left unanswered so far.
-    pub fn refill_refusals(&self) -> u64 {
-        self.refill.refusals.load(Ordering::Acquire)
     }
 
     /// True while the current session takes refills.
     pub fn refill_available(&self) -> bool {
         self.refill.available.load(Ordering::Acquire)
+    }
+
+    /// Job ids of refills refused or left unanswered since the last call,
+    /// oldest first. Recorded only after `keep_session_when_refill_refused`.
+    pub fn take_refused_refills(&self) -> Vec<String> {
+        self.refill
+            .refused_jobs
+            .lock()
+            .expect("refused refills lock")
+            .drain(..)
+            .collect()
+    }
+
+    /// Stops refills on this session and logs in again for a fresh range
+    /// once in-flight submissions settle, as long as `job_id` is still the
+    /// current job.
+    pub fn request_fresh_range(&self, job_id: &str) {
+        self.refill.fresh_range.store(true, Ordering::Release);
+        self.request_nonce_refill(job_id);
     }
 
     pub fn request_reconnect(&self) {
@@ -706,6 +740,14 @@ fn take_ready_nonce_refill(
     true
 }
 
+/// True when a switch back to the primary pool that became due at `due_since`
+/// should happen now: once submissions are idle, or after
+/// `SWITCH_BACK_MAX_WAIT` regardless.
+fn switch_back_due(idle: bool, due_since: Option<Instant>, now: Instant) -> bool {
+    idle || due_since
+        .is_some_and(|since| now.saturating_duration_since(since) >= SWITCH_BACK_MAX_WAIT)
+}
+
 fn run_pool_client_thread(
     endpoints: Vec<PoolEndpoint>,
     payout_memo: Option<String>,
@@ -847,7 +889,9 @@ async fn run_pool_client_loop(
                 let mut submit_timing_enabled = false;
                 let mut nonce_refill_enabled = false;
                 refill.available.store(false, Ordering::Release);
-                let mut pending_refill = None::<(u64, Instant)>;
+                // A fresh login already brings a fresh range.
+                refill.fresh_range.store(false, Ordering::Release);
+                let mut pending_refill = None::<(u64, Instant, String)>;
                 let mut refill_retry = None::<(Instant, String)>;
                 let mut last_outbound = Instant::now();
                 let mut submit_tick = tokio::time::interval(SUBMIT_POLL_INTERVAL);
@@ -855,6 +899,7 @@ async fn run_pool_client_loop(
                 let mut next_primary_probe = Instant::now() + failover.primary_recheck;
                 let mut primary_probe: Option<tokio::task::JoinHandle<bool>> = None;
                 let mut primary_back = false;
+                let mut primary_back_since = None::<Instant>;
 
                 loop {
                     if should_shutdown(process_shutdown.as_ref(), shutdown.as_ref()) {
@@ -899,6 +944,10 @@ async fn run_pool_client_loop(
                         );
                         break;
                     }
+                    if refill.fresh_range.swap(false, Ordering::AcqRel) {
+                        nonce_refill_enabled = false;
+                        refill.available.store(false, Ordering::Release);
+                    }
                     // A refill keeps the current range valid, so it need not
                     // wait for in-flight submits the way a resync does.
                     let mut refill_ready = take_ready_nonce_refill(
@@ -920,12 +969,13 @@ async fn run_pool_client_loop(
                         }
                     }
                     if pending_refill
-                        .is_some_and(|(_, sent)| sent.elapsed() >= REFILL_REPLY_TIMEOUT)
+                        .as_ref()
+                        .is_some_and(|(_, sent, _)| sent.elapsed() >= REFILL_REPLY_TIMEOUT)
                     {
-                        pending_refill = None;
+                        let (_, _, job_id) = pending_refill.take().expect("refill checked");
                         nonce_refill_enabled = false;
                         refill.available.store(false, Ordering::Release);
-                        refill.refusals.fetch_add(1, Ordering::AcqRel);
+                        refill.record_refusal(&job_id);
                         if !refill.keep_session.load(Ordering::Acquire) {
                             *refill_requested.lock().expect("refill lock") = current_job_id.clone();
                         }
@@ -934,7 +984,9 @@ async fn run_pool_client_loop(
                         // A refill already in flight answers this request too;
                         // a failed send surfaces as a disconnect.
                         refill_ready = false;
-                        if let (None, Some(job_id)) = (pending_refill, current_job_id.as_deref()) {
+                        if let (true, Some(job_id)) =
+                            (pending_refill.is_none(), current_job_id.as_deref())
+                        {
                             let request_id = next_request_id;
                             next_request_id =
                                 next_request_id.wrapping_add(1).max(LOGIN_REQUEST_ID + 1);
@@ -945,7 +997,8 @@ async fn run_pool_client_loop(
                                     .is_ok()
                                 {
                                     last_outbound = Instant::now();
-                                    pending_refill = Some((request_id, Instant::now()));
+                                    pending_refill =
+                                        Some((request_id, Instant::now(), job_id.to_string()));
                                 }
                             }
                         }
@@ -953,7 +1006,20 @@ async fn run_pool_client_loop(
                     let idle = pending_submits.is_empty()
                         && retry_queue.is_empty()
                         && submit_rx.is_empty();
-                    if primary_back && idle {
+                    if primary_back && switch_back_due(idle, primary_back_since, Instant::now()) {
+                        // Submissions still open after the wait end with the
+                        // session, as on a disconnect.
+                        reject_pending_submits(
+                            &event_tx,
+                            &mut pending_submits,
+                            &mut retry_queue,
+                            SUBMIT_REJECT_REASON_DISCONNECTED,
+                        );
+                        reject_queued_submits(
+                            &event_tx,
+                            &submit_rx,
+                            SUBMIT_REJECT_REASON_DISCONNECTED,
+                        );
                         let _ = event_tx.try_send(PoolEvent::Notification(PoolNotification {
                             kind: POOL_NOTIFICATION_FAILOVER.to_string(),
                             message: format!(
@@ -1007,6 +1073,11 @@ async fn run_pool_client_loop(
                             primary_probe = None;
                             next_primary_probe = Instant::now() + failover.primary_recheck;
                             primary_back = matches!(probe, Ok(true));
+                            primary_back_since = if primary_back {
+                                primary_back_since.or(Some(Instant::now()))
+                            } else {
+                                None
+                            };
                         }
                         // Queued submits go out as soon as they arrive; the
                         // tick still drives keepalives and due retries.
@@ -1207,10 +1278,11 @@ async fn run_pool_client_loop(
                             if trimmed.is_empty() {
                                 continue;
                             }
-                            let decoded = match pending_refill
-                                .and_then(|(id, _)| decode_refill_response(trimmed, id))
-                            {
-                                Some(outcome) => {
+                            let decoded = match pending_refill.as_ref().and_then(|(id, _, job_id)| {
+                                decode_refill_response(trimmed, *id)
+                                    .map(|outcome| (outcome, job_id.clone()))
+                            }) {
+                                Some((outcome, refill_job_id)) => {
                                     pending_refill = None;
                                     match outcome {
                                         RefillOutcome::Job(job) => {
@@ -1227,7 +1299,7 @@ async fn run_pool_client_loop(
                                             None
                                         }
                                         RefillOutcome::Refused => {
-                                            refill.refusals.fetch_add(1, Ordering::AcqRel);
+                                            refill.record_refusal(&refill_job_id);
                                             // Fall back to a fresh session once
                                             // in-flight submits settle, unless
                                             // the owner opens sessions itself.
@@ -3773,6 +3845,25 @@ mod tests {
     }
 
     #[test]
+    fn switching_back_to_the_primary_waits_for_submissions_only_so_long() {
+        let due = Instant::now();
+        assert!(switch_back_due(true, Some(due), due));
+        assert!(!switch_back_due(false, Some(due), due));
+        assert!(!switch_back_due(
+            false,
+            Some(due),
+            due + SWITCH_BACK_MAX_WAIT - Duration::from_millis(1)
+        ));
+        // A backup that keeps shares queued no longer holds the switch.
+        assert!(switch_back_due(
+            false,
+            Some(due),
+            due + SWITCH_BACK_MAX_WAIT
+        ));
+        assert!(!switch_back_due(false, None, due + SWITCH_BACK_MAX_WAIT));
+    }
+
+    #[test]
     fn tls_errors_get_actionable_messages() {
         let endpoint = parse_pool_endpoint("stratum+ssl://pool.example.com:3443").unwrap();
         let cert = friendly_pool_connect_error(
@@ -4110,8 +4201,11 @@ mod tests {
         (events, logins)
     }
 
-    /// Also returns the client's refused-refill count.
-    fn run_refill_pool_with(refuse: bool, keep_session: bool) -> (Vec<PoolEvent>, usize, u64) {
+    /// Also returns the job ids of refills the client recorded as refused.
+    fn run_refill_pool_with(
+        refuse: bool,
+        keep_session: bool,
+    ) -> (Vec<PoolEvent>, usize, Vec<String>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let server = thread::spawn(move || {
@@ -4195,8 +4289,10 @@ mod tests {
         let mut deadline = Instant::now() + Duration::from_secs(5);
         let mut requested = false;
         let mut refused_at = None;
+        let mut refused = Vec::new();
         while Instant::now() < deadline {
-            if keep_session && refused_at.is_none() && client.refill_refusals() > 0 {
+            refused.extend(client.take_refused_refills());
+            if keep_session && refused_at.is_none() && !refused.is_empty() {
                 // Long enough for a reconnect that should not happen.
                 refused_at = Some(Instant::now());
                 deadline = Instant::now() + Duration::from_millis(800);
@@ -4218,16 +4314,16 @@ mod tests {
                 break;
             }
         }
-        let refusals = client.refill_refusals();
+        refused.extend(client.take_refused_refills());
         shutdown.store(true, Ordering::Release);
         drop(client);
-        (events, server.join().unwrap(), refusals)
+        (events, server.join().unwrap(), refused)
     }
 
     #[test]
     fn a_refused_refill_keeps_the_session_for_an_owner_that_opens_its_own() {
-        let (events, logins, refusals) = run_refill_pool_with(true, true);
-        assert_eq!(refusals, 1);
+        let (events, logins, refused) = run_refill_pool_with(true, true);
+        assert_eq!(refused, ["job"], "refusals name the job the refill was for");
         assert_eq!(logins, 1, "the session reconnected: {events:?}");
         assert!(!events
             .iter()
