@@ -52,6 +52,15 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
 type VerifyExecutable = fn(&Path, &str) -> Result<()>;
 
 static RESTART_PENDING: AtomicBool = AtomicBool::new(false);
+/// Set for a Windows process started by `restart`, whose parent relaunches it.
+#[cfg(not(unix))]
+const SUPERVISED_ENV: &str = "SEINE_RESTART_SUPERVISED";
+/// Exit code a supervised Windows process uses to ask for a relaunch.
+#[cfg(not(unix))]
+const RESTART_EXIT_CODE: i32 = 0x5345;
+/// Spare names for a previous executable that is still running.
+#[cfg(windows)]
+const OLD_EXECUTABLE_SLOTS: u32 = 16;
 static UPDATED_EXECUTABLE: OnceLock<PathBuf> = OnceLock::new();
 
 /// The newest stable release as found by a lookup.
@@ -386,7 +395,10 @@ pub(crate) fn restart_pending() -> bool {
 }
 
 /// Starts the (updated) executable with this process's arguments. On Unix this
-/// replaces the process image; on Windows it spawns the new process and exits.
+/// replaces the process image. Windows cannot, so the first process stays as a
+/// small supervisor: it runs the updated executable, relaunches it after each
+/// later update, and exits with its exit code, so whatever started Seine still
+/// sees one process that ends when mining ends.
 pub(crate) fn restart() -> Result<()> {
     let exe = match UPDATED_EXECUTABLE.get() {
         Some(path) => path.clone(),
@@ -403,10 +415,20 @@ pub(crate) fn restart() -> Result<()> {
     }
     #[cfg(not(unix))]
     {
-        command
-            .spawn()
-            .with_context(|| format!("restart of {} failed", exe.display()))?;
-        std::process::exit(0);
+        if std::env::var_os(SUPERVISED_ENV).is_some() {
+            std::process::exit(RESTART_EXIT_CODE);
+        }
+        command.env(SUPERVISED_ENV, "1");
+        // Console interrupts reach the child too; it stops and returns its code.
+        crate::shutdown::supervise_child();
+        loop {
+            let status = command
+                .status()
+                .with_context(|| format!("restart of {} failed", exe.display()))?;
+            if status.code() != Some(RESTART_EXIT_CODE) {
+                std::process::exit(status.code().unwrap_or(1));
+            }
+        }
     }
 }
 
@@ -415,8 +437,36 @@ pub(crate) fn cleanup_leftovers() {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             let _ = fs::remove_file(dir.join(old_executable_name()));
+            #[cfg(windows)]
+            for slot in 1..=OLD_EXECUTABLE_SLOTS {
+                let _ = fs::remove_file(dir.join(numbered_old_executable_name(slot)));
+            }
         }
     }
+}
+
+#[cfg(windows)]
+fn numbered_old_executable_name(slot: u32) -> String {
+    format!("seine.old.{slot}.exe")
+}
+
+/// The first spare name for the running executable that is free or can be
+/// freed. A restart supervisor keeps an older one in use.
+#[cfg(windows)]
+fn free_old_executable(dir: &Path) -> Result<PathBuf> {
+    let names = std::iter::once(old_executable_name().to_string())
+        .chain((1..=OLD_EXECUTABLE_SLOTS).map(numbered_old_executable_name));
+    for name in names {
+        let path = dir.join(name);
+        let _ = fs::remove_file(&path);
+        if !path.exists() {
+            return Ok(path);
+        }
+    }
+    bail!(
+        "previous Seine executables in {} are still running",
+        dir.display()
+    )
 }
 
 fn old_executable_name() -> &'static str {
@@ -675,16 +725,16 @@ fn extract_executable(archive: &Path, target: &Path) -> Result<()> {
 }
 
 /// Swaps the staged executable in. The running binary stays usable until the
-/// rename lands; Windows keeps it as `seine.old.exe` because a running image
-/// cannot be deleted, and `cleanup_leftovers` removes it on the next start.
+/// rename lands; Windows keeps it as `seine.old.exe` (or a numbered spare while
+/// that one still runs) because a running image cannot be deleted, and
+/// `cleanup_leftovers` removes it on a later start.
 fn replace_executable(exe: &Path, staged: &Path) -> Result<()> {
     #[cfg(windows)]
     {
         let dir = exe
             .parent()
             .ok_or_else(|| anyhow!("executable has no directory"))?;
-        let old = dir.join(old_executable_name());
-        let _ = fs::remove_file(&old);
+        let old = free_old_executable(dir)?;
         fs::rename(exe, &old).with_context(|| format!("cannot move {} aside", exe.display()))?;
         if let Err(err) = fs::rename(staged, exe) {
             let _ = fs::rename(&old, exe);

@@ -30,6 +30,14 @@ pub(crate) fn request_auto_update(shutdown: &Arc<AtomicBool>) {
 
 pub(crate) struct Guard;
 
+/// This process now only waits for a restarted Seine sharing its console, which
+/// handles console interrupts itself.
+#[cfg(not(unix))]
+pub(crate) fn supervise_child() {
+    #[cfg(target_os = "windows")]
+    windows::SUPERVISING.store(true, Ordering::Release);
+}
+
 #[cfg(not(target_os = "windows"))]
 pub(crate) fn install(shutdown: Arc<AtomicBool>) -> anyhow::Result<Guard> {
     ctrlc::set_handler(move || {
@@ -56,6 +64,7 @@ mod windows {
 
     static SHUTDOWN: OnceLock<Arc<AtomicBool>> = OnceLock::new();
     pub(super) static COMPLETE: AtomicBool = AtomicBool::new(false);
+    pub(super) static SUPERVISING: AtomicBool = AtomicBool::new(false);
 
     // No allocation, locks, logging, disk or network IO in the OS callback.
     unsafe extern "system" fn handler(event: u32) -> i32 {
@@ -66,6 +75,11 @@ mod windows {
             CTRL_SHUTDOWN_EVENT => (4, true),
             _ => return 0,
         };
+        if SUPERVISING.load(Ordering::Acquire) {
+            // Ctrl+C: the child stops and the wait returns its code. Close
+            // events end this process the default way.
+            return i32::from(!closing);
+        }
         let Some(shutdown) = SHUTDOWN.get() else {
             return 0;
         };
