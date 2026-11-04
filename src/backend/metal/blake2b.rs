@@ -155,31 +155,33 @@ impl MetalBlake2bEngine {
             .min(pipeline.max_total_threads_per_threadgroup())
             .max(1);
 
-        let command_buffer = self.queue.new_command_buffer();
-        let encoder = command_buffer.new_compute_command_encoder();
-        encoder.set_compute_pipeline_state(pipeline);
-        encoder.set_bytes(
-            0,
-            std::mem::size_of::<KernelParams>() as u64,
-            (params as *const KernelParams).cast(),
-        );
-        encoder.set_bytes(1, 8, (&start_nonce as *const u64).cast());
-        encoder.set_bytes(2, 8, (&count as *const u64).cast());
-        encoder.set_buffer(3, Some(&self.candidates), 0);
-        encoder.set_buffer(4, Some(&self.candidate_count), 0);
-        encoder.set_bytes(5, 4, (&capacity as *const u32).cast());
-        encoder.dispatch_threads(
-            MTLSize::new(threads, 1, 1),
-            MTLSize::new(group.min(threads), 1, 1),
-        );
-        encoder.end_encoding();
-        command_buffer.commit();
-        command_buffer.wait_until_completed();
-        if command_buffer.status() != MTLCommandBufferStatus::Completed {
-            bail!(
-                "Metal BLAKE2b dispatch failed with status {:?}",
-                command_buffer.status()
+        // The worker thread has no autorelease pool of its own; drain the
+        // command objects of each dispatch here.
+        let status = metal::objc::rc::autoreleasepool(|| {
+            let command_buffer = self.queue.new_command_buffer();
+            let encoder = command_buffer.new_compute_command_encoder();
+            encoder.set_compute_pipeline_state(pipeline);
+            encoder.set_bytes(
+                0,
+                std::mem::size_of::<KernelParams>() as u64,
+                (params as *const KernelParams).cast(),
             );
+            encoder.set_bytes(1, 8, (&start_nonce as *const u64).cast());
+            encoder.set_bytes(2, 8, (&count as *const u64).cast());
+            encoder.set_buffer(3, Some(&self.candidates), 0);
+            encoder.set_buffer(4, Some(&self.candidate_count), 0);
+            encoder.set_bytes(5, 4, (&capacity as *const u32).cast());
+            encoder.dispatch_threads(
+                MTLSize::new(threads, 1, 1),
+                MTLSize::new(group.min(threads), 1, 1),
+            );
+            encoder.end_encoding();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+            command_buffer.status()
+        });
+        if status != MTLCommandBufferStatus::Completed {
+            bail!("Metal BLAKE2b dispatch failed with status {status:?}");
         }
 
         let found = unsafe { *(self.candidate_count.contents() as *const u32) } as usize;

@@ -392,73 +392,79 @@ impl MetalArgon2Engine {
         write_u32(&self.evaluate_target_buf, evaluate_target);
         write_u32(&self.eval_active_hashes_buf, requested_hashes);
 
-        let cmd_buf = self.command_queue.new_command_buffer();
+        // The worker thread has no autorelease pool of its own; drain the
+        // command objects of each dispatch here.
+        metal::objc::rc::autoreleasepool(|| {
+            let cmd_buf = self.command_queue.new_command_buffer();
 
-        // ---- Kernel 1: build_seed_blocks ----
-        {
-            let encoder = cmd_buf.new_compute_command_encoder();
-            encoder.set_compute_pipeline_state(&self.seed_pipeline);
-            encoder.set_buffer(0, Some(&self.header_base_buf), 0);
-            encoder.set_buffer(1, Some(&self.nonce_buf), 0);
-            encoder.set_buffer(2, Some(&self.seed_blocks_buf), 0);
-            encoder.set_buffer(3, Some(&self.header_base_len_buf), 0);
-            encoder.set_buffer(4, Some(&self.active_hashes_buf), 0);
-            encoder.set_buffer(5, Some(&self.m_cost_kib_buf), 0);
-            encoder.set_buffer(6, Some(&self.t_cost_buf), 0);
+            // ---- Kernel 1: build_seed_blocks ----
+            {
+                let encoder = cmd_buf.new_compute_command_encoder();
+                encoder.set_compute_pipeline_state(&self.seed_pipeline);
+                encoder.set_buffer(0, Some(&self.header_base_buf), 0);
+                encoder.set_buffer(1, Some(&self.nonce_buf), 0);
+                encoder.set_buffer(2, Some(&self.seed_blocks_buf), 0);
+                encoder.set_buffer(3, Some(&self.header_base_len_buf), 0);
+                encoder.set_buffer(4, Some(&self.active_hashes_buf), 0);
+                encoder.set_buffer(5, Some(&self.m_cost_kib_buf), 0);
+                encoder.set_buffer(6, Some(&self.t_cost_buf), 0);
 
-            let threads_per_group = MTLSize::new(SEED_KERNEL_THREADS as u64, 1, 1);
-            let total_threads = MTLSize::new(
-                div_ceil(requested_hashes, SEED_KERNEL_THREADS) as u64 * SEED_KERNEL_THREADS as u64,
-                1,
-                1,
-            );
-            encoder.dispatch_threads(total_threads, threads_per_group);
-            encoder.end_encoding();
-        }
+                let threads_per_group = MTLSize::new(SEED_KERNEL_THREADS as u64, 1, 1);
+                let total_threads = MTLSize::new(
+                    div_ceil(requested_hashes, SEED_KERNEL_THREADS) as u64
+                        * SEED_KERNEL_THREADS as u64,
+                    1,
+                    1,
+                );
+                encoder.dispatch_threads(total_threads, threads_per_group);
+                encoder.end_encoding();
+            }
 
-        // ---- Kernel 2: argon2id_fill ----
-        {
-            let encoder = cmd_buf.new_compute_command_encoder();
-            encoder.set_compute_pipeline_state(&self.fill_pipeline);
-            encoder.set_buffer(0, Some(&self.seed_blocks_buf), 0);
-            encoder.set_buffer(1, Some(&self.lane_memory), 0);
-            encoder.set_buffer(2, Some(&self.last_blocks_buf), 0);
-            encoder.set_buffer(3, Some(&self.cancel_flag_buf), 0);
-            encoder.set_buffer(4, Some(&self.completed_iters_buf), 0);
-            encoder.set_buffer(5, Some(&self.target_buf), 0);
-            encoder.set_buffer(6, Some(&self.found_index_buf), 0);
-            encoder.set_buffer(7, Some(&self.lanes_active_buf), 0);
-            encoder.set_buffer(8, Some(&self.active_hashes_fill_buf), 0);
-            encoder.set_buffer(9, Some(&self.lane_launch_iters_buf), 0);
-            encoder.set_buffer(10, Some(&self.evaluate_target_buf), 0);
+            // ---- Kernel 2: argon2id_fill ----
+            {
+                let encoder = cmd_buf.new_compute_command_encoder();
+                encoder.set_compute_pipeline_state(&self.fill_pipeline);
+                encoder.set_buffer(0, Some(&self.seed_blocks_buf), 0);
+                encoder.set_buffer(1, Some(&self.lane_memory), 0);
+                encoder.set_buffer(2, Some(&self.last_blocks_buf), 0);
+                encoder.set_buffer(3, Some(&self.cancel_flag_buf), 0);
+                encoder.set_buffer(4, Some(&self.completed_iters_buf), 0);
+                encoder.set_buffer(5, Some(&self.target_buf), 0);
+                encoder.set_buffer(6, Some(&self.found_index_buf), 0);
+                encoder.set_buffer(7, Some(&self.lanes_active_buf), 0);
+                encoder.set_buffer(8, Some(&self.active_hashes_fill_buf), 0);
+                encoder.set_buffer(9, Some(&self.lane_launch_iters_buf), 0);
+                encoder.set_buffer(10, Some(&self.evaluate_target_buf), 0);
 
-            let threadgroups = MTLSize::new(active_lanes as u64, 1, 1);
-            let threads_per_group = MTLSize::new(KERNEL_THREADS as u64, 1, 1);
-            encoder.dispatch_thread_groups(threadgroups, threads_per_group);
-            encoder.end_encoding();
-        }
+                let threadgroups = MTLSize::new(active_lanes as u64, 1, 1);
+                let threads_per_group = MTLSize::new(KERNEL_THREADS as u64, 1, 1);
+                encoder.dispatch_thread_groups(threadgroups, threads_per_group);
+                encoder.end_encoding();
+            }
 
-        // ---- Kernel 3: evaluate_hashes (if no fused target check) ----
-        if target.is_some() && evaluate_target == 0 {
-            let encoder = cmd_buf.new_compute_command_encoder();
-            encoder.set_compute_pipeline_state(&self.eval_pipeline);
-            encoder.set_buffer(0, Some(&self.last_blocks_buf), 0);
-            encoder.set_buffer(1, Some(&self.target_buf), 0);
-            encoder.set_buffer(2, Some(&self.found_index_buf), 0);
-            encoder.set_buffer(3, Some(&self.eval_active_hashes_buf), 0);
+            // ---- Kernel 3: evaluate_hashes (if no fused target check) ----
+            if target.is_some() && evaluate_target == 0 {
+                let encoder = cmd_buf.new_compute_command_encoder();
+                encoder.set_compute_pipeline_state(&self.eval_pipeline);
+                encoder.set_buffer(0, Some(&self.last_blocks_buf), 0);
+                encoder.set_buffer(1, Some(&self.target_buf), 0);
+                encoder.set_buffer(2, Some(&self.found_index_buf), 0);
+                encoder.set_buffer(3, Some(&self.eval_active_hashes_buf), 0);
 
-            let threads_per_group = MTLSize::new(EVAL_KERNEL_THREADS as u64, 1, 1);
-            let total_threads = MTLSize::new(
-                div_ceil(requested_hashes, EVAL_KERNEL_THREADS) as u64 * EVAL_KERNEL_THREADS as u64,
-                1,
-                1,
-            );
-            encoder.dispatch_threads(total_threads, threads_per_group);
-            encoder.end_encoding();
-        }
+                let threads_per_group = MTLSize::new(EVAL_KERNEL_THREADS as u64, 1, 1);
+                let total_threads = MTLSize::new(
+                    div_ceil(requested_hashes, EVAL_KERNEL_THREADS) as u64
+                        * EVAL_KERNEL_THREADS as u64,
+                    1,
+                    1,
+                );
+                encoder.dispatch_threads(total_threads, threads_per_group);
+                encoder.end_encoding();
+            }
 
-        cmd_buf.commit();
-        cmd_buf.wait_until_completed();
+            cmd_buf.commit();
+            cmd_buf.wait_until_completed();
+        });
 
         // Read back results from shared memory
         let completed_iters = unsafe { *(self.completed_iters_buf.contents() as *const u32) };
@@ -1006,8 +1012,7 @@ fn metal_worker_loop(
                     Some(assignment.work.template.stop_at),
                 ) {
                     Ok(batch) => {
-                        assignment.next_nonce += batch.hashes;
-                        assignment.hashes_done += batch.hashes;
+                        assignment.advance(batch.hashes);
                         shared.hashes.fetch_add(batch.hashes, Ordering::Relaxed);
                         for (nonce, hash) in batch.solutions {
                             shared.emit_solution(
@@ -1017,6 +1022,10 @@ fn metal_worker_loop(
                                 Some(hash),
                                 target_snapshot.share_binding_id,
                             );
+                            if assignment.work.template.pause_on_solution {
+                                assignment.solved = true;
+                                break;
+                            }
                         }
                     }
                     Err(e) => {
@@ -1051,7 +1060,9 @@ fn metal_worker_loop(
             // Dispatch a batch
             let batch_size = remaining.min(engine.max_hashes_per_launch as u64) as usize;
             let start_nonce = assignment.next_nonce;
-            let nonces: Vec<u64> = (0..batch_size as u64).map(|i| start_nonce + i).collect();
+            let nonces: Vec<u64> = (0..batch_size as u64)
+                .map(|i| start_nonce.wrapping_add(i))
+                .collect();
 
             shared
                 .inflight_assignment_hashes
@@ -1075,8 +1086,7 @@ fn metal_worker_loop(
             ) {
                 Ok(result) => {
                     let done = result.hashes_done;
-                    assignment.next_nonce += done;
-                    assignment.hashes_done += done;
+                    assignment.advance(done);
                     shared.hashes.fetch_add(done, Ordering::Relaxed);
 
                     if let Some(solved_nonce) = result.solved_nonce {
@@ -1087,6 +1097,9 @@ fn metal_worker_loop(
                             result.solved_hash,
                             target_snapshot.share_binding_id,
                         );
+                        if assignment.work.template.pause_on_solution {
+                            assignment.solved = true;
+                        }
                     }
                 }
                 Err(e) => {
@@ -1148,6 +1161,8 @@ struct ActiveAssignment {
     next_nonce: u64,
     hashes_done: u64,
     started_at: Instant,
+    /// A solution was found on work that stops at its first one.
+    solved: bool,
 }
 
 impl ActiveAssignment {
@@ -1158,15 +1173,23 @@ impl ActiveAssignment {
             next_nonce,
             hashes_done: 0,
             started_at: Instant::now(),
+            solved: false,
         }
     }
 
+    /// Nonces left in the chunk; the range may wrap past `u64::MAX`.
     fn remaining_nonces(&self) -> u64 {
-        let end = self
-            .work
+        if self.solved {
+            return 0;
+        }
+        self.work
             .nonce_chunk
-            .start_nonce
-            .saturating_add(self.work.nonce_chunk.nonce_count);
-        end.saturating_sub(self.next_nonce)
+            .nonce_count
+            .saturating_sub(self.hashes_done)
+    }
+
+    fn advance(&mut self, hashes: u64) {
+        self.next_nonce = self.next_nonce.wrapping_add(hashes);
+        self.hashes_done += hashes;
     }
 }
