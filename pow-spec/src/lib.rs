@@ -29,8 +29,10 @@ pub fn validate_header_length(length: usize) -> Result<u32, &'static str> {
 }
 
 /// False until upstream publishes final BLAKE2b parameters and vectors and
-/// they pass here. Until then fork-height work is refused unless the operator
-/// opts into the provisional parameters (Faraday testnet testing).
+/// they pass here. Until then callers choose whether to mine fork-height work
+/// with the provisional parameters. Pools and miners name the parameter set
+/// with the `pow_blake2b_v1` Stratum capability: if the final parameters
+/// differ, the capability gets a new name together with them.
 pub const BLAKE2B_POW_PARAMS_FINAL: bool = false;
 
 /// Picks the hash for a template height, refusing provisional BLAKE2b work

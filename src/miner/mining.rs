@@ -863,6 +863,7 @@ fn prepare_round_template(
             }
         };
         crate::backend::note_network_pow(pow);
+        super::note_provisional_pow(pow);
 
         let header_base = match decode_hex(&template.header_base, "header_base") {
             Ok(v) => v,

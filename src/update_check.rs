@@ -174,6 +174,11 @@ pub(crate) fn set_mining_blocked(blocked: bool) {
     }
 }
 
+#[cfg(test)]
+pub(crate) fn mining_blocked() -> bool {
+    MINING_BLOCKED.load(Ordering::Acquire)
+}
+
 /// The dashboard's answer to the countdown on screen.
 pub(crate) fn choose(choice: Choice) {
     let (lock, cvar) = &CHOICE;

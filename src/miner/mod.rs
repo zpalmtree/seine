@@ -117,12 +117,15 @@ struct ActivatedBackend {
     event_rx: Receiver<BackendEvent>,
 }
 
-/// Mining BLAKE2b work needs this opt-in until its parameters are final
-/// (`blocknet_pow_spec::BLAKE2B_POW_PARAMS_FINAL`), e.g. on a Faraday testnet.
+/// Until the BLAKE2b parameters are final
+/// (`blocknet_pow_spec::BLAKE2B_POW_PARAMS_FINAL`), Seine mines fork-height
+/// work with the provisional ones and tells pools so with the
+/// `pow_blake2b_v1` login capability; a pool on other parameters turns it away
+/// with an update notice. `0` here refuses provisional work instead.
 pub(super) const PROVISIONAL_FARADAY_POW_ENV: &str = "SEINE_FARADAY_PROVISIONAL_POW";
 
 pub(crate) fn provisional_faraday_pow_allowed() -> bool {
-    std::env::var_os(PROVISIONAL_FARADAY_POW_ENV).is_some_and(|value| value == "1")
+    std::env::var_os(PROVISIONAL_FARADAY_POW_ENV).is_none_or(|value| value != "0")
 }
 
 /// True when this build mines fork-height (BLAKE2b) work: final parameters, or
@@ -133,6 +136,18 @@ pub(crate) fn mines_blake2b() -> bool {
         provisional_faraday_pow_allowed(),
     )
     .is_ok()
+}
+
+/// The first fork-height work mined with provisional parameters asks for an
+/// update check, so a release with the final parameters installs promptly.
+pub(super) fn note_provisional_pow(pow: crate::backend::PowAlgorithm) {
+    static NOTED: AtomicBool = AtomicBool::new(false);
+    if pow == crate::backend::PowAlgorithm::Blake2b512
+        && !blocknet_pow_spec::BLAKE2B_POW_PARAMS_FINAL
+        && !NOTED.swap(true, Ordering::AcqRel)
+    {
+        crate::update_check::request_check_soon();
+    }
 }
 
 static UNSUPPORTED_WORK_NOTICE: AtomicBool = AtomicBool::new(false);

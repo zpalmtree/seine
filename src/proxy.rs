@@ -33,6 +33,7 @@ use crate::pool::{
 const MAX_RIG_MESSAGE_BYTES: usize = 8 * 1024;
 const CAP_SUBMIT_CLAIMED_HASH: &str = "submit_claimed_hash";
 const CAP_SAME_TEMPLATE_REBIND_V1: &str = "same_template_rebind_v1";
+/// The BLAKE2b parameter set; see `STRATUM_CAPABILITY_POW_BLAKE2B_V1` in pool.rs.
 const CAP_POW_BLAKE2B_V1: &str = "pow_blake2b_v1";
 const FARADAY_UPGRADE_MESSAGE: &str =
     "this proxy is mining the Faraday upgrade; update Seine to a release that supports it";

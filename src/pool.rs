@@ -89,6 +89,10 @@ const STRATUM_CAPABILITY_SUBMIT_TIMING_V1: &str = "submit_timing_v1";
 /// This miner hashes Faraday BLAKE2b work. The pool refuses fork-height work to
 /// sessions without it, so older miners get an upgrade message instead of
 /// mining the old hash and having every share rejected.
+/// Names the BLAKE2b parameter set this build mines (pow-spec: personalization
+/// `blocknet/pow/v1`, 156-byte header). Pools only send fork work to miners
+/// with the capability for their parameters, so a parameter change needs a
+/// new name here, in the farm proxy and in the pool.
 const STRATUM_CAPABILITY_POW_BLAKE2B_V1: &str = "pow_blake2b_v1";
 const STRATUM_METHOD_NOTIFICATION: &str = "notification";
 const SUBMIT_REJECT_REASON_DISCONNECTED: &str = "pool disconnected";
@@ -575,6 +579,12 @@ pub fn payout_account_for_pool(
 
 /// True when a pool error only reflects transient load (such as `server busy,
 /// retry`) rather than a refusal of the request itself.
+/// True when a pool turns this miner away until it is updated, such as the
+/// Faraday fork message sent to miners without the pool's BLAKE2b capability.
+pub(crate) fn requires_newer_miner(message: &str) -> bool {
+    message.to_ascii_lowercase().contains("update seine")
+}
+
 pub(crate) fn is_transient_pool_error(message: &str) -> bool {
     submit_retry::is_retryable_submit_reject(message)
 }
@@ -2924,11 +2934,35 @@ mod tests {
         let with = client_capabilities_for(true);
         assert!(with.contains(&STRATUM_CAPABILITY_POW_BLAKE2B_V1));
         assert_eq!(&with[..with.len() - 1], CLIENT_CAPABILITIES);
-        // Until the parameters are final this build needs the opt-in.
-        if !blocknet_pow_spec::BLAKE2B_POW_PARAMS_FINAL
-            && !crate::miner::provisional_faraday_pow_allowed()
-        {
-            assert_eq!(client_capabilities(), CLIENT_CAPABILITIES);
+        // Provisional parameters are mined unless turned off.
+        assert_eq!(
+            client_capabilities().contains(&STRATUM_CAPABILITY_POW_BLAKE2B_V1),
+            blocknet_pow_spec::BLAKE2B_POW_PARAMS_FINAL
+                || crate::miner::provisional_faraday_pow_allowed()
+        );
+    }
+
+    #[test]
+    fn faraday_update_notices_from_pools_and_proxies_require_a_newer_miner() {
+        // bntpool's login error and notice from the fork for miners without
+        // the pool's BLAKE2b capability.
+        assert!(requires_newer_miner(
+            "this miner cannot mine after the Faraday fork (block 103,680); update seine: https://github.com/zpalmtree/seine/releases/latest"
+        ));
+        // The farm proxy's message to its rigs.
+        assert!(requires_newer_miner(
+            "this proxy is mining the Faraday upgrade; update Seine to a release that supports it"
+        ));
+        assert!(!requires_newer_miner("address not allowed"));
+        assert!(!requires_newer_miner("server busy, retry"));
+    }
+
+    #[test]
+    fn provisional_faraday_pow_is_mined_unless_turned_off() {
+        if std::env::var_os("SEINE_FARADAY_PROVISIONAL_POW").is_none() {
+            assert!(crate::miner::provisional_faraday_pow_allowed());
+            assert!(crate::miner::mines_blake2b());
+            assert!(client_capabilities().contains(&STRATUM_CAPABILITY_POW_BLAKE2B_V1));
         }
     }
 

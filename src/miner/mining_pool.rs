@@ -1672,6 +1672,7 @@ fn handle_active_pool_event(
     stats: &Stats,
     tui: &mut Option<TuiDisplay>,
 ) -> Result<()> {
+    note_pool_requires_update(&event);
     match event {
         PoolEvent::Connected => {
             *connected = true;
@@ -1991,6 +1992,20 @@ fn force_pool_session_resync(
     Ok(())
 }
 
+/// A pool or farm proxy that turns this miner away until it is updated (for
+/// example a newer Faraday PoW) pauses mining like unsupported work, so the
+/// update installs even when it was skipped or the control API runs the miner.
+fn note_pool_requires_update(event: &PoolEvent) {
+    let message = match event {
+        PoolEvent::LoginRejected(message) | PoolEvent::Disconnected(message) => message,
+        PoolEvent::Notification(notification) => &notification.message,
+        _ => return,
+    };
+    if crate::pool::requires_newer_miner(message) {
+        super::note_unsupported_work("the pool requires a newer seine");
+    }
+}
+
 fn handle_inactive_pool_event(
     event: PoolEvent,
     mode: PoolConnectionMode,
@@ -2002,6 +2017,7 @@ fn handle_inactive_pool_event(
     stats: &Stats,
     tui: &mut Option<TuiDisplay>,
 ) {
+    note_pool_requires_update(&event);
     match event {
         PoolEvent::Connected => {
             if !*connected && mode.is_user() {
@@ -2254,6 +2270,7 @@ fn assign_pool_job(
         }
     };
     crate::backend::note_network_pow(pow);
+    super::note_provisional_pow(pow);
     let nonce_count = job.nonce_count();
     if nonce_count == 0 {
         if mode.is_user() {
@@ -3533,6 +3550,18 @@ mod tests {
         super::pause_for_unsupported_job("x", &mut slots, &executor, &mut active, &mut tui);
         assert_eq!(backend.0.load(Ordering::Acquire), cancels);
         crate::miner::clear_unsupported_work_notice();
+    }
+
+    #[test]
+    fn a_pool_update_notice_pauses_mining_until_supported_work_arrives() {
+        super::note_pool_requires_update(&crate::pool::PoolEvent::Connected);
+        assert!(!crate::update_check::mining_blocked());
+        super::note_pool_requires_update(&crate::pool::PoolEvent::LoginRejected(
+            "this miner cannot mine after the Faraday fork (block 103,680); update seine: https://github.com/zpalmtree/seine/releases/latest".into(),
+        ));
+        assert!(crate::update_check::mining_blocked());
+        crate::miner::clear_unsupported_work_notice();
+        assert!(!crate::update_check::mining_blocked());
     }
 
     fn test_daemon_client(server: &MockServer, token: &str) -> ApiClient {
