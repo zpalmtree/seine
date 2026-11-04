@@ -1330,7 +1330,8 @@ impl Config {
             .and_then(|detection| detection.as_ref().ok())
             .map(|devices| !devices.is_empty())
             .unwrap_or(false);
-        let (mut backends, nvidia_hint) = resolve_backend_selection(
+        let (mut backends, nvidia_hint) = resolve_backend_selection_in(
+            cli.mode.unwrap_or(MiningMode::Pool),
             &cli.backends,
             &cli.nvidia_devices,
             nvidia_available,
@@ -1808,7 +1809,8 @@ impl Config {
     }
 }
 
-fn resolve_backend_selection(
+fn resolve_backend_selection_in(
+    mode: MiningMode,
     requested_backends: &[BackendKind],
     nvidia_devices: &[u32],
     nvidia_available: bool,
@@ -1822,9 +1824,11 @@ fn resolve_backend_selection(
     // Integrated AMD GPUs are not auto-enabled; users can opt in via
     // --backend cpu,amd. On Apple Silicon builds that mine BLAKE2b, Metal is
     // added for BLAKE2b work only; --backend cpu,metal also mines Argon2 on it.
+    #[cfg(not(all(feature = "metal", target_os = "macos")))]
+    let _ = mode;
     let mut selected = vec![BackendKind::Cpu];
     #[cfg(all(feature = "metal", target_os = "macos"))]
-    if crate::miner::mines_blake2b() {
+    if crate::miner::mines_blake2b_in(mode) {
         selected.push(BackendKind::Metal);
     }
     if nvidia_available || !nvidia_devices.is_empty() {
@@ -5667,10 +5671,30 @@ HugePages_Rsvd:          0
         assert!(!cpu_autotune_threads);
     }
 
+    /// Pool-mode backend selection.
+    fn resolve_backend_selection(
+        requested_backends: &[BackendKind],
+        nvidia_devices: &[u32],
+        nvidia_available: bool,
+        amd_devices: &[u32],
+        amd_available: bool,
+    ) -> (Vec<BackendKind>, Option<&'static str>) {
+        resolve_backend_selection_in(
+            MiningMode::Pool,
+            requested_backends,
+            nvidia_devices,
+            nvidia_available,
+            amd_devices,
+            amd_available,
+        )
+    }
+
     /// The default selection: Apple Silicon builds that mine BLAKE2b add Metal
     /// after the CPU.
     fn auto_selected(mut kinds: Vec<BackendKind>) -> Vec<BackendKind> {
-        if cfg!(all(feature = "metal", target_os = "macos")) && crate::miner::mines_blake2b() {
+        if cfg!(all(feature = "metal", target_os = "macos"))
+            && crate::miner::mines_blake2b_in(MiningMode::Pool)
+        {
             kinds.insert(1, BackendKind::Metal);
         }
         kinds

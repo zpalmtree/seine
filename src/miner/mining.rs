@@ -60,6 +60,9 @@ use super::{
 
 type BackendEventAction = RuntimeBackendEventAction;
 
+/// Direct daemon mining cannot check which BLAKE2b parameters the daemon
+/// uses, so it mines provisional fork-height work only on request.
+const DIRECT_PROVISIONAL_POW_REFUSED: &str = "direct daemon mining waits for a release with the final Faraday PoW parameters (SEINE_FARADAY_PROVISIONAL_POW=1 mines the provisional ones)";
 const RETRY_LOG_INTERVAL: Duration = Duration::from_secs(10);
 const SUBMIT_BACKLOG_CAPACITY: usize = 512;
 const SUBMIT_BACKLOG_HARD_CAPACITY: usize = 4096;
@@ -853,6 +856,13 @@ fn prepare_round_template(
             Err(reason) => {
                 // Keep the process (and the update checker) alive; an
                 // installed update restarts through the shutdown flag.
+                let reason = if blocknet_pow_spec::PowAlgorithm::for_height(height)
+                    == blocknet_pow_spec::PowAlgorithm::Blake2b512
+                {
+                    DIRECT_PROVISIONAL_POW_REFUSED
+                } else {
+                    reason
+                };
                 super::note_unsupported_work(reason);
                 if !sleep_with_shutdown(shutdown, UNSUPPORTED_WORK_RETRY_DELAY) {
                     return None;

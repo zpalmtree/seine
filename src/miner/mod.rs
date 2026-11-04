@@ -118,24 +118,60 @@ struct ActivatedBackend {
 }
 
 /// Until the BLAKE2b parameters are final
-/// (`blocknet_pow_spec::BLAKE2B_POW_PARAMS_FINAL`), Seine mines fork-height
-/// work with the provisional ones and tells pools so with the
+/// (`blocknet_pow_spec::BLAKE2B_POW_PARAMS_FINAL`), pool mining mines
+/// fork-height work with the provisional ones and tells pools so with the
 /// `pow_blake2b_v1` login capability; a pool on other parameters turns it away
-/// with an update notice. `0` here refuses provisional work instead.
+/// with an update notice. Direct daemon mining has no such check, so it mines
+/// provisional work only with `1` here. `0` refuses it in every mode.
 pub(super) const PROVISIONAL_FARADAY_POW_ENV: &str = "SEINE_FARADAY_PROVISIONAL_POW";
 
-pub(crate) fn provisional_faraday_pow_allowed() -> bool {
-    std::env::var_os(PROVISIONAL_FARADAY_POW_ENV).is_none_or(|value| value != "0")
+/// Set for the duration of a direct daemon mining run.
+static DIRECT_DAEMON_MINING: AtomicBool = AtomicBool::new(false);
+
+fn note_mining_mode(mode: MiningMode) {
+    DIRECT_DAEMON_MINING.store(mode == MiningMode::Daemon, Ordering::Release);
 }
 
-/// True when this build mines fork-height (BLAKE2b) work: final parameters, or
-/// the provisional opt-in.
-pub(crate) fn mines_blake2b() -> bool {
+fn current_mining_mode() -> MiningMode {
+    if DIRECT_DAEMON_MINING.load(Ordering::Acquire) {
+        MiningMode::Daemon
+    } else {
+        MiningMode::Pool
+    }
+}
+
+fn provisional_pow_allowed_in(mode: MiningMode, setting: Option<&std::ffi::OsStr>) -> bool {
+    match mode {
+        MiningMode::Pool => setting.is_none_or(|value| value != "0"),
+        MiningMode::Daemon => setting.is_some_and(|value| value == "1"),
+    }
+}
+
+/// Whether the current run mines fork-height work with the provisional
+/// BLAKE2b parameters.
+pub(crate) fn provisional_faraday_pow_allowed() -> bool {
+    provisional_pow_allowed_in(
+        current_mining_mode(),
+        std::env::var_os(PROVISIONAL_FARADAY_POW_ENV).as_deref(),
+    )
+}
+
+/// True when a run in `mode` mines fork-height (BLAKE2b) work: final
+/// parameters, or provisional ones allowed in that mode.
+pub(crate) fn mines_blake2b_in(mode: MiningMode) -> bool {
     blocknet_pow_spec::ensure_supported_pow(
         blocknet_pow_spec::FARADAY_ACTIVATION_HEIGHT,
-        provisional_faraday_pow_allowed(),
+        provisional_pow_allowed_in(
+            mode,
+            std::env::var_os(PROVISIONAL_FARADAY_POW_ENV).as_deref(),
+        ),
     )
     .is_ok()
+}
+
+/// True when the current run mines fork-height (BLAKE2b) work.
+pub(crate) fn mines_blake2b() -> bool {
+    mines_blake2b_in(current_mining_mode())
 }
 
 /// The first fork-height work mined with provisional parameters asks for an
@@ -155,7 +191,7 @@ static UNSUPPORTED_WORK_NOTICE: AtomicBool = AtomicBool::new(false);
 /// Work this build cannot mine (a PoW or header format from a later release)
 /// pauses mining instead of ending the process, so the update checker can
 /// install a release that supports it. Warns once per pause.
-pub(super) fn note_unsupported_work(reason: &str) {
+pub(crate) fn note_unsupported_work(reason: &str) {
     crate::update_check::set_mining_blocked(true);
     crate::update_check::request_check_soon();
     crate::diagnostics::unsupported_work(true);
@@ -169,7 +205,7 @@ pub(super) fn note_unsupported_work(reason: &str) {
     }
 }
 
-pub(super) fn clear_unsupported_work_notice() {
+pub(crate) fn clear_unsupported_work_notice() {
     crate::update_check::set_mining_blocked(false);
     crate::diagnostics::unsupported_work(false);
     if UNSUPPORTED_WORK_NOTICE.swap(false, Ordering::AcqRel) {
@@ -353,6 +389,7 @@ pub(crate) fn run_with_thread_control(
     if cfg.bench {
         return bench::run_benchmark(cfg, shutdown.as_ref());
     }
+    note_mining_mode(cfg.mode);
     // Install before address resolution, backend initialization and autotuning so
     // failures before productive work are observable too. No network I/O here.
     let telemetry = cfg
@@ -4046,6 +4083,25 @@ pub(crate) mod tests {
             lanes,
             runtime_policy: BackendRuntimePolicy::default(),
             capabilities,
+        }
+    }
+
+    #[test]
+    fn provisional_faraday_pow_needs_the_opt_in_only_for_direct_mining() {
+        use std::ffi::OsStr;
+        let on = Some(OsStr::new("1"));
+        let off = Some(OsStr::new("0"));
+        assert!(provisional_pow_allowed_in(MiningMode::Pool, None));
+        assert!(provisional_pow_allowed_in(MiningMode::Pool, on));
+        assert!(!provisional_pow_allowed_in(MiningMode::Pool, off));
+        assert!(!provisional_pow_allowed_in(MiningMode::Daemon, None));
+        assert!(provisional_pow_allowed_in(MiningMode::Daemon, on));
+        assert!(!provisional_pow_allowed_in(MiningMode::Daemon, off));
+        if std::env::var_os(PROVISIONAL_FARADAY_POW_ENV).is_none()
+            && !blocknet_pow_spec::BLAKE2B_POW_PARAMS_FINAL
+        {
+            assert!(!mines_blake2b_in(MiningMode::Daemon));
+            assert!(mines_blake2b_in(MiningMode::Pool));
         }
     }
 

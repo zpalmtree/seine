@@ -86,13 +86,11 @@ const REFILL_RATE_LIMIT_RETRY: Duration = Duration::from_secs(1);
 pub(crate) const STRATUM_CAPABILITY_PROXY_WORKERS_V1: &str = "proxy_workers_v1";
 /// The pool accepts miner-side timing fields on submits.
 const STRATUM_CAPABILITY_SUBMIT_TIMING_V1: &str = "submit_timing_v1";
-/// This miner hashes Faraday BLAKE2b work. The pool refuses fork-height work to
-/// sessions without it, so older miners get an upgrade message instead of
-/// mining the old hash and having every share rejected.
-/// Names the BLAKE2b parameter set this build mines (pow-spec: personalization
-/// `blocknet/pow/v1`, 156-byte header). Pools only send fork work to miners
-/// with the capability for their parameters, so a parameter change needs a
-/// new name here, in the farm proxy and in the pool.
+/// This miner hashes Faraday BLAKE2b work with the parameter set the name
+/// stands for (pow-spec: personalization `blocknet/pow/v1`, 156-byte header).
+/// The pool refuses fork-height work to sessions without it, so older miners
+/// get an upgrade message instead of having every share rejected. A parameter
+/// change needs a new name here, in the farm proxy and in the pool.
 const STRATUM_CAPABILITY_POW_BLAKE2B_V1: &str = "pow_blake2b_v1";
 const STRATUM_METHOD_NOTIFICATION: &str = "notification";
 const SUBMIT_REJECT_REASON_DISCONNECTED: &str = "pool disconnected";
@@ -132,10 +130,12 @@ const CLIENT_CAPABILITIES_WITH_BLAKE2B: &[&str] = &[
     STRATUM_CAPABILITY_POW_BLAKE2B_V1,
 ];
 
-/// Advertises BLAKE2b only when this build will mine fork-height work: final
-/// parameters, or the provisional opt-in for Faraday testnet testing.
+/// Advertises BLAKE2b only when pool mining mines fork-height work: final
+/// parameters, or provisional ones unless `SEINE_FARADAY_PROVISIONAL_POW=0`.
 fn client_capabilities() -> &'static [&'static str] {
-    client_capabilities_for(crate::miner::mines_blake2b())
+    client_capabilities_for(crate::miner::mines_blake2b_in(
+        crate::config::MiningMode::Pool,
+    ))
 }
 
 fn client_capabilities_for(mines_blake2b: bool) -> &'static [&'static str] {
@@ -577,14 +577,14 @@ pub fn payout_account_for_pool(
     }
 }
 
-/// True when a pool error only reflects transient load (such as `server busy,
-/// retry`) rather than a refusal of the request itself.
 /// True when a pool turns this miner away until it is updated, such as the
 /// Faraday fork message sent to miners without the pool's BLAKE2b capability.
 pub(crate) fn requires_newer_miner(message: &str) -> bool {
     message.to_ascii_lowercase().contains("update seine")
 }
 
+/// True when a pool error only reflects transient load (such as `server busy,
+/// retry`) rather than a refusal of the request itself.
 pub(crate) fn is_transient_pool_error(message: &str) -> bool {
     submit_retry::is_retryable_submit_reject(message)
 }
@@ -2934,11 +2934,10 @@ mod tests {
         let with = client_capabilities_for(true);
         assert!(with.contains(&STRATUM_CAPABILITY_POW_BLAKE2B_V1));
         assert_eq!(&with[..with.len() - 1], CLIENT_CAPABILITIES);
-        // Provisional parameters are mined unless turned off.
+        // Pool mining mines provisional parameters unless turned off.
         assert_eq!(
             client_capabilities().contains(&STRATUM_CAPABILITY_POW_BLAKE2B_V1),
-            blocknet_pow_spec::BLAKE2B_POW_PARAMS_FINAL
-                || crate::miner::provisional_faraday_pow_allowed()
+            crate::miner::mines_blake2b_in(crate::config::MiningMode::Pool)
         );
     }
 
@@ -2958,10 +2957,11 @@ mod tests {
     }
 
     #[test]
-    fn provisional_faraday_pow_is_mined_unless_turned_off() {
+    fn pool_mining_mines_provisional_faraday_pow_unless_turned_off() {
         if std::env::var_os("SEINE_FARADAY_PROVISIONAL_POW").is_none() {
-            assert!(crate::miner::provisional_faraday_pow_allowed());
-            assert!(crate::miner::mines_blake2b());
+            assert!(crate::miner::mines_blake2b_in(
+                crate::config::MiningMode::Pool
+            ));
             assert!(client_capabilities().contains(&STRATUM_CAPABILITY_POW_BLAKE2B_V1));
         }
     }
