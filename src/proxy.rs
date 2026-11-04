@@ -36,7 +36,7 @@ const CAP_SAME_TEMPLATE_REBIND_V1: &str = "same_template_rebind_v1";
 /// The BLAKE2b parameter set; see `STRATUM_CAPABILITY_POW_BLAKE2B_V1` in pool.rs.
 const CAP_POW_BLAKE2B_V1: &str = "pow_blake2b_v1";
 const FARADAY_UPGRADE_MESSAGE: &str =
-    "this proxy is mining the Faraday upgrade; update Seine to a release that supports it";
+    "this rig cannot mine the Faraday upgrade this proxy is mining; update Seine to a release that supports it";
 /// A rig's first slice is this fraction of an upstream range.
 const INITIAL_SLICE_DIVISOR: u64 = 128;
 /// A rig's slice never grows past this fraction of an upstream range.
@@ -196,6 +196,9 @@ impl Upstreams {
             self.worker.clone(),
             Arc::clone(&stop),
         )?);
+        // A refused refill opens another session here rather than
+        // reconnecting the one rigs are mining on.
+        client.keep_session_when_refill_refused();
         let bridge_client = Arc::clone(&client);
         let bridge_stop = Arc::clone(&stop);
         let shutdown = Arc::clone(&self.shutdown);
@@ -302,7 +305,8 @@ impl Assignment {
         if self.exhausted || self.retired {
             0
         } else {
-            self.end - self.next + 1
+            // A full 64-bit range holds 2^64 nonces; report u64::MAX.
+            (self.end - self.next).saturating_add(1)
         }
     }
 
@@ -335,6 +339,8 @@ struct Template {
     range_size: u64,
     assignments: Vec<Assignment>,
     refill_requested_at: Option<Instant>,
+    /// The pool refused a refill for this template on this session.
+    refill_closed: bool,
     /// The upstream session this work came from has ended.
     dead: bool,
 }
@@ -351,6 +357,7 @@ impl Template {
             range_size: job.nonce_count().max(1),
             assignments: vec![Assignment::from_job(job)],
             refill_requested_at: None,
+            refill_closed: false,
             dead: false,
         }
     }
@@ -377,6 +384,8 @@ struct Session {
     stop: Arc<AtomicBool>,
     logged_in: bool,
     refill: bool,
+    /// The client's refused-refill count when this proxy last looked.
+    refill_refusals_seen: u64,
     /// The most recent upstream job id, which a refill request must name.
     last_upstream_job: Option<String>,
     current: Option<Template>,
@@ -408,6 +417,10 @@ struct LocalJob {
     assignment: usize,
     start: u64,
     end: u64,
+    /// The upstream job and target the slice was issued under. Shares found
+    /// at an older target go upstream under the job that had it.
+    upstream_job_id: String,
+    target: String,
 }
 
 #[derive(Debug)]
@@ -548,6 +561,7 @@ impl Hub {
                         stop,
                         logged_in: false,
                         refill: false,
+                        refill_refusals_seen: 0,
                         last_upstream_job: None,
                         current: None,
                         previous: None,
@@ -583,17 +597,17 @@ impl Hub {
     /// Blocknet address, otherwise --address. `None` when every address slot
     /// is taken by other addresses.
     fn payout_address(&self, requested: &str) -> Option<String> {
-        let requested = requested.trim();
         // A rig may log in as solo:<address>; it gets its own solo upstream.
-        let destination = crate::shortname::split_solo(requested).1;
+        let (solo, destination) = crate::shortname::split_solo(requested);
         let valid = !destination.is_empty()
             && !destination.starts_with(['@', '$'])
-            && crate::shortname::validate_destination(requested).is_ok();
+            && crate::shortname::validate_destination(destination).is_ok();
         if !valid {
             return Some(self.address.clone());
         }
+        let requested = crate::shortname::with_solo(solo, destination);
         let known: HashSet<&str> = self.sessions.values().map(|s| s.address.as_str()).collect();
-        (known.contains(requested) || known.len() < MAX_ADDRESSES).then(|| requested.to_string())
+        (known.contains(requested.as_str()) || known.len() < MAX_ADDRESSES).then_some(requested)
     }
 
     /// Range one template holds and the range `address`'s rigs want per
@@ -646,6 +660,21 @@ impl Hub {
             self.open_session(address);
             return;
         }
+        // A refused refill closes refills on that session's template; more
+        // range then comes from another session.
+        for id in &ids {
+            let Some(session) = self.sessions.get_mut(id) else {
+                continue;
+            };
+            let refusals = session.client.refill_refusals();
+            if refusals != session.refill_refusals_seen {
+                session.refill_refusals_seen = refusals;
+                if let Some(template) = session.current.as_mut() {
+                    template.refill_closed = true;
+                    template.refill_requested_at = None;
+                }
+            }
+        }
         let (range, demand) = self.demand(address);
         let live_remaining = ids
             .iter()
@@ -668,9 +697,10 @@ impl Hub {
             let session = &self.sessions[id];
             session.logged_in
                 && session.refill
-                && session
-                    .live()
-                    .is_some_and(|t| t.assignments.len() <= MAX_REFILLS_PER_TEMPLATE)
+                && session.client.refill_available()
+                && session.live().is_some_and(|t| {
+                    !t.refill_closed && t.assignments.len() <= MAX_REFILLS_PER_TEMPLATE
+                })
         });
         if let Some(id) = refillable {
             let session = self.sessions.get_mut(&id).expect("listed session");
@@ -1033,6 +1063,15 @@ impl Hub {
     /// Sends rigs mining slices of `assignment` the same slices under new
     /// job ids carrying the assignment's new share target.
     fn reissue_slices(&mut self, session: usize, generation: u64, assignment: usize) {
+        let Some((upstream_job_id, target)) = self
+            .sessions
+            .get(&session)
+            .and_then(|s| s.template(generation))
+            .and_then(|t| t.assignments.get(assignment))
+            .map(|a| (a.upstream_job_id.clone(), a.target.clone()))
+        else {
+            return;
+        };
         let updates: Vec<(u64, LocalJob)> = self
             .rigs
             .iter()
@@ -1041,7 +1080,12 @@ impl Hub {
                 (local.session == session
                     && local.generation == generation
                     && local.assignment == assignment)
-                    .then(|| (*conn, local.clone()))
+                    .then(|| {
+                        let mut local = local.clone();
+                        local.upstream_job_id = upstream_job_id.clone();
+                        local.target = target.clone();
+                        (*conn, local)
+                    })
             })
             .collect();
         for (conn, local) in updates {
@@ -1119,7 +1163,8 @@ impl Hub {
             else {
                 continue;
             };
-            if let Some((start, end)) = template.assignments[index].take(size) {
+            let assignment = &mut template.assignments[index];
+            if let Some((start, end)) = assignment.take(size) {
                 session.last_used = Instant::now();
                 slice = Some(LocalJob {
                     conn,
@@ -1128,6 +1173,8 @@ impl Hub {
                     assignment: index,
                     start,
                     end,
+                    upstream_job_id: assignment.upstream_job_id.clone(),
+                    target: assignment.target.clone(),
                 });
                 break;
             }
@@ -1276,9 +1323,13 @@ impl Hub {
                     .collect::<String>()
             })
             .filter(|worker| !worker.trim().is_empty());
-        let Some(address) =
-            self.payout_address(params.get("address").and_then(Value::as_str).unwrap_or(""))
-        else {
+        let requested = params.get("address").and_then(Value::as_str).unwrap_or("");
+        // The proxy has no memo for a rig's own address, so a shared exchange
+        // deposit address would be paid without the memo that identifies it.
+        if let Err(err) = crate::payout_destination::ensure_exchange_memo(requested, None, false) {
+            return self.reply_error(conn, id, &format!("{err:#}"));
+        }
+        let Some(address) = self.payout_address(requested) else {
             return self.reply_error(
                 conn,
                 id,
@@ -1351,7 +1402,16 @@ impl Hub {
             .template(local.generation)
             .filter(|t| !t.dead)
             .and_then(|t| t.assignments.get(local.assignment))
-            .map(|assignment| assignment.upstream_job_id.clone())
+            .map(|assignment| {
+                // A re-issue at the same target keeps the slice valid under
+                // the newest job; one at a new target leaves the slice on the
+                // job it was issued under, which the pool judges.
+                if assignment.target == local.target {
+                    assignment.upstream_job_id.clone()
+                } else {
+                    local.upstream_job_id.clone()
+                }
+            })
         else {
             return self.reply_error(conn, id, "stale job");
         };
@@ -1490,10 +1550,13 @@ impl Hub {
 }
 
 fn compact_address(address: &str) -> String {
-    if address.len() <= 16 {
+    let chars: Vec<char> = address.chars().collect();
+    if chars.len() <= 16 {
         return address.to_string();
     }
-    format!("{}…{}", &address[..8], &address[address.len() - 6..])
+    let head: String = chars[..8].iter().collect();
+    let tail: String = chars[chars.len() - 6..].iter().collect();
+    format!("{head}…{tail}")
 }
 
 fn format_hashrate(hashes_per_second: f64) -> String {
@@ -2026,6 +2089,82 @@ mod tests {
         let (_rig, job) = login_as(proxy_port, dev);
         assert_eq!(job["method"], "job");
         shutdown.store(true, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn rigs_paying_a_shared_exchange_address_are_refused() {
+        let (pool_port, seen, _push) = fake_pool();
+        let (proxy_port, shutdown) = start_proxy(pool_port);
+        next_upstream(&seen, "login");
+        let stream = StdTcpStream::connect(("127.0.0.1", proxy_port)).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut rig = TestRig {
+            writer: stream.try_clone().unwrap(),
+            reader: StdBufReader::new(stream),
+        };
+        rig.send(json!({"id": 1, "method": "login", "params": {
+            "address": "solo:ZJZqGfDPCVg78CRH5Z33CtHafg911Dp5Bauf1Dnxg5jgXx7Whqsvqka96FCV8W6QZXNDKzJefkFU6bwDEGBewqPrTWjij",
+            "worker": "rig", "protocol_version": 2,
+            "capabilities": ["submit_claimed_hash", "nonce_refill_v1"]}}));
+        let reply = rig.recv();
+        assert!(
+            reply["error"]
+                .as_str()
+                .is_some_and(|e| e.contains("SafeTrade")),
+            "{reply}"
+        );
+        shutdown.store(true, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn shares_found_before_a_difficulty_change_keep_their_job() {
+        let (pool_port, seen, push) = fake_pool();
+        let (proxy_port, shutdown) = start_proxy(pool_port);
+        next_upstream(&seen, "login");
+        std::thread::sleep(Duration::from_millis(300));
+        let (mut rig, _, first) = TestRig::connect(proxy_port, json!(["submit_claimed_hash"]));
+        let (start, _) = range(&first["params"]);
+
+        // The pool re-issues the same range under a new job at a new target.
+        let mut harder = job("u2", "t1", 10, 0);
+        harder["params"]["target"] = json!("0f".repeat(32));
+        harder["params"]["difficulty"] = json!(50);
+        push.send(harder).unwrap();
+        let second = rig.recv();
+        assert_eq!(second["method"], "job");
+        assert_ne!(second["params"]["job_id"], first["params"]["job_id"]);
+
+        // A share found on the first slice goes upstream under the job it met.
+        rig.send(json!({"id": 7, "method": "submit", "params": {
+            "job_id": first["params"]["job_id"], "nonce": start,
+            "claimed_hash": "00".repeat(32)}}));
+        assert_eq!(next_upstream(&seen, "submit")["params"]["job_id"], "u1");
+        rig.recv();
+        rig.send(json!({"id": 8, "method": "submit", "params": {
+            "job_id": second["params"]["job_id"], "nonce": start + 1,
+            "claimed_hash": "00".repeat(32)}}));
+        assert_eq!(next_upstream(&seen, "submit")["params"]["job_id"], "u2");
+        shutdown.store(true, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn compact_addresses_never_split_a_character() {
+        assert_eq!(compact_address("short"), "short");
+        let odd = format!("solo:\u{a0}\u{a0}{}", "x".repeat(20));
+        assert_eq!(compact_address(&odd), "solo:\u{a0}\u{a0}x…xxxxxx");
+    }
+
+    #[test]
+    fn a_full_nonce_range_is_not_empty() {
+        let mut job =
+            serde_json::from_value::<PoolJob>(job("u", "t", 1, 0)["params"].clone()).unwrap();
+        job.nonce_start = 0;
+        job.nonce_end = u64::MAX;
+        let mut assignment = Assignment::from_job(&job);
+        assert_eq!(assignment.remaining(), u64::MAX);
+        assert_eq!(assignment.take(10), Some((0, 9)));
     }
 
     #[test]

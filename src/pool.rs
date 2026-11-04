@@ -4,7 +4,7 @@ use std::io::Write;
 use std::net::SocketAddr;
 #[cfg(test)]
 use std::net::TcpStream;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -262,6 +262,18 @@ pub struct SubmitTiming {
     pub job_switch: Option<Duration>,
 }
 
+/// Refill state a client shares with its owner.
+#[derive(Debug, Default)]
+struct RefillShared {
+    /// Refills the pool refused or left unanswered.
+    refusals: AtomicU64,
+    /// The current session takes refills.
+    available: AtomicBool,
+    /// A refused refill keeps the session instead of reconnecting for a
+    /// fresh range; the owner opens another session for more range.
+    keep_session: AtomicBool,
+}
+
 #[derive(Debug)]
 pub struct PoolClient {
     submit_tx: Sender<PoolSubmit>,
@@ -270,6 +282,7 @@ pub struct PoolClient {
     event_rx: Receiver<PoolEvent>,
     reconnect_requested: Arc<AtomicBool>,
     refill_requested: Arc<Mutex<Option<String>>>,
+    refill: Arc<RefillShared>,
     shutdown: Arc<AtomicBool>,
 }
 
@@ -321,6 +334,8 @@ impl PoolClient {
         let reconnect_requested_for_thread = Arc::clone(&reconnect_requested);
         let refill_requested = Arc::new(Mutex::new(None));
         let refill_requested_for_thread = Arc::clone(&refill_requested);
+        let refill = Arc::new(RefillShared::default());
+        let refill_for_thread = Arc::clone(&refill);
         let shutdown = Arc::new(AtomicBool::new(false));
         let shutdown_for_thread = Arc::clone(&shutdown);
 
@@ -338,6 +353,7 @@ impl PoolClient {
                     process_shutdown,
                     reconnect_requested_for_thread,
                     refill_requested_for_thread,
+                    refill_for_thread,
                     shutdown_for_thread,
                 )
             })
@@ -349,6 +365,7 @@ impl PoolClient {
             event_rx,
             reconnect_requested,
             refill_requested,
+            refill,
             shutdown,
         })
     }
@@ -450,6 +467,21 @@ impl PoolClient {
     pub fn request_nonce_refill(&self, job_id: &str) {
         *self.refill_requested.lock().expect("refill lock") = Some(job_id.to_string());
         self.wake.notify_one();
+    }
+
+    /// A refused refill leaves the session in place; see `refill_refusals`.
+    pub fn keep_session_when_refill_refused(&self) {
+        self.refill.keep_session.store(true, Ordering::Release);
+    }
+
+    /// Refills the pool has refused or left unanswered so far.
+    pub fn refill_refusals(&self) -> u64 {
+        self.refill.refusals.load(Ordering::Acquire)
+    }
+
+    /// True while the current session takes refills.
+    pub fn refill_available(&self) -> bool {
+        self.refill.available.load(Ordering::Acquire)
     }
 
     pub fn request_reconnect(&self) {
@@ -578,9 +610,12 @@ pub fn payout_account_for_pool(
 }
 
 /// True when a pool turns this miner away until it is updated, such as the
-/// Faraday fork message sent to miners without the pool's BLAKE2b capability.
+/// Faraday fork message sent to miners without the pool's BLAKE2b capability
+/// ("this miner cannot mine after the Faraday fork …; update seine: …"). A
+/// notice that only suggests an update does not count.
 pub(crate) fn requires_newer_miner(message: &str) -> bool {
-    message.to_ascii_lowercase().contains("update seine")
+    let message = message.to_ascii_lowercase();
+    message.contains("cannot mine") && message.contains("update seine")
 }
 
 /// True when a pool error only reflects transient load (such as `server busy,
@@ -682,6 +717,7 @@ fn run_pool_client_thread(
     process_shutdown: Arc<AtomicBool>,
     reconnect_requested: Arc<AtomicBool>,
     refill_requested: Arc<Mutex<Option<String>>>,
+    refill: Arc<RefillShared>,
     shutdown: Arc<AtomicBool>,
 ) {
     let runtime = match tokio::runtime::Builder::new_current_thread()
@@ -709,6 +745,7 @@ fn run_pool_client_thread(
         process_shutdown,
         reconnect_requested,
         refill_requested,
+        refill,
         shutdown,
         INITIAL_WORK_TIMEOUT,
     ));
@@ -725,6 +762,7 @@ async fn run_pool_client_loop(
     process_shutdown: Arc<AtomicBool>,
     reconnect_requested: Arc<AtomicBool>,
     refill_requested: Arc<Mutex<Option<String>>>,
+    refill: Arc<RefillShared>,
     shutdown: Arc<AtomicBool>,
     initial_work_timeout: Duration,
 ) {
@@ -808,6 +846,7 @@ async fn run_pool_client_loop(
                 let mut submit_claimed_hash_enabled = true;
                 let mut submit_timing_enabled = false;
                 let mut nonce_refill_enabled = false;
+                refill.available.store(false, Ordering::Release);
                 let mut pending_refill = None::<(u64, Instant)>;
                 let mut refill_retry = None::<(Instant, String)>;
                 let mut last_outbound = Instant::now();
@@ -867,7 +906,9 @@ async fn run_pool_client_loop(
                         current_job_id.as_deref(),
                         login_confirmed
                             && (nonce_refill_enabled
-                                || (pending_submits.is_empty() && submit_rx.is_empty())),
+                                || (pending_submits.is_empty()
+                                    && retry_queue.is_empty()
+                                    && submit_rx.is_empty())),
                     );
                     if refill_retry
                         .as_ref()
@@ -883,7 +924,11 @@ async fn run_pool_client_loop(
                     {
                         pending_refill = None;
                         nonce_refill_enabled = false;
-                        *refill_requested.lock().expect("refill lock") = current_job_id.clone();
+                        refill.available.store(false, Ordering::Release);
+                        refill.refusals.fetch_add(1, Ordering::AcqRel);
+                        if !refill.keep_session.load(Ordering::Acquire) {
+                            *refill_requested.lock().expect("refill lock") = current_job_id.clone();
+                        }
                     }
                     if refill_ready && nonce_refill_enabled {
                         // A refill already in flight answers this request too;
@@ -905,7 +950,9 @@ async fn run_pool_client_loop(
                             }
                         }
                     }
-                    let idle = pending_submits.is_empty() && submit_rx.is_empty();
+                    let idle = pending_submits.is_empty()
+                        && retry_queue.is_empty()
+                        && submit_rx.is_empty();
                     if primary_back && idle {
                         let _ = event_tx.try_send(PoolEvent::Notification(PoolNotification {
                             kind: POOL_NOTIFICATION_FAILOVER.to_string(),
@@ -1180,11 +1227,16 @@ async fn run_pool_client_loop(
                                             None
                                         }
                                         RefillOutcome::Refused => {
+                                            refill.refusals.fetch_add(1, Ordering::AcqRel);
                                             // Fall back to a fresh session once
-                                            // in-flight submits settle.
-                                            nonce_refill_enabled = false;
-                                            *refill_requested.lock().expect("refill lock") =
-                                                current_job_id.clone();
+                                            // in-flight submits settle, unless
+                                            // the owner opens sessions itself.
+                                            if !refill.keep_session.load(Ordering::Acquire) {
+                                                nonce_refill_enabled = false;
+                                                refill.available.store(false, Ordering::Release);
+                                                *refill_requested.lock().expect("refill lock") =
+                                                    current_job_id.clone();
+                                            }
                                             None
                                         }
                                     }
@@ -1222,6 +1274,9 @@ async fn run_pool_client_loop(
                                                 .supports(STRATUM_CAPABILITY_SUBMIT_TIMING_V1);
                                             nonce_refill_enabled = ack
                                                 .supports(STRATUM_CAPABILITY_NONCE_REFILL_V1);
+                                            refill
+                                                .available
+                                                .store(nonce_refill_enabled, Ordering::Release);
                                             allow_login_difficulty_hint = ack
                                                 .supports(STRATUM_CAPABILITY_DIFFICULTY_HINT)
                                                 || ack.required_capabilities.iter().any(
@@ -2637,6 +2692,7 @@ mod tests {
                     Arc::new(AtomicBool::new(false)),
                     Arc::new(AtomicBool::new(false)),
                     Arc::new(Mutex::new(None)),
+                    Arc::new(RefillShared::default()),
                     client_shutdown,
                     Duration::from_millis(300),
                 ));
@@ -2950,8 +3006,10 @@ mod tests {
         ));
         // The farm proxy's message to its rigs.
         assert!(requires_newer_miner(
-            "this proxy is mining the Faraday upgrade; update Seine to a release that supports it"
+            "this rig cannot mine the Faraday upgrade this proxy is mining; update Seine to a release that supports it"
         ));
+        // A notice that only suggests updating does not force an install.
+        assert!(!requires_newer_miner("Please update Seine to v0.3.1"));
         assert!(!requires_newer_miner("address not allowed"));
         assert!(!requires_newer_miner("server busy, retry"));
     }
@@ -4048,6 +4106,12 @@ mod tests {
     /// A pool advertising `nonce_refill_v1` answers `refill` on the same
     /// session; `refuse` makes it reply with an error instead.
     fn run_refill_pool(refuse: bool) -> (Vec<PoolEvent>, usize) {
+        let (events, logins, _) = run_refill_pool_with(refuse, false);
+        (events, logins)
+    }
+
+    /// Also returns the client's refused-refill count.
+    fn run_refill_pool_with(refuse: bool, keep_session: bool) -> (Vec<PoolEvent>, usize, u64) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let server = thread::spawn(move || {
@@ -4124,10 +4188,19 @@ mod tests {
             Arc::clone(&shutdown),
         )
         .unwrap();
+        if keep_session {
+            client.keep_session_when_refill_refused();
+        }
         let mut events = Vec::new();
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut deadline = Instant::now() + Duration::from_secs(5);
         let mut requested = false;
+        let mut refused_at = None;
         while Instant::now() < deadline {
+            if keep_session && refused_at.is_none() && client.refill_refusals() > 0 {
+                // Long enough for a reconnect that should not happen.
+                refused_at = Some(Instant::now());
+                deadline = Instant::now() + Duration::from_millis(800);
+            }
             let Some(event) = client.recv_event_timeout(Duration::from_millis(100)) else {
                 continue;
             };
@@ -4145,9 +4218,20 @@ mod tests {
                 break;
             }
         }
+        let refusals = client.refill_refusals();
         shutdown.store(true, Ordering::Release);
         drop(client);
-        (events, server.join().unwrap())
+        (events, server.join().unwrap(), refusals)
+    }
+
+    #[test]
+    fn a_refused_refill_keeps_the_session_for_an_owner_that_opens_its_own() {
+        let (events, logins, refusals) = run_refill_pool_with(true, true);
+        assert_eq!(refusals, 1);
+        assert_eq!(logins, 1, "the session reconnected: {events:?}");
+        assert!(!events
+            .iter()
+            .any(|event| matches!(event, PoolEvent::Disconnected(_))));
     }
 
     #[test]
