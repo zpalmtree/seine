@@ -30,9 +30,10 @@ supported hardware only.
 - **Shorter `--help`** (lists the flags most miners need; every other flag still works and is in the [flag reference](https://github.com/zpalmtree/seine/blob/master/docs/MINER_FLAGS.md))
 - **Pool Pending balance includes estimated rewards** from blocks that have not matured yet
 
-**Upgrading from v0.2.45 with `--auto-update`:**
-- **Linux:** v0.2.45 installs this version but then exits instead of restarting. Start seine again once; setups that restart seine automatically, such as systemd, need nothing.
-- **Windows:** v0.2.45 starts this version and then exits. If a script or service restarts seine when it exits, stop it once after the update so only one seine keeps running.
+**Upgrading by automatic update:**
+- **Linux, from v0.2.45:** v0.2.45 installs this version but then exits instead of restarting. Start seine again once; setups that restart seine automatically, such as systemd, need nothing.
+- **Windows, from v0.2.45 or v0.3.0:** the old version starts this one and then exits. If a script or service restarts seine when it exits, stop it once after the update so only one seine keeps running.
+- **HiveOS and mmpOS, from the v0.3.0 package:** switch your flight sheet to the v0.3.1 package above. Automatic updates replace seine but not the package's launch scripts, which this version also fixes.
 
 ## v0.3.0
 
