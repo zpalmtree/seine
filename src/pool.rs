@@ -2323,7 +2323,9 @@ fn evaluate_login_ack_for_protocol(
 ) -> std::result::Result<bool, String> {
     if memo.is_some() {
         let accepted = match protocol {
+            // The pool keys a `solo:` login's account by the address alone.
             MemoProtocol::AcknowledgedField => {
+                let address = crate::shortname::split_solo(address).1;
                 ack.supports(crate::payout_destination::CAP_PAYOUT_MEMO)
                     && ack.payout_account.as_deref()
                         == Some(crate::payout_destination::account_id(address, memo).as_str())
@@ -4657,6 +4659,9 @@ mod tests {
             assert_eq!(ack.min_payout_atomic, None);
             assert!(evaluate_login_ack_for_destination(&ack, "address", Some("ID001")).is_ok());
             assert!(evaluate_login_ack_for_destination(&ack, "address", Some("ID002")).is_err());
+            assert!(
+                evaluate_login_ack_for_destination(&ack, "solo:address", Some("ID001")).is_ok()
+            );
         }
         let ack = parse_login_result(Some(
             serde_json::json!({"protocol_version": 2, "min_payout_atomic": 42}),
