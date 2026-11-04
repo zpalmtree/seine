@@ -509,7 +509,7 @@ impl PressureBackoff {
         } else {
             0
         };
-        let room = if level_decides && !pressure {
+        let room = if level_decides {
             available.max(current)
         } else {
             available
@@ -518,6 +518,7 @@ impl PressureBackoff {
         if level_decides {
             if !pressure {
                 self.level_ceiling = None;
+                return cap;
             }
             let needed = if self.level_ceiling.is_none() {
                 PRESSURE_TICKS
@@ -525,8 +526,12 @@ impl PressureBackoff {
                 LEVEL_RESHED_TICKS
             };
             if self.consecutive < needed {
-                // No growth back while the level stays raised.
-                return self.level_ceiling.map_or(cap, |ceiling| cap.min(ceiling));
+                // No growth while the level is raised.
+                let hold = self
+                    .level_ceiling
+                    .map_or(current, |ceiling| ceiling.min(current))
+                    .max(1);
+                return cap.min(hold);
             }
             // One worker per wait, and the level alone never stops the last one.
             self.consecutive = 0;
@@ -1312,11 +1317,22 @@ mod tests {
         // No pressure: running workers stay, and growth still needs room.
         assert_eq!(backoff.cap_on(true, false, 10, 16, 11, 16), 11);
         assert_eq!(backoff.cap_on(true, false, 13, 16, 11, 16), 13);
-        // Sustained pressure sheds even with room by the arithmetic.
+        // Sustained pressure sheds even with room by the arithmetic, and
+        // nothing grows while the level is raised.
         for _ in 0..PRESSURE_TICKS - 1 {
-            assert_eq!(backoff.cap_on(true, true, 14, 16, 11, 16), 14);
+            assert_eq!(backoff.cap_on(true, true, 14, 16, 11, 16), 11);
         }
         assert_eq!(backoff.cap_on(true, true, 14, 16, 11, 16), 10);
+        // A raised level with the arithmetic near zero still sheds one worker
+        // per wait, never all of them at once.
+        let mut backoff = PressureBackoff::default();
+        for available in [0, 1] {
+            for _ in 0..PRESSURE_TICKS - 1 {
+                assert_eq!(backoff.cap_on(true, true, available, 16, 6, 16), 6);
+            }
+            assert_eq!(backoff.cap_on(true, true, available, 16, 6, 16), 5);
+            assert_eq!(backoff.cap_on(true, false, available, 16, 5, 16), 5);
+        }
         // Elsewhere the arithmetic is the limit.
         let mut backoff = PressureBackoff::default();
         assert_eq!(backoff.cap_on(false, false, 10, 16, 11, 16), 10);
@@ -1349,7 +1365,7 @@ mod tests {
         // Once the level is normal again, the next shed waits the short time.
         assert_eq!(backoff.cap_on(true, false, 16, 16, 4, 16), 16);
         for _ in 0..PRESSURE_TICKS - 1 {
-            assert_eq!(backoff.cap_on(true, true, 16, 16, 4, 16), 16);
+            assert_eq!(backoff.cap_on(true, true, 16, 16, 4, 16), 4);
         }
         assert_eq!(backoff.cap_on(true, true, 16, 16, 4, 16), 3);
     }
