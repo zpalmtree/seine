@@ -131,12 +131,7 @@ const CLIENT_CAPABILITIES_WITH_BLAKE2B: &[&str] = &[
 /// Advertises BLAKE2b only when this build will mine fork-height work: final
 /// parameters, or the provisional opt-in for Faraday testnet testing.
 fn client_capabilities() -> &'static [&'static str] {
-    let mines_blake2b = blocknet_pow_spec::ensure_supported_pow(
-        blocknet_pow_spec::FARADAY_ACTIVATION_HEIGHT,
-        crate::miner::provisional_faraday_pow_allowed(),
-    )
-    .is_ok();
-    client_capabilities_for(mines_blake2b)
+    client_capabilities_for(crate::miner::mines_blake2b())
 }
 
 fn client_capabilities_for(mines_blake2b: bool) -> &'static [&'static str] {

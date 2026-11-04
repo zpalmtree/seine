@@ -125,6 +125,16 @@ pub(crate) fn provisional_faraday_pow_allowed() -> bool {
     std::env::var_os(PROVISIONAL_FARADAY_POW_ENV).is_some_and(|value| value == "1")
 }
 
+/// True when this build mines fork-height (BLAKE2b) work: final parameters, or
+/// the provisional opt-in.
+pub(crate) fn mines_blake2b() -> bool {
+    blocknet_pow_spec::ensure_supported_pow(
+        blocknet_pow_spec::FARADAY_ACTIVATION_HEIGHT,
+        provisional_faraday_pow_allowed(),
+    )
+    .is_ok()
+}
+
 static UNSUPPORTED_WORK_NOTICE: AtomicBool = AtomicBool::new(false);
 
 /// Work this build cannot mine (a PoW or header format from a later release)

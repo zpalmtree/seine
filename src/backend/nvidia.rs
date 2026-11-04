@@ -2170,9 +2170,10 @@ impl PowBackend for NvidiaBackend {
                 &self.cubin_cache_dir,
             ) {
                 Ok(engine) => Some(engine),
-                // The network's PoW is not known yet: BLAKE2b work needs no
-                // Argon2 engine, and Argon2 work retries the build.
-                Err(err) if network_pow.is_none() => {
+                // The network's PoW is not known yet and this build mines
+                // BLAKE2b work, which needs no Argon2 engine; Argon2 work
+                // retries the build.
+                Err(err) if network_pow.is_none() && crate::miner::mines_blake2b() => {
                     crate::miner::ui::warn(
                         "NVIDIA",
                         format!(
