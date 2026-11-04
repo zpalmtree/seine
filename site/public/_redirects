@@ -1,0 +1,2 @@
+# X and other link previews cached the first site's card path; serve the current card there.
+/assets/social-card.jpg /assets/brand/social-card.jpg 200
