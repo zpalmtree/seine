@@ -1059,7 +1059,22 @@ pub struct StartupUi {
 impl Config {
     /// `on_startup` runs once, after any prompts and before hardware detection.
     pub fn parse(on_startup: impl FnOnce(StartupUi) -> Result<()>) -> Result<Self> {
-        let matches = cli_command().get_matches();
+        let matches = match cli_command().try_get_matches() {
+            Ok(matches) => matches,
+            // Arguments the previous version took and this one refuses go
+            // back to that version (see `self_update::roll_back_failed_start`).
+            Err(err)
+                if crate::self_update::rollback_pending()
+                    && !matches!(
+                        err.kind(),
+                        clap::error::ErrorKind::DisplayHelp
+                            | clap::error::ErrorKind::DisplayVersion
+                    ) =>
+            {
+                return Err(anyhow::anyhow!("{}", err.render().to_string().trim()));
+            }
+            Err(err) => err.exit(),
+        };
         let nvidia_hashes_per_launch_per_lane_was_set = matches!(
             matches.value_source("nvidia_hashes_per_launch_per_lane"),
             Some(clap::parser::ValueSource::CommandLine)

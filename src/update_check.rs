@@ -259,8 +259,14 @@ fn count_down(tag: &str, shutdown: &AtomicBool) -> CountdownEnd {
     end
 }
 
-fn skip(data_dir: &Path, tag: &str, current: &str) {
+/// Records `tag` as skipped: it is not offered again unless mining pauses
+/// until Seine is updated.
+pub(crate) fn record_skip(data_dir: &Path, tag: &str) {
     let _ = std::fs::write(data_dir.join(SKIPPED_FILE), tag);
+}
+
+fn skip(data_dir: &Path, tag: &str, current: &str) {
+    record_skip(data_dir, tag);
     ui::info(
         "UPDATE",
         format!(
@@ -354,8 +360,9 @@ fn apply_update(
         ui::set_pending_install(None);
     }
     match result {
-        Ok(crate::self_update::Outcome::Updated { from, to, .. }) => {
+        Ok(crate::self_update::Outcome::Updated { from, to, path }) => {
             let _ = std::fs::write(data_dir.join(INSTALLED_FILE), format!("{from} {to}"));
+            crate::self_update::arm_rollback(&path, &to, data_dir);
             ui::info(
                 "UPDATE",
                 format!("installed seine {to} (was {from}); restarting with the same arguments"),

@@ -72,7 +72,21 @@ fn run() -> Result<()> {
             dashboard = miner::start_dashboard(Arc::clone(&shutdown), &startup);
         }
         Ok(())
-    })?;
+    });
+    let cfg = match cfg {
+        Ok(cfg) => {
+            self_update::confirm_started();
+            cfg
+        }
+        Err(err) => {
+            // Leave the dashboard before printing or restarting.
+            drop(dashboard.take());
+            miner::close_dashboard();
+            backend::amd::on_process_exit();
+            self_update::roll_back_failed_start(&err);
+            return Err(err);
+        }
+    };
     let _shutdown_guard = shutdown_guard;
     if shutdown.load(std::sync::atomic::Ordering::SeqCst) {
         return Ok(());

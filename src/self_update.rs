@@ -62,6 +62,12 @@ const RESTART_EXIT_CODE: i32 = 0x5345;
 #[cfg(windows)]
 const OLD_EXECUTABLE_SLOTS: u32 = 16;
 static UPDATED_EXECUTABLE: OnceLock<PathBuf> = OnceLock::new();
+/// The previous executable, kept beside the new one after an update.
+static PREVIOUS_EXECUTABLE: OnceLock<PathBuf> = OnceLock::new();
+/// Beside the executable from an automatic update until the new version has
+/// started once: the new tag, the previous executable's file name and the data
+/// directory, one per line.
+const ROLLBACK_MARKER: &str = ".seine-rollback";
 
 /// The newest stable release as found by a lookup.
 #[derive(Deserialize)]
@@ -360,8 +366,10 @@ fn install_fetched(
     let dir = exe
         .parent()
         .ok_or_else(|| anyhow!("executable {} has no parent directory", exe.display()))?;
-    let archive = dir.join(format!(".seine-update-{name}"));
-    let staged = dir.join(format!(".seine-update-{}", executable_name()));
+    // Per process, so updaters sharing the directory never write one file.
+    let pid = std::process::id();
+    let archive = dir.join(format!(".seine-update-{pid}-{name}"));
+    let staged = dir.join(format!(".seine-update-{pid}-{}", executable_name()));
     let result = stage_update(client, asset, &expected, &archive, &staged)
         .and_then(|()| {
             at_stage(
@@ -504,12 +512,165 @@ mod windows_job {
 pub(crate) fn cleanup_leftovers() {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
+            remove_stale_staging(dir);
+            // The previous version stays until this one has started once.
+            if dir.join(ROLLBACK_MARKER).exists() {
+                return;
+            }
             let _ = fs::remove_file(dir.join(old_executable_name()));
             #[cfg(windows)]
             for slot in 1..=OLD_EXECUTABLE_SLOTS {
                 let _ = fs::remove_file(dir.join(numbered_old_executable_name(slot)));
             }
         }
+    }
+}
+
+/// Staged downloads an updater left behind when it stopped part way. Ones
+/// less than a day old may belong to an updater still running.
+fn remove_stale_staging(dir: &Path) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let stale = entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.starts_with(".seine-update-"))
+            && entry
+                .metadata()
+                .and_then(|meta| meta.modified())
+                .is_ok_and(|modified| {
+                    modified
+                        .elapsed()
+                        .is_ok_and(|age| age > Duration::from_secs(24 * 60 * 60))
+                });
+        if stale {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
+}
+
+/// After an automatic update, lets the new version go back to this one if it
+/// cannot start with the same arguments.
+pub(crate) fn arm_rollback(exe: &Path, tag: &str, data_dir: &Path) {
+    let (Some(dir), Some(previous)) = (exe.parent(), PREVIOUS_EXECUTABLE.get()) else {
+        return;
+    };
+    let Some(name) = previous.file_name().and_then(|name| name.to_str()) else {
+        return;
+    };
+    let Some(data_dir) = data_dir.to_str() else {
+        return;
+    };
+    let _ = fs::write(
+        dir.join(ROLLBACK_MARKER),
+        format!("{tag}\n{name}\n{data_dir}\n"),
+    );
+}
+
+struct Rollback {
+    tag: String,
+    previous: PathBuf,
+    data_dir: PathBuf,
+}
+
+fn read_rollback(dir: &Path) -> Option<Rollback> {
+    let text = fs::read_to_string(dir.join(ROLLBACK_MARKER)).ok()?;
+    let mut lines = text.lines();
+    let tag = lines.next()?.trim().to_string();
+    let previous = lines.next()?.trim();
+    let data_dir = lines.next()?;
+    // A bare file name in the executable's directory, nothing else.
+    if previous.is_empty() || Path::new(previous).file_name()? != previous {
+        return None;
+    }
+    Some(Rollback {
+        tag,
+        previous: dir.join(previous),
+        data_dir: PathBuf::from(data_dir),
+    })
+}
+
+/// The first start after an automatic update, which can still go back.
+pub(crate) fn rollback_pending() -> bool {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join(ROLLBACK_MARKER).exists()))
+        .unwrap_or(false)
+}
+
+/// This version started: the previous one is no longer needed.
+pub(crate) fn confirm_started() {
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let Some(dir) = exe.parent() else {
+        return;
+    };
+    if dir.join(ROLLBACK_MARKER).exists() {
+        let _ = fs::remove_file(dir.join(ROLLBACK_MARKER));
+        cleanup_leftovers();
+    }
+}
+
+/// The first start after an automatic update failed before mining: put the
+/// previous version back, skip this release and run the previous version with
+/// the same arguments. Returns only when there is nothing to go back to.
+pub(crate) fn roll_back_failed_start(err: &anyhow::Error) {
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let Some(dir) = exe.parent() else {
+        return;
+    };
+    let Some(rollback) = read_rollback(dir) else {
+        return;
+    };
+    let _ = fs::remove_file(dir.join(ROLLBACK_MARKER));
+    let running = crate::update_check::version_triple(crate::version::release_version());
+    if running.is_none()
+        || crate::update_check::version_triple(&rollback.tag) != running
+        || !rollback.previous.is_file()
+    {
+        return;
+    }
+    let reason = format!("{err:#}");
+    let reason = reason.lines().next().unwrap_or_default().trim();
+    crate::console_output::eprintln!(
+        "seine {} could not start ({reason}); going back to the previous version and skipping {}",
+        rollback.tag,
+        rollback.tag
+    );
+    crate::update_check::record_skip(&rollback.data_dir, &rollback.tag);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        if fs::rename(&rollback.previous, &exe).is_err() {
+            return;
+        }
+        let err = std::process::Command::new(&exe)
+            .args(std::env::args_os().skip(1))
+            .exec();
+        crate::console_output::eprintln!("could not start the previous version: {err}");
+    }
+    #[cfg(not(unix))]
+    {
+        // The restart supervisor starts whatever is at this path again.
+        if std::env::var_os(SUPERVISED_ENV).is_none() {
+            return;
+        }
+        let Ok(failed) = free_old_executable(dir) else {
+            return;
+        };
+        if fs::rename(&exe, &failed).is_err() {
+            return;
+        }
+        if fs::rename(&rollback.previous, &exe).is_err() {
+            let _ = fs::rename(&failed, &exe);
+            return;
+        }
+        std::process::exit(RESTART_EXIT_CODE);
     }
 }
 
@@ -808,10 +969,19 @@ fn replace_executable(exe: &Path, staged: &Path) -> Result<()> {
             let _ = fs::rename(&old, exe);
             return Err(err).with_context(|| format!("cannot install {}", exe.display()));
         }
+        let _ = PREVIOUS_EXECUTABLE.set(old);
         Ok(())
     }
     #[cfg(not(windows))]
     {
+        // Keep the previous executable until the new one has started once.
+        if let Some(dir) = exe.parent() {
+            let previous = dir.join(old_executable_name());
+            let _ = fs::remove_file(&previous);
+            if fs::hard_link(exe, &previous).is_ok() {
+                let _ = PREVIOUS_EXECUTABLE.set(previous);
+            }
+        }
         fs::rename(staged, exe).with_context(|| format!("cannot install {}", exe.display()))?;
         // Persist the rename itself; best effort.
         if let Some(dir) = exe.parent() {
@@ -847,6 +1017,27 @@ mod tests {
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
+    }
+
+    #[test]
+    fn a_rollback_marker_names_only_a_file_beside_the_executable() {
+        let dir = std::env::temp_dir().join(format!("seine-rollback-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join(ROLLBACK_MARKER), "v0.3.2\nseine.old\n/data dir\n").unwrap();
+        let rollback = read_rollback(&dir).unwrap();
+        assert_eq!(rollback.tag, "v0.3.2");
+        assert_eq!(rollback.previous, dir.join("seine.old"));
+        assert_eq!(rollback.data_dir, PathBuf::from("/data dir"));
+        for previous in ["../seine", "/bin/sh", ""] {
+            fs::write(
+                dir.join(ROLLBACK_MARKER),
+                format!("v0.3.2\n{previous}\n/data\n"),
+            )
+            .unwrap();
+            assert!(read_rollback(&dir).is_none(), "{previous}");
+        }
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
