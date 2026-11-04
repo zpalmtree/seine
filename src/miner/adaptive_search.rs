@@ -156,6 +156,9 @@ pub(super) struct Params {
     pub candidates: Vec<CpuKernel>,
     pub saved: Option<Saved>,
     pub build: BuildFacts,
+    /// Whether a fresh search looks straight at everything that fits first. Off where
+    /// the start is a count the CPU family is known to end near.
+    pub look_at_top: bool,
 }
 
 #[derive(Debug, Default)]
@@ -640,6 +643,7 @@ pub(super) struct Search {
     climbing: bool,
     /// The next upward look goes straight to everything that fits.
     top_first: bool,
+    look_at_top: bool,
     /// The count tested by the look straight to everything that fits.
     top_look: Option<usize>,
     /// Counts here differ by less than short comparisons can show: once settled,
@@ -716,6 +720,7 @@ impl Search {
             candidates,
             saved,
             build,
+            look_at_top,
         } = params;
         // A result decided under other thread limits (such as `--threads`) is
         // only a starting count here, not a result to resume.
@@ -740,6 +745,7 @@ impl Search {
             tested_above: 0,
             climbing: true,
             top_first: false,
+            look_at_top,
             top_look: None,
             small_gains: false,
             upper_ties: 0,
@@ -826,7 +832,7 @@ impl Search {
         self.queue = self.challengers(seed.kernel, seed.threads);
         self.stage = Stage::Kernels;
         self.small_gains = false;
-        self.top_first = self.quality != SeedQuality::Measured;
+        self.top_first = self.quality != SeedQuality::Measured && self.look_at_top;
         self.search_reason =
             Some("finding the best settings: the thread count will change for a few minutes");
     }
@@ -2381,6 +2387,7 @@ mod tests {
             candidates: vec![STREAM],
             saved: None,
             build: BuildFacts::default(),
+            look_at_top: true,
         }
     }
 
@@ -2446,6 +2453,7 @@ mod tests {
             candidates: vec![STREAM],
             saved: Some(saved),
             build: BuildFacts::default(),
+            look_at_top: true,
         };
         let mut auto = Search::new(auto_params(saved.clone()));
         let mut threads = 4;
@@ -2801,6 +2809,7 @@ mod tests {
                 hot_fingerprint: hot.into(),
                 kernel_revisions: revisions.iter().map(|(k, r)| (k.to_string(), *r)).collect(),
             },
+            look_at_top: true,
         }
     }
 
@@ -2815,6 +2824,18 @@ mod tests {
                 _ => None,
             })
         })
+    }
+
+    #[test]
+    fn a_family_start_known_to_be_the_end_point_steps_out_from_it() {
+        let family = |look_at_top| Params {
+            quality: SeedQuality::Family,
+            look_at_top,
+            ..params(6, 12)
+        };
+        let first = |look_at_top| first_comparison(family(look_at_top)).map(|s| s.threads);
+        assert_eq!(first(true), Some(12));
+        assert_eq!(first(false), Some(7));
     }
 
     #[test]

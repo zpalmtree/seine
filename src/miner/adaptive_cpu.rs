@@ -291,6 +291,17 @@ fn cohort_cold_start(
     .filter(|&workers| workers > 0)
 }
 
+/// True where Ryzen 5000 desktops (19h model 21h) start at their physical core count;
+/// the search steps out from there rather than looking at every thread first.
+fn start_is_core_count(cfg: &Config, host: &CpuAutotuneHostFingerprint, start: usize) -> bool {
+    let identity = crate::runtime_identity::cpu_identity();
+    cfg.cpu_profile != CpuPerformanceProfile::Efficiency
+        && host.physical_cores == Some(start)
+        && identity.vendor.as_deref() == Some("AuthenticAMD")
+        && identity.family == Some(0x19)
+        && identity.model == Some(0x21)
+}
+
 // Threads already running (including the API's Tokio worker pool) are charged
 // in pids.current. Reserve only later work. DNS/blocking and GPU driver threads
 // are demand-driven, so the margin is best effort; startup also handles spawn
@@ -704,6 +715,8 @@ impl Controller {
                                 hot_fingerprint: crate::runtime_identity::hash_path_fingerprint(),
                                 kernel_revisions: plan.revisions(),
                             },
+                            look_at_top: !(quality == SeedQuality::Family
+                                && start_is_core_count(&cfg, &host, current)),
                         });
                         let settled_recorder = telemetry.clone();
                         let mut monitor = telemetry

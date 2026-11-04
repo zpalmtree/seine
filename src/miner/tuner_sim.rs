@@ -56,6 +56,10 @@ pub(super) struct Scenario {
     /// no room for the thread that is already running.
     #[serde(default)]
     pub ram_waver: bool,
+    /// The miner skips its first look at every thread when this is false (a start
+    /// that the CPU family is known to end near).
+    #[serde(default = "default_look_at_top")]
+    pub look_at_top: bool,
     /// (second, multiplier) sustained load steps on every count.
     #[serde(default)]
     pub load_events: Vec<(u64, f64)>,
@@ -67,6 +71,9 @@ pub(super) struct Scenario {
     pub seed: u64,
 }
 
+fn default_look_at_top() -> bool {
+    true
+}
 fn default_warm_secs() -> u64 {
     8
 }
@@ -631,6 +638,7 @@ pub(super) fn built_in() -> Vec<Scenario> {
         cap_events: Vec::new(),
         ram_edge: None,
         ram_waver: false,
+        look_at_top: true,
         load_events: Vec::new(),
         warm_secs: default_warm_secs(),
         hours: default_hours(),
@@ -717,6 +725,29 @@ pub(super) fn built_in() -> Vec<Scenario> {
             rates: rates(
                 &[(16, 14.0), (32, 14.2)],
                 &[(16, 18.6), (24, 18.75), (32, 18.7)],
+            ),
+            ..base.clone()
+        },
+        // A Ryzen 5000 desktop that starts at its core count, its family's end point,
+        // and steps out from there rather than looking at every thread first.
+        Scenario {
+            name: "desktop-starts-at-cores-6-of-12".into(),
+            known: true,
+            start_threads: 6,
+            max_threads: 12,
+            look_at_top: false,
+            noise: 0.006,
+            bursts: None,
+            rates: rates(
+                &[(6, 7.4), (12, 6.6)],
+                &[
+                    (3, 6.63),
+                    (4, 7.82),
+                    (5, 8.60),
+                    (6, 8.97),
+                    (7, 8.85),
+                    (12, 7.94),
+                ],
             ),
             ..base.clone()
         },
@@ -944,6 +975,7 @@ pub(super) fn update_cases() -> Vec<UpdateCase> {
                 cap_events: Vec::new(),
                 ram_edge: None,
                 ram_waver: false,
+                look_at_top: true,
                 load_events: Vec::new(),
                 warm_secs: default_warm_secs(),
                 hours: 12,
@@ -1083,6 +1115,7 @@ fn search_for(
             .collect(),
         saved,
         build,
+        look_at_top: scenario.look_at_top,
     });
     if let Some(kernel) = scenario.startup_kernel.as_deref() {
         search.adopt_start(Scenario::kernel(kernel));
