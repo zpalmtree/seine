@@ -9,11 +9,11 @@
       "source": "perf-results/2026-07-10 (mac-threads14-vs15 / max throughput run)"
     },
     {
-      "name": "AMD Ryzen 9 9950X3D",
-      "sub": "Zen 5 desktop · 16 threads · Windows",
+      "name": "AMD Ryzen 9 9950X",
+      "sub": "Zen 5 desktop · 21 threads · Linux",
       "category": "amd",
-      "hps": 10.312,
-      "source": "experiments/high-end-streaming-20261025 (native Windows, streaming kernel, 4 pairs)"
+      "hps": 16.625,
+      "source": "experiments/ryzen-9950x-live-20261102 (default settings, live pool mining, steady rate)"
     }
   ],
   "servers": [

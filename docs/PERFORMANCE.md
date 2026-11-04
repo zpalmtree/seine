@@ -75,7 +75,11 @@ VM allocations, not whole-socket estimates.
 |---|---|---:|
 | Apple M4 Max, 48 GB | 16 threads, `auto` affinity, CPU only | 30.94 |
 | Apple M4 Max, 48 GB | 14 threads, `pcore-only` (balanced) | 29.26 |
+| AMD Ryzen 9 9950X | 21 threads, default settings, Linux, 60 GB RAM | 16.63 |
 | AMD Ryzen 9 9950X3D | 16 threads, native Windows, regular pages | 10.31 |
+
+The Ryzen 9 9950X row is the steady rate while mining to a pool with default
+settings, where seine chose 21 threads. Measured on November 2, 2026.
 
 NVIDIA GPUs mine at the same time as the CPU and their rates add up; see the
 [NVIDIA guide](guides/nvidia.md).

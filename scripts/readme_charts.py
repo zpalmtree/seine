@@ -221,7 +221,7 @@ def main():
                    args.out / "best.svg", fonts, groups=False, big=True)
     hbar_chart(data["desktop"], "Desktops and laptops",
                "Whole-machine CPU hashrate, seine v0.2.22+",
-               "Offline benchmarks on stock hardware. Method: docs/PERFORMANCE.md",
+               "Stock hardware. Method: docs/PERFORMANCE.md",
                args.out / "desktop.svg", fonts, groups=False)
 
 
