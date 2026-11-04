@@ -38,6 +38,9 @@ test('legacy pool-specific manifests remain checked against both fee constants',
 test('reviews mining OS archives explicitly with matching release versions', () => {
   const x = fixture();
   const packages = ['hiveos', 'mmpos'].map(os => `seine-${os}-${x.facts.tag.slice(1)}.tar.gz`);
+  // Start from the platform archives alone, whatever the manifest lists.
+  x.facts.assets = x.facts.assets.filter(name => !packages.includes(name));
+  x.release.assets = x.release.assets.filter(({ name }) => !packages.includes(name));
   x.release.assets.push(...packages.map(name => ({ name })));
   assert.throws(() => compareRelease(x.facts, x.release, x.sources), /archives changed/);
   x.facts.assets.push(...packages);
