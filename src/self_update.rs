@@ -644,17 +644,21 @@ fn started_by_update() -> bool {
 
 /// The marker was left for this build's version.
 fn marker_for_this_version(rollback: &Rollback) -> bool {
-    let running = crate::update_check::version_triple(crate::version::release_version());
+    marker_for_version(rollback, crate::version::release_version())
+}
+
+fn marker_for_version(rollback: &Rollback, version: &str) -> bool {
+    let running = crate::update_check::version_triple(version);
     running.is_some() && crate::update_check::version_triple(&rollback.tag) == running
 }
 
 /// The rollback this process may take: only the start an update made, and
 /// only for a marker left for this version.
-fn pending_rollback(dir: &Path, started_by_update: bool) -> Option<Rollback> {
+fn pending_rollback(dir: &Path, started_by_update: bool, version: &str) -> Option<Rollback> {
     if !started_by_update {
         return None;
     }
-    read_rollback(dir).filter(marker_for_this_version)
+    read_rollback(dir).filter(|rollback| marker_for_version(rollback, version))
 }
 
 /// The first start after an automatic update, which can still go back.
@@ -662,8 +666,9 @@ pub(crate) fn rollback_pending() -> bool {
     running_exe()
         .ok()
         .and_then(|exe| {
-            exe.parent()
-                .and_then(|dir| pending_rollback(dir, started_by_update()))
+            exe.parent().and_then(|dir| {
+                pending_rollback(dir, started_by_update(), crate::version::release_version())
+            })
         })
         .is_some()
 }
@@ -700,7 +705,9 @@ pub(crate) fn roll_back_failed_start(err: &anyhow::Error, refused: bool) {
     let Some(dir) = exe.parent() else {
         return;
     };
-    let Some(rollback) = pending_rollback(dir, started_by_update()) else {
+    let Some(rollback) =
+        pending_rollback(dir, started_by_update(), crate::version::release_version())
+    else {
         return;
     };
     let _ = fs::remove_file(dir.join(ROLLBACK_MARKER));
@@ -1162,18 +1169,14 @@ mod tests {
     #[test]
     fn only_the_start_an_update_made_takes_a_rollback_for_this_version() {
         let dir = tempfile::tempdir().unwrap();
-        let this = crate::version::release_version();
-        fs::write(
-            dir.path().join(ROLLBACK_MARKER),
-            format!("{this}\nseine.old\n"),
-        )
-        .unwrap();
-        assert!(pending_rollback(dir.path(), true).is_some());
+        fs::write(dir.path().join(ROLLBACK_MARKER), "v0.3.2\nseine.old\n").unwrap();
+        assert!(pending_rollback(dir.path(), true, "v0.3.2").is_some());
         // A later start by hand, say with a mistyped flag, does not.
-        assert!(pending_rollback(dir.path(), false).is_none());
-        // Nor does a seine of another version sharing the directory.
-        fs::write(dir.path().join(ROLLBACK_MARKER), "v0.0.1\nseine.old\n").unwrap();
-        assert!(pending_rollback(dir.path(), true).is_none());
+        assert!(pending_rollback(dir.path(), false, "v0.3.2").is_none());
+        // Nor does a seine of another version sharing the directory, or an
+        // untagged build.
+        assert!(pending_rollback(dir.path(), true, "v0.3.1").is_none());
+        assert!(pending_rollback(dir.path(), true, "dev").is_none());
     }
 
     #[test]
