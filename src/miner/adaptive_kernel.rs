@@ -264,6 +264,31 @@ fn field_start_for(identity: &crate::runtime_identity::CpuIdentity, room: usize)
     Some(start.max(1))
 }
 
+/// Kernels this machine uses. Six-core Ryzen 5000 desktops leave out skipped stores.
+fn host_kernels(
+    identity: &crate::runtime_identity::CpuIdentity,
+    supported: &[CpuKernel],
+    physical_cores: Option<usize>,
+) -> Vec<CpuKernel> {
+    let six_core_vermeer = identity.vendor.as_deref() == Some("AuthenticAMD")
+        && identity.family == Some(0x19)
+        && identity.model == Some(0x21)
+        && physical_cores.is_some_and(|cores| cores <= 6);
+    supported
+        .iter()
+        .copied()
+        .filter(|kernel| !(six_core_vermeer && *kernel == CpuKernel::Avx2StreamSkip))
+        .collect()
+}
+
+fn this_host_kernels() -> Vec<CpuKernel> {
+    host_kernels(
+        &crate::runtime_identity::cpu_identity(),
+        &supported_kernels(),
+        super::cpu_autotune_host_fingerprint().physical_cores,
+    )
+}
+
 /// The cohort kernel regardless of worker count, for the worker-count search:
 /// every candidate count must be measured with the kernel that will mine.
 pub(super) fn cohort_kernel() -> Option<CpuKernel> {
@@ -278,7 +303,7 @@ pub(super) fn cohort_kernel() -> Option<CpuKernel> {
 pub(crate) fn fixed_count_trials_wanted(workers: usize) -> bool {
     fixed_count_trials_wanted_for(
         &crate::runtime_identity::cpu_identity(),
-        &supported_kernels(),
+        &this_host_kernels(),
         workers,
     )
 }
@@ -407,7 +432,7 @@ pub(crate) fn cohort_skip_store_permille(workers: usize) -> u16 {
 pub(super) fn static_kernel_for(workers: usize) -> Option<CpuKernel> {
     static_kernel_for_identity(
         &crate::runtime_identity::cpu_identity(),
-        &supported_kernels(),
+        &this_host_kernels(),
         workers,
     )
 }
@@ -596,6 +621,7 @@ impl KernelPlan {
         identity: &crate::runtime_identity::CpuIdentity,
         supported: &[CpuKernel],
     ) -> Self {
+        let supported = &host_kernels(identity, supported, host.physical_cores)[..];
         let mut candidates = candidates_for(identity, supported);
         // This exact Zen 4 context starts on the 256-bit kernel.
         if super::adaptive_cpu::full_count_cold_start(cfg, host, identity, 32, 32) {
@@ -1275,6 +1301,67 @@ mod tests {
         assert_eq!(field_start_for(&amd(0x19, 0x61), 29), Some(16));
         assert_eq!(field_start_for(&amd(0x1a, 0x44), 28), Some(21));
         assert_eq!(field_start_for(&amd(0x19, 0x11), 16), None);
+    }
+
+    #[test]
+    fn six_core_ryzen_5000_desktops_start_on_plain_streaming_without_a_trial() {
+        use crate::runtime_identity::CpuIdentity;
+        let zen3_desktop = CpuIdentity {
+            vendor: Some("AuthenticAMD".into()),
+            family: Some(0x19),
+            model: Some(0x21),
+            ..CpuIdentity::default()
+        };
+        let supported = [
+            CpuKernel::Avx2,
+            CpuKernel::Avx2Stream,
+            CpuKernel::Avx2StreamSkip,
+        ];
+        let plan = |cores| {
+            KernelPlan::for_supported(
+                &super::super::tests::test_config(),
+                &CpuAutotuneHostFingerprint {
+                    physical_cores: Some(cores),
+                    ..CpuAutotuneHostFingerprint::default()
+                },
+                &zen3_desktop,
+                &supported,
+            )
+        };
+        // The backend's first kernel and fixed --threads runs follow the same rule.
+        let six_kernels = host_kernels(&zen3_desktop, &supported, Some(6));
+        assert_eq!(
+            static_kernel_for_identity(&zen3_desktop, &six_kernels, 6),
+            Some(CpuKernel::Avx2Stream)
+        );
+        assert!(!fixed_count_trials_wanted_for(
+            &zen3_desktop,
+            &six_kernels,
+            6
+        ));
+        assert_eq!(
+            static_kernel_for_identity(
+                &zen3_desktop,
+                &host_kernels(&zen3_desktop, &supported, Some(12)),
+                12
+            ),
+            Some(CpuKernel::Avx2StreamSkip)
+        );
+        let six = plan(6);
+        assert!(!six.candidates_at(6).contains(&CpuKernel::Avx2StreamSkip));
+        assert_eq!(
+            six.start_for(&[snapshot_with(6)]),
+            Some(CpuKernel::Avx2Stream)
+        );
+        let twelve = plan(12);
+        assert!(twelve
+            .candidates_at(12)
+            .contains(&CpuKernel::Avx2StreamSkip));
+        assert!(twelve.candidates_at(12).contains(&CpuKernel::Avx2Stream));
+        assert_eq!(
+            twelve.start_for(&[snapshot_with(12)]),
+            Some(CpuKernel::Avx2StreamSkip)
+        );
     }
 
     #[test]
