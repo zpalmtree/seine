@@ -1820,11 +1820,13 @@ fn resolve_backend_selection(
     }
 
     // Integrated AMD GPUs are not auto-enabled; users can opt in via
-    // --backend cpu,amd. On Apple Silicon builds Metal is added for BLAKE2b
-    // work only; --backend cpu,metal also mines Argon2 on it.
+    // --backend cpu,amd. On Apple Silicon builds that mine BLAKE2b, Metal is
+    // added for BLAKE2b work only; --backend cpu,metal also mines Argon2 on it.
     let mut selected = vec![BackendKind::Cpu];
     #[cfg(all(feature = "metal", target_os = "macos"))]
-    selected.push(BackendKind::Metal);
+    if crate::miner::mines_blake2b() {
+        selected.push(BackendKind::Metal);
+    }
     if nvidia_available || !nvidia_devices.is_empty() {
         selected.push(BackendKind::Nvidia);
     }
@@ -5665,9 +5667,10 @@ HugePages_Rsvd:          0
         assert!(!cpu_autotune_threads);
     }
 
-    /// The default selection: Apple Silicon builds add Metal after the CPU.
+    /// The default selection: Apple Silicon builds that mine BLAKE2b add Metal
+    /// after the CPU.
     fn auto_selected(mut kinds: Vec<BackendKind>) -> Vec<BackendKind> {
-        if cfg!(all(feature = "metal", target_os = "macos")) {
+        if cfg!(all(feature = "metal", target_os = "macos")) && crate::miner::mines_blake2b() {
             kinds.insert(1, BackendKind::Metal);
         }
         kinds
