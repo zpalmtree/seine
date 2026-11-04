@@ -404,8 +404,11 @@ impl TuiStateInner {
             return false;
         }
         let Some(control) = self.thread_control.as_ref() else {
-            self.thread_notice =
-                Some("Thread controls unavailable: no active CPU backend.".to_string());
+            self.thread_notice = Some(if self.before_first_run {
+                "Thread controls are available once mining starts.".to_string()
+            } else {
+                "Thread controls unavailable: no active CPU backend.".to_string()
+            });
             return false;
         };
         if let Some(notice) = &self.threads_locked {

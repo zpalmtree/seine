@@ -61,7 +61,7 @@ use crate::config::{
     BackendKind, BackendSpec, Config, CpuPerformanceProfile, MiningMode, UiMode, WorkAllocation,
 };
 use crate::daemon_api::ApiClient;
-pub(crate) use mining_tui::start_dashboard;
+pub(crate) use mining_tui::{close_dashboard, start_dashboard};
 use scheduler::NonceReservation;
 use stats::{format_hashrate, Stats};
 use tui::{new_tui_state, TuiState};

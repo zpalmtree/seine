@@ -47,10 +47,11 @@ pub(super) fn begin_prompt_session() -> PromptSessionGuard {
 pub(crate) struct Dashboard {
     render_signal: Sender<RenderSignal>,
     render_stop: Arc<AtomicBool>,
-    render_worker: Option<JoinHandle<()>>,
+    render_worker: Mutex<Option<JoinHandle<()>>>,
     quit_watcher_stop: Arc<AtomicBool>,
-    quit_watcher: Option<JoinHandle<()>>,
+    quit_watcher: Mutex<Option<JoinHandle<()>>>,
     exit_summary: bool,
+    closed: AtomicBool,
 }
 
 impl Dashboard {
@@ -62,25 +63,41 @@ impl Dashboard {
         let dashboard = Arc::new(Self {
             render_signal,
             render_stop,
-            render_worker: Some(render_worker),
+            render_worker: Mutex::new(Some(render_worker)),
             quit_watcher_stop,
-            quit_watcher: Some(quit_watcher),
+            quit_watcher: Mutex::new(Some(quit_watcher)),
             exit_summary,
+            closed: AtomicBool::new(false),
         });
         *ACTIVE_DASHBOARD.lock().unwrap_or_else(|e| e.into_inner()) = Arc::downgrade(&dashboard);
         Ok(dashboard)
     }
 }
 
-impl Drop for Dashboard {
-    fn drop(&mut self) {
+impl Dashboard {
+    /// Stops drawing and reading keys and gives the terminal back. Runs once,
+    /// from the last reference or from `close_dashboard`.
+    fn close(&self) {
+        if self.closed.swap(true, Ordering::SeqCst) {
+            return;
+        }
         self.render_stop.store(true, Ordering::SeqCst);
         let _ = self.render_signal.try_send(RenderSignal::RenderNow);
-        if let Some(handle) = self.render_worker.take() {
+        let render_worker = self
+            .render_worker
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        if let Some(handle) = render_worker {
             let _ = handle.join();
         }
         self.quit_watcher_stop.store(true, Ordering::SeqCst);
-        if let Some(handle) = self.quit_watcher.take() {
+        let quit_watcher = self
+            .quit_watcher
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        if let Some(handle) = quit_watcher {
             let _ = handle.join();
         }
         if let Some(state) = current_tui_state() {
@@ -89,6 +106,24 @@ impl Drop for Dashboard {
                 print_exit_summary(&state);
             }
         }
+    }
+}
+
+impl Drop for Dashboard {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
+/// Closes the dashboard at process exit even while a mining run that did not
+/// stop in time still holds it, so the terminal is never left in raw mode.
+pub(crate) fn close_dashboard() {
+    let active = ACTIVE_DASHBOARD
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .upgrade();
+    if let Some(dashboard) = active {
+        dashboard.close();
     }
 }
 

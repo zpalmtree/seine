@@ -98,6 +98,7 @@ fn run() -> Result<()> {
     };
     backend::amd::on_process_exit();
     drop(dashboard);
+    miner::close_dashboard();
     if result.is_ok() && self_update::restart_pending() {
         self_update::restart()?;
     }
