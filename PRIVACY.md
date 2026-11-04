@@ -1,6 +1,6 @@
 # Privacy policy
 
-Last updated: October 27, 2026.
+Last updated: November 3, 2026.
 
 This policy describes hardware, performance and reliability telemetry in the Seine miner.
 Telemetry helps the project understand which hardware is in use, identify
@@ -29,6 +29,10 @@ whether the miner runs natively or under WSL. Report-time resource snapshots inc
 the allowed CPU count, OS-estimated available parallelism, effective memory limit
 and available memory, including container limits where supported. They include
 the miner version, build target and features, and whether it is a debug build.
+Where the firmware's memory tables can be read, reports also describe the installed
+memory modules: how many there are, the memory type (such as DDR5), whether they are
+registered, and the lowest rated and configured speeds. Module serial and part
+numbers are not read.
 
 For active mining backends, reports include GPU model and memory where available,
 the number of enabled workers or lanes, CPU kernel, requested page and affinity
@@ -36,6 +40,13 @@ policies, allocator-observed memory backing by page type, available GPU tuning
 settings, hash counts and measurement durations. Reports
 identify measurement windows in which settings changed or telemetry samples
 were missed so those windows can be excluded from performance comparisons.
+GPU backends can also report the GPU architecture (such as `gfx1100` or `sm_86`),
+whether the hash kernel was built into Seine or compiled on the machine, the AMD
+GPU performance level found at startup and which proof of work the backend was
+mining. Reports count the backends of each type a run expected and record how long
+each took to produce its first hash. They also count the AMD GPUs found, selected
+and left out (integrated or unsupported), whether the AMD GPU runtime could be
+loaded, and how many AMD display devices the operating system lists.
 
 Paired CPU tuning evidence can include baseline and candidate worker/kernel
 settings, per-window hashes and durations, resource snapshots, outcome and fixed
@@ -44,6 +55,10 @@ Unknown costs remain unknown. An optional digest describes CPU topology and
 placement without transmitting hostnames or configuration secrets. A random run
 ID and run-local trial numbers prevent duplicate comparisons. Inconclusive and
 aborted trials are retained too; explicit counts identify omitted evidence.
+When automatic CPU tuning settles, reports can include the chosen worker count and
+CPU kernel, its hash rate, how long tuning took and how many comparisons it made,
+whether available memory limited it, where it started from, whether it was checking
+a new release, and the rate measured at each worker count it tried.
 
 Reliability summaries include bounded counts of warnings, errors, backend failures
 and quarantines, failed mining runs and Rust panics. Each summary includes a
@@ -72,6 +87,18 @@ NVRTC compiler version as bounded numbers. These are not the installed NVIDIA
 display-driver release or toolkit version. Missing version queries remain absent.
 Loader failures can identify an unavailable NVIDIA driver or CUDA compiler library
 without uploading library search paths or error messages.
+On Linux, reports can include the kernel's out-of-memory kill count and whether it
+rose since an unclean previous run, which suggests but does not prove that the
+miner was stopped for lack of memory. Reports count the seconds mining was paused
+on work this version cannot mine.
+
+In pool mode, reports describe the pool connection with flags and counts only:
+whether the primary pool uses TLS, whether pools are reached through a SOCKS5
+proxy, whether a payout memo is set, how many backup pools are configured, and how
+many failovers, reconnects and nonce-range refills happened and how long was spent
+on a backup pool. Update status covers whether the miner installs new releases by
+itself, how many release checks succeeded or failed, how many installs succeeded or
+failed, and the stage at which the latest install failed.
 
 Seine creates a random installation ID in its data directory to distinguish
 installations and avoid counting frequent reports as additional users. This ID
@@ -80,9 +107,9 @@ also has a random ID to prevent duplicate storage. The collector records when
 reports arrive. Installation IDs make reports pseudonymous; they do not make
 them anonymous.
 
-Telemetry does not include wallet addresses or balances, private keys, API
-tokens, passwords, worker names, pool addresses, hostnames, MAC addresses,
-hardware serial numbers, command lines or raw logs.
+Telemetry does not include wallet addresses or balances, payout memos, private
+keys, API tokens, passwords, worker names, pool or proxy addresses, hostnames, MAC
+addresses, hardware serial numbers, command lines or raw logs.
 
 ## Transmission, access and retention
 
