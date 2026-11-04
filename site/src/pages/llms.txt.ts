@@ -9,7 +9,7 @@ export async function GET() {
     const posts = await getPosts('en');
     const lines = [
         '# seine', '', `> ${t('homeDescription')}`, '',
-        'seine mines Blocknet, a privacy cryptocurrency whose proof of work is memory-hard Argon2id using 2 GiB per hash. It runs on CPUs and NVIDIA GPUs, tunes itself while mining, and defaults to the bntpool.com pool.', '',
+        'seine mines Blocknet, a privacy cryptocurrency whose proof of work is memory-hard Argon2id using 2 GiB per hash. It runs on CPUs, NVIDIA GPUs and AMD Radeon GPUs (RX 6000 and newer), tunes itself while mining, and defaults to the bntpool.com pool.', '',
         '## Links', '',
         `- [Download](${SITE_URL}/#download): archives for Windows, macOS and Linux from the latest GitHub release`,
         `- [Source and documentation](${REPO})`,
