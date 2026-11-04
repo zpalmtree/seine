@@ -4336,18 +4336,26 @@ mod tests {
         let err = client.fetch_pool_balances().unwrap_err();
         assert_eq!(telemetry_failure_reason(&err), FailureReason::RateLimited);
 
-        // A socket bound without listening holds its port and refuses
-        // connections to it.
+        // A socket bound without listening holds its port. Linux refuses
+        // connections to it; macOS and Windows let them time out.
         let socket = tokio::net::TcpSocket::new_v4().unwrap();
         socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
         let port = socket.local_addr().unwrap().port();
         let client =
             PoolUiTelemetryClient::new(&format!("http://127.0.0.1:{port}"), "addr").unwrap();
         let err = client.fetch_pool_hashrate().unwrap_err();
-        assert_eq!(
-            telemetry_failure_reason(&err),
-            FailureReason::ConnectionRefused
-        );
+        let reason = telemetry_failure_reason(&err);
+        if cfg!(target_os = "linux") {
+            assert_eq!(reason, FailureReason::ConnectionRefused);
+        } else {
+            assert!(
+                matches!(
+                    reason,
+                    FailureReason::ConnectionRefused | FailureReason::ConnectionTimedOut
+                ),
+                "{reason:?}"
+            );
+        }
         drop(socket);
     }
 
