@@ -19,6 +19,7 @@ supported hardware only.
 - **AMD GPU support** (RX 6000, RX 7000, RX 9000, Radeon PRO): [setup](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/amd.md)
 - **Exchange mining support** (mine straight to your exchange deposit address; `--payout-memo` is required): [setup](https://github.com/zpalmtree/seine/blob/master/docs/EXCHANGE_PAYOUTS.md)
 - **Solo mining through pools that support it**: put `solo:` in front of your address (`-u solo:ADDRESS`) and the pool pays you the full reward of every block you find, less its fee
+- **Ready for the Faraday fork** (block 103,680): pool mining moves to the new proof of work by itself, and with automatic updates on, Seine pauses and installs a newer version whenever the pool asks for one
 - **Tunes faster, then stops**: finds your best thread count and kernel in minutes, keeps the lowest thread count that gets the same hashrate, and stops testing until something changes
 - **A cleaner first run**: the dashboard opens right away, setup happens on screen, and the log only shows what you need, with room to read it and scrollback (↑↓, PgUp, PgDn)
 - **Mining OS packages**
