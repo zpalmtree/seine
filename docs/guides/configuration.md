@@ -120,11 +120,12 @@ new executable must start before it replaces the old one, and Seine stops mining
 cleanly and restarts with the same arguments. The restarted dashboard logs
 `updated to seine vX.Y.Z`. Pass `--no-auto-update` to keep only the notice, or
 `--disable-update-check` to turn the check off. Builds you compile yourself only
-show the notice.
+show the notice; runs with `--service` or `--api-server` install only when mining
+pauses for a newer release (below).
 
 If a pool or daemon sends work that needs a newer release, Seine pauses mining
 instead of exiting and checks for an update right away; that update installs
-without the countdown.
+without the countdown, even a version you skipped.
 
 On Windows, a fatal error after double-clicking `seine.exe` with no arguments
 leaves its console open until you press Enter. Launches from an existing shell,

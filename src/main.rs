@@ -79,7 +79,12 @@ fn run() -> Result<()> {
     }
     update_check::report_installed(&cfg.data_dir);
     if cfg.update_check_enabled && !cfg.bench {
-        update_check::spawn(cfg.auto_update, cfg.data_dir.clone(), Arc::clone(&shutdown));
+        update_check::spawn(
+            cfg.auto_update,
+            cfg.api_server_enabled,
+            cfg.data_dir.clone(),
+            Arc::clone(&shutdown),
+        );
     }
 
     let result = if cfg.proxy_listen.is_some() {

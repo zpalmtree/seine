@@ -35,6 +35,12 @@ Behavior:
 - API starts immediately.
 - Miner start is triggered automatically at process startup.
 
+In both modes Seine announces new releases but does not install them by itself,
+because the restart would drop the miner state and token the API set. Update with
+`seine --self-update` and restart Seine when your controller is ready. The one
+exception: when mining pauses on work that needs a newer release, Seine installs
+it and restarts with the same arguments.
+
 ## Security and Binding
 
 - Every endpoint except `GET /v1/health` requires `Authorization: Bearer <token>`.

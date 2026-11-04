@@ -86,7 +86,15 @@ pub(crate) struct DashboardUpdate {
     pub log_message: Option<String>,
 }
 
-pub(crate) fn spawn(auto_update: bool, data_dir: PathBuf, shutdown: Arc<AtomicBool>) {
+/// `api_controlled`: the control API runs the miner (`--service`, `--api-server`).
+/// A restart would drop the miner state and token the API set, so new releases
+/// are only announced, unless mining is paused until Seine is updated.
+pub(crate) fn spawn(
+    auto_update: bool,
+    api_controlled: bool,
+    data_dir: PathBuf,
+    shutdown: Arc<AtomicBool>,
+) {
     let current = crate::version::release_version();
     // Untagged development builds have nothing meaningful to compare.
     if parse_version(current).is_none() {
@@ -100,6 +108,11 @@ pub(crate) fn spawn(auto_update: bool, data_dir: PathBuf, shutdown: Arc<AtomicBo
             "UPDATE",
             "automatic installs are off for builds not made by the seine release workflow; new releases are still announced",
         );
+    } else if auto_install && api_controlled {
+        ui::info(
+            "UPDATE",
+            "while the control API runs the miner, new releases are announced and install only if mining pauses for one (seine --self-update installs them)",
+        );
     }
     let _ = thread::Builder::new()
         .name("update-check".to_string())
@@ -111,9 +124,11 @@ pub(crate) fn spawn(auto_update: bool, data_dir: PathBuf, shutdown: Arc<AtomicBo
                     Ok(release) => {
                         let tag = release.tag().to_string();
                         record_latest(current, &tag);
+                        let blocked = MINING_BLOCKED.load(Ordering::Acquire);
                         if auto_install
                             && is_newer(&tag, current)
-                            && skipped_tag(&data_dir).as_deref() != Some(tag.as_str())
+                            && (blocked || !api_controlled)
+                            && offers_install(&tag, skipped_tag(&data_dir).as_deref(), blocked)
                         {
                             match count_down(&tag, &shutdown) {
                                 CountdownEnd::Stopped => return,
@@ -247,6 +262,12 @@ fn skip(data_dir: &Path, tag: &str, current: &str) {
             "skipped seine {tag}; staying on {current} (seine --self-update installs it later)"
         ),
     );
+}
+
+/// A skipped release is not offered again, unless mining is paused until
+/// Seine is updated: then it installs anyway.
+fn offers_install(tag: &str, skipped: Option<&str>, mining_blocked: bool) -> bool {
+    mining_blocked || skipped != Some(tag)
 }
 
 fn skipped_tag(data_dir: &Path) -> Option<String> {
@@ -505,6 +526,14 @@ mod tests {
         super::skip(&dir, "v9.9.9", "v0.1.0");
         assert_eq!(super::skipped_tag(&dir).as_deref(), Some("v9.9.9"));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_skipped_release_installs_once_mining_is_paused_for_it() {
+        assert!(!super::offers_install("v9.9.9", Some("v9.9.9"), false));
+        assert!(super::offers_install("v9.9.9", Some("v9.9.9"), true));
+        assert!(super::offers_install("v9.9.10", Some("v9.9.9"), false));
+        assert!(super::offers_install("v9.9.9", None, false));
     }
 
     #[test]
