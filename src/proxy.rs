@@ -25,7 +25,7 @@ use tokio::sync::mpsc;
 use crate::config::Config;
 use crate::miner::ui::{info, success, warn};
 use crate::pool::{
-    PoolClient, PoolEvent, PoolJob, PoolNotification, SocksProxy,
+    requires_newer_miner, PoolClient, PoolEvent, PoolJob, PoolNotification, SocksProxy,
     POOL_NOTIFICATION_MINER_BLOCK_FOUND, POOL_NOTIFICATION_POOL_BLOCK_SOLVED,
     STRATUM_CAPABILITY_NONCE_REFILL_V1,
 };
@@ -784,6 +784,17 @@ impl Hub {
         let Some(session) = self.sessions.get_mut(&id) else {
             return;
         };
+        let update_message = match &event {
+            PoolEvent::LoginRejected(message) | PoolEvent::Disconnected(message) => Some(message),
+            PoolEvent::Notification(notification) => Some(&notification.message),
+            _ => None,
+        };
+        // The pool turned the proxy itself away until it is updated: pause
+        // like unsupported work so the update installs, even a skipped one.
+        let proxy_outdated = update_message.is_some_and(|message| requires_newer_miner(message));
+        if proxy_outdated {
+            crate::miner::note_unsupported_work("the pool requires a newer seine for this proxy");
+        }
         match event {
             PoolEvent::Connected => {}
             PoolEvent::LoginAccepted(ack) => {
@@ -805,7 +816,10 @@ impl Hub {
                 // A busy pool is retried by the session's client. Only a
                 // refusal of the address turns its rigs away; --address is
                 // every rig's fallback, so its sessions stay.
+                // An update notice is about the proxy, not the address, and
+                // must not reach rigs that are up to date.
                 if session.address != self.address
+                    && !proxy_outdated
                     && !crate::pool::is_transient_pool_error(&message)
                 {
                     let address = session.address.clone();
@@ -825,7 +839,10 @@ impl Hub {
                     self.move_rigs_off(id, generation, |_| true);
                 }
             }
-            PoolEvent::Job(job) => self.on_upstream_job(id, job),
+            PoolEvent::Job(job) => {
+                crate::miner::clear_unsupported_work_notice();
+                self.on_upstream_job(id, job)
+            }
             PoolEvent::SubmitAck(ack) => {
                 let key = (id, ack.job_id.clone(), ack.nonce);
                 let Some(queue) = self.pending_acks.get_mut(&key) else {
@@ -2006,6 +2023,24 @@ mod tests {
         next_from(&seen, "login");
         // The first upstream login for the rig's address is busy; the session
         // retries and the rig gets work instead of being closed.
+        let (_rig, job) = login_as(proxy_port, dev);
+        assert_eq!(job["method"], "job");
+        shutdown.store(true, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn an_update_notice_for_the_proxy_does_not_turn_rigs_away() {
+        let dev = crate::dev_fee::DEV_ADDRESS;
+        let (pool_port, seen) = multi_pool_answering(
+            true,
+            Some(dev),
+            "this miner cannot mine after the Faraday fork (block 103,680); update seine: https://github.com/zpalmtree/seine/releases/latest",
+            1,
+        );
+        let (proxy_port, shutdown) = start_proxy_on(pool_port, "farmaddr");
+        next_from(&seen, "login");
+        // The notice is about the proxy's own version: the rig is not closed
+        // or told to update, and gets work once the pool takes the login.
         let (_rig, job) = login_as(proxy_port, dev);
         assert_eq!(job["method"], "job");
         shutdown.store(true, Ordering::Relaxed);
