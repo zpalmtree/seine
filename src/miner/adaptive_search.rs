@@ -140,6 +140,10 @@ pub(super) struct Saved {
     pub kernels: Vec<KernelResult>,
     #[serde(default)]
     pub rechecks: Vec<SavedRecheck>,
+    /// The thread limits this was decided under. A result from a run held to
+    /// other limits, such as `--threads`, does not apply to an unlimited run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bounds: Option<(usize, usize)>,
 }
 
 pub(super) struct Params {
@@ -710,6 +714,10 @@ impl Search {
             saved,
             build,
         } = params;
+        // A result decided under other thread limits (such as `--threads`) is
+        // only a starting count here, not a result to resume.
+        let bounds = (min.max(1).min(max.max(1)), max.max(1));
+        let saved = saved.filter(|saved| saved.bounds.map_or(true, |b| b == bounds));
         let mut search = Self {
             min: min.max(1).min(max.max(1)),
             max: max.max(1),
@@ -1154,6 +1162,7 @@ impl Search {
             kernel_revisions: self.build.kernel_revisions.clone(),
             kernels: self.results.clone(),
             rechecks,
+            bounds: Some((self.min, self.max)),
         }
     }
 
@@ -2413,6 +2422,48 @@ mod tests {
     }
 
     #[test]
+    fn a_pinned_runs_result_does_not_hold_back_an_unlimited_run() {
+        // `--threads 4` pins the search; 16 threads are four times faster.
+        let mut pinned = Search::new(Params {
+            min: 4,
+            max: 4,
+            ..params(4, 4)
+        });
+        let mut threads = 4;
+        run(&mut pinned, 0, 4000, &mut threads, 16);
+        let saved = pinned.saved();
+        assert_eq!(saved.bounds, Some((4, 4)));
+        let auto_params = |saved: Saved| Params {
+            seed: setting(saved.threads, STREAM),
+            quality: SeedQuality::Measured,
+            min: 1,
+            max: 16,
+            down_band: TIE_BAND,
+            candidates: vec![STREAM],
+            saved: Some(saved),
+            build: BuildFacts::default(),
+        };
+        let mut auto = Search::new(auto_params(saved.clone()));
+        let mut threads = 4;
+        let mut hashes = 0u64;
+        for now in 0..3600 {
+            hashes += threads as u64;
+            let out = auto.tick(now, &[snapshot(threads, STREAM, hashes)], 16, false);
+            if let Some(next) = out.threads {
+                threads = next;
+            }
+        }
+        assert!(threads > 4, "unlimited run stayed at the pinned count");
+        // A result saved under the same limits is still resumed.
+        let resumed = Search::new(Params {
+            min: 4,
+            max: 4,
+            ..auto_params(saved)
+        });
+        assert!(resumed.settled_hps > 0.0);
+    }
+
+    #[test]
     fn fewer_threads_need_evidence_that_little_is_lost() {
         // Inside the band, but the measurement allows a real loss.
         assert!(!fewer_holds(-0.0024, 0.0075, TIE_BAND));
@@ -2713,6 +2764,7 @@ mod tests {
                 ratio: 0.7,
             }],
             rechecks: Vec::new(),
+            bounds: None,
         }
     }
 
