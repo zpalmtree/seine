@@ -136,6 +136,12 @@ struct PoolTelemetryRefreshResult {
     errors: Vec<String>,
     /// Typed cause of the first error.
     failure: Option<FailureReason>,
+    /// Pool statistics were asked for and the network hashrate fetch failed.
+    hashrate_failed: bool,
+    /// Pool statistics were asked for, but not the balance, which is backing off.
+    balances_skipped: bool,
+    /// The balance was asked for and its fetch failed.
+    balances_failed: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -919,6 +925,7 @@ pub(super) fn run_pool_mining_loop(
     let mut pending_gpus_logged = false;
     let mut pool_network_hashrate = "unknown".to_string();
     let mut next_pool_telemetry_refresh = Instant::now();
+    let mut next_pool_balance_refresh = Instant::now();
     let mut pool_telemetry_failures = PoolTelemetryFailures::default();
     let mut telemetry_spawn_warning_logged = false;
     let (telemetry_result_tx, telemetry_result_rx) = unbounded::<PoolTelemetryRefreshResult>();
@@ -1089,10 +1096,10 @@ pub(super) fn run_pool_mining_loop(
 
                     pool_network_hashrate = "unknown".to_string();
                     // Dev-fee switches keep the statistics warning state: it
-                    // belongs to the user's pool, which has not changed.
-                    if pool_telemetry_failures.consecutive == 0 {
-                        next_pool_telemetry_refresh = Instant::now();
-                    }
+                    // belongs to the user's pool, which has not changed. The
+                    // hashrate is fetched again at once; a request still in
+                    // flight is superseded and its result ignored.
+                    next_pool_telemetry_refresh = Instant::now();
                     telemetry_inflight_request_id = None;
                 }
             }
@@ -1103,6 +1110,9 @@ pub(super) fn run_pool_mining_loop(
         while let Ok(result) = telemetry_result_rx.try_recv() {
             if telemetry_inflight_request_id == Some(result.request_id) {
                 telemetry_inflight_request_id = None;
+            }
+            if result.request_id != telemetry_next_request_id {
+                continue;
             }
             let current_pool =
                 result.pool_url.as_deref() == user_telemetry.map(|client| client.pool_url.as_str());
@@ -1139,8 +1149,16 @@ pub(super) fn run_pool_mining_loop(
                 continue;
             }
             let pool_url = result.pool_url.as_deref().unwrap_or_default();
+            if result.pool_url.is_some() {
+                pool_telemetry_failures.endpoints(
+                    pool_url,
+                    result.hashrate_failed,
+                    (!result.balances_skipped).then_some(result.balances_failed),
+                );
+            }
             if result.errors.is_empty() {
-                if pool_telemetry_failures.succeeded(pool_url) {
+                // A refresh that skipped the balance says nothing about it.
+                if !result.balances_skipped && pool_telemetry_failures.succeeded(pool_url) {
                     info("STATS", "pool telemetry recovered");
                 }
             } else if pool_telemetry_failures.failed(pool_url) {
@@ -1167,6 +1185,13 @@ pub(super) fn run_pool_mining_loop(
                 telemetry_next_request_id = telemetry_next_request_id.wrapping_add(1).max(1);
                 let request_id = telemetry_next_request_id;
                 let telemetry = user_telemetry.cloned();
+                // The balance backs off on its own failures; the network
+                // hashrate keeps its pace.
+                let fetch_balances = Instant::now() >= next_pool_balance_refresh;
+                if fetch_balances {
+                    next_pool_balance_refresh = Instant::now()
+                        + pool_telemetry_failure_backoff(pool_telemetry_failures.balances);
+                }
                 let shares_wallet_refresh = local_daemon_client.is_some();
                 let local_daemon_client = local_daemon_client.clone();
                 let local_daemon_cookie_path = cfg.token_cookie_path.clone();
@@ -1181,6 +1206,7 @@ pub(super) fn run_pool_mining_loop(
                                 .map(|telemetry| scope.spawn(|| telemetry.fetch_pool_hashrate()));
                             let balances = telemetry
                                 .as_ref()
+                                .filter(|_| fetch_balances)
                                 .map(|telemetry| scope.spawn(|| telemetry.fetch_pool_balances()));
                             let local_wallet = local_daemon_client.as_ref().and_then(|client| {
                                 fetch_local_daemon_wallet_snapshot(
@@ -1197,6 +1223,9 @@ pub(super) fn run_pool_mining_loop(
                         });
                         let mut errors = Vec::new();
                         let mut failure = None;
+                        let hashrate_failed = matches!(hashrate, Some(Err(_)));
+                        let balances_skipped = telemetry.is_some() && !fetch_balances;
+                        let balances_failed = matches!(balances, Some(Err(_)));
                         let hashrate = hashrate.and_then(|result| match result {
                             Ok(value) => Some(value),
                             Err(err) => {
@@ -1221,6 +1250,9 @@ pub(super) fn run_pool_mining_loop(
                             local_wallet,
                             errors,
                             failure,
+                            hashrate_failed,
+                            balances_skipped,
+                            balances_failed,
                         });
                     });
                 if spawn_result.is_ok() {
@@ -1231,7 +1263,7 @@ pub(super) fn run_pool_mining_loop(
                 }
                 // The local daemon wallet shares this refresh, so keep its pace.
                 let backoff = if !shares_wallet_refresh {
-                    pool_telemetry_failure_backoff(pool_telemetry_failures.consecutive)
+                    pool_telemetry_failure_backoff(pool_telemetry_failures.hashrate)
                 } else {
                     Duration::ZERO
                 };
@@ -3198,6 +3230,10 @@ struct PoolTelemetryFailures {
     pool_url: String,
     consecutive: u32,
     warned: bool,
+    /// Consecutive network hashrate failures, which pace the refresh.
+    hashrate: u32,
+    /// Consecutive balance failures, which pace the balance fetch.
+    balances: u32,
 }
 
 impl PoolTelemetryFailures {
@@ -3217,6 +3253,24 @@ impl PoolTelemetryFailures {
         self.consecutive = 0;
         self.warned = false;
         recovered
+    }
+
+    /// Counts each endpoint's failures in a row; `balances` is `None` when
+    /// the balance was not asked for.
+    fn endpoints(&mut self, pool_url: &str, hashrate_failed: bool, balances: Option<bool>) {
+        self.track(pool_url);
+        self.hashrate = if hashrate_failed {
+            self.hashrate.saturating_add(1)
+        } else {
+            0
+        };
+        if let Some(failed) = balances {
+            self.balances = if failed {
+                self.balances.saturating_add(1)
+            } else {
+                0
+            };
+        }
     }
 
     /// Returns true when the warning should be shown now.
@@ -4282,12 +4336,11 @@ mod tests {
         let err = client.fetch_pool_balances().unwrap_err();
         assert_eq!(telemetry_failure_reason(&err), FailureReason::RateLimited);
 
-        // Nothing listens on a port that was just released.
-        let port = std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
+        // A socket bound without listening holds its port and refuses
+        // connections to it.
+        let socket = tokio::net::TcpSocket::new_v4().unwrap();
+        socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let port = socket.local_addr().unwrap().port();
         let client =
             PoolUiTelemetryClient::new(&format!("http://127.0.0.1:{port}"), "addr").unwrap();
         let err = client.fetch_pool_hashrate().unwrap_err();
@@ -4295,6 +4348,27 @@ mod tests {
             telemetry_failure_reason(&err),
             FailureReason::ConnectionRefused
         );
+        drop(socket);
+    }
+
+    #[test]
+    fn balance_failures_do_not_slow_the_network_hashrate_refresh() {
+        let mut failures = PoolTelemetryFailures::default();
+        let pool = "stratum+tcp://bntpool.com:3333";
+        for _ in 0..5 {
+            failures.endpoints(pool, false, Some(true));
+        }
+        assert_eq!(failures.hashrate, 0);
+        assert_eq!(
+            pool_telemetry_failure_backoff(failures.hashrate),
+            Duration::ZERO
+        );
+        assert!(pool_telemetry_failure_backoff(failures.balances) > Duration::ZERO);
+        // A refresh that skipped the balance keeps its count.
+        failures.endpoints(pool, false, None);
+        assert_eq!(failures.balances, 5);
+        failures.endpoints(pool, true, Some(false));
+        assert_eq!((failures.hashrate, failures.balances), (1, 0));
     }
 
     #[test]
