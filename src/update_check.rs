@@ -125,10 +125,19 @@ pub(crate) fn spawn(
                         let tag = release.tag().to_string();
                         record_latest(current, &tag);
                         let blocked = MINING_BLOCKED.load(Ordering::Acquire);
+                        let gave_up = crate::self_update::gave_up_on(&tag);
+                        if auto_install && is_newer(&tag, current) && gave_up {
+                            note_gave_up(&tag, blocked);
+                        }
                         if auto_install
                             && is_newer(&tag, current)
                             && (blocked || !api_controlled)
-                            && offers_install(&tag, skipped_tag(&data_dir).as_deref(), blocked)
+                            && offers_install(
+                                &tag,
+                                skipped_tag(&data_dir).as_deref(),
+                                blocked,
+                                gave_up,
+                            )
                         {
                             match count_down(&tag, &shutdown) {
                                 CountdownEnd::Stopped => return,
@@ -276,9 +285,30 @@ fn skip(data_dir: &Path, tag: &str, current: &str) {
 }
 
 /// A skipped release is not offered again, unless mining is paused until
-/// Seine is updated: then it installs anyway.
-fn offers_install(tag: &str, skipped: Option<&str>, mining_blocked: bool) -> bool {
-    mining_blocked || skipped != Some(tag)
+/// Seine is updated: then it installs anyway. A release that could not start
+/// on this machine is not offered at all.
+fn offers_install(tag: &str, skipped: Option<&str>, mining_blocked: bool, gave_up: bool) -> bool {
+    !gave_up && (mining_blocked || skipped != Some(tag))
+}
+
+/// Says once per release that it is no longer installed automatically.
+fn note_gave_up(tag: &str, mining_blocked: bool) {
+    static NOTED: Mutex<Option<(String, bool)>> = Mutex::new(None);
+    let mut noted = NOTED.lock().unwrap_or_else(|e| e.into_inner());
+    if noted.as_ref() == Some(&(tag.to_string(), mining_blocked)) {
+        return;
+    }
+    *noted = Some((tag.to_string(), mining_blocked));
+    let message = if mining_blocked {
+        format!(
+            "seine {tag} could not start here, so it is not installed automatically; mining stays paused until Seine is updated (seine --self-update)"
+        )
+    } else {
+        format!(
+            "seine {tag} could not start here, so it is not installed automatically (seine --self-update installs it)"
+        )
+    };
+    ui::warn("UPDATE", message);
 }
 
 fn skipped_tag(data_dir: &Path) -> Option<String> {
@@ -362,7 +392,7 @@ fn apply_update(
     match result {
         Ok(crate::self_update::Outcome::Updated { from, to, path }) => {
             let _ = std::fs::write(data_dir.join(INSTALLED_FILE), format!("{from} {to}"));
-            crate::self_update::arm_rollback(&path, &to, data_dir);
+            crate::self_update::arm_rollback(&path, &to);
             ui::info(
                 "UPDATE",
                 format!("installed seine {to} (was {from}); restarting with the same arguments"),
@@ -542,10 +572,23 @@ mod tests {
 
     #[test]
     fn a_skipped_release_installs_once_mining_is_paused_for_it() {
-        assert!(!super::offers_install("v9.9.9", Some("v9.9.9"), false));
-        assert!(super::offers_install("v9.9.9", Some("v9.9.9"), true));
-        assert!(super::offers_install("v9.9.10", Some("v9.9.9"), false));
-        assert!(super::offers_install("v9.9.9", None, false));
+        assert!(!super::offers_install(
+            "v9.9.9",
+            Some("v9.9.9"),
+            false,
+            false
+        ));
+        assert!(super::offers_install("v9.9.9", Some("v9.9.9"), true, false));
+        assert!(super::offers_install(
+            "v9.9.10",
+            Some("v9.9.9"),
+            false,
+            false
+        ));
+        assert!(super::offers_install("v9.9.9", None, false, false));
+        // One that could not start here is not installed, paused or not.
+        assert!(!super::offers_install("v9.9.9", None, false, true));
+        assert!(!super::offers_install("v9.9.9", None, true, true));
     }
 
     #[test]

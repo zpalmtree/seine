@@ -65,9 +65,19 @@ static UPDATED_EXECUTABLE: OnceLock<PathBuf> = OnceLock::new();
 /// The previous executable, kept beside the new one after an update.
 static PREVIOUS_EXECUTABLE: OnceLock<PathBuf> = OnceLock::new();
 /// Beside the executable from an automatic update until the new version has
-/// started once: the new tag, the previous executable's file name and the data
-/// directory, one per line.
+/// started once: the new tag and the previous executable's file name, one per
+/// line.
 const ROLLBACK_MARKER: &str = ".seine-rollback";
+/// Set on the process an update restarts into. Only that start can go back to
+/// the previous version; a later start by hand with a mistyped flag cannot.
+const STARTED_BY_UPDATE_ENV: &str = "SEINE_STARTED_BY_UPDATE";
+/// Beside the executable: `<tag> <count>`, the release whose first start
+/// failed and how often. Kept beside the executable, which an update has
+/// just written, so it holds even where the data directory is read-only.
+const FAILED_START_FILE: &str = ".seine-failed-start";
+/// Failed first starts after which a release is no longer installed
+/// automatically, even when mining is paused for it.
+const FAILED_STARTS_BEFORE_GIVING_UP: u32 = 2;
 
 /// The newest stable release as found by a lookup.
 #[derive(Deserialize)]
@@ -152,11 +162,34 @@ pub(crate) fn run() -> Result<Outcome> {
     install(latest_release()?)
 }
 
+/// The path of the running executable. Linux reports a replaced image as
+/// `<path> (deleted)`; this gives the path the executable is installed at.
+pub(crate) fn running_exe() -> std::io::Result<PathBuf> {
+    let exe = std::env::current_exe()?;
+    Ok(installed_path(exe))
+}
+
+fn installed_path(exe: PathBuf) -> PathBuf {
+    if cfg!(target_os = "linux") && !exe.exists() {
+        if let Some(original) = exe
+            .to_str()
+            .and_then(|path| path.strip_suffix(" (deleted)"))
+            .map(PathBuf::from)
+        {
+            return original;
+        }
+    }
+    exe
+}
+
 /// Installs `release` (from `latest_release`) when it is newer than this build.
 pub(crate) fn install(release: Release) -> Result<Outcome> {
     let current = crate::version::release_version().to_string();
     let client = http_client()?;
-    let exe = std::env::current_exe().context("cannot locate the running executable")?;
+    let exe = running_exe().context("cannot locate the running executable")?;
+    if let Some(outcome) = installed_by_another(&release, &current, &exe, probe_executable) {
+        return Ok(outcome);
+    }
     install_fetched(
         &client,
         release,
@@ -165,6 +198,27 @@ pub(crate) fn install(release: Release) -> Result<Outcome> {
         &exe,
         probe_executable,
     )
+}
+
+/// Another seine sharing this executable already installed `release`: this
+/// process restarts into it and leaves the previous version that one kept.
+fn installed_by_another(
+    release: &Release,
+    current: &str,
+    exe: &Path,
+    verify: VerifyExecutable,
+) -> Option<Outcome> {
+    if !crate::update_check::is_newer(&release.tag_name, current)
+        || verify(exe, &release.tag_name).is_err()
+    {
+        return None;
+    }
+    let _ = UPDATED_EXECUTABLE.set(exe.to_path_buf());
+    Some(Outcome::Updated {
+        from: current.to_string(),
+        to: release.tag_name.clone(),
+        path: exe.to_path_buf(),
+    })
 }
 
 /// Looks up the newest stable release through the GitHub API, falling back to
@@ -411,11 +465,11 @@ pub(crate) fn restart_pending() -> bool {
 pub(crate) fn restart() -> Result<()> {
     let exe = match UPDATED_EXECUTABLE.get() {
         Some(path) => path.clone(),
-        None => std::env::current_exe().context("cannot locate the running executable")?,
+        None => running_exe().context("cannot locate the running executable")?,
     };
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     let mut command = std::process::Command::new(&exe);
-    command.args(&args);
+    command.args(&args).env(STARTED_BY_UPDATE_ENV, "1");
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -510,7 +564,7 @@ mod windows_job {
 
 /// Removes the previous executable Windows could not delete while it ran.
 pub(crate) fn cleanup_leftovers() {
-    if let Ok(exe) = std::env::current_exe() {
+    if let Ok(exe) = running_exe() {
         if let Some(dir) = exe.parent() {
             remove_stale_staging(dir);
             // The previous version stays until this one has started once.
@@ -553,26 +607,19 @@ fn remove_stale_staging(dir: &Path) {
 
 /// After an automatic update, lets the new version go back to this one if it
 /// cannot start with the same arguments.
-pub(crate) fn arm_rollback(exe: &Path, tag: &str, data_dir: &Path) {
+pub(crate) fn arm_rollback(exe: &Path, tag: &str) {
     let (Some(dir), Some(previous)) = (exe.parent(), PREVIOUS_EXECUTABLE.get()) else {
         return;
     };
     let Some(name) = previous.file_name().and_then(|name| name.to_str()) else {
         return;
     };
-    let Some(data_dir) = data_dir.to_str() else {
-        return;
-    };
-    let _ = fs::write(
-        dir.join(ROLLBACK_MARKER),
-        format!("{tag}\n{name}\n{data_dir}\n"),
-    );
+    let _ = fs::write(dir.join(ROLLBACK_MARKER), format!("{tag}\n{name}\n"));
 }
 
 struct Rollback {
     tag: String,
     previous: PathBuf,
-    data_dir: PathBuf,
 }
 
 fn read_rollback(dir: &Path) -> Option<Rollback> {
@@ -580,7 +627,6 @@ fn read_rollback(dir: &Path) -> Option<Rollback> {
     let mut lines = text.lines();
     let tag = lines.next()?.trim().to_string();
     let previous = lines.next()?.trim();
-    let data_dir = lines.next()?;
     // A bare file name in the executable's directory, nothing else.
     if previous.is_empty() || Path::new(previous).file_name()? != previous {
         return None;
@@ -588,61 +634,91 @@ fn read_rollback(dir: &Path) -> Option<Rollback> {
     Some(Rollback {
         tag,
         previous: dir.join(previous),
-        data_dir: PathBuf::from(data_dir),
     })
+}
+
+/// True for the process an update restarted into.
+fn started_by_update() -> bool {
+    std::env::var_os(STARTED_BY_UPDATE_ENV).is_some()
+}
+
+/// The marker was left for this build's version.
+fn marker_for_this_version(rollback: &Rollback) -> bool {
+    let running = crate::update_check::version_triple(crate::version::release_version());
+    running.is_some() && crate::update_check::version_triple(&rollback.tag) == running
+}
+
+/// The rollback this process may take: only the start an update made, and
+/// only for a marker left for this version.
+fn pending_rollback(dir: &Path, started_by_update: bool) -> Option<Rollback> {
+    if !started_by_update {
+        return None;
+    }
+    read_rollback(dir).filter(marker_for_this_version)
 }
 
 /// The first start after an automatic update, which can still go back.
 pub(crate) fn rollback_pending() -> bool {
-    std::env::current_exe()
+    running_exe()
         .ok()
-        .and_then(|exe| exe.parent().map(|dir| dir.join(ROLLBACK_MARKER).exists()))
-        .unwrap_or(false)
+        .and_then(|exe| {
+            exe.parent()
+                .and_then(|dir| pending_rollback(dir, started_by_update()))
+        })
+        .is_some()
 }
 
-/// This version started: the previous one is no longer needed.
+/// This version started: the previous one is no longer needed. A seine still
+/// on the previous version in this directory leaves the marker to the new one.
 pub(crate) fn confirm_started() {
-    let Ok(exe) = std::env::current_exe() else {
+    let Ok(exe) = running_exe() else {
         return;
     };
     let Some(dir) = exe.parent() else {
         return;
     };
-    if dir.join(ROLLBACK_MARKER).exists() {
+    clear_failed_start(dir, crate::version::release_version());
+    if !dir.join(ROLLBACK_MARKER).exists() {
+        return;
+    }
+    if read_rollback(dir).is_none_or(|rollback| marker_for_this_version(&rollback)) {
         let _ = fs::remove_file(dir.join(ROLLBACK_MARKER));
         cleanup_leftovers();
     }
 }
 
-/// The first start after an automatic update failed before mining: put the
-/// previous version back, skip this release and run the previous version with
-/// the same arguments. Returns only when there is nothing to go back to.
-pub(crate) fn roll_back_failed_start(err: &anyhow::Error) {
-    let Ok(exe) = std::env::current_exe() else {
+/// The process an update restarted into failed before mining: put the
+/// previous version back and run it with the same arguments. `refused` is set
+/// when the arguments or saved settings were refused, which the release would
+/// refuse again; other failures may pass, so the release is tried again up to
+/// `FAILED_STARTS_BEFORE_GIVING_UP` times. Returns only when there is nothing
+/// to go back to. A failure once mining has started is not rolled back.
+pub(crate) fn roll_back_failed_start(err: &anyhow::Error, refused: bool) {
+    let Ok(exe) = running_exe() else {
         return;
     };
     let Some(dir) = exe.parent() else {
         return;
     };
-    let Some(rollback) = read_rollback(dir) else {
+    let Some(rollback) = pending_rollback(dir, started_by_update()) else {
         return;
     };
     let _ = fs::remove_file(dir.join(ROLLBACK_MARKER));
-    let running = crate::update_check::version_triple(crate::version::release_version());
-    if running.is_none()
-        || crate::update_check::version_triple(&rollback.tag) != running
-        || !rollback.previous.is_file()
-    {
+    if !rollback.previous.is_file() {
         return;
     }
+    let failures = record_failed_start(dir, &rollback.tag, refused);
     let reason = format!("{err:#}");
     let reason = reason.lines().next().unwrap_or_default().trim();
+    let next = if failures >= FAILED_STARTS_BEFORE_GIVING_UP {
+        format!("no longer installing {} automatically", rollback.tag)
+    } else {
+        format!("trying {} again at a later update check", rollback.tag)
+    };
     crate::console_output::eprintln!(
-        "seine {} could not start ({reason}); going back to the previous version and skipping {}",
+        "seine {} could not start ({reason}); going back to the previous version and {next}",
         rollback.tag,
-        rollback.tag
     );
-    crate::update_check::record_skip(&rollback.data_dir, &rollback.tag);
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -651,6 +727,7 @@ pub(crate) fn roll_back_failed_start(err: &anyhow::Error) {
         }
         let err = std::process::Command::new(&exe)
             .args(std::env::args_os().skip(1))
+            .env_remove(STARTED_BY_UPDATE_ENV)
             .exec();
         crate::console_output::eprintln!("could not start the previous version: {err}");
     }
@@ -660,7 +737,7 @@ pub(crate) fn roll_back_failed_start(err: &anyhow::Error) {
         if std::env::var_os(SUPERVISED_ENV).is_none() {
             return;
         }
-        let Ok(failed) = free_old_executable(dir) else {
+        let Ok(failed) = free_old_executable(dir, Some(&rollback.previous)) else {
             return;
         };
         if fs::rename(&exe, &failed).is_err() {
@@ -674,19 +751,60 @@ pub(crate) fn roll_back_failed_start(err: &anyhow::Error) {
     }
 }
 
+/// The release a failed first start was recorded for and how many times.
+fn read_failed_start(dir: &Path) -> Option<(String, u32)> {
+    let text = fs::read_to_string(dir.join(FAILED_START_FILE)).ok()?;
+    let (tag, count) = text.trim().split_once(' ')?;
+    Some((tag.to_string(), count.trim().parse().ok()?))
+}
+
+/// Counts a failed first start of `tag` and returns the new count.
+fn record_failed_start(dir: &Path, tag: &str, refused: bool) -> u32 {
+    let earlier = read_failed_start(dir)
+        .filter(|(recorded, _)| recorded == tag)
+        .map_or(0, |(_, count)| count);
+    let mut count = earlier.saturating_add(1);
+    if refused {
+        count = count.max(FAILED_STARTS_BEFORE_GIVING_UP);
+    }
+    let _ = fs::write(dir.join(FAILED_START_FILE), format!("{tag} {count}\n"));
+    count
+}
+
+fn clear_failed_start(dir: &Path, tag: &str) {
+    let running = crate::update_check::version_triple(tag);
+    if read_failed_start(dir).is_some_and(|(recorded, _)| {
+        running.is_some() && crate::update_check::version_triple(&recorded) == running
+    }) {
+        let _ = fs::remove_file(dir.join(FAILED_START_FILE));
+    }
+}
+
+/// Whether automatic installs gave up on `tag` because its first start
+/// failed on this machine.
+pub(crate) fn gave_up_on(tag: &str) -> bool {
+    running_exe()
+        .ok()
+        .and_then(|exe| exe.parent().and_then(read_failed_start))
+        .is_some_and(|(recorded, count)| recorded == tag && count >= FAILED_STARTS_BEFORE_GIVING_UP)
+}
+
 #[cfg(windows)]
 fn numbered_old_executable_name(slot: u32) -> String {
     format!("seine.old.{slot}.exe")
 }
 
 /// The first spare name for the running executable that is free or can be
-/// freed. A restart supervisor keeps an older one in use.
+/// freed, never `keep`. A restart supervisor keeps an older one in use.
 #[cfg(windows)]
-fn free_old_executable(dir: &Path) -> Result<PathBuf> {
+fn free_old_executable(dir: &Path, keep: Option<&Path>) -> Result<PathBuf> {
     let names = std::iter::once(old_executable_name().to_string())
         .chain((1..=OLD_EXECUTABLE_SLOTS).map(numbered_old_executable_name));
     for name in names {
         let path = dir.join(name);
+        if keep.is_some_and(|keep| keep == path) {
+            continue;
+        }
         let _ = fs::remove_file(&path);
         if !path.exists() {
             return Ok(path);
@@ -963,7 +1081,9 @@ fn replace_executable(exe: &Path, staged: &Path) -> Result<()> {
         let dir = exe
             .parent()
             .ok_or_else(|| anyhow!("executable has no directory"))?;
-        let old = free_old_executable(dir)?;
+        // A previous version an update in progress may still go back to.
+        let pending = read_rollback(dir).map(|rollback| rollback.previous);
+        let old = free_old_executable(dir, pending.as_deref())?;
         fs::rename(exe, &old).with_context(|| format!("cannot move {} aside", exe.display()))?;
         if let Err(err) = fs::rename(staged, exe) {
             let _ = fs::rename(&old, exe);
@@ -1028,7 +1148,6 @@ mod tests {
         let rollback = read_rollback(&dir).unwrap();
         assert_eq!(rollback.tag, "v0.3.2");
         assert_eq!(rollback.previous, dir.join("seine.old"));
-        assert_eq!(rollback.data_dir, PathBuf::from("/data dir"));
         for previous in ["../seine", "/bin/sh", ""] {
             fs::write(
                 dir.join(ROLLBACK_MARKER),
@@ -1038,6 +1157,106 @@ mod tests {
             assert!(read_rollback(&dir).is_none(), "{previous}");
         }
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn only_the_start_an_update_made_takes_a_rollback_for_this_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let this = crate::version::release_version();
+        fs::write(
+            dir.path().join(ROLLBACK_MARKER),
+            format!("{this}\nseine.old\n"),
+        )
+        .unwrap();
+        assert!(pending_rollback(dir.path(), true).is_some());
+        // A later start by hand, say with a mistyped flag, does not.
+        assert!(pending_rollback(dir.path(), false).is_none());
+        // Nor does a seine of another version sharing the directory.
+        fs::write(dir.path().join(ROLLBACK_MARKER), "v0.0.1\nseine.old\n").unwrap();
+        assert!(pending_rollback(dir.path(), true).is_none());
+    }
+
+    #[test]
+    fn a_release_is_given_up_after_repeated_or_refused_first_starts() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir = dir.path();
+        assert_eq!(record_failed_start(dir, "v9.0.0", false), 1);
+        assert!(FAILED_STARTS_BEFORE_GIVING_UP > 1);
+        assert_eq!(
+            record_failed_start(dir, "v9.0.0", false),
+            FAILED_STARTS_BEFORE_GIVING_UP
+        );
+        // A newer release starts over.
+        assert_eq!(record_failed_start(dir, "v9.0.1", false), 1);
+        // Refused arguments are refused again: given up at once.
+        assert_eq!(
+            record_failed_start(dir, "v9.0.2", true),
+            FAILED_STARTS_BEFORE_GIVING_UP
+        );
+        // Another version starting leaves the record; that version clears it.
+        clear_failed_start(dir, "v9.0.1");
+        assert!(read_failed_start(dir).is_some());
+        clear_failed_start(dir, "v9.0.2");
+        assert!(read_failed_start(dir).is_none());
+    }
+
+    fn reports_any(_: &Path, _: &str) -> Result<()> {
+        Ok(())
+    }
+
+    fn reports_none(_: &Path, _: &str) -> Result<()> {
+        bail!("other version")
+    }
+
+    #[test]
+    fn a_release_another_seine_installed_is_not_installed_again() {
+        let release = Release {
+            tag_name: "v99.0.0".into(),
+            draft: false,
+            prerelease: false,
+            assets: Vec::new(),
+        };
+        let exe = Path::new("/opt/seine/seine");
+        assert!(matches!(
+            installed_by_another(&release, "v0.1.0", exe, reports_any),
+            Some(Outcome::Updated { .. })
+        ));
+        assert!(installed_by_another(&release, "v0.1.0", exe, reports_none).is_none());
+        assert!(installed_by_another(&release, "v99.0.0", exe, reports_any).is_none());
+    }
+
+    #[test]
+    fn a_replaced_executable_is_found_at_its_installed_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("seine");
+        fs::write(&exe, "new").unwrap();
+        let reported = PathBuf::from(format!("{} (deleted)", exe.display()));
+        let expected = if cfg!(target_os = "linux") {
+            exe.clone()
+        } else {
+            reported.clone()
+        };
+        assert_eq!(installed_path(reported), expected);
+        assert_eq!(installed_path(exe.clone()), exe);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn going_back_never_frees_the_previous_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let previous = dir.path().join(numbered_old_executable_name(1));
+        fs::write(&previous, "previous").unwrap();
+        // The first spare is held open, as a running supervisor holds it.
+        let held = dir.path().join(old_executable_name());
+        fs::write(&held, "supervisor").unwrap();
+        let _open =
+            std::os::windows::fs::OpenOptionsExt::share_mode(&mut fs::OpenOptions::new(), 0)
+                .read(true)
+                .open(&held)
+                .unwrap();
+        let free = free_old_executable(dir.path(), Some(&previous)).unwrap();
+        assert_eq!(free, dir.path().join(numbered_old_executable_name(2)));
+        assert_eq!(fs::read_to_string(&previous).unwrap(), "previous");
     }
 
     #[test]

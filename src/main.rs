@@ -63,9 +63,12 @@ fn run() -> Result<()> {
     let shutdown = Arc::new(AtomicBool::new(false));
     let mut shutdown_guard = None;
     let mut dashboard = None;
+    // Errors before this are the arguments or saved settings being refused.
+    let mut arguments_accepted = false;
     // Prompts come first and need the default Ctrl+C; everything after them
     // happens on the dashboard.
     let cfg = Config::parse(|startup| {
+        arguments_accepted = true;
         shutdown_guard = Some(shutdown::install(Arc::clone(&shutdown))?);
         miner::ui::set_verbose(startup.verbose);
         if startup.opens_dashboard {
@@ -83,7 +86,11 @@ fn run() -> Result<()> {
             drop(dashboard.take());
             miner::close_dashboard();
             backend::amd::on_process_exit();
-            self_update::roll_back_failed_start(&err);
+            self_update::roll_back_failed_start(&err, !arguments_accepted);
+            // Argument errors keep clap's own message and exit code.
+            if let Some(err) = err.downcast_ref::<clap::Error>() {
+                err.exit();
+            }
             return Err(err);
         }
     };

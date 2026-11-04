@@ -1071,7 +1071,7 @@ impl Config {
                             | clap::error::ErrorKind::DisplayVersion
                     ) =>
             {
-                return Err(anyhow::anyhow!("{}", err.render().to_string().trim()));
+                return Err(err.into());
             }
             Err(err) => err.exit(),
         };
