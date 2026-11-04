@@ -9,7 +9,7 @@ python3 -m http.server 8770 --directory docs/showcases/autotune-startup
 ```
 
 `index.html` renders the real dashboard with synthetic data at 120 and 46 terminal
-columns, for every tuning state: trying kernels, comparing thread counts, a thread key
+columns, for every tuning state: a thread key pressed before mining starts, trying kernels, comparing thread counts, a thread key
 pressed while tuning picks the count, tuned, another look at a close result, a restart on
 the saved settings, an update that improved this CPU's kernel, an update that found something faster, low on RAM,
 RAM returned and no room for one thread. Regenerate it with:

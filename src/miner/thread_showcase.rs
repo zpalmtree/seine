@@ -284,6 +284,19 @@ fn export_autotune_showcase() {
         );
         cases
     };
+    {
+        // Before mining starts the keys say when they will work.
+        let mut starting = dashboard_fixture("checking hardware", &[]);
+        starting.pool_address = "---".into();
+        starting.before_first_run = true;
+        starting.handle_key(KeyEvent::new(KeyCode::Char('+'), KeyModifiers::NONE));
+        html.push_str(
+            "<h2>Starting: someone presses + or - before mining starts</h2><div class=desktop>",
+        );
+        html.push_str(&capture_full(&starting, 120, 30));
+        html.push_str("</div>");
+        html.push_str(&capture_full(&starting, 46, 36));
+    }
     for (name, threads, status, log) in cases {
         let (sender, _requests) = crossbeam_channel::bounded(1);
         let mut state = mining_fixture("Working", &log);
