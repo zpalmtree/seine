@@ -156,6 +156,8 @@ pub struct TuiStateInner {
     pub accounting: String,
     pub version: String,
     pub update_available: Option<String>,
+    /// An automatic install counting down or downloading.
+    pub pending_install: Option<crate::update_check::PendingInstall>,
 
     // Timing
     pub started_at: Instant,
@@ -227,6 +229,7 @@ impl TuiStateInner {
             accounting: String::new(),
             version: String::new(),
             update_available: None,
+            pending_install: None,
 
             started_at: Instant::now(),
 
@@ -317,6 +320,30 @@ impl TuiStateInner {
         0
     }
 
+    /// `u` installs a counting-down update now; `s` skips that version.
+    fn answer_update_countdown(&mut self, key: KeyCode) -> bool {
+        let counting = self
+            .pending_install
+            .as_ref()
+            .is_some_and(|pending| pending.deadline.is_some());
+        if !counting {
+            return false;
+        }
+        let choice = match key {
+            KeyCode::Char('u') | KeyCode::Char('U') => crate::update_check::Choice::InstallNow,
+            KeyCode::Char('s') | KeyCode::Char('S') => crate::update_check::Choice::Skip,
+            _ => return false,
+        };
+        crate::update_check::choose(choice);
+        if let Some(pending) = &mut self.pending_install {
+            match choice {
+                crate::update_check::Choice::InstallNow => pending.deadline = None,
+                crate::update_check::Choice::Skip => self.pending_install = None,
+            }
+        }
+        true
+    }
+
     fn scroll_log(&mut self, key: KeyCode) -> bool {
         let (inner_height, inner_width) = self.log_panel.get();
         let oldest = self.max_log_scroll(inner_height, inner_width);
@@ -364,6 +391,9 @@ impl TuiStateInner {
             return true;
         }
         if self.scroll_log(key.code) {
+            return false;
+        }
+        if self.answer_update_countdown(key.code) {
             return false;
         }
         self.poll_thread_reply();
@@ -529,6 +559,43 @@ const UPDATE_STYLE: Style = Style::new()
     .fg(Color::Rgb(230, 200, 120))
     .bg(Color::Rgb(100, 80, 20))
     .add_modifier(Modifier::BOLD);
+/// The header's update notice: a countdown with its keys, the install in
+/// progress, or a release that is only announced.
+fn update_spans(state: &TuiStateInner, now: Instant) -> Vec<Span<'static>> {
+    match &state.pending_install {
+        Some(pending) => match pending.deadline {
+            Some(deadline) => vec![
+                Span::styled(
+                    format!(
+                        " updating to {} in {}s ",
+                        pending.latest,
+                        countdown_secs(deadline, now)
+                    ),
+                    UPDATE_STYLE,
+                ),
+                Span::styled(" u now  s skip ", TITLE_STYLE),
+            ],
+            None => vec![Span::styled(
+                format!(" installing {}… ", pending.latest),
+                UPDATE_STYLE,
+            )],
+        },
+        None => match &state.update_available {
+            Some(latest) => vec![Span::styled(
+                format!(" update {latest} available "),
+                UPDATE_STYLE,
+            )],
+            None => Vec::new(),
+        },
+    }
+}
+
+/// Whole seconds left, rounded up so the count never shows 0 while waiting.
+fn countdown_secs(deadline: Instant, now: Instant) -> u64 {
+    let left = deadline.saturating_duration_since(now);
+    left.as_secs() + u64::from(left.subsec_nanos() > 0)
+}
+
 // Keep block marker glyph single-cell across terminals.
 const BLOCK_MARKER_GLYPH: &str = "♦";
 
@@ -668,11 +735,9 @@ fn draw_compact_dashboard(frame: &mut ratatui::Frame, area: Rect, state: &TuiSta
             lines.insert(4, Line::from(format!("Min payout: {minimum}")));
         }
     }
-    if let Some(latest) = &state.update_available {
-        lines.push(Line::from(Span::styled(
-            format!("Update {latest} available"),
-            UPDATE_STYLE,
-        )));
+    let update = update_spans(state, Instant::now());
+    if !update.is_empty() {
+        lines.push(Line::from(update));
     }
     if let Some(status) = &state.tuning_status {
         lines.insert(1, tuning_line(status));
@@ -707,12 +772,7 @@ fn draw_header(frame: &mut ratatui::Frame, area: Rect, state: &TuiStateInner) {
         format!(" seine {} ", state.version),
         TITLE_STYLE,
     )];
-    if let Some(latest) = &state.update_available {
-        title.push(Span::styled(
-            format!(" update {latest} available "),
-            UPDATE_STYLE,
-        ));
-    }
+    title.extend(update_spans(state, Instant::now()));
     let uptime_text = format!(" uptime {uptime} ");
 
     let inner_width = area.width.saturating_sub(2) as usize;
@@ -1685,8 +1745,71 @@ mod tests {
             "{full}"
         );
         let compact = render_text(&state, 60, 12);
-        assert!(compact.contains("Update v0.2.23 available"), "{compact}");
+        assert!(compact.contains("update v0.2.23 available"), "{compact}");
         assert!(render_text(&state, 24, 1).contains("Threads: 7"));
+    }
+
+    #[test]
+    fn update_countdown_shows_keys_then_the_install() {
+        let mut state = TuiStateInner::new();
+        state.version = "v0.2.22".into();
+        state.threads = 7;
+        state.update_available = Some("v0.2.23".into());
+        state.pending_install = Some(crate::update_check::PendingInstall {
+            latest: "v0.2.23".into(),
+            deadline: Some(Instant::now() + Duration::from_millis(41_500)),
+        });
+        for (width, height) in [(160, 50), (60, 12)] {
+            let text = render_text(&state, width, height);
+            assert!(
+                text.contains(" updating to v0.2.23 in 42s  u now  s skip "),
+                "{width}x{height}: {text}"
+            );
+            assert!(!text.contains("available"), "{text}");
+        }
+        state.pending_install.as_mut().unwrap().deadline = None;
+        assert!(render_text(&state, 160, 50).contains(" installing v0.2.23… "));
+    }
+
+    #[test]
+    fn countdown_rounds_up_and_stops_at_zero() {
+        let now = Instant::now();
+        assert_eq!(countdown_secs(now + Duration::from_millis(59_001), now), 60);
+        assert_eq!(countdown_secs(now + Duration::from_secs(5), now), 5);
+        assert_eq!(countdown_secs(now, now + Duration::from_secs(1)), 0);
+    }
+
+    #[test]
+    fn update_keys_only_act_during_a_countdown() {
+        let _serial = crate::update_check::CHOICE_TEST
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let mut state = TuiStateInner::new();
+        // No countdown: `s` and `u` do nothing.
+        assert!(!state.answer_update_countdown(KeyCode::Char('s')));
+        state.pending_install = Some(crate::update_check::PendingInstall {
+            latest: "v0.2.23".into(),
+            deadline: None,
+        });
+        assert!(!state.answer_update_countdown(KeyCode::Char('u')));
+        assert_eq!(crate::update_check::take_choice(), None);
+
+        state.pending_install.as_mut().unwrap().deadline = Some(Instant::now());
+        assert!(!state.answer_update_countdown(KeyCode::Char('x')));
+        assert!(state.answer_update_countdown(KeyCode::Char('u')));
+        assert_eq!(
+            crate::update_check::take_choice(),
+            Some(crate::update_check::Choice::InstallNow)
+        );
+        assert_eq!(state.pending_install.as_ref().unwrap().deadline, None);
+
+        state.pending_install.as_mut().unwrap().deadline = Some(Instant::now());
+        assert!(state.answer_update_countdown(KeyCode::Char('S')));
+        assert_eq!(
+            crate::update_check::take_choice(),
+            Some(crate::update_check::Choice::Skip)
+        );
+        assert!(state.pending_install.is_none());
     }
 
     fn controlled_state() -> (

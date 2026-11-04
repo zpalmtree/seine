@@ -131,6 +131,7 @@ static UNSUPPORTED_WORK_NOTICE: AtomicBool = AtomicBool::new(false);
 /// pauses mining instead of ending the process, so the update checker can
 /// install a release that supports it. Warns once per pause.
 pub(super) fn note_unsupported_work(reason: &str) {
+    crate::update_check::set_mining_blocked(true);
     crate::update_check::request_check_soon();
     crate::diagnostics::unsupported_work(true);
     if !UNSUPPORTED_WORK_NOTICE.swap(true, Ordering::AcqRel) {
@@ -144,6 +145,7 @@ pub(super) fn note_unsupported_work(reason: &str) {
 }
 
 pub(super) fn clear_unsupported_work_notice() {
+    crate::update_check::set_mining_blocked(false);
     crate::diagnostics::unsupported_work(false);
     if UNSUPPORTED_WORK_NOTICE.swap(false, Ordering::AcqRel) {
         ui::info("UPDATE", "mining resumed");

@@ -206,6 +206,18 @@ pub(crate) fn announce_update(latest: &str, message: &str) -> bool {
     tui_state.is_some()
 }
 
+/// Shows (or clears) an automatic install in the live dashboard header.
+/// Returns false when no dashboard was live to show it.
+pub(crate) fn set_pending_install(pending: Option<crate::update_check::PendingInstall>) -> bool {
+    let Some(state) = lock(&TUI_STATE).clone() else {
+        return false;
+    };
+    if let Ok(mut state) = state.lock() {
+        state.pending_install = pending;
+    }
+    true
+}
+
 pub(super) fn set_tui_state(state: TuiState) {
     *lock(&TUI_STATE) = Some(state);
 }

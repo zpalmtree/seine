@@ -111,14 +111,20 @@ Seine checks GitHub for a newer release at startup and every 12 hours, and
 retries within about an hour when a check or install fails. When one exists, the
 dashboard header shows `update vX.Y.Z available` and the log gets one line with
 the download link (plain and API modes log the same line). Official release
-downloads then install the update automatically: the signed archive is verified,
-the new executable must start before it replaces the old one, and Seine stops
-mining cleanly and restarts with the same arguments. Pass `--no-auto-update` to
-keep only the notice, or `--disable-update-check` to turn the check off. Builds
-you compile yourself only show the notice.
+downloads then install the update automatically after a 60-second countdown, and
+mining continues while it runs. The header shows `updating to vX.Y.Z in 42s`.
+Press `u` to update now, or `s` to skip that version: Seine remembers the skip in
+its data directory and offers the next release as usual (`seine --self-update`
+installs a skipped one). After the countdown, the signed archive is verified, the
+new executable must start before it replaces the old one, and Seine stops mining
+cleanly and restarts with the same arguments. The restarted dashboard logs
+`updated to seine vX.Y.Z`. Pass `--no-auto-update` to keep only the notice, or
+`--disable-update-check` to turn the check off. Builds you compile yourself only
+show the notice.
 
 If a pool or daemon sends work that needs a newer release, Seine pauses mining
-instead of exiting and checks for an update right away.
+instead of exiting and checks for an update right away; that update installs
+without the countdown.
 
 On Windows, a fatal error after double-clicking `seine.exe` with no arguments
 leaves its console open until you press Enter. Launches from an existing shell,

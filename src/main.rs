@@ -77,8 +77,9 @@ fn run() -> Result<()> {
     if shutdown.load(std::sync::atomic::Ordering::SeqCst) {
         return Ok(());
     }
+    update_check::report_installed(&cfg.data_dir);
     if cfg.update_check_enabled && !cfg.bench {
-        update_check::spawn(cfg.auto_update, Arc::clone(&shutdown));
+        update_check::spawn(cfg.auto_update, cfg.data_dir.clone(), Arc::clone(&shutdown));
     }
 
     let result = if cfg.proxy_listen.is_some() {

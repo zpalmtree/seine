@@ -950,3 +950,135 @@ fn export_pool_balance_showcase() {
     std::fs::create_dir_all(path).unwrap();
     std::fs::write(path.join("index.html"), html).unwrap();
 }
+
+#[test]
+#[ignore = "writes the auto-update showcase; pass SEINE_SHOWCASE_DIR to choose where"]
+fn export_auto_update_showcase() {
+    use crate::update_check::PendingInstall;
+    use LogLevel::{Info, Success};
+    let mining: &[(LogLevel, &str, &str, f64)] = &[
+        (
+            Info,
+            "BACKEND",
+            "cpu: starting 16 threads (~32.0 GiB RAM)",
+            7_500.0,
+        ),
+        (Success, "CONN", "connected to pool", 7_500.0),
+        (Success, "CPU", "tuned to 16 threads", 7_200.0),
+        (Success, "SHARE", "share accepted", 4.0),
+    ];
+    let found = "seine v0.3.2 is available (running v0.3.1): https://github.com/zpalmtree/seine/releases/latest";
+    let with = |extra: &[(LogLevel, &str, &str, f64)]| {
+        let mut log = mining.to_vec();
+        log.extend_from_slice(extra);
+        let mut state = mining_fixture("working", &log);
+        state.log_entries[3].count = 96;
+        state
+    };
+    let countdown_log = [
+        (Info, "UPDATE", found, 18.0),
+        (
+            Info,
+            "UPDATE",
+            "seine v0.3.2 installs in 60s: press u to update now or s to skip this version",
+            18.0,
+        ),
+    ];
+    let mut counting = with(&countdown_log);
+    counting.update_available = Some("v0.3.2".into());
+    counting.pending_install = Some(PendingInstall {
+        latest: "v0.3.2".into(),
+        deadline: Some(Instant::now() + Duration::from_millis(42_500)),
+    });
+    let mut installing = with(&countdown_log);
+    installing.update_available = Some("v0.3.2".into());
+    installing.pending_install = Some(PendingInstall {
+        latest: "v0.3.2".into(),
+        deadline: None,
+    });
+    let mut skipped = with(&[
+        countdown_log[0],
+        countdown_log[1],
+        (
+            Info,
+            "UPDATE",
+            "skipped seine v0.3.2; staying on v0.3.1 (seine --self-update installs it later)",
+            9.0,
+        ),
+    ]);
+    skipped.update_available = Some("v0.3.2".into());
+    let mut announced = with(&[(Info, "UPDATE", found, 18.0)]);
+    announced.update_available = Some("v0.3.2".into());
+    let mut restarted = mining_fixture(
+        "working",
+        &[
+            (
+                Success,
+                "UPDATE",
+                "updated to seine v0.3.2 (was v0.3.1)",
+                12.0,
+            ),
+            (
+                Info,
+                "BACKEND",
+                "cpu: starting 16 threads (~32.0 GiB RAM)",
+                12.0,
+            ),
+            (Success, "CONN", "connected to pool", 10.0),
+            (Success, "SHARE", "share accepted", 2.0),
+        ],
+    );
+    restarted.version = "v0.3.2".into();
+    restarted.accepted = 3;
+
+    let mut body = String::new();
+    for (title, note, state) in [
+        (
+            "Countdown",
+            "A newer release was found. Mining continues for 60 seconds; u installs now, s skips this version.",
+            &counting,
+        ),
+        (
+            "Installing",
+            "After the countdown or u: the signed release downloads and is checked before Seine restarts.",
+            &installing,
+        ),
+        (
+            "Skipped",
+            "s keeps this version. Seine remembers the skip and offers the next release as usual.",
+            &skipped,
+        ),
+        (
+            "Restarted",
+            "The updated miner reports the update in its first log line.",
+            &restarted,
+        ),
+        (
+            "Notice only (--no-auto-update or a self-built binary)",
+            "No countdown: the header and log only announce the release.",
+            &announced,
+        ),
+    ] {
+        body.push_str(&format!(
+            "<section><h2>{title}</h2><p>{note}</p><div class='desktop'>{}{}</div><div class='mobile'>{}</div></section>",
+            capture_full(state, 120, 30),
+            capture_full(state, 80, 24),
+            capture_full(state, 48, 24),
+        ));
+    }
+    let revision = std::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .unwrap();
+    let html = format!(
+        r#"<!doctype html><html lang="en"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Seine auto-update</title>
+<style>body{{margin:16px;background:#101318;color:#b4bec8;font:14px system-ui}}h1{{font-size:22px}}h2{{font-size:16px;margin-bottom:4px}}p{{margin:0 0 8px}}pre{{background:#080b10;padding:8px;font:12px/1.25 Consolas,Menlo,monospace;width:max-content;max-width:100%;overflow:auto}}section{{margin:24px 0}}.mobile{{display:none}}@media(max-width:900px){{body{{margin:12px}}.desktop{{display:none}}.mobile{{display:block}}}}</style>
+<h1>Seine auto-update countdown</h1><p>The real terminal renderer with fixture data; no miner, network or update runs. 120x30 and 80x24 on desktop widths, 48 columns on phones. Source base: <code>{}</code>.</p>{body}</html>"#,
+        String::from_utf8_lossy(&revision.stdout).trim(),
+    );
+    let dir = std::env::var("SEINE_SHOWCASE_DIR")
+        .unwrap_or_else(|_| "target/showcases/auto-update".to_string());
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(std::path::Path::new(&dir).join("index.html"), html).unwrap();
+}

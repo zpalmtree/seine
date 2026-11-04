@@ -6,7 +6,13 @@
 //! failed check or install retries after `RETRY_INTERVAL` plus jitter, and
 //! mining code can ask for an earlier check when it receives work this build
 //! cannot mine.
+//!
+//! With `--auto-update`, a newer release installs after `COUNTDOWN` while
+//! mining continues. The dashboard shows the countdown and can install at once
+//! or skip that version (remembered in the data dir). Work this build cannot
+//! mine installs without waiting.
 
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
@@ -20,6 +26,13 @@ const RETRY_INTERVAL: Duration = Duration::from_secs(60 * 60);
 const RETRY_JITTER_SECS: u64 = 15 * 60;
 /// Earliest follow-up after any check when mining asks for one early.
 const MIN_REQUESTED_INTERVAL: Duration = Duration::from_secs(10 * 60);
+/// How long a found release waits before it installs.
+pub(crate) const COUNTDOWN: Duration = Duration::from_secs(60);
+/// Data-dir file holding the release tag the miner chose to skip.
+const SKIPPED_FILE: &str = "update-skipped";
+/// Data-dir file the installing process leaves for the restarted one:
+/// `<from> <to>`.
+const INSTALLED_FILE: &str = "update-installed";
 
 /// Set by the release workflow; source and local builds never replace
 /// themselves with the generic release binary.
@@ -30,6 +43,31 @@ const RELEASE_BUILD: bool = match option_env!("SEINE_RELEASE_BUILD") {
 
 static AUTO_INSTALL: AtomicBool = AtomicBool::new(false);
 static WAKE: (Mutex<bool>, Condvar) = (Mutex::new(false), Condvar::new());
+/// Set while mining is paused on work this build cannot mine.
+static MINING_BLOCKED: AtomicBool = AtomicBool::new(false);
+/// The miner's answer to a running countdown.
+static CHOICE: (Mutex<Option<Choice>>, Condvar) = (Mutex::new(None), Condvar::new());
+
+/// What the miner chose while an update counted down.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Choice {
+    InstallNow,
+    Skip,
+}
+
+/// An automatic install the dashboard shows in its header.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PendingInstall {
+    pub latest: String,
+    /// `None` once the download has started.
+    pub deadline: Option<Instant>,
+}
+
+enum CountdownEnd {
+    Install,
+    Skip,
+    Stopped,
+}
 
 static STATE: Mutex<UpdateState> = Mutex::new(UpdateState {
     latest: None,
@@ -48,7 +86,7 @@ pub(crate) struct DashboardUpdate {
     pub log_message: Option<String>,
 }
 
-pub(crate) fn spawn(auto_update: bool, shutdown: Arc<AtomicBool>) {
+pub(crate) fn spawn(auto_update: bool, data_dir: PathBuf, shutdown: Arc<AtomicBool>) {
     let current = crate::version::release_version();
     // Untagged development builds have nothing meaningful to compare.
     if parse_version(current).is_none() {
@@ -73,11 +111,23 @@ pub(crate) fn spawn(auto_update: bool, shutdown: Arc<AtomicBool>) {
                     Ok(release) => {
                         let tag = release.tag().to_string();
                         record_latest(current, &tag);
-                        if auto_install && is_newer(&tag, current) {
-                            match apply_update(release, &shutdown) {
-                                Some(true) => return,
-                                Some(false) => true,
-                                None => false,
+                        if auto_install
+                            && is_newer(&tag, current)
+                            && skipped_tag(&data_dir).as_deref() != Some(tag.as_str())
+                        {
+                            match count_down(&tag, &shutdown) {
+                                CountdownEnd::Stopped => return,
+                                CountdownEnd::Skip => {
+                                    skip(&data_dir, &tag, current);
+                                    true
+                                }
+                                CountdownEnd::Install => {
+                                    match apply_update(release, &data_dir, &shutdown) {
+                                        Some(true) => return,
+                                        Some(false) => true,
+                                        None => false,
+                                    }
+                                }
                             }
                         } else {
                             true
@@ -98,6 +148,128 @@ pub(crate) fn spawn(auto_update: bool, shutdown: Arc<AtomicBool>) {
 /// True when this process installs newer releases by itself.
 pub(crate) fn auto_install_active() -> bool {
     AUTO_INSTALL.load(Ordering::Acquire)
+}
+
+/// Mining paused (or resumed) on work this build cannot mine. While paused, a
+/// found release installs without its countdown.
+pub(crate) fn set_mining_blocked(blocked: bool) {
+    MINING_BLOCKED.store(blocked, Ordering::Release);
+    if blocked {
+        CHOICE.1.notify_all();
+    }
+}
+
+/// The dashboard's answer to the countdown on screen.
+pub(crate) fn choose(choice: Choice) {
+    let (lock, cvar) = &CHOICE;
+    *lock.lock().unwrap_or_else(|e| e.into_inner()) = Some(choice);
+    cvar.notify_all();
+}
+
+/// Serialises tests that touch the process-wide countdown answer.
+#[cfg(test)]
+pub(crate) static CHOICE_TEST: Mutex<()> = Mutex::new(());
+
+#[cfg(test)]
+pub(crate) fn take_choice() -> Option<Choice> {
+    CHOICE.0.lock().unwrap_or_else(|e| e.into_inner()).take()
+}
+
+/// Shows the countdown, then waits for it to run out, the miner's choice,
+/// blocked mining or shutdown.
+fn count_down(tag: &str, shutdown: &AtomicBool) -> CountdownEnd {
+    let (lock, cvar) = &CHOICE;
+    *lock.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    if MINING_BLOCKED.load(Ordering::Acquire) {
+        ui::info(
+            "UPDATE",
+            format!("installing seine {tag} now: mining is paused until Seine is updated"),
+        );
+        return CountdownEnd::Install;
+    }
+    let deadline = Instant::now() + COUNTDOWN;
+    let shows = ui::set_pending_install(Some(PendingInstall {
+        latest: tag.to_string(),
+        deadline: Some(deadline),
+    }));
+    let secs = COUNTDOWN.as_secs();
+    if shows {
+        ui::note(
+            "UPDATE",
+            format!(
+                "seine {tag} installs in {secs}s: press u to update now or s to skip this version"
+            ),
+        );
+    }
+    ui::detail(
+        "UPDATE",
+        format!("installing seine {tag} in {secs}s; mining continues until then"),
+    );
+    let mut choice = lock.lock().unwrap_or_else(|e| e.into_inner());
+    let end = loop {
+        if shutdown.load(Ordering::SeqCst) {
+            break CountdownEnd::Stopped;
+        }
+        match choice.take() {
+            Some(Choice::Skip) => break CountdownEnd::Skip,
+            Some(Choice::InstallNow) => break CountdownEnd::Install,
+            None => {}
+        }
+        let now = Instant::now();
+        if now >= deadline || MINING_BLOCKED.load(Ordering::Acquire) {
+            break CountdownEnd::Install;
+        }
+        // Wake each second to notice shutdown, which has no condvar.
+        let wait = deadline
+            .saturating_duration_since(now)
+            .min(Duration::from_secs(1));
+        choice = cvar
+            .wait_timeout(choice, wait)
+            .unwrap_or_else(|e| e.into_inner())
+            .0;
+    };
+    drop(choice);
+    ui::set_pending_install(match end {
+        CountdownEnd::Install => Some(PendingInstall {
+            latest: tag.to_string(),
+            deadline: None,
+        }),
+        CountdownEnd::Skip | CountdownEnd::Stopped => None,
+    });
+    end
+}
+
+fn skip(data_dir: &Path, tag: &str, current: &str) {
+    let _ = std::fs::write(data_dir.join(SKIPPED_FILE), tag);
+    ui::info(
+        "UPDATE",
+        format!(
+            "skipped seine {tag}; staying on {current} (seine --self-update installs it later)"
+        ),
+    );
+}
+
+fn skipped_tag(data_dir: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(data_dir.join(SKIPPED_FILE)).ok()?;
+    let tag = text.trim();
+    (!tag.is_empty()).then(|| tag.to_string())
+}
+
+/// Logs the update a previous process installed before restarting into this
+/// one. Call once the dashboard (if any) is up.
+pub(crate) fn report_installed(data_dir: &Path) {
+    let path = data_dir.join(INSTALLED_FILE);
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&path);
+    let mut parts = text.split_whitespace();
+    let (Some(from), Some(to), None) = (parts.next(), parts.next(), parts.next()) else {
+        return;
+    };
+    if parse_version(to) == parse_version(crate::version::release_version()) {
+        ui::success("UPDATE", format!("updated to seine {to} (was {from})"));
+    }
 }
 
 /// Asks the background checker to look for a release soon, at most once per
@@ -146,9 +318,18 @@ fn jitter_secs(max: u64) -> u64 {
 /// restart the updated executable with the same arguments. Returns `Some(true)`
 /// once installed, `Some(false)` when already current, and `None` on failure
 /// (retried after `RETRY_INTERVAL`).
-fn apply_update(release: crate::self_update::Release, shutdown: &Arc<AtomicBool>) -> Option<bool> {
-    match crate::self_update::install(release) {
+fn apply_update(
+    release: crate::self_update::Release,
+    data_dir: &Path,
+    shutdown: &Arc<AtomicBool>,
+) -> Option<bool> {
+    let result = crate::self_update::install(release);
+    if !matches!(result, Ok(crate::self_update::Outcome::Updated { .. })) {
+        ui::set_pending_install(None);
+    }
+    match result {
         Ok(crate::self_update::Outcome::Updated { from, to, .. }) => {
+            let _ = std::fs::write(data_dir.join(INSTALLED_FILE), format!("{from} {to}"));
             ui::info(
                 "UPDATE",
                 format!("installed seine {to} (was {from}); restarting with the same arguments"),
@@ -263,6 +444,81 @@ mod tests {
     use super::{is_newer, jitter_secs, parse_version, wait_for_next_check, WAKE};
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
+
+    fn countdown_with(
+        answer: impl FnOnce(&std::sync::atomic::AtomicBool) + Send,
+    ) -> super::CountdownEnd {
+        use std::sync::atomic::AtomicBool;
+        let shutdown = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            let waiter = scope.spawn(|| super::count_down("v9.9.9", &shutdown));
+            std::thread::sleep(Duration::from_millis(50));
+            answer(&shutdown);
+            waiter.join().unwrap()
+        })
+    }
+
+    #[test]
+    fn countdown_ends_on_the_miners_choice_or_shutdown() {
+        let _serial = super::CHOICE_TEST.lock().unwrap_or_else(|e| e.into_inner());
+        let started = Instant::now();
+        assert!(matches!(
+            countdown_with(|_| super::choose(super::Choice::Skip)),
+            super::CountdownEnd::Skip
+        ));
+        assert!(matches!(
+            countdown_with(|_| super::choose(super::Choice::InstallNow)),
+            super::CountdownEnd::Install
+        ));
+        assert!(matches!(
+            countdown_with(|stop| stop.store(true, std::sync::atomic::Ordering::SeqCst)),
+            super::CountdownEnd::Stopped
+        ));
+        assert!(matches!(
+            countdown_with(|_| super::set_mining_blocked(true)),
+            super::CountdownEnd::Install
+        ));
+        // Already blocked: no countdown at all.
+        assert!(matches!(
+            countdown_with(|_| {}),
+            super::CountdownEnd::Install
+        ));
+        super::set_mining_blocked(false);
+        assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    #[test]
+    fn a_choice_from_an_earlier_countdown_does_not_carry_over() {
+        let _serial = super::CHOICE_TEST.lock().unwrap_or_else(|e| e.into_inner());
+        super::choose(super::Choice::Skip);
+        assert!(matches!(
+            countdown_with(|_| super::choose(super::Choice::InstallNow)),
+            super::CountdownEnd::Install
+        ));
+    }
+
+    #[test]
+    fn skipped_release_is_remembered_in_the_data_dir() {
+        let dir = std::env::temp_dir().join(format!("seine-update-skip-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(super::skipped_tag(&dir), None);
+        super::skip(&dir, "v9.9.9", "v0.1.0");
+        assert_eq!(super::skipped_tag(&dir).as_deref(), Some("v9.9.9"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn installed_marker_is_consumed_once() {
+        let dir =
+            std::env::temp_dir().join(format!("seine-update-installed-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let marker = dir.join(super::INSTALLED_FILE);
+        std::fs::write(&marker, "v0.0.1 v9.9.9").unwrap();
+        super::report_installed(&dir);
+        assert!(!marker.exists());
+        super::report_installed(&dir);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     // Both wait tests share the process-wide wake flag.
     static WAKE_TEST: Mutex<()> = Mutex::new(());
