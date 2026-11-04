@@ -63,8 +63,9 @@ const PROXIED_TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
 /// How often a backup session checks whether the primary pool is back.
 const PRIMARY_RECHECK_INTERVAL: Duration = Duration::from_secs(5 * 60);
 const MAX_PRIMARY_RECHECK_INTERVAL: Duration = Duration::from_secs(60 * 60);
-/// Longest a switch back to the primary pool waits for submissions to settle.
-const SWITCH_BACK_MAX_WAIT: Duration = Duration::from_secs(30);
+/// Longest a switch back to the primary pool, or a fresh session after a
+/// refused refill, waits for submissions to settle.
+const SUBMIT_SETTLE_MAX_WAIT: Duration = Duration::from_secs(30);
 const CHANNEL_CAPACITY: usize = 4096;
 const MAX_SUBMITS_PER_IO_CYCLE: usize = 32;
 const MAX_RETRY_SUBMITS_PER_IO_CYCLE: usize = 4;
@@ -740,12 +741,13 @@ fn take_ready_nonce_refill(
     true
 }
 
-/// True when a switch back to the primary pool that became due at `due_since`
-/// should happen now: once submissions are idle, or after
-/// `SWITCH_BACK_MAX_WAIT` regardless.
-fn switch_back_due(idle: bool, due_since: Option<Instant>, now: Instant) -> bool {
+/// True when a step that waits for submissions to settle (a switch back to the
+/// primary pool, a fresh session for more range) and became due at
+/// `due_since` should happen now: once submissions are idle, or after
+/// `SUBMIT_SETTLE_MAX_WAIT` regardless.
+fn settle_wait_over(idle: bool, due_since: Option<Instant>, now: Instant) -> bool {
     idle || due_since
-        .is_some_and(|since| now.saturating_duration_since(since) >= SWITCH_BACK_MAX_WAIT)
+        .is_some_and(|since| now.saturating_duration_since(since) >= SUBMIT_SETTLE_MAX_WAIT)
 }
 
 fn run_pool_client_thread(
@@ -900,6 +902,9 @@ async fn run_pool_client_loop(
                 let mut primary_probe: Option<tokio::task::JoinHandle<bool>> = None;
                 let mut primary_back = false;
                 let mut primary_back_since = None::<Instant>;
+                // When a fresh session for more range started waiting for
+                // submissions to settle.
+                let mut fresh_session_since = None::<Instant>;
 
                 loop {
                     if should_shutdown(process_shutdown.as_ref(), shutdown.as_ref()) {
@@ -948,16 +953,26 @@ async fn run_pool_client_loop(
                         nonce_refill_enabled = false;
                         refill.available.store(false, Ordering::Release);
                     }
+                    let drained = pending_submits.is_empty()
+                        && retry_queue.is_empty()
+                        && submit_rx.is_empty();
+                    // A fresh session waits for in-flight submits, but only
+                    // so long: a pool that keeps answering "busy" keeps the
+                    // retry queue full.
+                    if !nonce_refill_enabled
+                        && refill_requested.lock().expect("refill lock").is_some()
+                    {
+                        fresh_session_since.get_or_insert_with(Instant::now);
+                    } else {
+                        fresh_session_since = None;
+                    }
+                    let settled = settle_wait_over(drained, fresh_session_since, Instant::now());
                     // A refill keeps the current range valid, so it need not
                     // wait for in-flight submits the way a resync does.
                     let mut refill_ready = take_ready_nonce_refill(
                         &refill_requested,
                         current_job_id.as_deref(),
-                        login_confirmed
-                            && (nonce_refill_enabled
-                                || (pending_submits.is_empty()
-                                    && retry_queue.is_empty()
-                                    && submit_rx.is_empty())),
+                        login_confirmed && (nonce_refill_enabled || settled),
                     );
                     if refill_retry
                         .as_ref()
@@ -1006,7 +1021,7 @@ async fn run_pool_client_loop(
                     let idle = pending_submits.is_empty()
                         && retry_queue.is_empty()
                         && submit_rx.is_empty();
-                    if primary_back && switch_back_due(idle, primary_back_since, Instant::now()) {
+                    if primary_back && settle_wait_over(idle, primary_back_since, Instant::now()) {
                         // Submissions still open after the wait end with the
                         // session, as on a disconnect.
                         reject_pending_submits(
@@ -3847,20 +3862,20 @@ mod tests {
     #[test]
     fn switching_back_to_the_primary_waits_for_submissions_only_so_long() {
         let due = Instant::now();
-        assert!(switch_back_due(true, Some(due), due));
-        assert!(!switch_back_due(false, Some(due), due));
-        assert!(!switch_back_due(
+        assert!(settle_wait_over(true, Some(due), due));
+        assert!(!settle_wait_over(false, Some(due), due));
+        assert!(!settle_wait_over(
             false,
             Some(due),
-            due + SWITCH_BACK_MAX_WAIT - Duration::from_millis(1)
+            due + SUBMIT_SETTLE_MAX_WAIT - Duration::from_millis(1)
         ));
         // A backup that keeps shares queued no longer holds the switch.
-        assert!(switch_back_due(
+        assert!(settle_wait_over(
             false,
             Some(due),
-            due + SWITCH_BACK_MAX_WAIT
+            due + SUBMIT_SETTLE_MAX_WAIT
         ));
-        assert!(!switch_back_due(false, None, due + SWITCH_BACK_MAX_WAIT));
+        assert!(!settle_wait_over(false, None, due + SUBMIT_SETTLE_MAX_WAIT));
     }
 
     #[test]
