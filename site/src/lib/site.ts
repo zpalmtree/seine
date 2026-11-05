@@ -1,6 +1,7 @@
 export const SITE_URL = 'https://seineminer.com';
 export const REPO = 'https://github.com/zpalmtree/seine';
-export const DEFAULT_IMAGE = `${SITE_URL}/assets/brand/social-card.jpg`;
+// Bump the query when the card changes: link previews cache images by URL.
+export const DEFAULT_IMAGE = `${SITE_URL}/assets/brand/social-card.jpg?v=2`;
 
 export const ORGANIZATION = {
     '@type': 'Organization',
