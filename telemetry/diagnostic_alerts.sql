@@ -16,14 +16,32 @@ WITH covered AS (
     FROM covered
     WHERE diagnostics->>'build_commit' <> 'unknown'
     GROUP BY 1 HAVING count(DISTINCT version) = 1
-), recent_unclean AS (
-    SELECT coalesce(c.diagnostics #>> '{previous_run,miner_version}', b.version, 'unknown') AS version,
-           count(DISTINCT c.installation_id) AS affected_installations,
-           jsonb_agg(DISTINCT c.version ORDER BY c.version) AS reporting_versions
+), unclean AS (
+    SELECT c.*,
+           coalesce(c.diagnostics #>> '{previous_run,miner_version}', b.version, 'unknown') AS previous_version
     FROM covered c LEFT JOIN build_versions b
       ON b.build_commit = c.diagnostics #>> '{previous_run,build_commit}'
     WHERE c.received_at >= now() - interval '24 hours'
       AND (c.diagnostics->>'previous_run_unclean')::boolean
+), unclean_installations AS (
+    -- Same rule as diagnostics.sql: a reboot, or one restart of an installation first
+    -- seen in the last day, is listed but not counted toward attention.
+    SELECT u.installation_id, u.restarts, f.first_seen >= now() - interval '24 hours' AS new_installation
+    FROM (SELECT installation_id, count(*) AS restarts FROM unclean GROUP BY 1) u
+    JOIN (SELECT installation_id, min(received_at) AS first_seen FROM covered
+          WHERE installation_id IN (SELECT installation_id FROM unclean) GROUP BY 1) f USING (installation_id)
+), recent_unclean AS (
+    SELECT u.previous_version AS version, count(DISTINCT u.installation_id) AS affected_installations,
+           count(DISTINCT u.installation_id) FILTER (
+             WHERE (u.diagnostics->>'previous_run_rebooted')::boolean) AS rebooted_installations,
+           count(DISTINCT u.installation_id) FILTER (
+             WHERE i.new_installation AND i.restarts = 1
+               AND (u.diagnostics->>'previous_run_rebooted')::boolean IS NOT TRUE) AS new_installation_single_restarts,
+           count(DISTINCT u.installation_id) FILTER (
+             WHERE (u.diagnostics->>'previous_run_rebooted')::boolean IS NOT TRUE
+               AND NOT (i.new_installation AND i.restarts = 1)) AS counted_installations,
+           jsonb_agg(DISTINCT u.version ORDER BY u.version) AS reporting_versions
+    FROM unclean u JOIN unclean_installations i USING (installation_id)
     GROUP BY 1
 ), recent_events AS (
     SELECT installation_id, received_at, version, event
@@ -86,11 +104,12 @@ WITH covered AS (
              AND r.version NOT IN (SELECT version FROM legacy_versions) AS needs_attention
     FROM recent_errors r LEFT JOIN recent_installations i USING (version)
 ), recent_unclean_rated AS (
-    SELECT r.version, r.affected_installations, r.reporting_versions,
+    SELECT r.version, r.affected_installations, r.counted_installations,
+           r.rebooted_installations, r.new_installation_single_restarts, r.reporting_versions,
            greatest(coalesce(i.installations, 0), r.affected_installations) AS installations_24h,
            r.version IN (SELECT version FROM legacy_versions) AS legacy,
-           r.affected_installations >= 3
-             AND r.affected_installations >= 0.10 * greatest(coalesce(i.installations, 0), r.affected_installations)
+           r.counted_installations >= 3
+             AND r.counted_installations >= 0.10 * greatest(coalesce(i.installations, 0), r.affected_installations)
              AND r.version <> 'unknown'
              AND r.version NOT IN (SELECT version FROM legacy_versions) AS needs_attention
     FROM recent_unclean r LEFT JOIN recent_installations i USING (version)

@@ -15,6 +15,17 @@ class DiagnosticSQLTests(unittest.TestCase):
     query = classmethod(test_alerts_sql.AlertSQLTests.query.__func__)
     setUp = test_alerts_sql.AlertSQLTests.setUp
     def insert_diagnostic(self, payload, identity=None):
+        if identity is None and payload['diagnostics'].get('previous_run_unclean'):
+            # An interrupted run on an installation already reporting two days ago, so
+            # the restart counts toward attention like an established machine's.
+            identity = uuid.uuid4().hex
+            earlier = copy.deepcopy(payload)
+            earlier['diagnostics'].update(previous_run_unclean=False, events=[])
+            earlier['diagnostics'].pop('previous_run', None)
+            earlier['diagnostics'].pop('previous_run_rebooted', None)
+            text = json.dumps(earlier).replace("'", "''")
+            self.query("INSERT INTO telemetry_reports VALUES "
+                       f"('{uuid.uuid4().hex}','{identity}',now()-interval '2 days','{text}'::jsonb)")
         text = json.dumps(payload).replace("'", "''")
         self.query("INSERT INTO telemetry_reports VALUES "
                    f"('{uuid.uuid4().hex}','{identity or uuid.uuid4().hex}',now(),'{text}'::jsonb)")
@@ -93,6 +104,46 @@ class DiagnosticSQLTests(unittest.TestCase):
         result = self.diagnostics()
         self.assertTrue(result['recent_unclean_versions'][0]['needs_attention'])
         self.assertEqual(result['status'], 'attention')
+
+    def test_reboots_and_single_restarts_of_new_installations_are_not_counted(self):
+        fixture = json.loads((Path(__file__).parent / 'diagnostics-fixture.json').read_text())
+        fixture['miner_version'] = 'v0.3.1'
+        fixture['diagnostics']['previous_run_unclean'] = False
+        fixture['diagnostics'].pop('previous_run', None)
+        def add(count, restarts=0, established=True, rebooted=None):
+            for _ in range(count):
+                identity = uuid.uuid4().hex
+                if established:
+                    text = json.dumps(fixture).replace("'", "''")
+                    self.query("INSERT INTO telemetry_reports VALUES "
+                               f"('{uuid.uuid4().hex}','{identity}',now()-interval '2 days','{text}'::jsonb)")
+                self.insert_diagnostic(fixture, identity)
+                for _ in range(restarts):
+                    value = copy.deepcopy(fixture)
+                    value['diagnostics']['previous_run_unclean'] = True
+                    value['diagnostics']['previous_run'] = {
+                        'miner_version': 'v0.3.1', 'build_commit': 'unknown', 'phase': 'mining', 'uptime_secs': 60}
+                    if rebooted is not None:
+                        value['diagnostics']['previous_run_rebooted'] = rebooted
+                    self.insert_diagnostic(value, identity)
+        add(20)
+        # A farm bringing up new machines: one interrupted run each.
+        add(4, restarts=1, established=False)
+        # Established machines that rebooted.
+        add(3, restarts=1, rebooted=True)
+        result = self.diagnostics()
+        row = result['recent_unclean_versions'][0]
+        self.assertEqual((row['affected_installations'], row['counted_installations']), (7, 0))
+        self.assertEqual((row['rebooted_installations'], row['new_installation_single_restarts']), (3, 4))
+        self.assertFalse(row['needs_attention'])
+        self.assertEqual(result['status'], 'ok')
+        self.assertEqual(sum(c['installations_rebooted'] for c in result['unclean_run_clusters']), 3)
+        # A new installation that keeps restarting counts, as do established ones on the same boot.
+        add(1, restarts=2, established=False)
+        add(2, restarts=1, rebooted=False)
+        row = self.diagnostics()['recent_unclean_versions'][0]
+        self.assertEqual((row['affected_installations'], row['counted_installations'], row['installations_24h']), (10, 3, 30))
+        self.assertTrue(row['needs_attention'])
 
     def test_older_release_lines_are_reported_without_failing_data_quality(self):
         fixture = json.loads((Path(__file__).parent / 'diagnostics-fixture.json').read_text())

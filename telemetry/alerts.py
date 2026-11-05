@@ -85,6 +85,11 @@ def evaluate(results):
                         version = ('Unknown previous version' if row['version'] == 'unknown'
                                    else f'Previous run {version}')
                         attribution = ' The restarting version is not assumed to be the interrupted version.'
+                        # Reboots and single restarts of new installations are not counted.
+                        count = row.get('counted_installations', count)
+                        uncounted = row['affected_installations'] - count
+                        if uncounted:
+                            attribution += f' {uncounted} more after a reboot or one restart of a new installation are not counted.'
                     active.append(issue('diagnostics', [field, row['version']], f'{version}: {count} installations with {title} in 24 hours.{attribution} Run telemetry/agent_report.py for issue clusters.'))
         pool = diagnostics.get('pool_connection_warnings')
         if pool is not None:

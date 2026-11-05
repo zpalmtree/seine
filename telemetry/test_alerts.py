@@ -201,6 +201,15 @@ class AlertsTests(unittest.TestCase):
         self.assertNotIn('v0.2.36:', active[0]['summary'])
         self.assertIn('Unknown previous version', active[1]['summary'])
 
+    def test_unclean_alert_counts_only_runs_not_explained_by_reboots_or_new_machines(self):
+        active, _ = alerts.evaluate({'diagnostics': {
+            'recent_error_versions': [], 'recent_unclean_versions': [
+                {'version': 'v0.3.1', 'affected_installations': 12, 'counted_installations': 4,
+                 'needs_attention': True, 'reporting_versions': ['v0.3.1']},
+            ]}})
+        self.assertIn('Previous run v0.3.1: 4 installations', active[0]['summary'])
+        self.assertIn('8 more after a reboot or one restart of a new installation are not counted', active[0]['summary'])
+
     def test_update_failures_and_unsupported_work_alert_at_three_installations(self):
         active, _ = alerts.evaluate({'diagnostics': {
             'recent_error_versions': [], 'recent_unclean_versions': [],

@@ -45,6 +45,7 @@ pub(crate) struct Recorder {
     checkpoint_store: Mutex<Option<(Weak<Store>, String)>>,
     previous_run: Mutex<Option<PreviousRun>>,
     previous_oom: Mutex<Option<bool>>,
+    previous_rebooted: Mutex<Option<bool>>,
     first_hashes: Mutex<BTreeMap<u64, (String, u64)>>,
 }
 
@@ -99,6 +100,7 @@ pub(crate) fn context(cfg: &Config) -> Diagnostics {
         phase: None,
         previous_run: None,
         previous_run_oom: None,
+        previous_run_rebooted: None,
         build_commit: fingerprint(option_env!("SEINE_GIT_COMMIT").unwrap_or("unknown")),
         source_fingerprint: fingerprint(crate::runtime_identity::source_fingerprint()),
         mode: match cfg.mode {
@@ -388,6 +390,7 @@ pub(crate) fn install(context: Diagnostics) -> Guard {
         checkpoint_store: Mutex::new(None),
         previous_run: Mutex::new(None),
         previous_oom: Mutex::new(None),
+        previous_rebooted: Mutex::new(None),
         first_hashes: Mutex::new(BTreeMap::new()),
     });
     if let Ok(mut active) = ACTIVE.lock() {
@@ -836,15 +839,26 @@ impl Recorder {
         }
     }
 
-    pub(crate) fn set_previous_run(&self, previous: Option<PreviousRun>) {
+    /// `rebooted` compares the boot the previous run checkpointed on with this one.
+    pub(crate) fn set_previous_run(&self, previous: Option<PreviousRun>, rebooted: Option<bool>) {
+        let rebooted = previous.as_ref().and(rebooted);
         *self.previous_oom.lock().unwrap_or_else(|e| e.into_inner()) =
             previous.as_ref().and_then(|run| {
-                oom_likely(
-                    self.previous_unclean.load(Ordering::Relaxed),
-                    run.oom_kills,
-                    oom_kill_count(),
-                )
+                // The kernel's count restarts at boot, so a reboot leaves it unknown.
+                (rebooted != Some(true))
+                    .then(|| {
+                        oom_likely(
+                            self.previous_unclean.load(Ordering::Relaxed),
+                            run.oom_kills,
+                            oom_kill_count(),
+                        )
+                    })
+                    .flatten()
             });
+        *self
+            .previous_rebooted
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = rebooted;
         *self.previous_run.lock().unwrap_or_else(|e| e.into_inner()) = previous;
     }
 
@@ -870,6 +884,11 @@ impl Recorder {
         result.previous_run_unclean = self.previous_unclean.swap(false, Ordering::Relaxed);
         result.previous_run_oom = self
             .previous_oom
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        result.previous_run_rebooted = self
+            .previous_rebooted
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .take();
@@ -925,7 +944,11 @@ pub(crate) struct Store {
     pending: PathBuf,
     attempt: PathBuf,
     checkpoint_path: PathBuf,
+    boot_id: Option<String>,
     pub(crate) previous_run: Option<PreviousRun>,
+    /// Whether the machine booted again since the previous run's checkpoint;
+    /// absent when either boot is unknown. The boot ID never leaves the data directory.
+    pub(crate) previous_rebooted: Option<bool>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -933,7 +956,32 @@ pub(crate) struct Store {
 struct Checkpoint {
     installation_id: String,
     marker_modified_ns: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    boot_id: Option<String>,
     run: PreviousRun,
+}
+
+/// The kernel's random identifier for the current boot, where it provides one.
+fn boot_id() -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        parse_boot_id(&std::fs::read_to_string("/proc/sys/kernel/random/boot_id").ok()?)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn parse_boot_id(value: &str) -> Option<String> {
+    let value = value.trim();
+    (value.len() == 36 && value.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-'))
+        .then(|| value.to_ascii_lowercase())
+}
+
+fn rebooted(saved: Option<&str>, current: Option<&str>) -> Option<bool> {
+    Some(saved? != current?)
 }
 
 fn marker_stamp(path: &Path) -> Option<u64> {
@@ -963,7 +1011,8 @@ impl Store {
         let previous_unclean =
             fresh(&marker) && fs::read_to_string(&marker).ok().as_deref() == Some(installation_id);
         let checkpoint_path = dir.join("seine.diagnostics.phase.json");
-        let previous_run = if previous_unclean && fresh(&checkpoint_path) {
+        let boot_id = boot_id();
+        let previous = if previous_unclean && fresh(&checkpoint_path) {
             fs::metadata(&checkpoint_path)
                 .ok()
                 .filter(|m| m.len() <= 8192)
@@ -974,10 +1023,13 @@ impl Store {
                         && Some(c.marker_modified_ns) == marker_stamp(&marker)
                         && c.run.validate()
                 })
-                .map(|c| c.run)
         } else {
             None
         };
+        let previous_rebooted = previous
+            .as_ref()
+            .and_then(|c| rebooted(c.boot_id.as_deref(), boot_id.as_deref()));
+        let previous_run = previous.map(|c| c.run);
         let _ = fs::remove_file(&checkpoint_path);
         fs::write(&marker, installation_id).ok()?;
         let _ = fs::remove_file(dir.join("seine.diagnostics.pending.tmp"));
@@ -987,7 +1039,9 @@ impl Store {
                 finished: Mutex::new(false),
                 marker,
                 checkpoint_path,
+                boot_id,
                 previous_run,
+                previous_rebooted,
                 pending: dir.join("seine.diagnostics.pending.json"),
                 attempt: dir.join("seine.diagnostics.attempt"),
             },
@@ -1062,6 +1116,7 @@ impl Store {
         let checkpoint = Checkpoint {
             installation_id: installation_id.into(),
             marker_modified_ns,
+            boot_id: self.boot_id.clone(),
             run,
         };
         let temp = self.checkpoint_path.with_extension("tmp");
@@ -1121,6 +1176,7 @@ pub(crate) fn test_context() -> Diagnostics {
         phase: None,
         previous_run: None,
         previous_run_oom: None,
+        previous_run_rebooted: None,
         build_commit: "abcdef123456".into(),
         source_fingerprint: "1234abcd".into(),
         mode: "pool".into(),
@@ -1172,7 +1228,21 @@ fn oom_likely(unclean: bool, saved: Option<u64>, now: Option<u64>) -> Option<boo
 
 #[cfg(test)]
 mod tests {
-    use super::{oom_likely, parse_oom_kills};
+    use super::{oom_likely, parse_boot_id, parse_oom_kills, rebooted};
+
+    #[test]
+    fn boot_ids_are_read_and_compared_only_when_both_are_known() {
+        let id = "1b4e28ba-2fa1-11d2-883f-0016d3cca427";
+        assert_eq!(
+            parse_boot_id(&format!("{}\n", id.to_uppercase())).as_deref(),
+            Some(id)
+        );
+        assert_eq!(parse_boot_id("not a boot id"), None);
+        assert_eq!(rebooted(Some(id), Some(id)), Some(false));
+        assert_eq!(rebooted(Some(id), Some("other")), Some(true));
+        assert_eq!(rebooted(None, Some(id)), None);
+        assert_eq!(rebooted(Some(id), None), None);
+    }
 
     #[test]
     fn oom_kills_are_read_from_vmstat() {
@@ -1328,6 +1398,7 @@ mod tests {
             checkpoint_store: Mutex::new(None),
             previous_run: Mutex::new(None),
             previous_oom: Mutex::new(None),
+            previous_rebooted: Mutex::new(None),
             first_hashes: Mutex::new(BTreeMap::new()),
         }
     }
@@ -1498,6 +1569,41 @@ mod tests {
         let (store, unclean) = Store::open(&settings, id).unwrap();
         assert!(!unclean);
         assert!(store.previous_run.is_none());
+        store.finish();
+        drop(store);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn interrupted_run_reports_whether_the_machine_booted_again() {
+        let dir =
+            std::env::temp_dir().join(format!("seine-boot-diagnostics-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let settings = dir.join("settings.json");
+        let id = "22222222222222222222222222222222";
+        let recorder = recorder();
+        let (store, _) = Store::open(&settings, id).unwrap();
+        store.checkpoint(id, recorder.checkpoint());
+        drop(store);
+        let (mut store, unclean) = Store::open(&settings, id).unwrap();
+        assert!(unclean);
+        assert!(store.previous_run.is_some());
+        // Same boot where the kernel names one; unknown elsewhere.
+        assert_eq!(store.previous_rebooted, boot_id().map(|_| false));
+        assert!(!serde_json::to_string(&store.previous_run)
+            .unwrap()
+            .contains("boot"));
+        store.boot_id = Some("00000000-0000-0000-0000-000000000000".into());
+        store.checkpoint(id, recorder.checkpoint());
+        drop(store);
+        let (store, unclean) = Store::open(&settings, id).unwrap();
+        assert!(unclean);
+        assert_eq!(store.previous_rebooted, boot_id().map(|_| true));
+        recorder.set_previous_unclean(true);
+        recorder.set_previous_run(store.previous_run.clone(), Some(true));
+        let snapshot = recorder.snapshot(false);
+        assert_eq!(snapshot.previous_run_rebooted, Some(true));
+        assert_eq!(snapshot.previous_run_oom, None);
         store.finish();
         drop(store);
         fs::remove_dir_all(dir).unwrap();

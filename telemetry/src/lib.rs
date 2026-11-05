@@ -2,7 +2,7 @@
 use serde::{Deserialize, Serialize};
 pub mod tuning;
 
-pub const SCHEMA_VERSION: u32 = 15;
+pub const SCHEMA_VERSION: u32 = 16;
 pub const MAX_BODY_BYTES: usize = 32 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -372,6 +372,10 @@ pub struct Diagnostics {
     /// Absent where the count cannot be read (schema 15).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub previous_run_oom: Option<bool>,
+    /// The machine booted again between the previous run's last checkpoint and this
+    /// run. Absent where the platform reports no boot identity (schema 16).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_run_rebooted: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cleanup_stage: Option<CleanupStage>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -680,6 +684,7 @@ impl Diagnostics {
                 .previous_run
                 .as_ref()
                 .is_none_or(|r| self.previous_run_unclean && r.validate())
+            && (self.previous_run_rebooted.is_none() || self.previous_run.is_some())
             && self.events.len() <= 32
             && self.uptime_secs <= 315_360_000
             && self.dropped_events <= 1_000_000_000_000
@@ -928,6 +933,7 @@ impl Report {
                                     .iter()
                                     .all(DiagnosticEvent::schema14_compatible)
                             })))
+                    && (self.schema_version >= 16 || d.previous_run_rebooted.is_none())
                     && (self.schema_version >= 14 || d.schema13_compatible())
                     && (self.schema_version >= 13
                         || (d.events.iter().all(DiagnosticEvent::schema12_compatible)
@@ -1306,6 +1312,22 @@ mod tests {
         assert!(!final_report.validate());
         final_report.diagnostics.as_mut().unwrap().reason = "failure".into();
         assert!(final_report.validate());
+    }
+
+    #[test]
+    fn reboot_flag_needs_schema_16_and_a_previous_run() {
+        let value: serde_json::Value =
+            serde_json::from_str(include_str!("../diagnostics-fixture.json")).unwrap();
+        let mut report: Report = serde_json::from_value(value).unwrap();
+        assert!(report.diagnostics.as_ref().unwrap().previous_run.is_some());
+        report.schema_version = 16;
+        report.diagnostics.as_mut().unwrap().previous_run_rebooted = Some(true);
+        assert!(report.validate());
+        report.schema_version = 15;
+        assert!(!report.validate());
+        report.schema_version = 16;
+        report.diagnostics.as_mut().unwrap().previous_run = None;
+        assert!(!report.validate());
     }
 
     #[test]

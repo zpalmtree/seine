@@ -560,20 +560,21 @@ fn start_with_context(
             if !still_enabled(&options) {
                 return;
             }
-            let store =
-                crate::diagnostics::Store::open(&options.state_path, &options.installation_id).map(
-                    |(store, unclean)| {
-                        let store = Arc::new(store);
-                        worker_completion
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner())
-                            .attach(&store);
-                        diagnostics.set_previous_unclean(unclean);
-                        diagnostics.set_previous_run(store.previous_run.clone());
-                        diagnostics.attach_checkpoint_store(&store, &options.installation_id);
-                        store
-                    },
-                );
+            let store = crate::diagnostics::Store::open(
+                &options.state_path,
+                &options.installation_id,
+            )
+            .map(|(store, unclean)| {
+                let store = Arc::new(store);
+                worker_completion
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .attach(&store);
+                diagnostics.set_previous_unclean(unclean);
+                diagnostics.set_previous_run(store.previous_run.clone(), store.previous_rebooted);
+                diagnostics.attach_checkpoint_store(&store, &options.installation_id);
+                store
+            });
             // One bounded replay on the next launch, using the same report ID for deduplication.
             if let Some(store) = &store {
                 if let Some(pending) = store.pending(&options.installation_id) {

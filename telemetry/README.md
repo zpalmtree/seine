@@ -71,6 +71,14 @@ algorithms never share a cohort. Deploy the schema-11 collector before
 releasing schema-11 miners; schemas 1-10 remain accepted, with no SQL storage
 migration.
 
+Schema 16 adds `diagnostics.previous_run_rebooted`: whether the machine booted
+again between the previous run's last checkpoint and the restart. Linux miners
+compare the kernel's boot ID, which stays in the data directory and is never
+uploaded; other platforms leave the field out. After a reboot
+`previous_run_oom` is absent, because the kernel's OOM-kill count restarts at
+boot. Deploy the schema-16 collector before releasing schema-16 miners; schemas
+1-15 remain accepted, with no SQL storage migration.
+
 Schema 15 adds the search's settled result under `tuning.settled` and
 `diagnostics.previous_run_oom`; see [TUNING.md](TUNING.md). It also adds the
 operation `pool_stats` for pool statistics and balance fetches, with the reasons
@@ -203,7 +211,7 @@ The strict upload schema is in [src/lib.rs](src/lib.rs), with an example in
 
 The [reliability fixture](reliability-fixture.json) demonstrates schema 5; the
 [diagnostic fixture](diagnostics-fixture.json) retains schema-4 compatibility coverage.
-The collector accepts schemas 1–15. Deploy schema-15 support before schema-15 miners.
+The collector accepts schemas 1–16. Deploy schema-16 support before schema-16 miners.
 The recorder starts after configuration parsing, before address resolution,
 backend initialization and tuning. UI warnings/errors identify their original
 call site through `track_caller`; backend error and quarantine paths also report
@@ -280,8 +288,13 @@ service flags a fleet-wide spike when at least 20 installations, and three times
 prior day's hourly average, report them within an hour.
 `diagnostics.sql` flags a version on the newest release line when at least three
 installations, and at least 5% of that version's installations reporting in 24 hours,
-report errors or quarantines, or 10% report unclean previous runs. Each row carries
-`installations_24h`, `legacy` and `needs_attention`. Older release lines and the
+report errors or quarantines, or 10% report unclean previous runs. Unclean runs
+count only when they are not explained by setup: a run that ended in a reboot
+(`rebooted_installations`), or the only interrupted run of an installation first
+seen in the last 24 hours (`new_installation_single_restarts`), is listed but not
+counted; a new installation that restarts uncleanly twice counts. The threshold
+uses `counted_installations`. Each row carries `installations_24h`, `legacy` and
+`needs_attention`, and `unclean_run_clusters` carries `installations_rebooted`. Older release lines and the
 explicitly unknown-version bucket of unattributed interrupted runs stay listed but
 never raise attention. Failed self-update installs and mining paused on unsupported
 work still flag any version at three installations. Single-installation failures and
