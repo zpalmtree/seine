@@ -260,7 +260,8 @@ fn initial_threads(
 // Cold start for CPUs whose cohort mines on a streaming kernel. Zen 4/5, Intel
 // Xeons with an AVX-512 streaming default and Intel AVX2 desktops start at every
 // allowed logical CPU that fits in RAM, as do Broadwell-EP Xeons; Zen 2/3 (AVX2
-// streaming, with or without skipped stores) start at the physical core count.
+// streaming, with or without skipped stores) start at the physical core count, and
+// Ryzen 5000 desktops with 12 or more cores at three quarters of it.
 // Count trials still decide afterwards.
 fn cohort_cold_start(
     cfg: &Config,
@@ -285,21 +286,38 @@ fn cohort_cold_start(
         {
             Some(max)
         }
-        CpuKernel::Avx2Stream | CpuKernel::Avx2StreamSkip => host.physical_cores,
+        CpuKernel::Avx2Stream | CpuKernel::Avx2StreamSkip => {
+            vermeer_start(host).or(host.physical_cores)
+        }
         _ => Some(max),
     }
     .filter(|&workers| workers > 0)
 }
 
-/// True where Ryzen 5000 desktops (19h model 21h) start at their physical core count;
-/// the search steps out from there rather than looking at every thread first.
-fn start_is_core_count(cfg: &Config, host: &CpuAutotuneHostFingerprint, start: usize) -> bool {
-    let identity = crate::runtime_identity::cpu_identity();
-    cfg.cpu_profile != CpuPerformanceProfile::Efficiency
-        && host.physical_cores == Some(start)
-        && identity.vendor.as_deref() == Some("AuthenticAMD")
+/// The cold start for Ryzen 5000 desktops (19h model 21h): the physical core count,
+/// or three quarters of it from 12 cores.
+fn vermeer_start(host: &CpuAutotuneHostFingerprint) -> Option<usize> {
+    vermeer_start_for(
+        &crate::runtime_identity::cpu_identity(),
+        host.physical_cores,
+    )
+}
+
+fn vermeer_start_for(
+    identity: &crate::runtime_identity::CpuIdentity,
+    physical_cores: Option<usize>,
+) -> Option<usize> {
+    let vermeer = identity.vendor.as_deref() == Some("AuthenticAMD")
         && identity.family == Some(0x19)
-        && identity.model == Some(0x21)
+        && identity.model == Some(0x21);
+    let cores = physical_cores.filter(|_| vermeer)?;
+    Some(if cores >= 12 { cores * 3 / 4 } else { cores })
+}
+
+/// True where Ryzen 5000 desktops start from their own rule; the search steps out from
+/// there rather than looking at every thread first.
+fn start_is_core_count(cfg: &Config, host: &CpuAutotuneHostFingerprint, start: usize) -> bool {
+    cfg.cpu_profile != CpuPerformanceProfile::Efficiency && vermeer_start(host) == Some(start)
 }
 
 // Threads already running (including the API's Tokio worker pool) are charged
@@ -1103,6 +1121,25 @@ mod tuner_sim;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ryzen_5000_desktops_start_at_their_cores_or_three_quarters_from_twelve() {
+        let vermeer = crate::runtime_identity::CpuIdentity {
+            vendor: Some("AuthenticAMD".into()),
+            family: Some(0x19),
+            model: Some(0x21),
+            ..Default::default()
+        };
+        assert_eq!(super::vermeer_start_for(&vermeer, Some(6)), Some(6));
+        assert_eq!(super::vermeer_start_for(&vermeer, Some(8)), Some(8));
+        assert_eq!(super::vermeer_start_for(&vermeer, Some(12)), Some(9));
+        assert_eq!(super::vermeer_start_for(&vermeer, Some(16)), Some(12));
+        let milan = crate::runtime_identity::CpuIdentity {
+            model: Some(0x01),
+            ..vermeer
+        };
+        assert_eq!(super::vermeer_start_for(&milan, Some(16)), None);
+    }
 
     #[test]
     fn preparation_keeps_ram_manual_limit_separate_and_rejects_exhausted_pid_budget() {
