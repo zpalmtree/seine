@@ -262,7 +262,8 @@ fn initial_threads(
 // allowed logical CPU that fits in RAM, as do Broadwell-EP Xeons; Haswell-E/EP and Kaby
 // Lake to Comet Lake have no cohort start and keep the estimate from their core count;
 // Zen 2/3 (AVX2 streaming, with or without skipped stores) start at the physical core
-// count, and Ryzen 5000 desktops with 12 or more cores at three quarters of it.
+// count, and Ryzen 5000 desktops with 12 or more cores and EPYC 7002 with 64 or more at
+// three quarters of it.
 // Count trials still decide afterwards.
 fn cohort_cold_start(
     cfg: &Config,
@@ -287,9 +288,14 @@ fn cohort_cold_start(
         {
             intel_stream_start_for(&crate::runtime_identity::cpu_identity(), max)
         }
-        CpuKernel::Avx2Stream | CpuKernel::Avx2StreamSkip => {
-            vermeer_start(host).or(host.physical_cores)
-        }
+        CpuKernel::Avx2Stream | CpuKernel::Avx2StreamSkip => vermeer_start(host)
+            .or_else(|| {
+                rome_start_for(
+                    &crate::runtime_identity::cpu_identity(),
+                    host.physical_cores,
+                )
+            })
+            .or(host.physical_cores),
         _ => Some(max),
     }
     .filter(|&workers| workers > 0)
@@ -326,6 +332,20 @@ fn vermeer_start_for(
         && identity.model == Some(0x21);
     let cores = physical_cores.filter(|_| vermeer)?;
     Some(if cores >= 12 { cores * 3 / 4 } else { cores })
+}
+
+/// The cold start for EPYC 7002 (17h model 31h) with 64 or more physical cores: three
+/// quarters of them.
+fn rome_start_for(
+    identity: &crate::runtime_identity::CpuIdentity,
+    physical_cores: Option<usize>,
+) -> Option<usize> {
+    let rome = identity.vendor.as_deref() == Some("AuthenticAMD")
+        && identity.family == Some(0x17)
+        && identity.model == Some(0x31);
+    physical_cores
+        .filter(|&cores| rome && cores >= 64)
+        .map(|cores| cores * 3 / 4)
 }
 
 /// True where Ryzen 5000 desktops start from their own rule; the search steps out from
@@ -1153,6 +1173,15 @@ mod tests {
             ..vermeer
         };
         assert_eq!(super::vermeer_start_for(&milan, Some(16)), None);
+        let rome = crate::runtime_identity::CpuIdentity {
+            family: Some(0x17),
+            model: Some(0x31),
+            ..milan.clone()
+        };
+        assert_eq!(super::rome_start_for(&rome, Some(64)), Some(48));
+        assert_eq!(super::rome_start_for(&rome, Some(96)), Some(72));
+        assert_eq!(super::rome_start_for(&rome, Some(32)), None);
+        assert_eq!(super::rome_start_for(&milan, Some(64)), None);
     }
 
     #[test]
