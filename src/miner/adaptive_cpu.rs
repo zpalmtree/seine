@@ -259,9 +259,10 @@ fn initial_threads(
 
 // Cold start for CPUs whose cohort mines on a streaming kernel. Zen 4/5, Intel
 // Xeons with an AVX-512 streaming default and Intel AVX2 desktops start at every
-// allowed logical CPU that fits in RAM, as do Broadwell-EP Xeons; Zen 2/3 (AVX2
-// streaming, with or without skipped stores) start at the physical core count, and
-// Ryzen 5000 desktops with 12 or more cores at three quarters of it.
+// allowed logical CPU that fits in RAM, as do Broadwell-EP Xeons; Haswell-E/EP have no
+// cohort start and keep the estimate from their core count; Zen 2/3 (AVX2 streaming,
+// with or without skipped stores) start at the physical core count, and Ryzen 5000
+// desktops with 12 or more cores at three quarters of it.
 // Count trials still decide afterwards.
 fn cohort_cold_start(
     cfg: &Config,
@@ -284,7 +285,7 @@ fn cohort_cold_start(
             if crate::runtime_identity::cpu_identity().vendor.as_deref()
                 == Some("GenuineIntel") =>
         {
-            Some(max)
+            intel_stream_start_for(&crate::runtime_identity::cpu_identity(), max)
         }
         CpuKernel::Avx2Stream | CpuKernel::Avx2StreamSkip => {
             vermeer_start(host).or(host.physical_cores)
@@ -292,6 +293,18 @@ fn cohort_cold_start(
         _ => Some(max),
     }
     .filter(|&workers| workers > 0)
+}
+
+/// The cold start for Intel CPUs whose cohort kernel is AVX2 streaming: every allowed
+/// logical CPU that fits in RAM, or none for Haswell-E/EP (06h/3Fh).
+fn intel_stream_start_for(
+    identity: &crate::runtime_identity::CpuIdentity,
+    max: usize,
+) -> Option<usize> {
+    let haswell_ep = identity.vendor.as_deref() == Some("GenuineIntel")
+        && identity.family == Some(6)
+        && identity.model == Some(0x3f);
+    (!haswell_ep).then_some(max)
 }
 
 /// The cold start for Ryzen 5000 desktops (19h model 21h): the physical core count,
@@ -1139,6 +1152,19 @@ mod tests {
             ..vermeer
         };
         assert_eq!(super::vermeer_start_for(&milan, Some(16)), None);
+    }
+
+    #[test]
+    fn intel_avx2_streaming_starts_at_every_cpu_except_haswell_ep() {
+        let intel = |model| crate::runtime_identity::CpuIdentity {
+            vendor: Some("GenuineIntel".into()),
+            family: Some(6),
+            model: Some(model),
+            ..Default::default()
+        };
+        assert_eq!(super::intel_stream_start_for(&intel(0x3f), 14), None);
+        assert_eq!(super::intel_stream_start_for(&intel(0x4f), 14), Some(14));
+        assert_eq!(super::intel_stream_start_for(&intel(0x97), 12), Some(12));
     }
 
     #[test]
