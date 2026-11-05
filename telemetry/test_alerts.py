@@ -169,13 +169,16 @@ class AlertsTests(unittest.TestCase):
     def test_aggregate_thresholds_and_unknown_categories(self):
         results = {'infrastructure': False, 'quality': {'versions': [
             {'version': 'v1', 'sustained_inventory_only_installations': 4},
-            {'version': 'v2', 'sustained_inventory_only_installations': 5}]},
+            {'version': 'v2', 'sustained_inventory_only_installations': 5},
+            {'version': 'v0.2.45', 'sustained_inventory_only_installations': 9, 'legacy': True}]},
             'diagnostics': {'recent_error_versions': [
                 {'version': 'v1', 'affected_installations': 2},
                 {'version': 'v2', 'affected_installations': 3}], 'recent_unclean_versions': []},
             'performance': None}
         active, known = alerts.evaluate(results)
         self.assertEqual({i['category'] for i in active}, {'monitor', 'infrastructure', 'quality', 'diagnostics'})
+        quality = {i['version']: i for i in active if i['category'] == 'quality'}
+        self.assertEqual((quality['v2']['severity'], quality['v0.2.45']['severity']), ('warning', 'info'))
         self.assertNotIn('performance', known)
         self.assertNotIn('ingestion', known)
         results['performance'] = {'minutes_since_last_report': 120, 'performance_cohorts': []}

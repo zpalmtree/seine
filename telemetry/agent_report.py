@@ -75,7 +75,8 @@ def main():
         failed = True
         briefing['assessment'] = (
             'Hardware inventory is arriving without performance samples from at least five '
-            'installations of one version, each reporting at least three times over two hours. '
+            'installations of one version on the newest release line, each reporting at least three '
+            'times over two hours. '
             'Investigate the miner sampling path and pool connectivity using inventory_only_clusters; '
             'missing samples alone do not prove a sampling bug.'
         )
@@ -149,7 +150,10 @@ def main():
         'startup.first_hash counts each run once, so cold starts stay visible; first_hash_ms includes any '
         'wait for pool work, while lag_behind_cpu_ms removes it where a CPU backend ran. '
         'backends_not_hashing covers runs up at least ten minutes that hashed on some backend; a GPU can '
-        'also be idle on purpose when its kernel cannot run this proof of work.'
+        'also be idle on purpose when its kernel cannot run this proof of work. '
+        'installations_idle_until_fork counts Metal that never hashed in a run that has not mined BLAKE2b: '
+        'the default Metal backend mines only BLAKE2b, and telemetry cannot tell it from an explicit '
+        '--backend metal, so these are left out of the missing counts until the fork.'
     )
     if release.get('status') == 'error':
         briefing['release_health_assessment'] = 'Release-health query failed; missing schema-14 aggregates do not establish healthy updates.'

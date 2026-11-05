@@ -448,7 +448,10 @@ not "hardware is slow."
 A separate six-hour data-quality query counts inventory-only, sampled and stable
 reports. Five installations of the same version, each with at least three reports
 spanning two hours and no backend samples, fail both the agent briefing and the
-five-minute service check. This flags sustained missing samples even when HTTPS
+five-minute service check. Only the newest release line (`newest_release_line`,
+the highest major.minor among v-prefixed release builds) can fail it; older lines
+are still listed with `legacy: true` and alert at info severity, because only an
+upgrade changes them. Source builds and commit versions are never legacy. This flags sustained missing samples even when HTTPS
 and the database are healthy. `inventory_only_clusters` separately shows observed
 pool connection warnings and mining phase; neither a mining checkpoint nor the
 absence of a connection warning proves that usable work was available. Low report counts alone are not an outage; unstable

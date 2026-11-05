@@ -157,7 +157,9 @@ gpu_samples AS (
 -- first_hash_ms includes any wait for pool work; lag_behind_cpu_ms removes it.
 startup_reports AS (
     SELECT installation_id, received_at, version, d->'backend_startup' AS b,
-           (d->>'uptime_secs')::bigint AS uptime_secs
+           (d->>'uptime_secs')::bigint AS uptime_secs,
+           EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(backends, '[]'::jsonb)) x
+                   WHERE x #>> '{settings,pow}' = 'blake2b') AS mined_blake2b
     FROM reports WHERE d->'backend_startup' IS NOT NULL
 ), first_hash_runs AS (
     SELECT DISTINCT r.installation_id, r.version, f->>'backend' AS backend,
@@ -185,12 +187,12 @@ startup_reports AS (
 ), latest_startup AS (
     -- Long enough that a missing backend is stuck, not still starting. A run with
     -- no hashes at all had no work, which says nothing about its backends.
-    SELECT DISTINCT ON (installation_id) installation_id, version, b
+    SELECT DISTINCT ON (installation_id) installation_id, version, b, mined_blake2b
     FROM startup_reports
     WHERE uptime_secs >= 600 AND jsonb_array_length(coalesce(b->'first_hashes', '[]'::jsonb)) > 0
     ORDER BY installation_id, received_at DESC
 ), expected_backends AS (
-    SELECT l.installation_id, l.version, e.backend, e.expected,
+    SELECT l.installation_id, l.version, e.backend, e.expected, l.mined_blake2b,
            (SELECT count(*) FROM jsonb_array_elements(l.b->'first_hashes') f
             WHERE f->>'backend' = e.backend) AS hashing
     FROM latest_startup l
@@ -199,11 +201,18 @@ startup_reports AS (
         ('amd', (l.b->>'expected_amd')::int), ('metal', (l.b->>'expected_metal')::int)
     ) AS e(backend, expected)
     WHERE e.expected > 0
+), expected_backend_state AS (
+    -- Metal that Seine adds by itself mines BLAKE2b only, so before the fork it
+    -- waits idle. Telemetry cannot tell it from an explicit --backend metal, so
+    -- an idle Metal is counted apart until the run mines BLAKE2b work.
+    SELECT *, backend = 'metal' AND hashing = 0 AND NOT mined_blake2b AS idle_until_fork
+    FROM expected_backends
 ), backends_not_hashing AS (
     SELECT version, backend, count(*) AS installations,
-           count(*) FILTER (WHERE hashing < expected) AS installations_missing_backends,
-           coalesce(sum(greatest(expected - hashing, 0)), 0) AS instances_not_hashing
-    FROM expected_backends GROUP BY 1, 2
+           count(*) FILTER (WHERE hashing < expected AND NOT idle_until_fork) AS installations_missing_backends,
+           coalesce(sum(greatest(expected - hashing, 0)) FILTER (WHERE NOT idle_until_fork), 0) AS instances_not_hashing,
+           count(*) FILTER (WHERE idle_until_fork) AS installations_idle_until_fork
+    FROM expected_backend_state GROUP BY 1, 2
 ),
 -- Pool connection setup and churn (pool mode only).
 pool_reports AS (

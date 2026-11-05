@@ -55,9 +55,14 @@ def evaluate(results):
             count = row['sustained_inventory_only_installations']
             if count >= 5:
                 # These shipped versions predate the pool sampling fix in v0.2.26.
-                legacy = row['version'] in ('0.2.24', 'v0.2.24', '0.2.25', 'v0.2.25')
-                action = ('Known pool-reporting bug in this release. Upgrade to v0.2.26 or later.'
-                          if legacy else 'Inspect miner activity and the performance sampling path.')
+                pool_bug = row['version'] in ('0.2.24', 'v0.2.24', '0.2.25', 'v0.2.25')
+                legacy = pool_bug or bool(row.get('legacy'))
+                if pool_bug:
+                    action = 'Known pool-reporting bug in this release. Upgrade to v0.2.26 or later.'
+                elif legacy:
+                    action = 'Older release line; only an upgrade changes it.'
+                else:
+                    action = 'Inspect miner activity and the performance sampling path.'
                 active.append(issue(
                     'quality', row['version'],
                     'Installations repeatedly send hardware inventory without hashrate samples. '

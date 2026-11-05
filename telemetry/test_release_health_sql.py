@@ -105,6 +105,23 @@ class ReleaseHealthSQLTests(unittest.TestCase):
         self.assertEqual(missing['amd']['instances_not_hashing'], 1)
         self.assertEqual(missing['nvidia']['installations_missing_backends'], 0)
 
+    def test_default_metal_idle_before_the_fork_is_not_a_missing_backend(self):
+        base = self.fixture()
+        base['diagnostics']['backend_startup']['expected_metal'] = 1
+        # Before the fork the default Metal backend waits idle on Argon2 work.
+        self.insert(base)
+        self.insert(base)
+        # Once the run mines BLAKE2b, an idle Metal is a missing backend again.
+        forked = copy.deepcopy(base)
+        forked['schema_version'] = 15
+        forked['backends'][0]['settings']['pow'] = 'blake2b'
+        self.insert(forked)
+        metal = {b['backend']: b for b in self.report()['startup']['backends_not_hashing']}['metal']
+        self.assertEqual(metal['installations'], 3)
+        self.assertEqual(metal['installations_idle_until_fork'], 2)
+        self.assertEqual(metal['installations_missing_backends'], 1)
+        self.assertEqual(metal['instances_not_hashing'], 1)
+
     def test_fork_readiness_counts_paused_installations_and_events_by_version(self):
         base = self.fixture()
         for version, mode in (('v0.3.0', 'pool'), ('v0.3.0', 'pool'), ('v0.2.36', 'daemon')):

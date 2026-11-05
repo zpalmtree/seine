@@ -51,6 +51,40 @@ class DiagnosticSQLTests(unittest.TestCase):
         self.assertTrue(all(c['observed_mining_phase'] for c in clusters))
         self.assertNotIn('installation_id', json.dumps(result))
 
+    def test_older_release_lines_are_reported_without_failing_data_quality(self):
+        fixture = json.loads((Path(__file__).parent / 'diagnostics-fixture.json').read_text())
+        def add(version, backends):
+            value = copy.deepcopy(fixture)
+            value['miner_version'] = version
+            value['diagnostics']['reason'] = 'periodic'
+            value['diagnostics']['events'] = []
+            if not backends:
+                value['backends'] = []
+            identity = uuid.uuid4().hex
+            for hour in (5, 3, 1):
+                payload = json.dumps(value).replace("'", "''")
+                self.query("INSERT INTO telemetry_reports VALUES "
+                           f"('{uuid.uuid4().hex}','{identity}',now()-interval '{hour} hours','{payload}'::jsonb)")
+        # The newest release line comes from release builds; a source build of
+        # a later line does not move it.
+        add('v0.3.1', True)
+        add('0.4.0', True)
+        for _ in range(5):
+            add('v0.2.45', False)
+        result = json.loads(self.query((Path(__file__).parent / 'data_quality.sql').read_text()))
+        self.assertEqual(result['status'], 'ok')
+        self.assertEqual(result['newest_release_line'], 'v0.3')
+        versions = {v['version']: v for v in result['versions']}
+        self.assertEqual(versions['v0.2.45']['sustained_inventory_only_installations'], 5)
+        self.assertTrue(versions['v0.2.45']['legacy'])
+        self.assertFalse(versions['v0.3.1']['legacy'] or versions['0.4.0']['legacy'])
+        self.assertTrue(all(c['legacy'] for c in result['inventory_only_clusters']))
+        # The same gap on the newest line still fails.
+        for _ in range(5):
+            add('v0.3.1', False)
+        self.assertEqual(json.loads(self.query(
+            (Path(__file__).parent / 'data_quality.sql').read_text()))['status'], 'error')
+
     def test_alert_counts_keep_distinct_installations_and_time_windows(self):
         self.assertEqual(self.diagnostics()['status'], 'unavailable')
         fixture = json.loads((Path(__file__).parent / 'diagnostics-fixture.json').read_text())
