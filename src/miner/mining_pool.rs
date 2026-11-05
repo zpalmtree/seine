@@ -119,7 +119,6 @@ impl PoolConnectionConfig {
 #[derive(Debug, Clone)]
 struct PoolUiTelemetryClient {
     pool_url: String,
-    expected_account: Option<String>,
     endpoints: Vec<PoolTelemetryEndpoint>,
     http: HttpClient,
     rate_limit_backoff_until: Arc<Mutex<Option<Instant>>>,
@@ -2926,12 +2925,8 @@ impl PoolUiTelemetryClient {
         memo: Option<&str>,
         proxy: Option<&crate::pool::SocksProxy>,
     ) -> Option<Self> {
-        let account = crate::pool::payout_account_for_pool(pool_url, address, memo).ok()?;
-        let mut client = Self::with_proxy(pool_url, &account, proxy)?;
-        if memo.is_some() && crate::pool::uses_longhorn_memos(pool_url) {
-            client.expected_account = Some(account);
-        }
-        Some(client)
+        let account = crate::payout_destination::account_id(address, memo);
+        Self::with_proxy(pool_url, &account, proxy)
     }
 
     #[cfg(test)]
@@ -2979,7 +2974,6 @@ impl PoolUiTelemetryClient {
             .collect::<Vec<_>>();
         Some(Self {
             pool_url: crate::pool::primary_pool_url(pool_url).to_string(),
-            expected_account: None,
             endpoints,
             http,
             rate_limit_backoff_until: Arc::new(Mutex::new(None)),
@@ -3185,13 +3179,6 @@ impl PoolUiTelemetryClient {
             .send()
             .map_err(reqwest::Error::without_url)?;
         let body = self.json_or_rate_limit(response, url)?;
-        if self
-            .expected_account
-            .as_deref()
-            .is_some_and(|account| body.get("address").and_then(Value::as_str) != Some(account))
-        {
-            bail!("pool returned balances for a different payout destination");
-        }
         let pending = body
             .pointer("/balance/pending_confirmed")
             .and_then(Value::as_u64)
@@ -3436,9 +3423,6 @@ fn div_ceil_u64(value: u64, divisor: u64) -> u64 {
 }
 
 fn pool_api_base_urls_from_pool_url(pool_url: &str) -> Vec<String> {
-    if crate::pool::uses_longhorn_memos(pool_url) {
-        return vec!["https://longhornpool.net".into()];
-    }
     let trimmed = crate::pool::primary_pool_url(pool_url);
     if trimmed.is_empty() {
         return Vec::new();
@@ -4073,20 +4057,8 @@ mod tests {
     }
 
     #[test]
-    fn memo_telemetry_uses_pool_specific_identity_and_encodes_reserved_characters() {
+    fn memo_telemetry_uses_the_opaque_account_id() {
         let memo = "ID0001%2F?x=a&b=#";
-        let client = PoolUiTelemetryClient::for_destination(
-            "stratum+ssl://us.longhornpool.net:3334",
-            "address",
-            Some(memo),
-            None,
-        )
-        .unwrap();
-        let account = format!("address?memo={memo}");
-        assert_eq!(client.expected_account.as_deref(), Some(account.as_str()));
-        let url = &client.endpoints[0].miner_balance_url;
-        assert_eq!(url, "https://longhornpool.net/api/miner/address%3Fmemo=ID0001%252F%3Fx=a&b=%23/balance?include_pending_estimate=true");
-        assert!(!super::pool_telemetry_url_for_log(url).contains("ID0001"));
         let standard = PoolUiTelemetryClient::for_destination(
             "stratum+tcp://bntpool.com:3333",
             "address",
@@ -4098,25 +4070,6 @@ mod tests {
             &crate::payout_destination::account_id("address", Some(memo))
         ));
         assert!(!standard.endpoints[0].miner_balance_url.contains("ID0001"));
-    }
-
-    #[test]
-    fn memo_telemetry_rejects_an_aggregate_or_different_memo_balance() {
-        for returned in ["address", "address?memo=OTHER", "address?memo=DEMO001"] {
-            let server = MockServer::start();
-            let response = server.mock(|when, then| {
-                when.method(GET);
-                then.status(200).json_body(json!({"address":returned,"balance":{"pending_confirmed":100000000,"paid":200000000}}));
-            });
-            let mut client =
-                PoolUiTelemetryClient::new(&server.url(""), "address?memo=DEMO001").unwrap();
-            client.expected_account = Some("address?memo=DEMO001".into());
-            assert_eq!(
-                client.fetch_pool_balances().is_ok(),
-                returned == "address?memo=DEMO001"
-            );
-            response.assert_hits(1);
-        }
     }
 
     #[test]
@@ -4133,8 +4086,7 @@ mod tests {
             connection: super::PoolConnectionConfig {
                 payout_memo: Some("DEMO001".into()),
                 mode: PoolConnectionMode::User,
-                pool_url: "stratum+tcp://bntpool.com:3333,stratum+ssl://us.longhornpool.net:3334"
-                    .into(),
+                pool_url: "stratum+tcp://bntpool.com:3333,stratum+ssl://pool.example:3334".into(),
                 proxy: None,
                 address: "address".into(),
                 solo: false,
@@ -4148,7 +4100,7 @@ mod tests {
             recent_submit_lookup: Default::default(),
         };
         for url in [
-            "stratum+ssl://us.longhornpool.net:3334",
+            "stratum+ssl://pool.example:3334",
             "stratum+tcp://bntpool.com:3333",
         ] {
             let event = crate::pool::PoolEvent::LoginAccepted(crate::pool::PoolLoginAck {
@@ -4162,10 +4114,6 @@ mod tests {
             super::update_user_pool_telemetry(&event, &mut session, &mut None);
             let telemetry = session.telemetry.as_ref().unwrap();
             assert_eq!(telemetry.pool_url, url);
-            assert_eq!(
-                telemetry.expected_account.is_some(),
-                url.contains("longhorn")
-            );
             super::update_user_pool_telemetry(
                 &crate::pool::PoolEvent::Disconnected("test".into()),
                 &mut session,
