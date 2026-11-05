@@ -577,6 +577,10 @@ fn worker_loop_with_allocator<const MEMORY_KB: u32>(
 
 #[cfg(target_os = "linux")]
 const HUGEPAGE_BYTES: usize = 2 * 1024 * 1024;
+/// Worker 0 warns when transparent huge pages back less than this share of
+/// its arena; a mapping that is not 2 MiB aligned always misses one page.
+#[cfg(target_os = "linux")]
+const HUGEPAGE_COVERAGE_WARN_PERCENT: u64 = 95;
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const HUGEPAGE_1G_BYTES: usize = 1024 * 1024 * 1024;
 #[cfg(target_os = "linux")]
@@ -782,6 +786,8 @@ mod tests {
         assert_eq!(advice(0), None);
     }
 
+    #[cfg(target_os = "linux")]
+    use super::arena_huge_kib_from_smaps;
     #[cfg(target_os = "linux")]
     use super::PowArena;
     use super::{handle_found_solution, SolutionDisposition};
@@ -1561,6 +1567,50 @@ mod tests {
         assert_eq!(observation.allocation_failures, 0);
     }
 
+    #[cfg(target_os = "linux")]
+    fn smaps_region(start: usize, end: usize, anonymous_kib: u64, huge_kib: u64) -> String {
+        format!(
+            "{start:x}-{end:x} rw-p 00000000 00:00 0\nSize:  {} kB\nRss:  {anonymous_kib} kB\n\
+             Anonymous:  {anonymous_kib} kB\nAnonHugePages:  {huge_kib} kB\nVmFlags: rd wr mr mw me ac hg\n",
+            (end - start) / 1024
+        )
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn arena_huge_pages_count_only_the_arena_when_neighbours_share_its_mapping() {
+        const ARENA: usize = 64 << 20;
+        const ARENA_KIB: u64 = (ARENA / 1024) as u64;
+        let base = 0x4000_0000usize;
+        let own = smaps_region(base, base + ARENA, ARENA_KIB, ARENA_KIB / 2);
+        let unrelated = smaps_region(base + ARENA, base + ARENA + 4096, 4, 0);
+        let alone = format!("{own}{unrelated}");
+        assert_eq!(
+            arena_huge_kib_from_smaps(&alone, base, ARENA),
+            Some(ARENA_KIB / 2)
+        );
+
+        // Three merged arenas, fully resident, three quarters on huge pages.
+        let merged = smaps_region(base, base + 3 * ARENA, 3 * ARENA_KIB, 9 * ARENA_KIB / 4);
+        for arena in 0..3 {
+            assert_eq!(
+                arena_huge_kib_from_smaps(&merged, base + arena * ARENA, ARENA),
+                Some(3 * ARENA_KIB / 4)
+            );
+        }
+
+        // A neighbour still faulting in counts by its resident share only.
+        let faulting = smaps_region(base, base + 2 * ARENA, 3 * ARENA_KIB / 2, 3 * ARENA_KIB / 2);
+        assert_eq!(
+            arena_huge_kib_from_smaps(&faulting, base, ARENA),
+            Some(ARENA_KIB)
+        );
+
+        let untouched = smaps_region(base, base + 2 * ARENA, 0, 0);
+        assert_eq!(arena_huge_kib_from_smaps(&untouched, base, ARENA), Some(0));
+        assert_eq!(arena_huge_kib_from_smaps(&unrelated, base, ARENA), None);
+    }
+
     // Allocation needs a pre-reserved 1 GiB HugeTLB pool, e.g.:
     //   echo 2 | sudo tee /sys/kernel/mm/hugepages/hugepages-1048576kB/nr_hugepages
     // so this test is ignored by default; run with `cargo test -- --ignored`.
@@ -1905,7 +1955,7 @@ fn emit_linux_hugepage_diagnostics(
     }
 
     let huge_kib = mmap_arena.anon_huge_kib().unwrap_or(0);
-    if huge_kib >= total_kib {
+    if huge_kib.saturating_mul(100) >= total_kib.saturating_mul(HUGEPAGE_COVERAGE_WARN_PERCENT) {
         return;
     }
 
@@ -2501,7 +2551,7 @@ impl MmapArena {
 
     #[cfg(target_os = "linux")]
     fn anon_huge_kib(&self) -> Option<u64> {
-        read_smaps_anon_huge_kib(self.ptr as usize)
+        read_smaps_arena_huge_kib(self.ptr as usize, self.byte_len)
     }
 
     fn backing_observation(&self, requested_bytes: u64) -> ArenaBackingObservation {
@@ -2569,24 +2619,74 @@ impl MmapArena {
 }
 
 #[cfg(target_os = "linux")]
-fn read_smaps_anon_huge_kib(addr: usize) -> Option<u64> {
+fn read_smaps_arena_huge_kib(addr: usize, len: usize) -> Option<u64> {
     let smaps = std::fs::read_to_string("/proc/self/smaps").ok()?;
-    let mut in_target_mapping = false;
+    arena_huge_kib_from_smaps(&smaps, addr, len)
+}
+
+/// Transparent-huge KiB backing `[addr, addr + len)`. The kernel merges
+/// adjacent arenas with matching flags into one mapping, so a mapping that
+/// extends past the arena is credited with its huge share of resident pages,
+/// scaled to the overlap, instead of its whole total.
+#[cfg(target_os = "linux")]
+fn arena_huge_kib_from_smaps(smaps: &str, addr: usize, len: usize) -> Option<u64> {
+    struct Region {
+        start: usize,
+        end: usize,
+        anonymous_kib: u64,
+        huge_kib: Option<u64>,
+    }
+    let arena_end = addr.checked_add(len)?;
+    let mut regions: Vec<Region> = Vec::new();
+    let mut in_arena = false;
     for line in smaps.lines() {
         if let Some((start, end)) = parse_smaps_region_header(line) {
-            in_target_mapping = addr >= start && addr < end;
+            in_arena = start < arena_end && addr < end;
+            if in_arena {
+                regions.push(Region {
+                    start,
+                    end,
+                    anonymous_kib: 0,
+                    huge_kib: None,
+                });
+            }
             continue;
         }
-        if in_target_mapping {
-            if let Some(rest) = line.strip_prefix("AnonHugePages:") {
-                return rest
-                    .split_whitespace()
-                    .next()
-                    .and_then(|value| value.parse::<u64>().ok());
-            }
+        let Some(region) = regions.last_mut().filter(|_| in_arena) else {
+            continue;
+        };
+        if let Some(kib) = smaps_field_kib(line, "Anonymous:") {
+            region.anonymous_kib = kib;
+        } else if let Some(kib) = smaps_field_kib(line, "AnonHugePages:") {
+            region.huge_kib = Some(kib);
         }
     }
-    None
+    let mut total = None;
+    for region in regions {
+        let Some(huge_kib) = region.huge_kib else {
+            continue;
+        };
+        let overlap_kib = ((region.end.min(arena_end) - region.start.max(addr)) / 1024) as u64;
+        let credited = if region.start >= addr && region.end <= arena_end {
+            huge_kib
+        } else if region.anonymous_kib == 0 {
+            0
+        } else {
+            (u128::from(huge_kib) * u128::from(overlap_kib) / u128::from(region.anonymous_kib))
+                .min(u128::from(overlap_kib)) as u64
+        };
+        total = Some(total.unwrap_or(0u64).saturating_add(credited));
+    }
+    total
+}
+
+#[cfg(target_os = "linux")]
+fn smaps_field_kib(line: &str, field: &str) -> Option<u64> {
+    line.strip_prefix(field)?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()
 }
 
 #[cfg(target_os = "linux")]
