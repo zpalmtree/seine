@@ -18,31 +18,6 @@
   <img src="docs/assets/screenshots/dashboard.png" alt="seine mining on bntpool from an Apple M4 Max at 30 H/s, 5 of 5 shares accepted" width="900">
 </p>
 
-## Exchange deposits
-
-For an exchange that requires a memo, use both its full deposit address and your
-own deposit memo with a pool that supports memo payouts:
-
-```sh
-./seine --address 'EXCHANGE_ADDRESS' --payout-memo 'YOUR_DEPOSIT_MEMO'
-```
-
-Seine checks pool support before mining and shows the payout minimum when the
-pool provides it. Known shared addresses require a memo; interactive startup
-prompts for a missing memo, including for saved addresses. Unknown or rotated addresses can use `--payout-memo` too. Personal
-wallets and ordinary Blocknet IDs need no new flag. Memo mining requires the full
-address and is not supported in daemon mode or through Seine farm proxies.
-
-Setup saves the memo with the address, preserving case and leading zeros. A memo
-entered for a command-line address override is used only for that run. When
-changing a saved exchange address, explicitly provide the new memo, or use
-`--no-payout-memo` to switch to a personal wallet. A changed address or memo has a
-separate pool balance. Command-line overrides apply to the current run; edit
-`seine-data/seine.config.json` to change saved settings. On the pool Stats page,
-enter both the address and memo.
-
-See [exchange payouts](docs/EXCHANGE_PAYOUTS.md) for pool compatibility.
-
 ## Why seine
 
 - **Fast on whatever you own.** Hand-tuned Argon2id kernels for AVX2, AVX-512,
@@ -116,6 +91,7 @@ Seine is fast out of the box. These guides cover the last few percent:
 ## Documentation
 
 - [Setup and configuration](docs/guides/configuration.md): first run, flags, dashboard controls, shortnames, dev fee
+- [Mining to an exchange](docs/EXCHANGE_PAYOUTS.md): pay straight to an exchange deposit address with `--payout-memo`
 - [How automatic tuning works](docs/guides/autotuning.md): thread counts, CPU kernels, memory recovery
 - [Solo mining](docs/guides/solo-mining.md): mine against your own Blocknet node
 - [HiveOS](docs/guides/hiveos.md): add seine to a flight sheet with one installation URL
