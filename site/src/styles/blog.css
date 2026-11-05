@@ -39,6 +39,8 @@
 .prose figure img { margin: 0; }
 .prose figcaption { margin-top: 0.6em; font-size: 0.85rem; color: var(--ink-3); }
 .prose table { border-collapse: collapse; display: block; overflow-x: auto; font-size: 0.95rem; margin: 1.4em 0; }
+/* Table cells wrap between words; a table wider than the column scrolls inside its own box. */
+.prose :is(th, td) { overflow-wrap: normal; }
 .prose th, .prose td { border-bottom: 1px solid var(--rule); padding-block: 10px; padding-inline: 0 16px; text-align: start; }
 .prose th { color: var(--ink); font-weight: 600; border-bottom-color: var(--ink-3); }
 
