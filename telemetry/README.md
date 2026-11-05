@@ -278,10 +278,14 @@ health is evaluated separately from sample-quality and miner-reliability assessm
 `diagnostics.sql` also counts installations with pool connection warnings; the alert
 service flags a fleet-wide spike when at least 20 installations, and three times the
 prior day's hourly average, report them within an hour.
-`diagnostics.sql` flags a version after at least three installations report errors,
-quarantines or unclean runs within 24 hours. Single-installation failures and
-warnings remain visible below that threshold. Unattributed interrupted runs have a
-separate explicitly unknown-version bucket. The five-minute server check records
+`diagnostics.sql` flags a version on the newest release line when at least three
+installations, and at least 5% of that version's installations reporting in 24 hours,
+report errors or quarantines, or 10% report unclean previous runs. Each row carries
+`installations_24h`, `legacy` and `needs_attention`. Older release lines and the
+explicitly unknown-version bucket of unattributed interrupted runs stay listed but
+never raise attention. Failed self-update installs and mining paused on unsupported
+work still flag any version at three installations. Single-installation failures and
+warnings remain visible below these thresholds. The five-minute server check records
 these incidents in systemd/journald; the separate alert timer sends aggregate incidents to the configured Discord destination
 (see the production runbook). It never sends raw report payloads.
 

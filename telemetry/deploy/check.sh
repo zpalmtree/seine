@@ -39,7 +39,7 @@ failures = []
 if quality['status'] != 'ok':
     failures.append('Telemetry data quality failed: sustained hardware-only reports without backend samples.')
 if diagnostics['status'] == 'attention':
-    failures.append('Miner reliability needs attention: errors or unclean runs on at least three installations of one version in 24 hours. Run telemetry/agent_report.py.')
+    failures.append('Miner reliability needs attention: errors or unclean runs above the per-version share on the newest release line, or failed installs or paused mining on at least three installations of one version, in 24 hours. Run telemetry/agent_report.py.')
 if failures:
     sys.exit('\n'.join(failures))
 PYTHON

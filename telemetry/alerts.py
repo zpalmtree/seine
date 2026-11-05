@@ -76,7 +76,9 @@ def evaluate(results):
                              ('recent_unsupported_work_versions', 'mining paused on work this build cannot mine (these miners need an update)')]:
             for row in diagnostics.get(field, []):
                 count = row['affected_installations']
-                if count >= 3:
+                # Errors and unclean runs carry a fleet-scaled verdict; install
+                # failures and paused mining alert at three on any version.
+                if row.get('needs_attention', count >= 3):
                     version = label(row['version'])
                     attribution = ''
                     if field == 'recent_unclean_versions':

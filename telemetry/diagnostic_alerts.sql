@@ -1,5 +1,5 @@
 BEGIN READ ONLY;
-SET LOCAL statement_timeout = '15s';
+SET LOCAL statement_timeout = '30s';
 SET LOCAL lock_timeout = '2s';
 SET LOCAL TIME ZONE 'America/New_York';
 -- Alert evaluation needs counts, not the full seven-day hardware/event clusters.
@@ -29,6 +29,24 @@ WITH covered AS (
     SELECT installation_id, received_at, version, event
     FROM covered CROSS JOIN LATERAL jsonb_array_elements(diagnostics->'events') event
     WHERE received_at >= now() - interval '25 hours'
+), recent_installations AS (
+    SELECT version, count(DISTINCT installation_id) AS installations
+    FROM covered WHERE received_at >= now() - interval '24 hours'
+    GROUP BY 1
+), release_lines AS (
+    -- Same release-line rule as data_quality.sql: the newest major.minor among
+    -- v-prefixed release builds; source builds and commits never set it.
+    SELECT DISTINCT version,
+           (regexp_match(version, '^v?(\d+)\.(\d+)\.\d+$'))[1]::int AS major,
+           (regexp_match(version, '^v?(\d+)\.(\d+)\.\d+$'))[2]::int AS minor,
+           version ~ '^v\d+\.\d+\.\d+$' AS release_build
+    FROM recent_installations
+), newest_line AS (
+    SELECT major, minor FROM release_lines WHERE release_build
+    ORDER BY major DESC, minor DESC LIMIT 1
+), legacy_versions AS (
+    SELECT l.version FROM release_lines l, newest_line n
+    WHERE l.major IS NOT NULL AND (l.major, l.minor) < (n.major, n.minor)
 ), recent_errors AS (
     SELECT version, count(DISTINCT installation_id) AS affected_installations
     FROM recent_events WHERE received_at >= now() - interval '24 hours'
@@ -55,10 +73,31 @@ WITH covered AS (
     SELECT date_trunc('hour', received_at) AS hour, count(DISTINCT installation_id) AS installations
     FROM pool_connection WHERE received_at < now() - interval '1 hour'
     GROUP BY 1
+), recent_errors_rated AS (
+    -- Errors and unclean runs scale with each version's fleet: attention needs at
+    -- least three installations and 5% (errors) or 10% (unclean runs) of the
+    -- version's installations reporting in 24 hours. Older release lines and
+    -- unattributed runs are listed but only an upgrade changes them.
+    SELECT r.version, r.affected_installations,
+           greatest(coalesce(i.installations, 0), r.affected_installations) AS installations_24h,
+           r.version IN (SELECT version FROM legacy_versions) AS legacy,
+           r.affected_installations >= 3
+             AND r.affected_installations >= 0.05 * greatest(coalesce(i.installations, 0), r.affected_installations)
+             AND r.version NOT IN (SELECT version FROM legacy_versions) AS needs_attention
+    FROM recent_errors r LEFT JOIN recent_installations i USING (version)
+), recent_unclean_rated AS (
+    SELECT r.version, r.affected_installations, r.reporting_versions,
+           greatest(coalesce(i.installations, 0), r.affected_installations) AS installations_24h,
+           r.version IN (SELECT version FROM legacy_versions) AS legacy,
+           r.affected_installations >= 3
+             AND r.affected_installations >= 0.10 * greatest(coalesce(i.installations, 0), r.affected_installations)
+             AND r.version <> 'unknown'
+             AND r.version NOT IN (SELECT version FROM legacy_versions) AS needs_attention
+    FROM recent_unclean r LEFT JOIN recent_installations i USING (version)
 )
 SELECT jsonb_build_object(
-    'recent_error_versions', coalesce((SELECT jsonb_agg(recent_errors ORDER BY version) FROM recent_errors), '[]'::jsonb),
-    'recent_unclean_versions', coalesce((SELECT jsonb_agg(recent_unclean ORDER BY version) FROM recent_unclean), '[]'::jsonb),
+    'recent_error_versions', coalesce((SELECT jsonb_agg(recent_errors ORDER BY version) FROM recent_errors_rated recent_errors), '[]'::jsonb),
+    'recent_unclean_versions', coalesce((SELECT jsonb_agg(recent_unclean ORDER BY version) FROM recent_unclean_rated recent_unclean), '[]'::jsonb),
     'recent_install_failure_versions', coalesce((SELECT jsonb_agg(r ORDER BY version) FROM recent_install_failures r), '[]'::jsonb),
     'recent_unsupported_work_versions', coalesce((SELECT jsonb_agg(r ORDER BY version) FROM recent_paused r), '[]'::jsonb),
     'pool_connection_warnings', jsonb_build_object(
@@ -66,8 +105,8 @@ SELECT jsonb_build_object(
         'last_hour_limit_installations', (SELECT count(DISTINCT installation_id) FROM pool_connection WHERE received_at >= now() - interval '1 hour' AND refused_at_limit),
         'baseline_hourly_installations', (SELECT coalesce(sum(installations), 0) / 24.0 FROM pool_connection_hours)
     ),
-    'status', CASE WHEN EXISTS (SELECT 1 FROM recent_errors WHERE affected_installations >= 3)
-                    OR EXISTS (SELECT 1 FROM recent_unclean WHERE affected_installations >= 3)
+    'status', CASE WHEN EXISTS (SELECT 1 FROM recent_errors_rated WHERE needs_attention)
+                    OR EXISTS (SELECT 1 FROM recent_unclean_rated WHERE needs_attention)
                     OR EXISTS (SELECT 1 FROM recent_install_failures WHERE affected_installations >= 3)
                     OR EXISTS (SELECT 1 FROM recent_paused WHERE affected_installations >= 3) THEN 'attention'
                    WHEN NOT EXISTS (SELECT 1 FROM covered) THEN 'unavailable' ELSE 'ok' END

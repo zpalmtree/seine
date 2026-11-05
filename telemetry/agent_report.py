@@ -105,8 +105,9 @@ def main():
     if diagnostics.get('status') == 'attention':
         failed = True
         briefing['diagnostic_assessment'] = (
-            'At least three installations of one version reported errors, quarantines or '
-            'unclean previous runs within 24 hours. Investigate issue clusters by build, '
+            'A version on the newest release line passed its share of installations with errors, '
+            'quarantines or unclean previous runs, or three installations of one version reported '
+            'failed installs or paused mining, within 24 hours. Investigate issue clusters by build, '
             'source location and hardware. An unclean run is not proof of a crash.'
         )
     elif diagnostics.get('status') == 'unavailable':

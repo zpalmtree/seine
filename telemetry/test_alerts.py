@@ -173,10 +173,14 @@ class AlertsTests(unittest.TestCase):
             {'version': 'v0.2.45', 'sustained_inventory_only_installations': 9, 'legacy': True}]},
             'diagnostics': {'recent_error_versions': [
                 {'version': 'v1', 'affected_installations': 2},
-                {'version': 'v2', 'affected_installations': 3}], 'recent_unclean_versions': []},
+                {'version': 'v2', 'affected_installations': 3},
+                {'version': 'v0.2.45', 'affected_installations': 67, 'needs_attention': False}],
+                'recent_unclean_versions': []},
             'performance': None}
         active, known = alerts.evaluate(results)
         self.assertEqual({i['category'] for i in active}, {'monitor', 'infrastructure', 'quality', 'diagnostics'})
+        self.assertEqual([i['key'] for i in active if i['category'] == 'diagnostics'],
+                         [alerts.issue('diagnostics', ['recent_error_versions', 'v2'], '')['key']])
         quality = {i['version']: i for i in active if i['category'] == 'quality'}
         self.assertEqual((quality['v2']['severity'], quality['v0.2.45']['severity']), ('warning', 'info'))
         self.assertNotIn('performance', known)

@@ -51,6 +51,49 @@ class DiagnosticSQLTests(unittest.TestCase):
         self.assertTrue(all(c['observed_mining_phase'] for c in clusters))
         self.assertNotIn('installation_id', json.dumps(result))
 
+    def test_errors_and_unclean_runs_scale_with_the_version_fleet(self):
+        fixture = json.loads((Path(__file__).parent / 'diagnostics-fixture.json').read_text())
+        fixture['diagnostics']['previous_run_unclean'] = False
+        def add(version, count, events=(), previous=None):
+            value = copy.deepcopy(fixture)
+            value['miner_version'] = version
+            value['diagnostics']['events'] = [{'code': code, 'kind': 'general', 'count': 1} for code in events]
+            if previous:
+                value['diagnostics']['previous_run_unclean'] = True
+                value['diagnostics']['previous_run'] = {
+                    'miner_version': previous, 'build_commit': 'unknown', 'phase': 'mining', 'uptime_secs': 60}
+            for _ in range(count):
+                self.insert_diagnostic(value)
+        # 4 of 100 newest-line installations with errors stays under 5%.
+        add('v0.3.1', 96)
+        add('v0.3.1', 4, events=['run_failed'])
+        # Every one of ten installations on an older line errors and was interrupted.
+        add('v0.2.45', 10, events=['error'], previous='v0.2.45')
+        # Unattributed interrupted runs never raise attention.
+        add('v0.3.1', 5, previous='unknown')
+        result = self.diagnostics()
+        errors = {r['version']: r for r in result['recent_error_versions']}
+        self.assertEqual((errors['v0.3.1']['affected_installations'], errors['v0.3.1']['installations_24h']), (4, 105))
+        self.assertFalse(errors['v0.3.1']['needs_attention'] or errors['v0.3.1']['legacy'])
+        self.assertTrue(errors['v0.2.45']['legacy'])
+        self.assertFalse(errors['v0.2.45']['needs_attention'])
+        unclean = {r['version']: r for r in result['recent_unclean_versions']}
+        self.assertFalse(unclean['v0.2.45']['needs_attention'] or unclean['unknown']['needs_attention'])
+        self.assertEqual(result['status'], 'ok')
+        # Two more failing installations pass 5% of the newest line.
+        add('v0.3.1', 2, events=['backend_quarantined'])
+        result = self.diagnostics()
+        errors = {r['version']: r for r in result['recent_error_versions']}
+        self.assertTrue(errors['v0.3.1']['needs_attention'])
+        self.assertEqual(result['status'], 'attention')
+        # 10% of the newest line interrupted is attention too.
+        self.query('TRUNCATE telemetry_reports')
+        add('v0.3.1', 27)
+        add('v0.3.1', 3, previous='v0.3.1')
+        result = self.diagnostics()
+        self.assertTrue(result['recent_unclean_versions'][0]['needs_attention'])
+        self.assertEqual(result['status'], 'attention')
+
     def test_older_release_lines_are_reported_without_failing_data_quality(self):
         fixture = json.loads((Path(__file__).parent / 'diagnostics-fixture.json').read_text())
         def add(version, backends):
