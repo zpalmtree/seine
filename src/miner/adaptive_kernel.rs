@@ -182,18 +182,18 @@ fn cohort_stream_kernel(
 const STARTUP_STREAM_MIN_WORKERS: usize = 8;
 
 /// Ryzen 3000 and 4000 (17h 71h, 60h), Ryzen 5000 (19h 21h, 50h), Ryzen 7000 (19h
-/// 61h), EPYC 9004 (19h 11h, A0h), EPYC 9005 (1Ah 02h), Ryzen 9000 (1Ah 44h), Intel
-/// 12th Gen to Core Ultra 200 desktops, Haswell-E/EP and Broadwell-E/EP, and Skylake-SP
-/// to Granite Rapids Xeons start on their cohort kernel at any worker count; EPYC 7002
-/// and 7003 (17h 31h, 19h 01h) and Kaby Lake to Comet Lake (06h/9Eh, A5h) from four
-/// workers.
+/// 61h), EPYC 9004 (19h 11h, A0h), EPYC 9005 (1Ah 00h, 02h), Ryzen 9000 (1Ah 44h),
+/// Intel 12th Gen to Core Ultra 200 desktops, Haswell-E/EP and Broadwell-E/EP, and
+/// Skylake-SP to Granite Rapids Xeons start on their cohort kernel at any worker count;
+/// EPYC 7003 (19h 01h) from three workers; EPYC 7002 (17h 31h) and Kaby Lake to Comet
+/// Lake (06h/9Eh, A5h) from four.
 fn startup_stream_min_workers(identity: &crate::runtime_identity::CpuIdentity) -> usize {
     let any_count = match identity.vendor.as_deref() {
         Some("AuthenticAMD") => matches!(
             (identity.family, identity.model),
             (Some(0x17), Some(0x60 | 0x71))
                 | (Some(0x19), Some(0x11 | 0x21 | 0x50 | 0x61 | 0xa0))
-                | (Some(0x1a), Some(0x02 | 0x44))
+                | (Some(0x1a), Some(0x00 | 0x02 | 0x44))
         ),
         Some("GenuineIntel") => is_intel_model(
             identity,
@@ -204,14 +204,14 @@ fn startup_stream_min_workers(identity: &crate::runtime_identity::CpuIdentity) -
         ),
         _ => false,
     };
-    let from_four = (identity.vendor.as_deref() == Some("AuthenticAMD")
-        && matches!(
-            (identity.family, identity.model),
-            (Some(0x17), Some(0x31)) | (Some(0x19), Some(0x01))
-        ))
+    let amd = identity.vendor.as_deref() == Some("AuthenticAMD");
+    let from_three = amd && (identity.family, identity.model) == (Some(0x19), Some(0x01));
+    let from_four = (amd && (identity.family, identity.model) == (Some(0x17), Some(0x31)))
         || is_intel_model(identity, &[0x9e, 0xa5]);
     if any_count {
         1
+    } else if from_three {
+        3
     } else if from_four {
         4
     } else {
@@ -274,28 +274,46 @@ fn field_start_for(identity: &crate::runtime_identity::CpuIdentity, room: usize)
     Some(start.max(1))
 }
 
-/// Kernels this machine uses. Six-core Ryzen 5000 desktops leave out skipped stores.
+/// Kernels this machine uses. Six-core Ryzen 5000 desktops leave out skipped stores,
+/// and Xeon Scalable processors that report a Skylake client model (06h/5Eh) leave out
+/// AVX2 streaming.
 fn host_kernels(
     identity: &crate::runtime_identity::CpuIdentity,
     supported: &[CpuKernel],
     physical_cores: Option<usize>,
+    brand: Option<&str>,
 ) -> Vec<CpuKernel> {
     let six_core_vermeer = identity.vendor.as_deref() == Some("AuthenticAMD")
         && identity.family == Some(0x19)
         && identity.model == Some(0x21)
         && physical_cores.is_some_and(|cores| cores <= 6);
+    let scalable_xeon_as_client = is_intel_model(identity, &[0x5e])
+        && brand.is_some_and(|brand| {
+            let brand = brand.to_ascii_uppercase();
+            [
+                "XEON(R) BRONZE",
+                "XEON(R) SILVER",
+                "XEON(R) GOLD",
+                "XEON(R) PLATINUM",
+            ]
+            .iter()
+            .any(|line| brand.contains(line))
+        });
     supported
         .iter()
         .copied()
         .filter(|kernel| !(six_core_vermeer && *kernel == CpuKernel::Avx2StreamSkip))
+        .filter(|kernel| !(scalable_xeon_as_client && *kernel == CpuKernel::Avx2Stream))
         .collect()
 }
 
 fn this_host_kernels() -> Vec<CpuKernel> {
+    let host = super::cpu_autotune_host_fingerprint();
     host_kernels(
         &crate::runtime_identity::cpu_identity(),
         &supported_kernels(),
-        super::cpu_autotune_host_fingerprint().physical_cores,
+        host.physical_cores,
+        host.cpu_brand.as_deref(),
     )
 }
 
@@ -650,7 +668,12 @@ impl KernelPlan {
         identity: &crate::runtime_identity::CpuIdentity,
         supported: &[CpuKernel],
     ) -> Self {
-        let supported = &host_kernels(identity, supported, host.physical_cores)[..];
+        let supported = &host_kernels(
+            identity,
+            supported,
+            host.physical_cores,
+            host.cpu_brand.as_deref(),
+        )[..];
         let mut candidates = candidates_for(identity, supported);
         // This exact Zen 4 context starts on the 256-bit kernel.
         if super::adaptive_cpu::full_count_cold_start(cfg, host, identity, 32, 32) {
@@ -1035,11 +1058,12 @@ mod tests {
                 Some(CpuKernel::Avx512256Stream)
             );
         }
-        assert_eq!(static_kernel_for_identity(&masked_zen5, &all, 7), None);
-        assert_eq!(
-            static_kernel_for_identity(&raphael, &all, 1),
-            Some(CpuKernel::Avx512256Stream)
-        );
+        for identity in [&masked_zen5, &raphael] {
+            assert_eq!(
+                static_kernel_for_identity(identity, &all, 1),
+                Some(CpuKernel::Avx512256Stream)
+            );
+        }
         // Zen 3 shares family 19h but has no AVX-512, so no streaming path.
         let milan = CpuIdentity {
             model: Some(0x01),
@@ -1122,6 +1146,7 @@ mod tests {
             (intel(0xad), &avx512[..], CpuKernel::Avx512Stream),
             (amd(0x19, 0x11), &avx512[..], CpuKernel::Avx512StreamL2),
             (amd(0x1a, 0x02), &avx512[..], CpuKernel::Avx512Stream),
+            (amd(0x1a, 0x00), &avx512[..], CpuKernel::Avx512Stream),
         ] {
             assert_eq!(
                 static_kernel_for_identity(&identity, supported, 2),
@@ -1130,15 +1155,16 @@ mod tests {
             );
             assert!(!fixed_count_trials_wanted_for(&identity, supported, 2));
         }
-        // These start on it from four workers; below that a pinned count compares.
-        for identity in [amd(0x19, 0x01), amd(0x17, 0x31)] {
-            assert_eq!(static_kernel_for_identity(&identity, &avx2, 3), None);
+        // EPYC 7003 starts on it from three workers and EPYC 7002 from four; below
+        // that a pinned count compares.
+        for (identity, from) in [(amd(0x19, 0x01), 3), (amd(0x17, 0x31), 4)] {
+            assert_eq!(static_kernel_for_identity(&identity, &avx2, from - 1), None);
             assert_eq!(
-                static_kernel_for_identity(&identity, &avx2, 4),
+                static_kernel_for_identity(&identity, &avx2, from),
                 Some(CpuKernel::Avx2Stream)
             );
-            assert!(fixed_count_trials_wanted_for(&identity, &avx2, 3));
-            assert!(!fixed_count_trials_wanted_for(&identity, &avx2, 4));
+            assert!(fixed_count_trials_wanted_for(&identity, &avx2, from - 1));
+            assert!(!fixed_count_trials_wanted_for(&identity, &avx2, from));
         }
         // Neighbouring cohorts keep the gate, and a low pinned count compares
         // kernels instead of staying on the plain path.
@@ -1368,12 +1394,67 @@ mod tests {
         };
         let supported = [CpuKernel::Avx2, CpuKernel::Avx2Stream];
         let plan = plan_for(&milan, &supported);
-        assert!(plan.candidates_at(3).contains(&CpuKernel::Avx2));
-        assert!(!plan.candidates_at(4).contains(&CpuKernel::Avx2));
-        assert_eq!(plan.start_for(&[snapshot_with(3)]), None);
+        assert!(plan.candidates_at(2).contains(&CpuKernel::Avx2));
+        assert!(!plan.candidates_at(3).contains(&CpuKernel::Avx2));
+        assert_eq!(plan.start_for(&[snapshot_with(2)]), None);
         assert_eq!(
-            plan.start_for(&[snapshot_with(4)]),
+            plan.start_for(&[snapshot_with(3)]),
             Some(CpuKernel::Avx2Stream)
+        );
+    }
+
+    #[test]
+    fn scalable_xeons_reporting_a_client_model_skip_avx2_streaming() {
+        use crate::runtime_identity::CpuIdentity;
+        let client_model = CpuIdentity {
+            vendor: Some("GenuineIntel".into()),
+            family: Some(6),
+            model: Some(0x5e),
+            ..CpuIdentity::default()
+        };
+        let supported = [CpuKernel::Avx2, CpuKernel::Avx2Stream];
+        let xeon = Some("Intel(R) Xeon(R) Gold 6133 CPU @ 2.50GHz");
+        assert_eq!(
+            host_kernels(&client_model, &supported, Some(4), xeon),
+            [CpuKernel::Avx2]
+        );
+        assert!(!fixed_count_trials_wanted_for(
+            &client_model,
+            &host_kernels(&client_model, &supported, Some(4), xeon),
+            4
+        ));
+        // Desktop parts with that model keep the streaming challenger.
+        let desktop = Some("Intel(R) Core(TM) i7-6700K CPU @ 4.00GHz");
+        assert_eq!(
+            host_kernels(&client_model, &supported, Some(4), desktop),
+            supported
+        );
+        let mut host = CpuAutotuneHostFingerprint::default();
+        host.cpu_brand = xeon.map(str::to_string);
+        let plan = KernelPlan::for_supported(
+            &super::super::tests::test_config(),
+            &host,
+            &client_model,
+            &supported,
+        );
+        assert_eq!(plan.candidates_at(4), [CpuKernel::Avx2]);
+    }
+
+    #[test]
+    fn masked_zen5_epyc_starts_on_streaming_at_two_workers_without_plain_trials() {
+        use crate::runtime_identity::CpuIdentity;
+        let masked = CpuIdentity {
+            vendor: Some("AuthenticAMD".into()),
+            family: Some(0x1a),
+            model: Some(0x00),
+            ..CpuIdentity::default()
+        };
+        let supported = [CpuKernel::Avx512, CpuKernel::Avx2, CpuKernel::Avx512Stream];
+        let plan = plan_for(&masked, &supported);
+        assert_eq!(plan.candidates_at(2), [CpuKernel::Avx512Stream]);
+        assert_eq!(
+            plan.start_for(&[snapshot_with(2)]),
+            Some(CpuKernel::Avx512Stream)
         );
     }
 
@@ -1453,7 +1534,7 @@ mod tests {
             )
         };
         // The backend's first kernel and fixed --threads runs follow the same rule.
-        let six_kernels = host_kernels(&zen3_desktop, &supported, Some(6));
+        let six_kernels = host_kernels(&zen3_desktop, &supported, Some(6), None);
         assert_eq!(
             static_kernel_for_identity(&zen3_desktop, &six_kernels, 6),
             Some(CpuKernel::Avx2Stream)
@@ -1466,7 +1547,7 @@ mod tests {
         assert_eq!(
             static_kernel_for_identity(
                 &zen3_desktop,
-                &host_kernels(&zen3_desktop, &supported, Some(12)),
+                &host_kernels(&zen3_desktop, &supported, Some(12), None),
                 12
             ),
             Some(CpuKernel::Avx2StreamSkip)
