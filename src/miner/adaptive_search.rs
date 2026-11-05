@@ -1799,6 +1799,7 @@ impl Search {
                         // Short comparisons cannot help here: keep the long look's answer
                         // and give the count halfway back a long look of its own.
                         out.save = !self.manual;
+                        self.announce_result(now, out);
                         if !fewer {
                             let below = Setting {
                                 threads: trial.base.threads,
@@ -2120,6 +2121,30 @@ impl Search {
         );
     }
 
+    /// Report the setting the search keeps: the summary line and settled report, and a
+    /// note when the setting changed and notes are allowed.
+    fn announce_result(&mut self, now: u64, out: &mut Output) {
+        out.settled_now = true;
+        out.details.push(format!(
+            "done — {} threads on {} after {} comparison{}",
+            self.keep,
+            self.peak.kernel,
+            self.done,
+            if self.done == 1 { "" } else { "s" }
+        ));
+        let announced = self.announced;
+        self.announced = Some(self.operating());
+        if announced != self.announced && now >= self.next_result_note {
+            self.pending_notes.push(Note {
+                text: format!("tuned to {} threads", self.keep),
+                success: true,
+            });
+            if now >= RESULT_NOTES_FREE_UNTIL {
+                self.next_result_note = now + RESULT_NOTE_SECS;
+            }
+        }
+    }
+
     fn settle(&mut self, now: u64, out: &mut Output, limit: usize) {
         self.stage = Stage::Settled;
         self.top_look = None;
@@ -2141,23 +2166,8 @@ impl Search {
         if self.unloaded_best.is_some_and(|best| best <= self.keep) {
             self.unloaded_best = None;
         }
-        out.settled_now = true;
         out.save = !self.manual;
-        out.details.push(format!(
-            "done — {} threads on {} after {} comparisons",
-            self.keep, self.peak.kernel, self.done
-        ));
-        let announced = self.announced;
-        self.announced = Some(self.operating());
-        if announced != self.announced && now >= self.next_result_note {
-            self.pending_notes.push(Note {
-                text: format!("tuned to {} threads", self.keep),
-                success: true,
-            });
-            if now >= RESULT_NOTES_FREE_UNTIL {
-                self.next_result_note = now + RESULT_NOTE_SECS;
-            }
-        }
+        self.announce_result(now, out);
         self.settled_after_update = self.testing_update;
         self.testing_update = false;
         self.schedule_retests(now);
@@ -2527,6 +2537,11 @@ mod tests {
         assert_eq!(search.keep, 12);
         assert_eq!(search.stage, Stage::Settled, "no short-window climb");
         assert!(out.save);
+        assert!(out.settled_now, "the settled report follows the new count");
+        assert_eq!(
+            out.details.last().map(String::as_str),
+            Some("done — 12 threads on avx2-stream after 1 comparison")
+        );
         let queued: Vec<usize> = search.undecided.iter().map(|(s, _)| s.threads).collect();
         assert_eq!(
             queued,
