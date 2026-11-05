@@ -451,6 +451,11 @@ impl Pooled {
         }
     }
 
+    /// Whether any earlier comparison of these two settings is pooled here.
+    fn has_evidence(self) -> bool {
+        self.weights > 0.0
+    }
+
     fn estimate(self) -> (f64, f64) {
         if self.weights == 0.0 {
             return (0.0, f64::INFINITY);
@@ -1776,7 +1781,7 @@ impl Search {
             },
             Purpose::Restore => {
                 // A re-test of a close result proves nothing through heavy noise.
-                let trusted = trial.prior.looks == 0 || error <= CONTAMINATED_ERROR;
+                let trusted = !trial.prior.has_evidence() || error <= CONTAMINATED_ERROR;
                 let accepted = trusted
                     && (verdict == Verdict::Better || (fewer && fewer_holds(gain, error, band)));
                 if accepted {
@@ -2562,6 +2567,30 @@ mod tests {
         clear.trial.as_mut().unwrap().prior = Pooled::summary(1, 0.03, 0.01, setting(8, STREAM));
         clear.finish_trial(2900, Verdict::Better, 0.03, 0.004, &mut out);
         assert_eq!(clear.stage, Stage::CountUp);
+    }
+
+    #[test]
+    fn a_first_long_look_counts_through_noise_but_a_noisy_re_test_does_not() {
+        let look = |prior: Pooled| {
+            let mut search = Search::new(params(8, 24));
+            search.keep = 8;
+            search.peak = setting(8, STREAM);
+            search.stage = Stage::Settled;
+            let mut out = Output::default();
+            search.start_trial(500, Purpose::Restore, setting(8, STREAM), setting(16, STREAM));
+            search.trial.as_mut().unwrap().prior = prior;
+            search.finish_trial(900, Verdict::Better, 0.09, 0.025, &mut out);
+            search.keep
+        };
+        // The count between two others, queued without a measurement of its own.
+        let between = Pooled {
+            looks: 1,
+            against: Some(setting(8, STREAM)),
+            ..Pooled::default()
+        };
+        assert_eq!(look(between), 16);
+        let measured = Pooled::summary(1, 0.004, 0.004, setting(8, STREAM));
+        assert_eq!(look(measured), 8);
     }
 
     #[test]
