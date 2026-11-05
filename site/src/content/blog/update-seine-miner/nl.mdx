@@ -1,31 +1,47 @@
 ---
 title: 'Je Blocknet-miner bijwerken'
-description: 'Werk seine voor Blocknet bij, behoud je instellingen, controleer de officiële download en verifieer de versie, poolverbinding en geaccepteerde shares.'
+description: 'Houd de seine-miner voor Blocknet actueel: hoe automatische updates nieuwe releases installeren, hoe je handmatig bijwerkt en hoe je controleert dat de nieuwe versie minet.'
 tags: ['Mininghandleiding', 'seine', 'Updates']
 faq:
   - q: 'Installeert seine updates automatisch?'
-    a: 'De versiecontrole meldt nieuwe releases in het dashboard en logboek. Je kiest zelf wanneer je installeert. Download en controleer het officiële archief, stop de miner, vervang de programmabestanden en start opnieuw met dezelfde gegevensmap en startopties.'
+    a: 'Ja, sinds v0.3.0. Als er een nieuwe release is, telt het dashboard 60 seconden af terwijl het minen doorgaat; daarna controleert seine de ondertekende download, stopt netjes en start opnieuw op de nieuwe versie met dezelfde instellingen. Druk op u om meteen bij te werken, op s om die versie over te slaan, of start seine met --no-auto-update om handmatig bij te werken.'
   - q: 'Welke bestanden bewaren mijn instellingen?'
     a: 'Standaard staat de configuratie in seine-data/seine.config.json, relatief aan de startmap. data-dir verandert die locatie. Bewaar de gegevensmap en je startscript of serviceconfiguratie: backend- en threadopties staan los van de opgeslagen verbindingsgegevens.'
   - q: 'Waarom vraagt seine opnieuw om mijn adres?'
     a: 'Controleer de werkmap en data-dir. Starten vanuit een nieuwe map kan seine naar een andere configuratielocatie sturen. Stop die instantie, zoek de oorspronkelijke gegevensmap en start met het juiste pad. Controleer adres en pool voordat je verder minet.'
-sourceHash: '1d2a2deba793'
+sourceHash: '37fa2d9966c0'
 translation: draft
 ---
 
-Werk seine bij met behoud van je werkende poolverbinding en startopties. Deze handleiding volgt de openbare release v0.2.36 en behandelt voorbereiding, vervanging en controle. Gebruik voor de eerste installatie de handleiding voor [Windows](/nl/blog/mine-blocknet-on-windows/), [Linux](/nl/blog/mine-blocknet-on-linux/) of [Mac](/nl/blog/mine-blocknet-on-mac/).
+Houd seine op de nieuwste release met de poolverbinding en startopties die al werken op je machine. Deze handleiding volgt de openbare release v0.3.1: hoe automatische updates werken, wat je eenmalig doet als je van een oudere versie komt, en hoe je handmatig bijwerkt. Gebruik voor de eerste installatie de handleiding voor [Windows](/nl/blog/mine-blocknet-on-windows/), [Linux](/nl/blog/mine-blocknet-on-linux/) of [Mac](/nl/blog/mine-blocknet-on-mac/).
 
 ## Hoe werk je seine bij?
 
 <Answer>
-Download en controleer het officiële archief voor je systeem, stop de miner, bewaar de gegevensmap en vervang de programmabestanden. Start opnieuw met dezelfde werkmap en argumenten. Controleer versie, uitbetalingsadres, poolverbinding en geaccepteerde shares voordat je een andere machine bijwerkt.
+Laat seine draaien. Het controleert bij het starten en elke 12 uur op een nieuwe release, telt 60 seconden af in de dashboardkop terwijl het blijft minen, installeert dan de ondertekende release en start opnieuw met dezelfde argumenten en instellingen. Wil je handmatig bijwerken, stop seine dan, vervang de bestanden uit het officiële archief en start het op dezelfde manier.
 </Answer>
+
+## Hoe werken automatische updates?
+
+Als er een nieuwere release is, toont de kop `update vX.Y.Z available`, linkt het logboek naar de release en telt de kop daarna af: `updating to vX.Y.Z in 42s`. Tijdens het aftellen gaat het minen door. Druk op `u` om meteen bij te werken, of op `s` om die versie over te slaan; seine onthoudt dat in zijn gegevensmap en biedt de volgende release gewoon aan.
+
+Na het aftellen controleert seine de handtekening van de release, zorgt het dat het nieuwe programma start, en pas dan vervangt het het oude. Het stopt het minen netjes en start opnieuw met dezelfde argumenten, en het nieuwe dashboard logt `updated to seine vX.Y.Z`. De nieuwe versie start met je opgeslagen tuning en test alleen wat de release heeft veranderd, dus het is snel weer op volle snelheid.
+
+Als een pool werk stuurt dat een nieuwere release vereist, bijvoorbeeld bij een netwerkupgrade, pauzeert seine het minen en installeert het de update meteen, ook een versie die je hebt overgeslagen. Gebruik `--no-auto-update` om alleen de melding te houden, of `--disable-update-check` om de controle uit te zetten. Builds die je zelf compileert, tonen de melding en laten de update aan jou over.
+
+## Wat doe je eenmalig als je van een oudere versie komt?
+
+De meeste rigs hoeven niets te doen. Een paar setups hebben één stap nodig bij de eerste automatische update naar v0.3.1:
+
+- **Linux, vanaf v0.2.45:** v0.2.45 installeert de nieuwe versie en sluit dan af. Start seine nog een keer. Setups die seine zelf opnieuw starten, zoals een systemd-service, hoeven niets te doen.
+- **Windows, vanaf v0.2.45 of v0.3.0:** de oude versie start de nieuwe en sluit af. Als een script of service seine ook herstart wanneer het afsluit, stop dat dan één keer na de update, zodat er maar één seine blijft draaien.
+- **HiveOS en mmpOS, vanaf het pakket v0.3.0:** zet je flight sheet of profiel over op het pakket v0.3.1 van de [releasepagina](https://github.com/zpalmtree/seine/releases). Vanaf v0.3.1 wordt het pakket bijgewerkt via het mining-OS: wijzig de versie in de URL, zoals de [gids voor HiveOS en mmpOS](/nl/blog/mine-blocknet-hiveos-mmpos/) laat zien.
 
 <img src="/assets/blog/miner-update.svg" alt="Het programma wordt vervangen terwijl de configuratiemap behouden blijft, gevolgd door een verbindingscontrole." width="1200" height="675" loading="lazy" />
 
 ## Hoe controleer je de huidige versie?
 
-Voer de versieopdracht uit op het werkelijk gebruikte programma. Een oude kopie kan afwijken van de versie die een snelkoppeling of service start. Noteer programmapad, werkmap en argumenten samen om de update herhaalbaar te maken. Open op Windows PowerShell in de huidige minermap:
+De dashboardkop toont de versie die je draait. Je kunt ook de versieopdracht uitvoeren op het werkelijk gebruikte programma. Een oude kopie kan afwijken van de versie die een snelkoppeling of service start. Noteer programmapad, werkmap en argumenten samen om de update herhaalbaar te maken. Open op Windows PowerShell in de huidige minermap:
 
 ```powershell
 .\seine.exe --version
@@ -37,7 +53,7 @@ Open op Linux of macOS een terminal in die map:
 ./seine --version
 ```
 
-Vergelijk met de [officiële releases](https://github.com/zpalmtree/seine/releases). seine controleert bij het starten en elke 12 uur en meldt updates in dashboard en logboek. De melding geeft een downloadlink; jij kiest de installatie. Lees de release-informatie over platform, runtime en startopties.
+Vergelijk het resultaat met de [officiële releases](https://github.com/zpalmtree/seine/releases) en lees de release-informatie over wijzigingen die je platform, runtime of startopties raken.
 
 ## Welke instellingen moet je bewaren?
 
@@ -45,11 +61,11 @@ Standaard leest seine `./seine-data/seine.config.json`. `./` verwijst naar de we
 
 De configuratie bewaart miningmodus, uitbetalingsadres, pool-URL en machinenaam. Bewaar de hele gegevensmap, inclusief tuningbestanden. Bewaar ook de startopdracht, het script of de servicedefinitie: `--backend` en `--threads` staan los van de opgeslagen verbindingsvelden. Samen behouden ze je bedoelde instellingen bij de herstart.
 
-## Download en controleer de vervanging
+## Hoe werk je seine handmatig bij?
 
-Kies via de [downloadpagina](/nl/#download) of officiële release het archief voor systeem en CPU-architectuur. Download ook het losse bestand `SHA256SUMS.txt` van dezelfde release. Vergelijk de checksum voordat je uitpakt in een aparte map. De [verificatiehandleiding](/nl/blog/antivirus-flags-crypto-miner/) behandelt Windows en downloadwaarschuwingen.
+Draai je met `--no-auto-update` of kies je het moment liever zelf, werk dan handmatig bij. Kies via de [downloadpagina](/nl/#download) of officiële release het archief voor systeem en CPU-architectuur. Download ook het losse bestand `SHA256SUMS.txt` van dezelfde release. Vergelijk de checksum voordat je uitpakt in een aparte map. De [verificatiehandleiding](/nl/blog/antivirus-flags-crypto-miner/) behandelt Windows en downloadwaarschuwingen.
 
-Houd alle meegeleverde bestanden bij elkaar. Het Windows-pakket bevat NVIDIA-runtimebibliotheken naast `seine.exe`; alleen het programma kopiëren kan versies vermengen. De [NVIDIA-handleiding](/nl/blog/mine-blocknet-nvidia-gpu/) behandelt de runtime. De [configuratiereferentie voor v0.2.36](https://github.com/zpalmtree/seine/blob/v0.2.36/docs/guides/configuration.md) documenteert de opgeslagen instellingen en het startgedrag.
+Houd alle meegeleverde bestanden bij elkaar. Het Windows-pakket bevat NVIDIA-runtimebibliotheken naast `seine.exe`; alleen het programma kopiëren kan versies vermengen. De [NVIDIA-handleiding](/nl/blog/mine-blocknet-nvidia-gpu/) behandelt de runtime. De [configuratiereferentie voor v0.3.1](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/configuration.md) documenteert de opgeslagen instellingen, automatische updates en het startgedrag.
 
 ## Stop, maak een back-up en vervang
 

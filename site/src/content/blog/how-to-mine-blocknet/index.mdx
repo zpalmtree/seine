@@ -2,13 +2,13 @@
 title: How to mine Blocknet
 description: Start mining Blocknet on Windows, macOS or Linux in a few minutes. Get an address, download seine, and mine on bntpool.com with your CPU and NVIDIA GPU.
 date: 2026-10-25
-updated: 2026-11-02
+updated: 2026-11-04
 tags: [Mining guide, Blocknet, Argon2id, bntpool]
 faq:
   - q: How much RAM do I need to mine Blocknet?
     a: Each mining thread needs about 2 GB of RAM, because every Argon2id hash works through a 2 GiB block of memory. A machine with 16 GB can therefore run roughly six to seven threads after leaving room for the system. Seine measures your memory and picks a safe thread count automatically.
   - q: When do Blocknet mining payouts arrive on bntpool.com?
-    a: The bntpool.com pool pays with PPLNS over a six-hour window. A block's reward can only be paid after it is 60 blocks deep, about five hours at five-minute blocks, and balances are sent once they reach 0.1 BNT. Expect the first payment several hours after your first accepted shares.
+    a: The bntpool.com pool pays with PPLNS over a six-hour window. A block's reward can only be paid after it is 60 blocks deep, about five hours at five-minute blocks, and balances are sent once they reach 1 BNT. Expect the first payment several hours after your first accepted shares.
   - q: Can I mine Blocknet with my CPU and GPU at the same time?
     a: Yes. On Windows and Linux, seine mines on every CPU core and every NVIDIA graphics card in the machine at once, and the two hashrates add up. It tunes the processor and each card separately while it runs, so you get the most from all of your hardware without changing a setting.
 related: [blocknet-wallet-node-miner, run-blocknet-node, blocknet-mining-hardware-hashrate, what-is-blocknet]
@@ -50,7 +50,7 @@ From here seine keeps tuning while it mines. It compares thread counts and CPU k
 
 ## How long until you get paid?
 
-The bntpool.com pool uses PPLNS: each block's reward is shared among the shares submitted in the six hours before it was found. A reward can't be spent until its block is 60 blocks deep, which is about five hours at Blocknet's five-minute block time. Once your confirmed balance reaches 0.1 BNT, the pool sends it to your address.
+The bntpool.com pool uses PPLNS: each block's reward is shared among the shares submitted in the six hours before it was found. A reward can't be spent until its block is 60 blocks deep, which is about five hours at Blocknet's five-minute block time. Once your confirmed balance reaches 1 BNT, the pool sends it to your address.
 
 You can follow your hashrate, shares and balance on [bntpool.com](https://bntpool.com) by looking up your address. The pool shows rewards from blocks that haven't confirmed yet separately, because those can still change.
 
@@ -79,10 +79,10 @@ Results for every CPU tested are on the [performance page](https://github.com/zp
 
 ## Can you mine Blocknet solo?
 
-Yes. If you run your own synced Blocknet node, start seine with `./seine --mode daemon` and it mines directly against the node instead of a pool. You keep every block you find, but payouts arrive only when you find a whole block, so most people start on a pool. The [solo mining guide](https://github.com/zpalmtree/seine/blob/master/docs/guides/solo-mining.md) explains the setup.
+Yes, in two ways. The simplest is solo mining on bntpool.com: put `solo:` in front of your address, as in `./seine --address solo:YOUR_ADDRESS`, and the pool pays you the whole reward of every block your rig finds, with no node to run. [Solo mining on bntpool.com](https://bntpool.com/blog/solo-mine-blocknet-on-bntpool/) covers the setup. If you run your own synced Blocknet node, `./seine --mode daemon` mines directly against it instead, as the [solo mining guide](https://github.com/zpalmtree/seine/blob/master/docs/guides/solo-mining.md) explains. Solo rewards arrive as whole blocks, so they suit miners with a large share of the network.
 
 <Note>
-Blocknet plans a network upgrade called Faraday around 2027-02-16, according to [blocknetcrypto.com](https://blocknetcrypto.com/#faraday). It is planned to change the proof of work, so keep seine up to date: it checks for new releases when it starts and every 12 hours.
+Blocknet plans a network upgrade called Faraday around 2027-02-16, according to [blocknetcrypto.com](https://blocknetcrypto.com/#faraday). It is planned to change the proof of work. Seine v0.3.1 is ready for it: pool mining moves to the new proof of work by itself, and with automatic updates on, seine installs newer releases for you.
 </Note>
 
 <CTA target="seine" title="Download seine" text="Free for Windows, macOS and Linux. Run it, paste your address and you are mining on bntpool.com." />

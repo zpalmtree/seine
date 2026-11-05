@@ -1,0 +1,96 @@
+---
+title: 'Como minerar Blocknet com uma GPU AMD'
+description: 'Minere Blocknet com placas AMD Radeon RX 6000, RX 7000, RX 9000 e Radeon PRO usando o seine. Configure Windows ou Linux, escolha as placas e confira cada GPU.'
+tags: ['Guia de mineração', 'AMD', 'Radeon', 'GPU']
+sourceHash: '60f795ed50a7'
+translation: draft
+faq:
+  - q: 'Quais placas de vídeo AMD podem minerar Blocknet?'
+    a: 'O seine minera com placas AMD Radeon RX 6000, RX 7000 e RX 9000 e com as Radeon PRO baseadas nos mesmos chips, no Windows x86_64 e no Linux x86_64. Ele encontra sozinho cada placa AMD dedicada e minera com ela junto com a CPU. Os gráficos Radeon integrados ficam desligados, a menos que você adicione --backend amd.'
+  - q: 'O que preciso instalar para minerar com GPU AMD no Windows?'
+    a: 'Apenas o driver de vídeo da AMD, Adrenalin ou Radeon PRO. O driver inclui o runtime HIP que o seine usa, e o binário da versão já contém os kernels de GPU para placas RX 6000, RX 7000 e RX 9000. Você não precisa do HIP SDK nem de nenhum outro download.'
+  - q: 'O que preciso instalar para minerar com GPU AMD no Linux?'
+    a: 'O driver de kernel amdgpu, que as distribuições atuais já incluem, e o runtime ROCm HIP da AMD, seja o pacote hip-runtime-amd ou uma instalação completa do ROCm. Seu usuário também precisa de acesso aos arquivos de dispositivo da GPU, o que na maioria das distribuições significa entrar nos grupos render e video.'
+  - q: 'O seine pode minerar com placas AMD e NVIDIA no mesmo computador?'
+    a: 'Sim. Sem a opção de backend, o seine minera com a CPU e com cada placa NVIDIA e AMD dedicada que encontrar. Para deixar a CPU livre, inicie-o com --backend nvidia,amd. Cada placa ganha sua própria linha no painel Devices, então você pode conferir cada GPU separadamente.'
+---
+
+O seine minera Blocknet com placas de vídeo AMD Radeon junto com sua CPU. Este guia mostra o que instalar no Windows e no Linux, como escolher as placas, como confirmar que cada GPU está gerando hashes e o que verificar se uma placa não aparecer. Ele descreve o seine v0.3.1.
+
+## Quais placas AMD o seine suporta?
+
+<Answer>
+O seine minera com placas AMD Radeon RX 6000, RX 7000 e RX 9000, e com as Radeon PRO baseadas nos mesmos chips RDNA2, RDNA3 e RDNA4. Ele roda no Windows x86_64 e no Linux x86_64. Cada placa AMD dedicada é selecionada sozinha e minera junto com a CPU, sem configurações para mudar.
+</Answer>
+
+Cada placa minera com várias lanes, um hash em andamento por lane. Uma lane precisa de cerca de 2 GB de memória de vídeo, um pouco menos em RDNA2, RDNA3 e RDNA4, então placas com mais memória rodam mais lanes ao mesmo tempo. Uma placa de 16 GB roda cerca de 9 lanes. O seine calcula isso a partir da memória livre ao iniciar, então você não precisa fazer a conta.
+
+Os gráficos Radeon integrados nos processadores Ryzen ficam desligados por padrão. Você pode incluí-los com `--backend amd`, se quiser.
+
+## Como configurar a mineração com GPU AMD no Windows?
+
+Instale o driver de vídeo atual da AMD para sua placa, Adrenalin para placas Radeon RX ou o driver Radeon PRO para placas PRO, pela [página de drivers da AMD](https://www.amd.com/en/support/download/drivers.html). O driver inclui o runtime HIP que o seine usa, e o binário da versão traz kernels de GPU já compilados para placas RX 6000, RX 7000 e RX 9000. Não é preciso mais nada.
+
+Baixe `seine-windows-x86_64.zip` na [seção de downloads](/pt-br/#download), extraia o arquivo inteiro em uma pasta com permissão de escrita e inicie:
+
+```powershell
+.\seine.exe
+```
+
+Na primeira execução, cole seu endereço de pagamento e pressione Enter para aceitar o bntpool.com. O [guia de configuração no Windows](/pt-br/blog/mine-blocknet-on-windows/) mostra o download e a extração passo a passo.
+
+## Como configurar a mineração com GPU AMD no Linux?
+
+<Answer>
+Instale o driver de kernel amdgpu, que as distribuições atuais já incluem, e o runtime ROCm HIP da AMD, seja o pacote hip-runtime-amd ou uma instalação completa do ROCm. Adicione seu usuário aos grupos render e video para que o seine possa abrir a GPU, faça login de novo e inicie o arquivo do seine para Linux x86_64. O seine encontra suas placas AMD sozinho.
+</Answer>
+
+1. **Instale o runtime.** Adicione o repositório ROCm da AMD para sua distribuição e instale `hip-runtime-amd`, ou a instalação completa do ROCm se você já a usa. O [guia de instalação do ROCm](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/) da AMD lista as distribuições suportadas.
+2. **Dê ao seu usuário acesso à GPU.** O seine abre `/dev/kfd` e `/dev/dri/renderD*`:
+
+   ```bash
+   sudo usermod -aG render,video $USER
+   ```
+
+   Saia e entre de novo para que os novos grupos sejam aplicados.
+3. **Inicie o seine.** Baixe `seine-linux-x86_64.tar.gz` na [seção de downloads](/pt-br/#download), extraia e execute:
+
+   ```bash
+   ./seine
+   ```
+
+Quando o hipRTC está instalado, o seine compila seu kernel para a sua placa exata ao iniciar. As placas RX 6000, RX 7000 e RX 9000 também funcionam sem ele, usando os kernels incluídos na versão. O [guia de mineração no Linux](/pt-br/blog/mine-blocknet-on-linux/) cobre o arquivo e os requisitos do sistema.
+
+Nas placas RX 7000 e Radeon PRO W7000, o seine define o nível de energia da placa como `high` enquanto minera, quando roda como root, e restaura o nível anterior ao sair. Sem root, ele mostra o comando de uma linha que faz o mesmo, para você aplicar.
+
+## Como escolher quais placas mineram?
+
+Deixe a opção de backend sem definir para minerar com a CPU e com cada placa AMD dedicada. Para manter as GPUs minerando e deixar a CPU livre, selecione `amd`:
+
+```bash
+./seine --backend amd
+```
+
+Para minerar com uma placa e manter a mineração na CPU, selecione os dois backends e o índice da placa:
+
+```bash
+./seine --backend cpu,amd --amd-devices 0
+```
+
+`--amd-devices 0,1` seleciona duas placas. Em um computador com placas NVIDIA e AMD, `--backend nvidia,amd` minera com todas elas sem a CPU. Para deixar memória de vídeo livre para um jogo ou outros apps na mesma placa, limite as lanes com `--amd-max-lanes 2`. O [guia de configurações](/pt-br/blog/configure-seine-miner/) mostra como manter essas opções em todo início.
+
+## Como confirmar que a GPU AMD está minerando?
+
+As placas AMD iniciam em segundo plano enquanto a CPU já está minerando. Cada placa ganha sua própria linha no painel Devices, `amd#1`, `amd#2` e assim por diante, e o log informa quando ela fica online com seu número de lanes, por exemplo `amd#1: online (initialized in background, 9 lanes)`. A linha então mostra a hashrate atual e média da placa.
+
+Shares aceitos no painel Mining confirmam que o pool credita seu trabalho. O [guia do painel](/pt-br/blog/seine-dashboard-explained/) explica cada seção, e você pode acompanhar seus rigs no bntpool.com com o [guia de acompanhamento do minerador](https://bntpool.com/blog/pt-br/track-your-miner-on-bntpool/).
+
+## O que verificar se uma placa AMD não aparece?
+
+- **Verifique o driver e o runtime.** No Windows, instale ou atualize o driver da AMD. No Linux, instale `hip-runtime-amd` e confira se seu usuário está nos grupos `render` e `video`. Sem um runtime, o seine minera com a CPU e, com `--backend amd`, informa ao iniciar qual runtime está faltando.
+- **Verifique seu comando.** `--backend cpu` minera só com o processador. Use o comando padrão ou inclua `amd` na lista de backends. Se você definiu `--amd-devices`, confira se o índice existe.
+- **Indique amd você mesmo após atualizar o driver.** Se o runtime da AMD fechar o seine duas vezes seguidas, o seine deixa de selecionar as placas AMD sozinho e continua minerando com o resto, e volta a testá-las depois da próxima atualização. Inicie-o uma vez com `--backend cpu,amd` para testar as placas de novo na hora.
+
+O [guia AMD do seine](https://github.com/zpalmtree/seine/blob/master/docs/guides/amd.md) traz os requisitos completos, e quem usa sistemas operacionais de mineração pode instalar o pacote [HiveOS](https://github.com/zpalmtree/seine/blob/master/docs/guides/hiveos.md) ou [mmpOS](https://github.com/zpalmtree/seine/blob/master/docs/guides/mmpos.md) de cada versão.
+
+<CTA target="seine" title="Baixe o seine para minerar com GPU AMD" text="Escolha o arquivo para Windows ou Linux x86_64 e o seine minera com sua CPU e com cada placa Radeon que encontrar." />

@@ -1,31 +1,47 @@
 ---
 title: 'Cách cập nhật phần mềm đào Blocknet'
-description: 'Cập nhật seine để đào Blocknet, giữ cấu hình, xác minh tệp tải chính thức và kiểm tra phiên bản, kết nối pool cùng các share được chấp nhận sau khi khởi động lại.'
+description: 'Giữ trình đào seine cho Blocknet luôn cập nhật: cách cập nhật tự động cài bản mới, cách cập nhật thủ công và cách xác nhận phiên bản mới vẫn đào.'
 tags: ['Hướng dẫn đào', 'seine', 'Cập nhật']
 faq:
   - q: 'seine có tự cài bản cập nhật không?'
-    a: 'Bộ kiểm tra thông báo bản mới trong bảng điều khiển và nhật ký. Bạn chọn lúc cài. Tải và xác minh gói chính thức, dừng phần mềm, thay tệp ứng dụng rồi chạy lại với cùng thư mục dữ liệu và tùy chọn khởi động.'
+    a: 'Có, từ v0.3.0. Khi có bản phát hành mới, bảng điều khiển đếm ngược 60 giây trong khi vẫn đào, rồi seine xác minh bản tải có chữ ký, dừng gọn gàng và khởi động lại trên phiên bản mới với cùng cài đặt. Nhấn u để cập nhật ngay, s để bỏ qua phiên bản đó, hoặc khởi động seine với --no-auto-update để cập nhật thủ công.'
   - q: 'Tệp nào giữ cấu hình của tôi?'
     a: 'Mặc định là seine-data/seine.config.json, tính từ thư mục khởi chạy. data-dir đổi vị trí này. Giữ cả thư mục dữ liệu và tập lệnh hoặc cấu hình dịch vụ: tùy chọn backend và luồng riêng biệt với thông tin kết nối đã lưu.'
   - q: 'Vì sao cập nhật xong lại hỏi địa chỉ?'
     a: 'Kiểm tra thư mục làm việc và data-dir. Chạy từ thư mục mới có thể khiến seine tìm cấu hình ở nơi khác. Dừng phiên đó, tìm dữ liệu gốc rồi chạy lại với đường dẫn đúng. Kiểm tra địa chỉ và pool trước khi tiếp tục.'
-sourceHash: '1d2a2deba793'
+sourceHash: '37fa2d9966c0'
 translation: draft
 ---
 
-Cập nhật seine nhưng giữ kết nối pool và tùy chọn đang hoạt động. Hướng dẫn dựa trên bản công khai v0.2.36, gồm chuẩn bị, thay tệp và kiểm tra. Nếu cài lần đầu, xem hướng dẫn [Windows](/vi/blog/mine-blocknet-on-windows/), [Linux](/vi/blog/mine-blocknet-on-linux/) hoặc [Mac](/vi/blog/mine-blocknet-on-mac/).
+Giữ seine ở bản phát hành mới nhất với kết nối pool và tùy chọn khởi động đang hoạt động trên máy của bạn. Hướng dẫn dựa trên bản công khai v0.3.1: cập nhật tự động hoạt động thế nào, cần làm gì một lần khi chuyển từ phiên bản cũ, và cách cập nhật thủ công. Nếu cài lần đầu, xem hướng dẫn [Windows](/vi/blog/mine-blocknet-on-windows/), [Linux](/vi/blog/mine-blocknet-on-linux/) hoặc [Mac](/vi/blog/mine-blocknet-on-mac/).
 
 ## Cập nhật seine như thế nào?
 
 <Answer>
-Tải và xác minh gói chính thức cho hệ điều hành, dừng phần mềm, giữ thư mục dữ liệu và thay tệp ứng dụng. Chạy lại với cùng thư mục làm việc và tham số. Kiểm tra phiên bản, địa chỉ nhận tiền, kết nối pool và share được chấp nhận trước khi cập nhật máy khác.
+Cứ để seine chạy. Nó kiểm tra bản phát hành mới khi khởi động và mỗi 12 giờ, đếm ngược 60 giây ở phần đầu bảng điều khiển trong khi vẫn đào, rồi cài bản phát hành có chữ ký và khởi động lại với cùng tham số và cài đặt. Nếu muốn cập nhật thủ công, dừng seine, thay tệp từ gói chính thức và khởi động theo cùng cách.
 </Answer>
+
+## Cập nhật tự động hoạt động thế nào?
+
+Khi có bản phát hành mới hơn, phần đầu hiển thị `update vX.Y.Z available`, nhật ký dẫn liên kết đến bản phát hành, rồi phần đầu đếm ngược: `updating to vX.Y.Z in 42s`. Việc đào tiếp tục trong lúc đếm ngược. Nhấn `u` để cập nhật ngay, hoặc `s` để bỏ qua phiên bản đó; seine ghi nhớ lựa chọn bỏ qua trong thư mục dữ liệu và vẫn đề xuất bản phát hành tiếp theo như thường.
+
+Sau khi đếm ngược, seine kiểm tra chữ ký của bản phát hành, đảm bảo tệp thực thi mới khởi động được, và chỉ khi đó mới thay tệp cũ. Nó dừng đào gọn gàng và khởi động lại với cùng tham số, và bảng điều khiển mới ghi `updated to seine vX.Y.Z`. Phiên bản mới bắt đầu từ kết quả tinh chỉnh đã lưu và chỉ thử những gì bản phát hành thay đổi, nên nhanh chóng trở lại tốc độ tối đa.
+
+Nếu pool gửi công việc cần bản phát hành mới hơn, ví dụ khi nâng cấp mạng, seine tạm dừng đào và cài bản cập nhật ngay, kể cả phiên bản bạn đã bỏ qua. Dùng `--no-auto-update` để chỉ giữ thông báo, hoặc `--disable-update-check` để tắt việc kiểm tra. Bản bạn tự biên dịch sẽ hiển thị thông báo và để việc cập nhật cho bạn.
+
+## Cần làm gì một lần khi chuyển từ phiên bản cũ?
+
+Đa số dàn máy không cần làm gì. Một số thiết lập cần một bước ở lần cập nhật tự động đầu tiên lên v0.3.1:
+
+- **Linux, từ v0.2.45:** v0.2.45 cài phiên bản mới rồi thoát. Hãy khởi động seine thêm một lần. Những thiết lập tự khởi động lại seine, như dịch vụ systemd, không cần làm gì.
+- **Windows, từ v0.2.45 hoặc v0.3.0:** phiên bản cũ khởi động phiên bản mới rồi thoát. Nếu script hoặc dịch vụ cũng khởi động lại seine khi nó thoát, hãy dừng nó một lần sau khi cập nhật để chỉ còn một seine chạy.
+- **HiveOS và mmpOS, từ gói v0.3.0:** chuyển flight sheet hoặc profile sang gói v0.3.1 từ [trang phát hành](https://github.com/zpalmtree/seine/releases). Từ v0.3.1 trở đi, gói được nâng cấp qua hệ điều hành đào: đổi phiên bản trong URL của nó, như [hướng dẫn HiveOS và mmpOS](/vi/blog/mine-blocknet-hiveos-mmpos/) trình bày.
 
 <img src="/assets/blog/miner-update.svg" alt="Thay gói ứng dụng, giữ thư mục cấu hình rồi kiểm tra kết nối." width="1200" height="675" loading="lazy" />
 
 ## Kiểm tra phiên bản hiện tại ra sao?
 
-Chạy lệnh phiên bản với đúng tệp thực thi đang dùng. Bản cũ ở thư mục khác có thể khác bản do lối tắt hoặc dịch vụ chạy. Ghi lại đường dẫn, thư mục làm việc và tham số để lặp lại quy trình. Trên Windows, mở PowerShell tại thư mục phần mềm hiện tại:
+Phần đầu bảng điều khiển hiển thị phiên bản bạn đang chạy. Bạn cũng có thể chạy lệnh phiên bản với đúng tệp thực thi đang dùng. Bản cũ ở thư mục khác có thể khác bản do lối tắt hoặc dịch vụ chạy. Ghi lại đường dẫn, thư mục làm việc và tham số để lặp lại quy trình. Trên Windows, mở PowerShell tại thư mục phần mềm hiện tại:
 
 ```powershell
 .\seine.exe --version
@@ -37,7 +53,7 @@ Trên Linux hoặc macOS, mở terminal tại thư mục đó:
 ./seine --version
 ```
 
-So sánh với [các bản phát hành chính thức](https://github.com/zpalmtree/seine/releases). seine kiểm tra khi khởi động và mỗi 12 giờ, thông báo trong bảng điều khiển và nhật ký. Thông báo cung cấp liên kết tải; bạn chọn thời điểm cài. Đọc ghi chú về nền tảng, thư viện thực thi và tùy chọn khởi động.
+So sánh với [các bản phát hành chính thức](https://github.com/zpalmtree/seine/releases) và đọc ghi chú phát hành về những thay đổi ảnh hưởng đến nền tảng, thư viện thực thi hoặc tùy chọn khởi động của bạn.
 
 ## Cần giữ những cấu hình nào?
 
@@ -45,11 +61,11 @@ Mặc định seine đọc `./seine-data/seine.config.json`. `./` là thư mục
 
 Cấu hình lưu chế độ đào, địa chỉ nhận tiền, URL pool và tên máy. Giữ toàn bộ thư mục dữ liệu, gồm cả tệp tinh chỉnh. Lưu thêm lệnh, tập lệnh hoặc định nghĩa dịch vụ: `--backend` và `--threads` tách biệt với trường kết nối đã lưu. Giữ cả hai giúp duy trì thiết lập sau khi chạy lại.
 
-## Tải và xác minh bản thay thế
+## Cập nhật seine thủ công thế nào?
 
-Từ [trang tải](/vi/#download) hoặc bản phát hành chính thức, chọn gói đúng hệ điều hành và kiến trúc CPU. Tải riêng `SHA256SUMS.txt` của cùng phiên bản. So sánh checksum trước khi giải nén vào thư mục khác. [Hướng dẫn xác minh](/vi/blog/antivirus-flags-crypto-miner/) giải thích quy trình Windows và cảnh báo khi tải.
+Nếu bạn chạy với `--no-auto-update` hoặc muốn tự chọn thời điểm, hãy cập nhật thủ công. Từ [trang tải](/vi/#download) hoặc bản phát hành chính thức, chọn gói đúng hệ điều hành và kiến trúc CPU. Tải riêng `SHA256SUMS.txt` của cùng phiên bản. So sánh checksum trước khi giải nén vào thư mục khác. [Hướng dẫn xác minh](/vi/blog/antivirus-flags-crypto-miner/) giải thích quy trình Windows và cảnh báo khi tải.
 
-Giữ mọi tệp trong gói cùng nhau. Gói Windows kèm thư viện NVIDIA cạnh `seine.exe`; chỉ chép tệp thực thi có thể trộn phiên bản. [Hướng dẫn NVIDIA](/vi/blog/mine-blocknet-nvidia-gpu/) trình bày môi trường thực thi. [Tài liệu v0.2.36](https://github.com/zpalmtree/seine/blob/v0.2.36/docs/guides/configuration.md) mô tả cấu hình lưu và hành vi khởi động dùng ở đây.
+Giữ mọi tệp trong gói cùng nhau. Gói Windows kèm thư viện NVIDIA cạnh `seine.exe`; chỉ chép tệp thực thi có thể trộn phiên bản. [Hướng dẫn NVIDIA](/vi/blog/mine-blocknet-nvidia-gpu/) trình bày môi trường thực thi. [Tài liệu cấu hình v0.3.1](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/configuration.md) mô tả cấu hình lưu, cập nhật tự động và hành vi khởi động dùng ở đây.
 
 ## Dừng, sao lưu và thay tệp
 

@@ -1,62 +1,85 @@
 ---
 title: 'Cómo ajusta seine la minería con CPU automáticamente'
-description: 'Descubre cómo seine ajusta los hilos de CPU al minar Blocknet, compara opciones, reutiliza resultados y responde a la RAM disponible mientras sigue minando.'
+description: 'Descubre cómo seine ajusta hilos y kernels de CPU mientras mina Blocknet, conserva el menor número de hilos que da la máxima velocidad y deja de probar al terminar.'
 tags: ['Guía de minería', 'Ajuste de CPU', 'seine']
-faq:
-  - q: '¿seine mina mientras ajusta los hilos de CPU?'
-    a: 'Sí. En v0.2.36, la minería normal con CPU parte de una configuración guardada compatible o de una estimación basada en el equipo. El ajuste compara cantidades de hilos con trabajo real de minería. Las pruebas sin conexión usan otro proceso, por lo que su arranque no describe una sesión normal.'
-  - q: '¿Por qué cambia la cantidad de hilos de CPU?'
-    a: 'El ajuste automático prueba cantidades de hilos cercanas y responde a la memoria disponible. Un cambio puede ser una prueba de rendimiento o una respuesta a la presión sobre la RAM. Consulta el registro junto con la cantidad de hilos y deja terminar la comparación antes de juzgar una lectura breve del hashrate.'
-  - q: '¿Dónde guarda seine los resultados del ajuste de CPU?'
-    a: 'Por defecto, los resultados de hilos se guardan en seine.cpu-autotune.json dentro del directorio de datos. Las elecciones de kernel usan el archivo asociado terminado en .kernels.json. Los resultados compatibles ayudan a iniciar futuras sesiones. Conserva el mismo directorio y deja que el minero compruebe si los ajustes siguen siendo compatibles.'
-sourceHash: '41f9cc188856'
+sourceHash: 'd974c5518636'
 translation: draft
+faq:
+  - q: '¿Mina seine mientras ajusta los hilos de CPU?'
+    a: 'Sí. Seine empieza a minar de inmediato desde el mejor punto de partida que conoce y después compara números de hilos y kernels de CPU con trabajo de minería real. Cada comparación gana shares. La mayoría de las máquinas terminan en minutos; después, la fila Tuning indica done y el número de hilos no cambia.'
+  - q: '¿Por qué cambia el número de hilos de CPU?'
+    a: 'Durante el ajuste, el número de hilos alterna entre dos valores mientras seine los mide, y la fila Tuning indica el par y el tiempo restante. Tras el ajuste solo cambia por un motivo que el registro indica: una nueva versión que cambió algo para tu CPU, un cambio duradero de la tasa de hash o RAM que necesitan otros programas.'
+  - q: '¿Dónde guarda seine los resultados del ajuste de CPU?'
+    a: 'En seine.cpu-autotune.json, dentro del directorio de datos, seine-data por defecto. En el siguiente inicio seine vuelve directamente al resultado guardado y la fila Tuning indica done. Mantén el mismo directorio de datos entre ejecuciones y actualizaciones para que encuentre el archivo.'
 ---
 
-Entiende qué hace seine cuando cambia la cantidad de hilos de CPU durante la minería. Esta guía sigue la versión pública v0.2.36 y explica el ajuste durante el trabajo, las elecciones guardadas y los cambios de memoria. Para instalarlo, consulta la [guía de minería](/es/blog/how-to-mine-blocknet/); para interpretar los paneles, usa el [recorrido por el panel](/es/blog/seine-dashboard-explained/).
+Entiende qué hace seine cuando su número de hilos de CPU cambia durante la minería. Esta guía sigue la versión pública v0.3.1 y explica cómo encuentra seine los ajustes más rápidos para tu CPU, por qué se queda con el menor número de hilos que los alcanza y cuándo vuelve a mirar. Para la instalación, empieza por la [guía de minería](/es/blog/how-to-mine-blocknet/); para el significado de cada recuadro, usa el [recorrido por el panel](/es/blog/seine-dashboard-explained/).
 
 ## ¿Cómo funciona el ajuste automático de CPU?
 
 <Answer>
-Con el ajuste de CPU activado, seine empieza a minar con una cantidad guardada compatible o una estimación del equipo y compara opciones usando trabajo real. Mide una referencia, prueba una candidata y vuelve a medir la referencia. La RAM disponible y los límites configurados acotan la búsqueda de los ajustes adecuados.
+Seine empieza a minar de inmediato y se ajusta con trabajo de minería real. Compara los kernels de CPU que puede ejecutar tu procesador y después los números de hilos, midiendo el ajuste actual, el candidato y otra vez el ajuste actual. Se queda con el menor número de hilos que calcula hashes tan rápido como el mejor y deja de probar hasta que algo cambie.
 </Answer>
 
 <img src="/assets/blog/cpu-autotuning.svg" alt="Una comparación repetida referencia–candidata–referencia lleva a un ajuste guardado, comprobando la memoria disponible durante todo el proceso." width="1200" height="675" loading="lazy" />
 
-## La minería empieza antes de terminar la búsqueda
+Deja `--threads` sin indicar para usar el ajuste automático. No hay nada que configurar. Seine parte de lo mejor que conoce: el resultado guardado de esta máquina, después un punto de partida para tu modelo de CPU y después una estimación a partir de tus núcleos y tu RAM libre. Desde ahí busca con pasos cada vez mayores hasta que más hilos dejan de ayudar, y luego afina.
 
-Deja `--threads` sin especificar para usar el ajuste automático de hilos. Durante la minería normal, seine elige una cantidad inicial dentro del presupuesto de recursos y empieza a trabajar sin un barrido previo de hilos sin conexión. Una caché compatible puede aportar ese punto de partida. Un equipo nuevo comienza con una estimación que mejora mediante comparaciones posteriores.
+Ejecutar el ajuste actual antes y después de cada candidato hace que un cambio de carga, como una pestaña del navegador o una actualización en segundo plano, no cuente a favor ni en contra del candidato. Un candidato claramente más lento se interrumpe antes, así que la mayoría de las máquinas terminan en minutos.
 
-Cada prueba mide hashes completados por tiempo transcurrido. Las nuevas áreas de memoria terminan un hash inicial antes de empezar su ventana de medición. La secuencia referencia–candidata–referencia ayuda a distinguir el efecto del ajuste de las condiciones cambiantes. Una deriva considerable de la referencia, cambios de límites de memoria o una pérdida sostenida de trabajo pueden descartar la comparación. Un pico breve del panel es solo una observación dentro de una decisión más larga.
+## ¿Qué significa la fila Tuning del panel?
 
-## ¿Por qué dejan de ayudar más hilos?
+La fila `Tuning:` del panel indica en qué punto está el ajuste:
 
-Cada hilo activo de CPU usa una gran área de memoria y comparte el ancho de banda de memoria del equipo. Añadir hilos permite más trabajo simultáneo, pero el resultado depende del sistema completo. El ajuste compara los H/s totales de CPU sin suponer que la mayor cantidad de hilos da la mayor velocidad. La [guía de RAM](/es/blog/how-much-ram-to-mine-blocknet/) explica el presupuesto de memoria.
+| Fila | Significado |
+|---|---|
+| `trying kernels, about 4 min left` | Compara kernels de CPU mientras mina |
+| `12 vs 16 threads, about 3 min left` | Compara dos números de hilos; el número alterna entre ellos mientras seine mide |
+| `update: 12 vs 14 threads, ~2 min` | Una nueva versión cambió algo para tu CPU y prueba solo eso |
+| `done` | Ajustado. El número de hilos no cambia salvo que algo cambie |
+| `low on RAM, best is 12 threads` | Usa menos hilos hasta que vuelva a haber RAM libre |
 
-El perfil predeterminado es `balanced`. Los perfiles controlan la política de ajuste y los valores de ejecución; `efficiency` es una elección explícita que puede favorecer menos hilos. Mantén un mismo perfil al evaluar una sesión. La cantidad de hilos, su ubicación en la CPU y las páginas de memoria interactúan: el resultado de otro equipo o configuración es una referencia, no un ajuste para copiar automáticamente.
+El registro tiene una línea cuando empieza el ajuste, con el motivo, y otra cuando termina, por ejemplo `tuned to 12 threads`. La [guía del panel](/es/blog/seine-dashboard-explained/) cubre los demás recuadros.
 
-## ¿Qué ocurre cuando otros programas necesitan RAM?
+## ¿Por qué usa seine menos hilos de los que podría?
 
-El presupuesto automático de memoria cambia con los recursos disponibles. Cuando hay presión de memoria, los hilos pueden terminar el hash actual, pausarse y liberar sus áreas. Si vuelve a haber margen sostenido, el minero puede activar las posiciones disponibles y continuar explorando. Así, cuando el ordenador ejecuta otras aplicaciones, la cantidad activa puede adaptarse durante la misma sesión.
+Cada hilo de CPU ocupa una gran área de memoria, y todos los hilos comparten el ancho de banda de memoria de la máquina. A partir de cierto número, más hilos no añaden tasa de hash y ocupan RAM que podrían usar tus otros programas. Por eso seine considera igual de bueno cualquier número que iguale al más rápido y se queda con el menor de ellos. Obtienes la misma tasa de hash con más memoria libre.
 
-Una reducción temporal no tiene por qué borrar una cantidad mayor aprendida antes. La caché y la cantidad activa cumplen funciones diferentes. En Linux, las áreas HugeTLB explícitas liberadas vuelven a la reserva de páginas grandes; seine no cambia el tamaño de esa reserva del sistema. Consulta la [guía de páginas grandes](/es/blog/huge-pages-blocknet-mining/) para modificarla y distingue esos ajustes de la RAM libre normal.
+Por eso el mejor número suele estar por debajo de tu total de núcleos o hilos, y por eso varía entre máquinas que parecen iguales. El número de hilos, los canales de memoria y el respaldo de páginas influyen, así que el resultado de otro ordenador es una referencia, no un ajuste que copiar. La [guía de RAM](/es/blog/how-much-ram-to-mine-blocknet/) explica la memoria que necesita cada hilo.
 
-## ¿seine también ajusta el kernel de CPU?
+Si prefieres ahorrar energía y memoria antes que exprimir los últimos hashes, `--cpu-profile efficiency` mantiene un número menor cercano al más rápido.
 
-Las CPU compatibles pueden comparar implementaciones de hashing además de cantidades de hilos. Aquí, kernel significa la implementación de software del cálculo hash. El minero comprueba las instrucciones admitidas y compara las implementaciones compatibles con muestras repetidas de minería. Las pruebas de kernel e hilos se alternan mientras sigue activa la gestión de memoria. La [guía técnica de ajuste](https://github.com/zpalmtree/seine/blob/v0.2.36/docs/guides/autotuning.md) describe las opciones de esta versión.
+## ¿Ajusta seine también el kernel de CPU?
 
-Los cambios automáticos de CPU conservan la conexión al pool y no reinician los backends de GPU. El kernel cambia entre hashes completos, manteniendo las áreas asignadas. Es distinto de pulsar manualmente `+` o `-` en el panel: esos cambios reinician los backends, reconectan la minería al pool y desactivan el ajuste automático de CPU durante esa sesión. El registro indica qué tipo de cambio ocurrió.
+Sí. Aquí, un kernel es la implementación en software del hash para un conjunto concreto de instrucciones del procesador. Seine comprueba qué instrucciones admite tu CPU, nunca prueba un kernel que no pueda ejecutar y omite los kernels que no ganan en tu CPU. Compara el resto mientras mina, antes de fijar el número de hilos. Los cambios de kernel ocurren entre hashes completos, así que la minería continúa y la conexión con el pool se mantiene.
 
-## ¿Cómo se reutilizan los ajustes guardados?
+## ¿Cuándo vuelve a ajustar seine?
 
-La caché de hilos predeterminada es `seine.cpu-autotune.json` dentro de `--data-dir`; la de kernels es `seine.cpu-autotune.json.kernels.json`. Guardan las decisiones aprendidas separadas de la conexión al pool. Conserva el mismo directorio entre ejecuciones para que el minero las encuentre. La [guía de actualización](/es/blog/update-seine-miner/) explica cómo mantenerlo al sustituir la aplicación.
+Una vez que la fila indica `done`, seine no hace pruebas programadas. Solo vuelve a mirar cuando algo cambia:
 
-La reutilización depende de la compatibilidad del equipo y la compilación, la ubicación de los hilos y las páginas. Los límites de recursos actuales siguen acotando la cantidad inicial activa. Es normal que una caché no se reutilice tras un cambio relevante: deja que el minero reúna nuevas mediciones. Evita copiar la caché de otro equipo o editar las mediciones a mano. Lee los mensajes de arranque y ajuste antes de considerar problemática una nueva búsqueda.
+- **Una nueva versión cambia algo para tu CPU.** La nueva versión arranca con tu resultado guardado y prueba solo lo que cambió, como un kernel nuevo o mejorado. Una versión que no cambia nada del cálculo de hashes no hace ninguna prueba.
+- **La tasa de hash cambia durante un tiempo prolongado,** por ejemplo cuando otro programa empieza o deja de usar mucho la CPU.
+- **Queda más RAM libre** cuando la RAM era lo que limitaba el número de hilos.
+- **Cambian el hardware, el sistema operativo o los límites de CPU,** como el límite de CPU de un contenedor.
 
-## ¿Cuándo conviene fijar la cantidad de hilos?
+Cada uno de estos casos escribe una línea en el registro con el motivo del ajuste. Las actualizaciones automáticas conservan tu ajuste, así que actualizar seine no lo devuelve al principio. La [guía de actualización](/es/blog/update-seine-miner/) explica cómo funcionan las actualizaciones.
 
-Fija la cantidad cuando necesites deliberadamente una configuración repetible. Por ejemplo, `--threads 4` pide cuatro hilos y normalmente desactiva el ajuste automático de hilos y kernels. `--cpu-autotune-threads` activa el ajuste incluso con una cantidad especificada; `--disable-cpu-autotune-threads` lo desactiva. La [referencia de opciones](https://github.com/zpalmtree/seine/blob/v0.2.36/docs/MINER_FLAGS.md) documenta los límites de búsqueda y sus interacciones.
+## ¿Qué pasa cuando otros programas necesitan RAM?
 
-Para minar habitualmente, empieza con los valores predeterminados y deja terminar las comparaciones productivas. Revisa juntos la fila de CPU, los mensajes de ajuste y las participaciones aceptadas. Compara condiciones similares de carga y memoria. El hashrate del pool se estima a partir de participaciones recibidas: usa las mediciones de CPU del minero para entender una prueba y las [estadísticas del pool](https://bntpool.com/blog/es/track-your-miner-on-bntpool/) para seguir el trabajo acreditado.
+Seine comprueba la RAM libre una vez por segundo. Cuando otros programas necesitan memoria, los hilos de CPU terminan su hash actual, se detienen y liberan sus áreas de memoria, y la fila muestra `low on RAM`. Cuando la memoria vuelve a estar libre, los hilos regresan. El mejor número que aprendió sigue guardado, así que una falta breve de memoria no lo borra.
 
-<CTA target="seine" title="Mina con ajuste automático de CPU" text="Descarga seine, conserva el ajuste predeterminado y sigue sus decisiones en el panel." />
+En Linux, las áreas HugeTLB explícitas liberadas vuelven a la reserva de huge pages; seine no cambia el tamaño de esa reserva. La [guía de huge pages](/es/blog/huge-pages-blocknet-mining/) explica cómo reservarlas.
+
+## ¿Cómo se reutilizan los resultados guardados?
+
+Los resultados se guardan en `seine.cpu-autotune.json` dentro del directorio de datos, `seine-data` por defecto. En el siguiente inicio seine vuelve directamente al resultado guardado y la fila indica `done`. Si la tasa de hash es claramente distinta de la última vez, vuelve a ajustar y el registro indica el motivo. Mantén el mismo directorio de datos entre ejecuciones para que seine encuentre el archivo, y deja que cada rig cree el suyo: copiar el archivo de otra máquina no ayuda, porque el resultado depende del hardware y los ajustes exactos.
+
+## ¿Puedes cambiar tú el número de hilos?
+
+Sí. Pulsa `-` o `+` en el panel para quitar o añadir un hilo de CPU. Cuando el ajuste indica `done`, el cambio se aplica al momento a los hilos en marcha, y las GPU y la conexión con el pool siguen funcionando. Mientras el ajuste aún elige un número, las teclas esperan y el panel muestra cuánto le queda. Una pulsación dura solo esa ejecución; el siguiente inicio vuelve a usar el resultado guardado.
+
+Para fijar un número desde el inicio, usa `--threads`, por ejemplo `--threads 4`. Seine mantiene entonces ese número y sigue eligiendo el mejor kernel para él. `--disable-cpu-autotune-threads` desactiva por completo el ajuste de hilos y kernels. La [referencia de opciones](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/MINER_FLAGS.md) documenta estas opciones, y [minar mientras usas el PC](/es/blog/mine-while-using-pc/) muestra cómo compartir un ordenador de escritorio con la minería.
+
+Para la minería diaria, empieza con los valores predeterminados y deja que el ajuste llegue a `done`. Usa la fila del dispositivo CPU para seguir una prueba de ajuste y las [estadísticas del pool](https://bntpool.com/blog/es/track-your-miner-on-bntpool/) para seguir la actividad de minería acreditada.
+
+<CTA target="seine" title="Mina con ajuste automático de CPU" text="Descarga seine, mantén los ajustes predeterminados y encontrará en minutos el número de hilos y el kernel más rápidos para tu CPU." />

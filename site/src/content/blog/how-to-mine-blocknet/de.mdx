@@ -6,10 +6,10 @@ faq:
   - q: 'Wie viel RAM brauche ich, um Blocknet zu minen?'
     a: 'Jeder Mining-Thread braucht etwa 2 GB RAM, weil jeder Argon2id-Hash einen 2-GiB-Speicherblock durcharbeitet. Ein Rechner mit 16 GB kann daher etwa sechs bis sieben Threads ausführen und lässt dabei noch Platz für das System. seine misst deinen Arbeitsspeicher und wählt automatisch eine sichere Thread-Anzahl.'
   - q: 'Wann kommen die Auszahlungen für Blocknet-Mining auf bntpool.com an?'
-    a: 'Der Pool bntpool.com zahlt per PPLNS über ein Sechs-Stunden-Fenster aus. Die Belohnung eines Blocks kann erst ausgezahlt werden, wenn 60 weitere Blöcke darauf folgen, bei Fünf-Minuten-Blöcken also nach etwa fünf Stunden, und Guthaben werden ab 0,1 BNT überwiesen. Rechne mit der ersten Zahlung einige Stunden nach deinen ersten akzeptierten Shares.'
+    a: 'Der Pool bntpool.com zahlt per PPLNS über ein Sechs-Stunden-Fenster aus. Die Belohnung eines Blocks kann erst ausgezahlt werden, wenn 60 weitere Blöcke darauf folgen, bei Fünf-Minuten-Blöcken also nach etwa fünf Stunden, und Guthaben werden ab 1 BNT überwiesen. Rechne mit der ersten Zahlung einige Stunden nach deinen ersten akzeptierten Shares.'
   - q: 'Kann ich Blocknet gleichzeitig mit CPU und GPU minen?'
     a: 'Ja. seine mint unter Windows und Linux auf jedem CPU-Kern und jeder NVIDIA-Grafikkarte im Rechner gleichzeitig, und die beiden Hashraten addieren sich. Prozessor und jede Karte werden während des Betriebs getrennt optimiert, sodass du ohne eine einzige Einstellung das Maximum aus deiner gesamten Hardware holst.'
-sourceHash: bff032ea0960
+sourceHash: 42d41a1c403b
 translation: draft
 ---
 
@@ -49,7 +49,7 @@ Ab jetzt optimiert seine weiter, während es mint. Es vergleicht Thread-Anzahlen
 
 ## Wie lange dauert es bis zur Auszahlung?
 
-Der Pool bntpool.com nutzt PPLNS: Die Belohnung jedes Blocks wird auf die Shares verteilt, die in den sechs Stunden vor seinem Fund eingereicht wurden. Eine Belohnung kann erst ausgegeben werden, wenn 60 weitere Blöcke auf ihren Block folgen, bei Blocknets Blockzeit von fünf Minuten also nach etwa fünf Stunden. Sobald dein bestätigtes Guthaben 0,1 BNT erreicht, überweist der Pool es an deine Adresse.
+Der Pool bntpool.com nutzt PPLNS: Die Belohnung jedes Blocks wird auf die Shares verteilt, die in den sechs Stunden vor seinem Fund eingereicht wurden. Eine Belohnung kann erst ausgegeben werden, wenn 60 weitere Blöcke auf ihren Block folgen, bei Blocknets Blockzeit von fünf Minuten also nach etwa fünf Stunden. Sobald dein bestätigtes Guthaben 1 BNT erreicht, überweist der Pool es an deine Adresse.
 
 Deine Hashrate, Shares und dein Guthaben kannst du auf [bntpool.com](https://bntpool.com) verfolgen, indem du deine Adresse nachschlägst. Belohnungen aus noch nicht bestätigten Blöcken zeigt der Pool getrennt an, weil sie sich noch ändern können.
 
@@ -78,10 +78,10 @@ Ergebnisse für alle getesteten CPUs stehen auf der [Leistungsseite](https://git
 
 ## Kann man Blocknet solo minen?
 
-Ja. Wenn du einen eigenen, synchronisierten Blocknet-Node betreibst, starte seine mit `./seine --mode daemon`, und es mint direkt über den Node statt über einen Pool. Jeder Block, den du findest, gehört komplett dir, aber Auszahlungen gibt es nur, wenn du einen ganzen Block findest, deshalb fangen die meisten auf einem Pool an. Die [Solo-Mining-Anleitung](https://github.com/zpalmtree/seine/blob/master/docs/guides/solo-mining.md) erklärt die Einrichtung.
+Ja, auf zwei Arten. Am einfachsten ist Solo-Mining auf bntpool.com: Setze `solo:` vor deine Adresse, etwa `./seine --address solo:YOUR_ADDRESS`, und der Pool zahlt dir die volle Belohnung jedes Blocks, den dein Rig findet, ganz ohne eigenen Node. [Solo-Mining auf bntpool.com](https://bntpool.com/blog/de/solo-mine-blocknet-on-bntpool/) erklärt die Einrichtung. Wenn du einen eigenen, synchronisierten Blocknet-Node betreibst, mint `./seine --mode daemon` stattdessen direkt über diesen Node, wie die [Solo-Mining-Anleitung](https://github.com/zpalmtree/seine/blob/master/docs/guides/solo-mining.md) erklärt. Solo-Belohnungen kommen als ganze Blöcke, sie passen daher zu Minern mit einem großen Anteil am Netzwerk.
 
 <Note>
-Laut [blocknetcrypto.com](https://blocknetcrypto.com/#faraday) plant Blocknet um den 16. Februar 2027 ein Netzwerk-Upgrade namens Faraday. Dabei soll sich der Proof of Work ändern, nutze also immer die aktuelle Version von seine: Der Miner sucht beim Start und alle 12 Stunden nach neuen Releases.
+Laut [blocknetcrypto.com](https://blocknetcrypto.com/#faraday) plant Blocknet um den 16. Februar 2027 ein Netzwerk-Upgrade namens Faraday. Dabei soll sich der Proof of Work ändern. seine v0.3.1 ist dafür bereit: Pool-Mining wechselt von selbst auf den neuen Proof of Work, und mit aktivierten automatischen Updates installiert seine neue Releases für dich.
 </Note>
 
 <CTA target="seine" title="seine herunterladen" text="Kostenlos für Windows, macOS und Linux. Starten, Adresse einfügen, und du minst auf bntpool.com." />

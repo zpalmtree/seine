@@ -1,31 +1,47 @@
 ---
 title: '如何更新 Blocknet 挖礦軟體'
-description: '更新 Blocknet 的 seine 挖礦軟體並保留現有設定：驗證官方安裝包，正確保留資料目錄與啟動參數，再檢查版本、礦池連線及已接受的份額。'
+description: '讓 Blocknet 的 seine 挖礦軟體保持最新：了解自動更新如何安裝新版本、如何手動更新，以及如何確認新版本正在挖礦。'
 tags: ['挖礦指南', 'seine', '更新']
 faq:
   - q: 'seine 會自動安裝更新嗎？'
-    a: '版本檢查會在儀表板和日誌中提示新版本，安裝時間由你決定。下載並驗證官方壓縮檔，停止挖礦程式，替換應用程式檔案，再使用相同的資料目錄和啟動選項重新執行。'
+    a: '會，從 v0.3.0 起自動安裝。有新版本時，儀表板會在繼續挖礦的同時倒數 60 秒，然後 seine 驗證已簽署的下載檔案，正常停止，並以相同設定在新版本上重新啟動。按 u 立即更新，按 s 略過該版本；如果想手動更新，用 --no-auto-update 啟動 seine。'
   - q: '哪些檔案儲存我的設定？'
     a: '預設設定位於相對於啟動目錄的 seine-data/seine.config.json。data-dir 可變更位置。請保留資料目錄，以及啟動指令稿或服務設定；命令列指定的後端和執行緒選項與儲存的連線資訊是分開的。'
   - q: '為什麼更新後再次詢問地址？'
     a: '先檢查工作目錄和 data-dir。從新解壓縮的資料夾啟動可能讓 seine 在另一個位置尋找設定。停止該程序，找到原始資料目錄，再用正確路徑啟動。繼續挖礦前核對地址和礦池。'
-sourceHash: '1d2a2deba793'
+sourceHash: '37fa2d9966c0'
 translation: draft
 ---
 
-更新 seine，同時保留已經正常運作的礦池連線和啟動設定。本指南以公開版本 v0.2.36 為依據，說明準備、檔案替換與驗證。首次安裝請參閱 [Windows](/zh-hant/blog/mine-blocknet-on-windows/)、[Linux](/zh-hant/blog/mine-blocknet-on-linux/) 或 [Mac](/zh-hant/blog/mine-blocknet-on-mac/) 指南。
+讓 seine 保持在最新版本，同時保留已經正常運作的礦池連線和啟動設定。本指南以公開版本 v0.3.1 為依據，說明自動更新如何運作、從舊版本升級時需要做的一次性操作，以及如何手動更新。首次安裝請參閱 [Windows](/zh-hant/blog/mine-blocknet-on-windows/)、[Linux](/zh-hant/blog/mine-blocknet-on-linux/) 或 [Mac](/zh-hant/blog/mine-blocknet-on-mac/) 指南。
 
 ## 如何更新 seine？
 
 <Answer>
-下載並驗證適合系統的官方壓縮檔，停止挖礦程式，保留資料目錄，再替換應用程式檔案。使用相同的工作目錄和參數重新啟動。更新另一台機器前，確認版本、收款地址、礦池連線和已接受的份額。
+讓 seine 保持執行即可。它會在啟動時及每隔 12 小時檢查新版本，在繼續挖礦的同時於儀表板標題列倒數 60 秒，然後安裝已簽署的新版本，並以相同的參數和設定重新啟動。如果要手動更新，先停止 seine，用官方壓縮檔中的檔案替換，再依原來的方式啟動。
 </Answer>
+
+## 自動更新如何運作？
+
+有新版本發布時，標題列會顯示 `update vX.Y.Z available`，日誌會提供該版本的連結，隨後標題列開始倒數：`updating to vX.Y.Z in 42s`。倒數期間挖礦不會中斷。按 `u` 立即更新，按 `s` 略過該版本；seine 會在資料目錄中記住略過的版本，並照常提示下一個版本。
+
+倒數結束後，seine 會驗證該版本的簽章，確認新的執行檔能夠啟動，然後才替換舊檔案。它會正常停止挖礦，並用相同的參數重新啟動，新的儀表板會在日誌中顯示 `updated to seine vX.Y.Z`。新版本從你已儲存的調校結果開始，只測試該版本變更的部分，所以很快就能恢復全速。
+
+如果礦池傳送的工作需要更新的版本（例如在網路升級時），seine 會暫停挖礦並立即安裝更新，即使是你略過的版本也一樣。使用 `--no-auto-update` 只保留提示，使用 `--disable-update-check` 關閉檢查。自行編譯的版本只顯示提示，更新由你自己完成。
+
+## 從舊版本升級時需要做哪些一次性操作？
+
+大多數礦機無需任何操作。少數設定在首次自動更新到 v0.3.1 時需要做一步：
+
+- **Linux，從 v0.2.45 升級：** v0.2.45 會安裝新版本然後結束。請再啟動一次 seine。會自動重新啟動 seine 的設定（例如 systemd 服務）無需任何操作。
+- **Windows，從 v0.2.45 或 v0.3.0 升級：** 舊版本會啟動新版本然後結束。如果還有指令碼或服務會在 seine 結束時重新啟動它，請在更新後停止一次該指令碼或服務，確保只有一個 seine 在執行。
+- **HiveOS 與 mmpOS，從 v0.3.0 套件升級：** 把 flight sheet 或設定檔切換到[發行頁面](https://github.com/zpalmtree/seine/releases)上的 v0.3.1 套件。從 v0.3.1 起，套件透過挖礦系統升級：依照 [HiveOS 與 mmpOS 指南](/zh-hant/blog/mine-blocknet-hiveos-mmpos/)所示，修改其 URL 中的版本號即可。
 
 <img src="/assets/blog/miner-update.svg" alt="替換應用程式、保留設定資料夾，然後驗證連線的流程。" width="1200" height="675" loading="lazy" />
 
 ## 如何檢查目前版本？
 
-對實際使用的執行檔執行版本命令。另一個資料夾中的舊副本可能與捷徑或服務啟動的版本不同。一起記錄程式路徑、工作目錄和參數，方便重複操作。在 Windows 中，於目前的挖礦程式目錄開啟 PowerShell：
+儀表板標題列會顯示你正在執行的版本。你也可以對實際使用的執行檔執行版本命令。另一個資料夾中的舊副本可能與捷徑或服務啟動的版本不同。一起記錄程式路徑、工作目錄和參數，方便重複操作。在 Windows 中，於目前的挖礦程式目錄開啟 PowerShell：
 
 ```powershell
 .\seine.exe --version
@@ -37,7 +53,7 @@ translation: draft
 ./seine --version
 ```
 
-將結果與[官方發行版本](https://github.com/zpalmtree/seine/releases)比較。seine 在啟動時及每隔 12 小時檢查更新，並在儀表板和日誌通知。提示提供下載連結，安裝時機由你選擇。閱讀涉及平台、執行階段程式庫和啟動選項的發行說明。
+將結果與[官方發行版本](https://github.com/zpalmtree/seine/releases)比較，並閱讀涉及平台、執行階段程式庫和啟動選項的發行說明。
 
 ## 應保留哪些設定？
 
@@ -45,11 +61,11 @@ seine 預設讀取 `./seine-data/seine.config.json`。`./` 表示目前工作目
 
 設定儲存挖礦模式、收款地址、礦池 URL 和機器名稱等連線資訊。保留整個資料目錄，包括調校檔案。同時儲存啟動命令、指令稿或服務定義：`--backend`、`--threads` 等選項獨立於已儲存的連線欄位。兩者都保留，才能在重新啟動後維持預期設定。
 
-## 下載並驗證新檔案
+## 如何手動更新 seine？
 
-透過[下載頁面](/zh-hant/#download)或官方發行頁選擇對應系統和 CPU 架構的壓縮檔，同時下載同一版本單獨提供的 `SHA256SUMS.txt`。比對校驗碼後，再解壓縮到獨立資料夾。[下載驗證指南](/zh-hant/blog/antivirus-flags-crypto-miner/)介紹 Windows 操作和下載警告處理。
+如果你使用 `--no-auto-update` 執行，或者想自己選擇更新時機，可以手動更新。透過[下載頁面](/zh-hant/#download)或官方發行頁選擇對應系統和 CPU 架構的壓縮檔，同時下載同一版本單獨提供的 `SHA256SUMS.txt`。比對校驗碼後，再解壓縮到獨立資料夾。[下載驗證指南](/zh-hant/blog/antivirus-flags-crypto-miner/)介紹 Windows 操作和下載警告處理。
 
-將壓縮檔中的檔案保持在一起。Windows 套件在 `seine.exe` 旁附帶 NVIDIA 執行階段程式庫，只複製程式可能造成版本混用。[NVIDIA 指南](/zh-hant/blog/mine-blocknet-nvidia-gpu/)說明執行環境。[v0.2.36 設定參考](https://github.com/zpalmtree/seine/blob/v0.2.36/docs/guides/configuration.md)記錄本文使用的設定儲存和啟動行為。
+將壓縮檔中的檔案保持在一起。Windows 套件在 `seine.exe` 旁附帶 NVIDIA 執行階段程式庫，只複製程式可能造成版本混用。[NVIDIA 指南](/zh-hant/blog/mine-blocknet-nvidia-gpu/)說明執行環境。[v0.3.1 設定參考](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/configuration.md)記錄本文使用的設定儲存、自動更新和啟動行為。
 
 ## 停止、備份並替換
 

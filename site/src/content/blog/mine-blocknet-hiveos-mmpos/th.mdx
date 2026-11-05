@@ -1,0 +1,107 @@
+---
+title: 'วิธีขุด Blocknet บน HiveOS และ mmpOS'
+description: 'ขุด Blocknet บน HiveOS หรือ mmpOS ด้วยแพ็กเกจ seine ที่มากับทุกรุ่น ตั้งค่า flight sheet หรือ miner profile เลือก GPU หรือ CPU และอัปเกรดได้ในขั้นตอนเดียว'
+tags: ['คู่มือการขุด', 'HiveOS', 'mmpOS', 'GPU']
+sourceHash: 'e49fce300603'
+translation: draft
+faq:
+  - q: 'ขุด Blocknet บน HiveOS ได้ไหม?'
+    a: 'ได้ ทุกรุ่นของ seine มีแพ็กเกจ HiveOS เพิ่มกระเป๋า BNT สร้าง flight sheet โดยตั้ง Pool เป็น Configure in miner และ Miner เป็น Custom วางลิงก์แพ็กเกจเป็น Installation URL แล้วนำไปใช้กับเครื่องขุด จากนั้นแดชบอร์ด HiveOS จะแสดง hashrate ของแต่ละ GPU และ share ที่ได้รับการยอมรับ'
+  - q: 'ขุด Blocknet บน mmpOS ได้ไหม?'
+    a: 'ได้ ทุกรุ่นของ seine มีแพ็กเกจ mmpOS นำเข้า miner profile สำเร็จรูปจากคู่มือ mmpOS ของ seine ซึ่งเพิ่มกระเป๋า BNT พูล bntpool.com และโปรแกรมขุด seine ในขั้นตอนเดียว แล้วตั้งเป็น Active miner profile บนเครื่องขุดของคุณ'
+  - q: 'แพ็กเกจ HiveOS ขุดด้วย CPU ด้วยไหม?'
+    a: 'บนเครื่องขุด GPU แพ็กเกจขุดด้วย GPU เท่านั้น เพราะแต่ละเธรด CPU ต้องใช้ RAM ระบบ 2 GB และเครื่องขุด GPU จำนวนมากมี RAM น้อย เครื่องที่ไม่มี GPU จะขุดด้วย CPU หากต้องการเพิ่มการขุดด้วย CPU บนเครื่องขุด GPU ให้ใส่ --backend nvidia,cpu --threads 2 ใน Extra config arguments'
+  - q: 'อัปเกรด seine บน HiveOS หรือ mmpOS อย่างไร?'
+    a: 'เปลี่ยนหมายเลขรุ่นใน URL ติดตั้งหรือดาวน์โหลดเป็นรุ่นล่าสุด แล้วนำ flight sheet หรือ profile ไปใช้อีกครั้ง ระบบปฏิบัติการสำหรับขุดจะดาวน์โหลดแพ็กเกจใหม่ และ seine เก็บผลการปรับจูนที่บันทึกไว้ เครื่องขุดจึงกลับมาแฮชได้ภายในไม่กี่วินาที'
+---
+
+คู่มือนี้แสดงวิธีขุด Blocknet บน HiveOS และ mmpOS ด้วย seine ทุกรุ่นของ seine มีแพ็กเกจสำหรับระบบปฏิบัติการสำหรับขุดทั้งสองแบบ คุณจึงเพิ่ม seine เป็นโปรแกรมขุดแบบกำหนดเองด้วยลิงก์เดียว และเครื่องขุดจะรายงาน hashrate และ share บนแดชบอร์ดที่คุณใช้อยู่ เนื้อหานี้อ้างอิง seine v0.3.1
+
+## ต้องใช้แพ็กเกจไหน?
+
+ทุกรุ่นใน[หน้ารุ่นเผยแพร่ของ seine](https://github.com/zpalmtree/seine/releases/latest) มีแพ็กเกจสำหรับระบบปฏิบัติการสำหรับขุดสองแพ็กเกจ:
+
+| ระบบปฏิบัติการสำหรับขุด | แพ็กเกจ |
+|---|---|
+| HiveOS | `seine-hiveos-X.Y.Z.tar.gz` |
+| mmpOS | `seine-mmpos-X.Y.Z.tar.gz` |
+
+`X.Y.Z` คือหมายเลขรุ่น เช่น `0.3.1` แต่ละแพ็กเกจมี seine ที่สร้างสำหรับไลบรารีระบบของระบบปฏิบัติการนั้น ไลบรารีคอมไพเลอร์เคอร์เนล NVIDIA ที่ seine ใช้ และสคริปต์ที่เชื่อม seine กับแดชบอร์ด คุณไม่ต้องติดตั้งอย่างอื่นบนเครื่องขุด
+
+## ขุด Blocknet บน HiveOS อย่างไร?
+
+<Answer>
+เพิ่มที่อยู่ Blocknet ของคุณเป็นกระเป๋า BNT แล้วสร้าง flight sheet โดยตั้ง Pool เป็น Configure in miner และ Miner เป็น Custom ใน Setup Miner Config ให้วางลิงก์แพ็กเกจ seine-hiveos เป็น Installation URL ใช้ %WAL%.%WORKER_NAME% เป็นแม่แบบกระเป๋าและ worker และตั้ง Pool URL แล้วนำ flight sheet ไปใช้กับเครื่องขุด
+</Answer>
+
+1. **เพิ่มกระเป๋า** เปิด **Wallets** แล้วเพิ่มที่อยู่รับเงิน Blocknet ของคุณ หากไม่มี BNT ในรายการเหรียญ ให้พิมพ์ `BNT` เป็นชื่อเหรียญ ชื่อ Blocknet ID เช่น `@name` ก็ใช้ได้ ให้ใช้รูปแบบ `@` เพราะ HiveOS จัดการ `$` เป็นพิเศษ
+2. **สร้าง flight sheet** เลือกเหรียญและกระเป๋า BNT ตั้ง **Pool** เป็น *Configure in miner* และ **Miner** เป็น *Custom*
+3. **คลิก Setup Miner Config** แล้วกรอก:
+
+   | Field | ค่า |
+   |---|---|
+   | Miner name | `seine-hiveos` (HiveOS กรอกให้จาก URL) |
+   | Installation URL | `https://github.com/zpalmtree/seine/releases/download/vX.Y.Z/seine-hiveos-X.Y.Z.tar.gz` |
+   | Hash algorithm | เว้นว่าง |
+   | Wallet and worker template | `%WAL%.%WORKER_NAME%` |
+   | Pool URL | `stratum+tcp://bntpool.com:3333` |
+   | Pass | เว้นว่าง |
+
+4. **นำ flight sheet ไปใช้**กับเครื่องขุดของคุณ
+
+แทน `X.Y.Z` ด้วยรุ่นล่าสุด หรือคัดลอกลิงก์แพ็กเกจจากหน้ารุ่นเผยแพร่ พูลสำรองใส่แยกบรรทัดใน **Pool URL** seine จะลองตามลำดับและกลับไปพูลแรกเมื่อพูลนั้นกลับมา หาก **Pool URL** ว่าง seine จะขุดบน bntpool.com
+
+จากนั้นแดชบอร์ด HiveOS จะแสดง hashrate ของ seine ต่อ GPU share ที่ยอมรับและถูกปฏิเสธ รวมถึงอุณหภูมิและพัดลมของ GPU
+
+## ขุด Blocknet บน mmpOS อย่างไร?
+
+<Answer>
+รายการเหรียญของ mmpOS ยังไม่มี BNT คุณจึงนำเข้า profile สำเร็จรูปแทน คัดลอก JSON ของ miner profile จากคู่มือ mmpOS ของ seine ใส่ที่อยู่ Blocknet และหมายเลขรุ่น แล้วนำเข้าใน Miner profiles เพิ่มกระเป๋า พูล และ profile ที่สร้างขึ้น แล้วตั้ง seine BNT เป็น Active miner profile บนเครื่องขุด
+</Answer>
+
+1. **แก้ไข profile** คัดลอก JSON profile จาก[คู่มือ mmpOS ของ seine](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/mmpos.md) แทน `YOUR_BLOCKNET_ADDRESS` ด้วยที่อยู่รับเงินหรือ `@name` ของคุณ และแทน `X.Y.Z` ทั้งสองแห่งใน `custom_url` ด้วยรุ่นล่าสุด
+2. **นำเข้า** เปิด **Miner profiles** คลิก **Import from JSON** วาง profile แล้วคลิก **Import**
+3. **เพิ่มแต่ละส่วน**จากผลการนำเข้าตามลำดับ: **Add wallet** จากนั้น **Add pool** (กระเป๋า BNT จะกรอกเอง) จากนั้น **Add miner profile** โดยเลือกพูล `bntpool` ช่องเหรียญและโปรแกรมขุดจะดูว่างเพราะ BNT ไม่อยู่ในรายการของ mmpOS แต่ค่าที่นำเข้ายังถูกบันทึกไว้
+4. **กำหนด profile** บนเครื่องขุดแต่ละเครื่อง ตั้ง **Active miner profile** เป็น `seine BNT`
+
+profile จะกรอกกระเป๋า ชื่อเครื่อง และพูลเมื่อ mmpOS เริ่มโปรแกรมขุด และแดชบอร์ด mmpOS แสดง hashrate ของ seine ต่อ GPU และ share แพ็กเกจ mmpOS ต้องใช้ image ที่สร้างบน Ubuntu 20.04 ขึ้นไป
+
+## แพ็กเกจขุดบนอุปกรณ์ใด?
+
+แพ็กเกจเลือกอุปกรณ์ตามฮาร์ดแวร์ที่ระบบปฏิบัติการสำหรับขุดตรวจพบ:
+
+- **เครื่องขุด GPU ขุดบน GPU** แต่ละแฮชของ Blocknet ต้องใช้หน่วยความจำ 2 GB คือหน่วยความจำวิดีโอบน GPU และ RAM ระบบบน CPU เครื่องขุด GPU จำนวนมากมี RAM 4 ถึง 8 GB แพ็กเกจจึงเว้น CPU ไว้ให้ระบบ
+- **เครื่องที่ไม่มี GPU ขุดบน CPU** โดยกำหนดจำนวนเธรดตาม RAM ที่ว่าง
+- **การ์ด NVIDIA** ต้องใช้ไดรเวอร์ที่รองรับ CUDA 12 การ์ดซีรีส์ RTX 50 ต้องใช้ไดรเวอร์ 570 ขึ้นไป
+- **การ์ด AMD Radeon RX 6000, RX 7000 และ RX 9000** ต้องมี ROCm HIP runtime บนเครื่องขุด [คู่มือ GPU AMD](/th/blog/mine-blocknet-amd-gpu/) อธิบายสิ่งที่การ์ดเหล่านี้ต้องใช้
+
+ในการเริ่มครั้งแรก seine จะปรับจูนตัวเองให้เข้ากับ GPU แต่ละตัวสักครู่ก่อน hashrate จะปรากฏ แล้วบันทึกผลไว้เพื่อให้การเริ่มครั้งต่อไปแฮชได้ภายในไม่กี่วินาที หากคุณใช้การรีสตาร์ตเมื่อ hashrate ต่ำของ watchdog ใน HiveOS ให้ตั้งเวลาเกิน 10 นาที เพื่อไม่ให้ตัดการปรับจูนครั้งแรกกลางคัน
+
+## เพิ่มการขุดด้วย CPU หรือการตั้งค่าอื่นอย่างไร?
+
+สิ่งที่คุณใส่ใน **Extra config arguments** ของ HiveOS หรือท้ายอาร์กิวเมนต์ของ profile mmpOS จะส่งถึง seine ตามที่เขียนและมีผลเหนือค่าเริ่มต้นของแพ็กเกจ หากต้องการขุดด้วย CPU ของเครื่องขุด GPU ด้วย ให้ระบุทั้งสอง backend และจำนวนเธรดที่พอดีกับ RAM ที่เหลือ หนึ่งเธรดต่อ 2 GB โดยเหลือให้ระบบอย่างน้อย 2 GB:
+
+```text
+--backend nvidia,cpu --threads 2
+```
+
+ใช้ `amd,cpu` บนเครื่องขุด AMD หรือ `nvidia,amd,cpu` บนเครื่องผสม หากไม่ใส่ `--threads` seine จะกำหนดและปรับจูนเธรด CPU ตาม RAM ที่ว่างเอง อาร์กิวเมนต์ที่มีประโยชน์อื่น:
+
+| อาร์กิวเมนต์ | ผล |
+|---|---|
+| `--backend nvidia --nvidia-devices 0,1,3` | ขุดบน GPU NVIDIA บางตัวเท่านั้น |
+| `--nvidia-max-lanes 4` | ใช้หน่วยความจำวิดีโอน้อยลงบน GPU NVIDIA แต่ละตัว |
+
+แพ็กเกจตั้งค่าการเชื่อมต่อแดชบอร์ด บันทึกแบบข้อความธรรมดา และไดเรกทอรีข้อมูลให้คุณ ให้คง `--api-bind`, `--api-cookie` และ `--api-token` ตามที่แพ็กเกจตั้งไว้ เพราะแดชบอร์ดอ่านสถิติของ seine ผ่านค่าเหล่านี้ [คู่มือการตั้งค่า](/th/blog/configure-seine-miner/) อธิบายตัวเลือกอื่นของ seine
+
+## อัปเกรด seine บนระบบปฏิบัติการสำหรับขุดอย่างไร?
+
+บน HiveOS และ mmpOS รุ่นใหม่มาทางแพ็กเกจ เมื่อมีรุ่นใหม่กว่า seine จะบันทึกการแจ้งเตือนไว้ เปลี่ยนรุ่นใน Installation URL หรือใน URL ดาวน์โหลดของ profile mmpOS เป็นรุ่นใหม่ แล้วนำ flight sheet หรือ profile ไปใช้อีกครั้ง ระบบปฏิบัติการสำหรับขุดจะดาวน์โหลดแพ็กเกจใหม่ และ seine เก็บผลการปรับจูนและการตั้งค่าไว้ในไดเรกทอรีข้อมูล เครื่องขุดจึงกลับสู่ hashrate เต็มภายในไม่กี่วินาที
+
+หากเครื่องขุดของคุณใช้แพ็กเกจ v0.3.0 ให้เปลี่ยน flight sheet หรือ profile เป็นแพ็กเกจ v0.3.1 สคริปต์เปิดใช้งานของแพ็กเกจก็ได้รับการอัปเดตด้วย
+
+## ดู share และการจ่ายได้ที่ไหน?
+
+แดชบอร์ดของระบบปฏิบัติการสำหรับขุดแสดง hashrate และ share ของแต่ละเครื่อง สำหรับงานที่นับแล้ว ยอดคงเหลือ และการจ่าย ให้ค้นหาที่อยู่ของคุณบน [bntpool.com](https://bntpool.com/stats) เครื่องขุดแต่ละเครื่องแสดงตามชื่อ worker ของ HiveOS หรือชื่อ rig ของ mmpOS และ[คู่มือติดตามเครื่องขุด](https://bntpool.com/blog/th/track-your-miner-on-bntpool/)อธิบายหน้าสถิติ บันทึกทั้งหมดอยู่ใน miner log ของระบบปฏิบัติการสำหรับขุด บน HiveOS คือ `/var/log/miner/custom/seine-hiveos.log`
+
+<CTA target="seine" title="รับแพ็กเกจ seine สำหรับระบบปฏิบัติการขุด" text="ทุกรุ่นมีแพ็กเกจ HiveOS และ mmpOS วางลิงก์เดียวใน flight sheet หรือ profile แล้วเครื่องขุดของคุณจะขุด Blocknet" />

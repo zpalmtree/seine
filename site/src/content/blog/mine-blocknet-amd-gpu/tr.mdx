@@ -1,0 +1,96 @@
+---
+title: 'AMD ekran kartıyla Blocknet madenciliği nasıl yapılır'
+description: 'seine ile AMD Radeon RX 6000, RX 7000, RX 9000 ve Radeon PRO kartlarda Blocknet kazın. Windows veya Linux kurun, kartları seçin ve her GPU''nun kazdığını doğrulayın.'
+tags: ['Madencilik rehberi', 'AMD', 'Radeon', 'GPU']
+sourceHash: '60f795ed50a7'
+translation: draft
+faq:
+  - q: 'Hangi AMD ekran kartları Blocknet kazabilir?'
+    a: 'seine; AMD Radeon RX 6000, RX 7000 ve RX 9000 kartlarda ve aynı yongalar üzerine kurulu Radeon PRO kartlarda, Windows x86_64 ve Linux x86_64 üzerinde kazar. Her harici AMD kartı kendisi bulur ve CPU ile birlikte onda kazar. Tümleşik Radeon grafikleri, --backend amd eklemediğiniz sürece kapalı kalır.'
+  - q: 'Windows''ta AMD GPU madenciliği için ne kurmam gerekir?'
+    a: 'Yalnızca AMD grafik sürücüsü, Adrenalin veya Radeon PRO. Sürücü, seine''in kullandığı HIP çalışma zamanını içerir ve sürüm dosyası RX 6000, RX 7000 ve RX 9000 kartlar için GPU kernellerini zaten barındırır. HIP SDK''ya veya başka bir indirmeye ihtiyacınız yoktur.'
+  - q: 'Linux''ta AMD GPU madenciliği için ne kurmam gerekir?'
+    a: 'Güncel dağıtımlarda bulunan amdgpu çekirdek sürücüsü ve AMD''nin ROCm HIP çalışma zamanı: hip-runtime-amd paketi veya tam ROCm kurulumu. Kullanıcınızın ayrıca GPU aygıt dosyalarına erişimi olmalıdır; bu, çoğu dağıtımda render ve video gruplarına katılmak demektir.'
+  - q: 'seine aynı bilgisayarda AMD ve NVIDIA kartlarda kazabilir mi?'
+    a: 'Evet. Backend seçeneği olmadan seine CPU''da ve bulduğu her NVIDIA kartında ve harici AMD kartında kazar. CPU''yu boş bırakmak için --backend nvidia,amd ile başlatın. Her kartın Devices panelinde kendi satırı vardır, böylece her GPU''yu ayrı ayrı kontrol edebilirsiniz.'
+---
+
+seine, Blocknet'i CPU'nuzla birlikte AMD Radeon ekran kartlarında kazar. Bu rehber Windows ve Linux'ta neyin kurulacağını, kartların nasıl seçileceğini, her GPU'nun hash hesapladığının nasıl doğrulanacağını ve bir kart görünmüyorsa neyin kontrol edileceğini anlatır. seine v0.3.1'i açıklar.
+
+## seine hangi AMD kartlarını destekler?
+
+<Answer>
+seine, AMD Radeon RX 6000, RX 7000 ve RX 9000 kartlarda ve aynı RDNA2, RDNA3 ve RDNA4 yongaları üzerine kurulu Radeon PRO kartlarda kazar. Windows x86_64 ve Linux x86_64 üzerinde çalışır. Her harici AMD kart kendiliğinden seçilir ve hiçbir ayar değiştirmeden CPU ile birlikte kazar.
+</Answer>
+
+Her kart birkaç lane ile kazar; her lane'de bir hash işlenir. Bir lane yaklaşık 2 GB video belleği gerektirir, RDNA2, RDNA3 ve RDNA4'te biraz daha az; bu yüzden daha fazla belleği olan kartlar aynı anda daha fazla lane çalıştırır. 16 GB'lık bir kart yaklaşık 9 lane çalıştırır. seine bunu başlangıçta boş olan belleğe göre belirler, yani sizin hesaplamanız gerekmez.
+
+Ryzen işlemcilerdeki tümleşik Radeon grafikleri varsayılan olarak kapalıdır. İsterseniz `--backend amd` ile ekleyebilirsiniz.
+
+## Windows'ta AMD GPU madenciliği nasıl kurulur?
+
+Kartınız için güncel AMD grafik sürücüsünü, Radeon RX kartlar için Adrenalin'i veya PRO kartlar için Radeon PRO sürücüsünü, [AMD'nin sürücü sayfasından](https://www.amd.com/en/support/download/drivers.html) kurun. Sürücü, seine'in kullandığı HIP çalışma zamanını içerir ve sürüm dosyası RX 6000, RX 7000 ve RX 9000 kartlar için hazır GPU kernelleri taşır. Başka bir şeye gerek yoktur.
+
+`seine-windows-x86_64.zip` dosyasını [indirme bölümünden](/tr/#download) indirin, arşivin tamamını yazılabilir bir klasöre çıkarın ve başlatın:
+
+```powershell
+.\seine.exe
+```
+
+İlk çalıştırmada ödeme adresinizi yapıştırın ve bntpool.com'u kabul etmek için Enter'a basın. [Windows kurulum rehberi](/tr/blog/mine-blocknet-on-windows/) indirme ve çıkarma işlemini adım adım anlatır.
+
+## Linux'ta AMD GPU madenciliği nasıl kurulur?
+
+<Answer>
+Güncel dağıtımlarda bulunan amdgpu çekirdek sürücüsünü ve AMD'nin ROCm HIP çalışma zamanını kurun: hip-runtime-amd paketi veya tam ROCm kurulumu. seine'in GPU'yu açabilmesi için kullanıcınızı render ve video gruplarına ekleyin, yeniden oturum açın ve ardından Linux x86_64 seine arşivini başlatın. seine AMD kartlarınızı kendisi bulur.
+</Answer>
+
+1. **Çalışma zamanını kurun.** Dağıtımınız için AMD'nin ROCm deposunu ekleyin ve `hip-runtime-amd` paketini veya zaten kullanıyorsanız tam ROCm kurulumunu yükleyin. AMD'nin [ROCm kurulum rehberi](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/) desteklenen dağıtımları listeler.
+2. **Kullanıcınıza GPU erişimi verin.** seine `/dev/kfd` ve `/dev/dri/renderD*` dosyalarını açar:
+
+   ```bash
+   sudo usermod -aG render,video $USER
+   ```
+
+   Yeni grupların geçerli olması için oturumu kapatıp yeniden açın.
+3. **seine'i başlatın.** `seine-linux-x86_64.tar.gz` dosyasını [indirme bölümünden](/tr/#download) indirin, çıkarın ve çalıştırın:
+
+   ```bash
+   ./seine
+   ```
+
+hipRTC kuruluysa seine başlangıçta kernelini tam olarak kartınıza göre derler. RX 6000, RX 7000 ve RX 9000 kartlar, sürüme gömülü kernelleri kullanarak onsuz da çalışır. [Linux madencilik rehberi](/tr/blog/mine-blocknet-on-linux/) arşivi ve sistem gereksinimlerini anlatır.
+
+RX 7000 ve Radeon PRO W7000 kartlarda seine root olarak çalıştığında kazarken kartın güç seviyesini `high` yapar ve çıkarken önceki seviyeyi geri koyar. Root olmadan aynı işi yapan tek satırlık komutu yazdırır, böylece komutu kendiniz uygulayabilirsiniz.
+
+## Hangi kartların kazacağını nasıl seçersiniz?
+
+CPU'da ve her harici AMD kartta kazmak için backend seçeneğini ayarlamayın. GPU'larda kazmaya devam edip CPU'yu boş bırakmak için `amd` seçin:
+
+```bash
+./seine --backend amd
+```
+
+Tek bir kartta kazıp CPU madenciliğini sürdürmek için iki backend'i ve kartın dizinini seçin:
+
+```bash
+./seine --backend cpu,amd --amd-devices 0
+```
+
+`--amd-devices 0,1` iki kart seçer. Hem NVIDIA hem AMD kartları olan bir bilgisayarda `--backend nvidia,amd` CPU olmadan hepsinde kazar. Aynı karttaki bir oyun veya başka uygulamalar için video belleği bırakmak isterseniz lane sayısını `--amd-max-lanes 2` ile sınırlayın. [Ayarlar rehberi](/tr/blog/configure-seine-miner/) bu seçenekleri her başlangıç için nasıl saklayacağınızı gösterir.
+
+## AMD GPU'nun kazdığını nasıl doğrularsınız?
+
+AMD kartlar, CPU zaten kazarken arka planda başlar. Her kartın Devices panelinde kendi satırı vardır, `amd#1`, `amd#2` ve devamı; günlük de kartın çevrimiçi olduğunu lane sayısıyla bildirir, örneğin `amd#1: online (initialized in background, 9 lanes)`. Satır ardından kartın anlık ve ortalama hash gücünü gösterir.
+
+Mining panelindeki kabul edilen paylar, havuzun işinizi hesabınıza yazdığını doğrular. [Panel rehberi](/tr/blog/seine-dashboard-explained/) her paneli açıklar; cihazlarınızı bntpool.com'da [madenci takip rehberiyle](https://bntpool.com/blog/tr/track-your-miner-on-bntpool/) izleyebilirsiniz.
+
+## Bir AMD kart görünmüyorsa neyi kontrol etmelisiniz?
+
+- **Sürücüyü ve çalışma zamanını kontrol edin.** Windows'ta AMD sürücüsünü kurun veya güncelleyin. Linux'ta `hip-runtime-amd` paketini kurun ve kullanıcınızın `render` ve `video` gruplarında olduğunu kontrol edin. Çalışma zamanı olmadan seine CPU'da kazar; `--backend amd` ile de başlangıçta eksik çalışma zamanının adını verir.
+- **Komutunuzu kontrol edin.** `--backend cpu` yalnızca işlemcide kazar. Varsayılan komutu kullanın veya backend listesine `amd` ekleyin. `--amd-devices` ayarladıysanız o dizinin var olduğunu kontrol edin.
+- **Sürücü güncellemesinden sonra amd'yi kendiniz belirtin.** AMD çalışma zamanı seine'i art arda iki kez kapatırsa seine AMD kartları kendiliğinden seçmeyi bırakır ve geri kalan donanımda kazmaya devam eder, ardından bir sonraki güncellemesinden sonra kartları yeniden dener. Kartları hemen yeniden denemek için seine'i bir kez `--backend cpu,amd` ile başlatın.
+
+[seine AMD rehberi](https://github.com/zpalmtree/seine/blob/master/docs/guides/amd.md) tüm gereksinimleri içerir; madencilik işletim sistemi kullanıcıları her sürümden [HiveOS](https://github.com/zpalmtree/seine/blob/master/docs/guides/hiveos.md) veya [mmpOS](https://github.com/zpalmtree/seine/blob/master/docs/guides/mmpos.md) paketini kurabilir.
+
+<CTA target="seine" title="AMD GPU madenciliği için seine'i indirin" text="Windows veya Linux x86_64 arşivini seçin; seine CPU'nuzda ve bulduğu her Radeon kartta kazsın." />

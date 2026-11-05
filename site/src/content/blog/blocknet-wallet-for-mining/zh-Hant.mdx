@@ -8,11 +8,11 @@ faq:
   - q: 'Blocknet 復原助記詞有幾個單字？'
     a: 'Blocknet 復原助記詞共 12 個單字。在命令列錢包中，seed 指令會在顯示警告並要求輸入錢包密碼後顯示助記詞。請把這些單字寫在紙上並離線保存。憑這 12 個單字，即使錢包檔案與密碼都遺失了，import 指令也能在任何電腦上重建你的錢包。'
   - q: 'bntpool.com 的收益什麼時候入帳？'
-    a: '礦池找到的區塊需要 60 個確認才會支付其獎勵，依 Blocknet 五分鐘的出塊時間約為五小時。當你已確認的礦池餘額達到 0.1 BNT 時，礦池會把它發送到你的地址。這筆支付在歷史紀錄中顯示為一般交易，經過 10 個確認（約 50 分鐘）後即可花費。'
+    a: '礦池找到的區塊需要 60 個確認才會支付其獎勵，依 Blocknet 五分鐘的出塊時間約為五小時。當你已確認的礦池餘額達到 1 BNT 時，礦池會把它發送到你的地址。這筆支付在歷史紀錄中顯示為一般交易，經過 10 個確認（約 50 分鐘）後即可花費。'
   - q: '可以在多台礦機上使用同一個地址嗎？'
     a: '可以。每台執行 seine 的機器都可以挖到同一個地址或 Blocknet ID 短名稱，bntpool.com 會把它們的份額計入同一個餘額。礦池的統計頁面會在你的地址下列出每台已連線的機器。錢包及其復原助記詞始終留在你自己的電腦上。'
-sourceHash: '9f4ecc0f989f'
-translation: reviewed
+sourceHash: 'd01002f3db3c'
+translation: draft
 ---
 
 挖 Blocknet 需要一個接收獎勵的地址，官方錢包幾分鐘內就能為你產生一個。本指南介紹如何用命令列錢包或桌面錢包建立錢包、備份復原助記詞、找到要貼到 seine 中的地址，以及在 bntpool.com 向你支付時查看餘額。
@@ -151,7 +151,7 @@ xattr -cr /Applications/blocknet.app
 
 ## 挖礦收益如何顯示在錢包中？
 
-bntpool.com 會在區塊成熟後支付獎勵。礦池找到的區塊需要 60 個確認，依 Blocknet 五分鐘的出塊時間約為五小時。當你已確認的餘額達到 0.1 BNT 的最低支付額時，礦池會以一筆一般 Blocknet 交易把它發送到你的地址。
+bntpool.com 會在區塊成熟後支付獎勵。礦池找到的區塊需要 60 個確認，依 Blocknet 五分鐘的出塊時間約為五小時。當你已確認的餘額達到 1 BNT 的最低支付額時，礦池會以一筆一般 Blocknet 交易把它發送到你的地址。
 
 在錢包中，查看 `balance`（或 `bal`）：
 
@@ -170,4 +170,4 @@ bntpool.com 會在區塊成熟後支付獎勵。礦池找到的區塊需要 60 �
 
 剛開始挖礦？[Blocknet 挖礦指南](/zh-hant/blog/how-to-mine-blocknet/)介紹了如何下載 seine、選擇執行緒數量以及在 bntpool.com 上可以期待什麼。
 
-<CTA target="pool" title="挖礦到你的新地址" text="把你的 Blocknet 地址貼到 seine 中，接受 bntpool.com，餘額達到 0.1 BNT 後即可看到收益支付到你的錢包。" />
+<CTA target="pool" title="挖礦到你的新地址" text="把你的 Blocknet 地址貼到 seine 中，接受 bntpool.com，餘額達到 1 BNT 後即可看到收益支付到你的錢包。" />

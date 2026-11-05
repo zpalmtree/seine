@@ -11,7 +11,7 @@ faq:
     a: 'Sí. Las versiones x86 de seine incluyen un kernel portable que funciona en cualquier procesador x86 de 64 bits, junto con kernels AVX2 y AVX-512 para los chips que los admiten. seine comprueba qué conjuntos de instrucciones admite tu procesador y elige el kernel adecuado, y compara kernels mientras mina en los chips que tienen tanto AVX2 como AVX-512.'
   - q: '¿Cuánta electricidad gasta minar en un PC antiguo?'
     a: 'Depende de la máquina. Mídelo con un medidor de consumo de enchufe mientras seine funciona; luego multiplica los vatios por 24 y divide entre 1000 para obtener los kilovatios hora al día. Multiplica eso por tu tarifa eléctrica para saber el coste diario y compáralo con las monedas que esperas obtener al día.'
-sourceHash: 024eb1ee2b56
+sourceHash: e94745a9d6b9
 translation: reviewed
 ---
 
@@ -105,7 +105,7 @@ La [guía de minería paso a paso](/es/blog/how-to-mine-blocknet/) cubre los mis
 
 ## ¿Por qué minar en un pool con una máquina pequeña?
 
-Un pool te paga por tu parte del trabajo en cada bloque que encuentra, así que a una máquina pequeña se le paga con cada bloque del pool en lugar de tener que esperar a encontrar un bloque entero por sí misma. La guía sobre [cómo funciona la minería de criptomonedas](/es/blog/how-crypto-mining-works/) explica los pools y los shares con más detalle. En bntpool.com, las recompensas se reparten entre los shares enviados en las seis horas anteriores a cada bloque, y tu saldo se paga cuando llega a 0,1 BNT. Puedes seguir tu tasa de hash y tu saldo buscando tu dirección o tu `@name` en [bntpool.com](https://bntpool.com).
+Un pool te paga por tu parte del trabajo en cada bloque que encuentra, así que a una máquina pequeña se le paga con cada bloque del pool en lugar de tener que esperar a encontrar un bloque entero por sí misma. La guía sobre [cómo funciona la minería de criptomonedas](/es/blog/how-crypto-mining-works/) explica los pools y los shares con más detalle. En bntpool.com, las recompensas se reparten entre los shares enviados en las seis horas anteriores a cada bloque, y tu saldo se paga cuando llega a 1 BNT. Puedes seguir tu tasa de hash y tu saldo buscando tu dirección o tu `@name` en [bntpool.com](https://bntpool.com).
 
 Para estimar tu producción, usa la tasa de hash de la red que muestra el panel de bntpool.com. Con bloques de cinco minutos, Blocknet encuentra 288 bloques al día, así que tu parte diaria esperada de las monedas nuevas de la red es 288 × (tus H/s ÷ H/s de la red) × la recompensa de bloque, que baja cada mes.
 

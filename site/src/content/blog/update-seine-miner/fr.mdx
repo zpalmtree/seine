@@ -1,31 +1,47 @@
 ---
 title: 'Mettre à jour son mineur Blocknet'
-description: 'Mettez à jour le mineur seine pour Blocknet, conservez vos réglages, vérifiez le téléchargement officiel et confirmez la connexion et les shares acceptées.'
+description: 'Gardez le mineur seine pour Blocknet à jour : comment les mises à jour automatiques installent les nouvelles versions, comment mettre à jour à la main et vérifier que la nouvelle version mine.'
 tags: ['Guide de minage', 'seine', 'Mises à jour']
 faq:
   - q: 'seine installe-t-il automatiquement les mises à jour ?'
-    a: 'Le vérificateur annonce les nouvelles versions dans le tableau de bord et le journal. Vous choisissez quand les télécharger et les installer. Vérifiez l''archive officielle, arrêtez le mineur, remplacez les fichiers de l''application et redémarrez avec le même répertoire de données et les mêmes options.'
+    a: 'Oui, depuis la v0.3.0. Quand une nouvelle version sort, le tableau de bord lance un compte à rebours de 60 secondes pendant que le minage continue, puis seine vérifie le téléchargement signé, s’arrête proprement et redémarre sur la nouvelle version avec les mêmes réglages. Appuyez sur u pour mettre à jour tout de suite, sur s pour ignorer cette version, ou lancez seine avec --no-auto-update pour mettre à jour à la main.'
   - q: 'Quels fichiers conservent mes réglages ?'
     a: 'Par défaut, la configuration se trouve dans seine-data/seine.config.json, relativement au dossier de lancement. data-dir modifie cet emplacement. Conservez le répertoire de données ainsi que le script ou la définition du service : les options de backend et de threads sont distinctes des paramètres de connexion enregistrés.'
   - q: 'Pourquoi l''adresse est-elle redemandée après la mise à jour ?'
     a: 'Vérifiez le répertoire de travail et data-dir. Un lancement depuis un nouveau dossier peut faire chercher la configuration ailleurs. Arrêtez cette instance, retrouvez le répertoire de données initial et redémarrez avec le bon chemin. Vérifiez l''adresse et le pool avant de reprendre le minage.'
-sourceHash: '1d2a2deba793'
+sourceHash: '37fa2d9966c0'
 translation: draft
 ---
 
-Mettez à jour seine en conservant la connexion au pool et les options qui fonctionnent déjà. Ce guide s'appuie sur la version publique v0.2.36 : préparation, remplacement et vérification. Pour une première installation, consultez les guides [Windows](/fr/blog/mine-blocknet-on-windows/), [Linux](/fr/blog/mine-blocknet-on-linux/) ou [Mac](/fr/blog/mine-blocknet-on-mac/).
+Gardez seine sur la dernière version avec la connexion au pool et les options de lancement qui fonctionnent déjà sur votre machine. Ce guide suit la version publique v0.3.1 : le fonctionnement des mises à jour automatiques, ce qu'il faut faire une fois si vous venez d'une version antérieure et la mise à jour à la main. Pour une première installation, consultez les guides [Windows](/fr/blog/mine-blocknet-on-windows/), [Linux](/fr/blog/mine-blocknet-on-linux/) ou [Mac](/fr/blog/mine-blocknet-on-mac/).
 
 ## Comment mettre à jour le mineur seine ?
 
 <Answer>
-Téléchargez et vérifiez l'archive officielle de votre système, arrêtez le mineur, conservez son répertoire de données et remplacez les fichiers de l'application. Relancez avec le même répertoire de travail et les mêmes arguments. Vérifiez la version, la destination des paiements, le pool et les shares acceptées avant de passer à une autre machine.
+Laissez seine tourner. Il recherche une nouvelle version au démarrage puis toutes les 12 heures, lance un compte à rebours de 60 secondes dans l'en-tête du tableau de bord tout en continuant de miner, puis installe la version signée et redémarre avec les mêmes arguments et réglages. Pour mettre à jour à la main, arrêtez seine, remplacez ses fichiers par ceux de l'archive officielle et relancez-le de la même façon.
 </Answer>
+
+## Comment fonctionnent les mises à jour automatiques ?
+
+Quand une version plus récente sort, l'en-tête affiche `update vX.Y.Z available`, le journal renvoie vers la version, puis l'en-tête lance un compte à rebours : `updating to vX.Y.Z in 42s`. Le minage continue pendant le compte à rebours. Appuyez sur `u` pour mettre à jour tout de suite, ou sur `s` pour ignorer cette version ; seine mémorise ce choix dans son répertoire de données et propose la version suivante comme d'habitude.
+
+Après le compte à rebours, seine vérifie la signature de la version, s'assure que le nouvel exécutable démarre et seulement ensuite remplace l'ancien. Il arrête proprement le minage et redémarre avec les mêmes arguments, et le nouveau tableau de bord journalise `updated to seine vX.Y.Z`. La nouvelle version démarre sur votre réglage enregistré et ne teste que ce que la version a changé : elle retrouve vite sa pleine vitesse.
+
+Si un pool envoie un travail qui nécessite une version plus récente, par exemple lors d'une mise à niveau du réseau, seine met le minage en pause et installe la mise à jour immédiatement, même une version que vous aviez ignorée. Passez `--no-auto-update` pour ne garder que l'annonce, ou `--disable-update-check` pour désactiver la vérification. Les versions que vous compilez vous-même affichent l'annonce et vous laissent faire la mise à jour.
+
+## Que faire une fois si vous venez d'une version antérieure ?
+
+La plupart des rigs n'ont besoin de rien. Quelques configurations demandent une étape lors de la première mise à jour automatique vers la v0.3.1 :
+
+- **Linux, depuis la v0.2.45 :** la v0.2.45 installe la nouvelle version puis se ferme. Relancez seine une fois. Les configurations qui relancent seine d'elles-mêmes, comme un service systemd, n'ont besoin de rien.
+- **Windows, depuis la v0.2.45 ou la v0.3.0 :** l'ancienne version lance la nouvelle puis se ferme. Si un script ou un service relance aussi seine quand il se ferme, arrêtez-le une fois après la mise à jour pour qu'un seul seine continue de tourner.
+- **HiveOS et mmpOS, depuis le paquet v0.3.0 :** passez votre flight sheet ou votre profil au paquet v0.3.1 de la [page des versions](https://github.com/zpalmtree/seine/releases). À partir de la v0.3.1, le paquet se met à jour via le système de minage : changez la version dans son URL, comme le montre le [guide HiveOS et mmpOS](/fr/blog/mine-blocknet-hiveos-mmpos/).
 
 <img src="/assets/blog/miner-update.svg" alt="Le paquet de l&#x27;application est remplacé, le dossier de configuration conservé, puis la connexion vérifiée." width="1200" height="675" loading="lazy" />
 
 ## Comment vérifier la version actuelle ?
 
-Exécutez la commande de version sur le programme réellement utilisé. Une ancienne copie dans un autre dossier peut différer de celle lancée par un raccourci ou un service. Notez ensemble le chemin de l'exécutable, le répertoire de travail et les arguments pour rendre la procédure reproductible. Sous Windows, ouvrez PowerShell dans le dossier actuel du mineur :
+L'en-tête du tableau de bord affiche la version en cours d'exécution. Vous pouvez aussi exécuter la commande de version sur le programme réellement utilisé. Une ancienne copie dans un autre dossier peut différer de celle lancée par un raccourci ou un service. Notez ensemble le chemin de l'exécutable, le répertoire de travail et les arguments pour rendre la procédure reproductible. Sous Windows, ouvrez PowerShell dans le dossier actuel du mineur :
 
 ```powershell
 .\seine.exe --version
@@ -37,7 +53,7 @@ Sous Linux ou macOS, ouvrez le terminal dans ce dossier :
 ./seine --version
 ```
 
-Comparez le résultat aux [versions officielles](https://github.com/zpalmtree/seine/releases). seine recherche une nouvelle version au démarrage puis toutes les 12 heures et l'annonce dans le tableau de bord et le journal. L'annonce fournit le lien ; vous choisissez l'installation. Lisez les notes concernant votre plateforme, les bibliothèques d'exécution et les options de lancement.
+Comparez le résultat aux [versions officielles](https://github.com/zpalmtree/seine/releases) et lisez les notes concernant votre plateforme, les bibliothèques d'exécution et les options de lancement.
 
 ## Quels réglages faut-il conserver ?
 
@@ -45,11 +61,11 @@ Par défaut, seine lit `./seine-data/seine.config.json`. `./` désigne le réper
 
 La configuration enregistre le mode de minage, l'adresse de paiement, l'URL du pool et le nom de la machine. Conservez tout le répertoire de données, fichiers de réglage automatique compris. Sauvegardez aussi la commande, le script ou le service : `--backend` et `--threads` sont distincts des paramètres de connexion enregistrés. Les deux éléments préservent votre installation au redémarrage.
 
-## Télécharger et vérifier la nouvelle version
+## Comment mettre à jour seine à la main ?
 
-Utilisez la [page de téléchargement](/fr/#download) ou la version officielle et choisissez l'archive de votre système et architecture CPU. Prenez aussi le fichier indépendant `SHA256SUMS.txt` de la même version. Comparez la somme de l'archive avant de l'extraire dans un dossier séparé. Le [guide de vérification](/fr/blog/antivirus-flags-crypto-miner/) explique la procédure Windows et les avertissements de téléchargement.
+Si vous utilisez `--no-auto-update` ou préférez choisir le moment vous-même, mettez à jour à la main. Utilisez la [page de téléchargement](/fr/#download) ou la version officielle et choisissez l'archive de votre système et architecture CPU. Prenez aussi le fichier indépendant `SHA256SUMS.txt` de la même version. Comparez la somme de l'archive avant de l'extraire dans un dossier séparé. Le [guide de vérification](/fr/blog/antivirus-flags-crypto-miner/) explique la procédure Windows et les avertissements de téléchargement.
 
-Gardez ensemble tous les fichiers livrés. Le paquet Windows contient notamment les bibliothèques NVIDIA à côté de `seine.exe` ; copier seulement l'exécutable peut mélanger les versions. Le [guide NVIDIA](/fr/blog/mine-blocknet-nvidia-gpu/) explique leur installation. La [documentation v0.2.36](https://github.com/zpalmtree/seine/blob/v0.2.36/docs/guides/configuration.md) décrit la configuration sauvegardée et le démarrage utilisés ici.
+Gardez ensemble tous les fichiers livrés. Le paquet Windows contient notamment les bibliothèques NVIDIA à côté de `seine.exe` ; copier seulement l'exécutable peut mélanger les versions. Le [guide NVIDIA](/fr/blog/mine-blocknet-nvidia-gpu/) explique leur installation. La [documentation v0.3.1](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/configuration.md) décrit la configuration sauvegardée, les mises à jour automatiques et le démarrage utilisés ici.
 
 ## Arrêter, sauvegarder et remplacer
 

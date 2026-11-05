@@ -6,10 +6,10 @@ faq:
   - q: 'Blocknet을 채굴하려면 RAM이 얼마나 필요합니까?'
     a: '채굴 스레드 하나당 약 2 GB의 RAM이 필요합니다. Argon2id 해시 하나를 계산할 때마다 2 GiB 메모리 블록 전체를 처리하기 때문입니다. 따라서 16 GB 컴퓨터는 시스템용 여유를 남기고 대략 6~7개의 스레드를 돌릴 수 있습니다. seine가 메모리를 측정해 안전한 스레드 수를 자동으로 고릅니다.'
   - q: 'bntpool.com에서 Blocknet 채굴 보상은 언제 지급됩니까?'
-    a: 'bntpool.com 풀은 6시간 구간의 PPLNS 방식으로 지급합니다. 블록 보상은 해당 블록 위에 60개 블록이 쌓인 뒤(5분 블록 기준 약 5시간)에 지급할 수 있으며, 잔액이 0.1 BNT에 도달하면 전송됩니다. 첫 지급은 첫 셰어가 승인되고 몇 시간 뒤로 예상하면 됩니다.'
+    a: 'bntpool.com 풀은 6시간 구간의 PPLNS 방식으로 지급합니다. 블록 보상은 해당 블록 위에 60개 블록이 쌓인 뒤(5분 블록 기준 약 5시간)에 지급할 수 있으며, 잔액이 1 BNT에 도달하면 전송됩니다. 첫 지급은 첫 셰어가 승인되고 몇 시간 뒤로 예상하면 됩니다.'
   - q: 'CPU와 GPU로 동시에 Blocknet을 채굴할 수 있습니까?'
     a: '네. Windows와 Linux에서 seine는 컴퓨터의 모든 CPU 코어와 모든 NVIDIA 그래픽 카드로 동시에 채굴하며, 두 해시레이트가 합산됩니다. 실행 중에 프로세서와 각 카드를 따로 튜닝하므로 설정을 바꾸지 않아도 모든 하드웨어의 성능을 최대한 끌어냅니다.'
-sourceHash: bff032ea0960
+sourceHash: 42d41a1c403b
 translation: draft
 ---
 
@@ -49,7 +49,7 @@ seine는 먼저 수령 주소나 `@shortname`을 묻고, 이어서 풀을 묻습
 
 ## 지급까지 얼마나 걸립니까?
 
-bntpool.com 풀은 PPLNS 방식을 사용합니다. 각 블록의 보상은 그 블록이 발견되기 전 6시간 동안 제출된 셰어에 나뉘어 돌아갑니다. 보상은 해당 블록 위에 60개 블록이 쌓여야 사용할 수 있으며, Blocknet의 5분 블록 시간 기준으로 약 5시간입니다. 컨펌된 잔액이 0.1 BNT에 도달하면 풀이 주소로 전송합니다.
+bntpool.com 풀은 PPLNS 방식을 사용합니다. 각 블록의 보상은 그 블록이 발견되기 전 6시간 동안 제출된 셰어에 나뉘어 돌아갑니다. 보상은 해당 블록 위에 60개 블록이 쌓여야 사용할 수 있으며, Blocknet의 5분 블록 시간 기준으로 약 5시간입니다. 컨펌된 잔액이 1 BNT에 도달하면 풀이 주소로 전송합니다.
 
 [bntpool.com](https://bntpool.com)에서 주소를 조회하면 해시레이트, 셰어, 잔액을 확인할 수 있습니다. 아직 컨펌되지 않은 블록의 보상은 변경될 수 있으므로 풀에서 따로 표시합니다.
 
@@ -78,10 +78,10 @@ bntpool.com 풀은 PPLNS 방식을 사용합니다. 각 블록의 보상은 그 
 
 ## Blocknet을 솔로 채굴할 수 있습니까?
 
-네. 동기화된 Blocknet 노드를 직접 운영한다면 `./seine --mode daemon`으로 seine를 실행하세요. 그러면 풀 대신 노드에 직접 연결해 채굴합니다. 찾은 블록은 모두 본인의 것이 되지만, 블록 하나를 통째로 찾았을 때만 보상을 받으므로 대부분은 풀에서 시작합니다. 설정 방법은 [솔로 채굴 가이드](https://github.com/zpalmtree/seine/blob/master/docs/guides/solo-mining.md)에서 설명합니다.
+네, 두 가지 방법이 있습니다. 가장 간단한 방법은 bntpool.com에서 솔로 채굴하는 것입니다. `./seine --address solo:YOUR_ADDRESS`처럼 주소 앞에 `solo:`를 붙이면 노드를 운영하지 않아도 장비가 찾은 각 블록의 전체 보상을 풀이 지급합니다. 설정 방법은 [bntpool.com에서 솔로 채굴하기](https://bntpool.com/blog/ko/solo-mine-blocknet-on-bntpool/)에서 설명합니다. 동기화된 Blocknet 노드를 직접 운영한다면 [솔로 채굴 가이드](https://github.com/zpalmtree/seine/blob/master/docs/guides/solo-mining.md)에서 설명하듯 `./seine --mode daemon`으로 노드에 직접 연결해 채굴할 수도 있습니다. 솔로 보상은 블록 단위로 들어오므로 네트워크에서 큰 비중을 차지하는 채굴자에게 적합합니다.
 
 <Note>
-[blocknetcrypto.com](https://blocknetcrypto.com/#faraday)에 따르면 Blocknet은 2027년 2월 16일 무렵 Faraday라는 네트워크 업그레이드를 계획하고 있습니다. 이 업그레이드에서 작업 증명이 바뀔 예정이므로 seine를 최신 상태로 유지하세요. seine는 시작할 때와 12시간마다 새 릴리스를 확인합니다.
+[blocknetcrypto.com](https://blocknetcrypto.com/#faraday)에 따르면 Blocknet은 2027년 2월 16일 무렵 Faraday라는 네트워크 업그레이드를 계획하고 있습니다. 이 업그레이드에서 작업 증명이 바뀔 예정입니다. seine v0.3.1은 이에 대비되어 있습니다. 풀 채굴은 새 작업 증명으로 자동 전환되며, 자동 업데이트를 켜 두면 seine가 새 릴리스를 설치합니다.
 </Note>
 
 <CTA target="seine" title="seine 다운로드" text="Windows, macOS, Linux용 무료 채굴기입니다. 실행하고 주소를 붙여 넣으면 bntpool.com에서 바로 채굴이 시작됩니다." />

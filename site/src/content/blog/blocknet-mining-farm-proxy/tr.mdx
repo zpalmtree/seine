@@ -1,0 +1,82 @@
+---
+title: 'Blocknet madencilik çiftliğini tek bir proxy üzerinden çalıştırın'
+description: 'Blocknet çiftliğinizi tek bir seine çiftlik proxy''si üzerinden çalıştırın: havuzu ve ödeme adresini tek yerde ayarlayın, cihazları ona yönlendirin, cihaz başına istatistik tutun.'
+tags: ['Madencilik rehberi', 'Çiftlik proxy''si', 'seine', 'Sunucular']
+sourceHash: '043973652634'
+translation: draft
+faq:
+  - q: 'seine çiftlik proxy''si nedir?'
+    a: 'Yerel ağınızdaki tek bir makinede çalışan ve tüm cihazlarınız adına havuza bağlanan bir seine modudur. Her cihaz havuz yerine proxy''ye bağlanır ve işin kendi payını kazar. Havuz tek bir bağlantı görür; havuzu ve yedek havuzları tek yerde ayarlarsınız.'
+  - q: 'Çiftlik proxy''si güçlü bir makine gerektirir mi?'
+    a: 'Hayır. Proxy kazı yapmaz, bu yüzden az CPU ve bellek gerektirir. Cihazlarınızın yerel ağda erişebildiği herhangi bir makinede çalışabilir; örneğin küçük bir sunucuda veya kendi madencisinin yanında cihazlarınızdan birinde.'
+  - q: 'Proxy arkasındaki cihazlar bntpool.com''da yine ayrı görünür mü?'
+    a: 'Evet. bntpool.com payları cihaz başına hesaba yazar; bu yüzden proxy arkasındaki her cihaz, istatistik sayfasında kendi worker adı, kendi hash gücü ve paylarıyla, doğrudan bağlantıdaki gibi görünür. Proxy ayrıca bağlı cihazları ve payları her dakika günlüğe yazar.'
+  - q: 'Tek bir proxy arkasındaki cihazlar farklı cüzdanlara ödeme alabilir mi?'
+    a: 'Evet. Her cihaz giriş yaptığı adrese ödenir; bu yüzden en fazla 16 farklı adrese kazan cihazlar tek bir proxy''yi paylaşabilir. Geçerli bir adres olmadan giriş yapan bir cihaz, proxy''ye --address ile verdiğiniz adrese ödenir.'
+---
+
+Bu rehber, bir Blocknet madencilik çiftliğini tek bir seine çiftlik proxy'si üzerinden nasıl çalıştıracağınızı gösterir. Proxy'yi ağınızdaki bir makinede başlatır, her cihazı ona yönlendirirsiniz ve proxy tüm çiftlik adına bntpool.com'a bağlanır. Havuzu, ödeme adresini ve yedek havuzları tek yerde ayarlarsınız, cihaz başına istatistikler havuzda kalır. seine v0.3.1'i izler.
+
+## Çiftlik proxy'si ne yapar?
+
+<Answer>
+Çiftlik proxy'si, cihazlarınız için yerel bir havuz olarak çalışan seine'dir. Tüm çiftlik için bntpool.com'a bir kez bağlanır ve her cihaza işten kendi payını verir. Havuz tek bir bağlantı görür, her cihaz yine kendi başına kazar ve hesabına yazılır; tüm cihazların havuzunu veya yedek havuzlarını tek yerde değiştirirsiniz.
+</Answer>
+
+Çiftlik proxy'si birkaç cihazdan fazlasını çalıştıran herkese uygundur:
+
+- **Ayarlar için tek yer.** Havuzu, yedek havuzları ve varsayılan ödeme adresini proxy'de ayarlayın; her cihaz bunları alır.
+- **Tek giden bağlantı.** Cihazlar proxy ile yerel ağınız üzerinden konuşur ve proxy yalnızca çiftliğin ihtiyaç duyduğu havuz bağlantılarını açar, genellikle bir veya birkaç tane.
+- **Havuzda cihaz başına istatistikler.** bntpool.com payları cihaz başına hesaba yazar; bu yüzden her cihaz [istatistik sayfasında](https://bntpool.com/stats) yine kendi worker adıyla görünür.
+
+Proxy'nin kendisi kazı yapmaz. Az CPU ve bellek gerektirir, bu yüzden cihazların erişebildiği herhangi bir makinede, cihazlardan birinde bile çalışabilir.
+
+## Proxy nasıl başlatılır?
+
+<Answer>
+seine'i, cihazların bağlanacağı adres ve bağlantı noktasıyla birlikte --proxy-listen ve her zamanki havuz, ödeme adresi ve cihaz adı seçenekleriyle başlatın. Örneğin: ./seine --proxy-listen 0.0.0.0:3333 --pool-url stratum+tcp://bntpool.com:3333 --address YOUR_ADDRESS --pool-worker farm-1. Proxy ardından 3333 numaralı bağlantı noktasında cihazları bekler.
+</Answer>
+
+Proxy'yi çalıştıracak makinede:
+
+```bash
+./seine --proxy-listen 0.0.0.0:3333 \
+        --pool-url stratum+tcp://bntpool.com:3333 \
+        --address YOUR_ADDRESS --pool-worker farm-1
+```
+
+`--proxy-listen` proxy'nin cihazları nerede kabul edeceğini belirler; `0.0.0.0:3333`, 3333 numaralı bağlantı noktasında tüm ağ arayüzlerini dinler. `--address`, geçerli bir adres olmadan giriş yapan her cihaz için kullanılan varsayılan ödeme adresidir. Yedek havuzlar dahil tüm havuz seçenekleri proxy'de çalışır: onları sırayla, virgülle ayırarak yazın; proxy ilk havuz düzelince ona döner. [seine yapılandırma rehberi](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/configuration.md) havuz seçeneklerini anlatır.
+
+Proxy'yi yerel ağınıza bağlayın. Bağlantı noktasına erişebilen herkes onun üzerinden kazabilir; bu yüzden internete açmak yerine `--proxy-listen` içinde bir LAN adresi kullanın veya bağlantı noktasını güvenlik duvarıyla kapatın.
+
+## Cihazlar proxy'ye nasıl yönlendirilir?
+
+Her cihazda proxy'nin yerel adresini havuz olarak kullanın ve cihaza kendi adını verin:
+
+```bash
+./seine --pool-url 192.168.1.10:3333 --address YOUR_ADDRESS --pool-worker rig-07
+```
+
+`192.168.1.10` yerine ağınızdaki proxy makinesinin adresini yazın. Madencilik işletim sistemi çalıştıran cihazlar da aynı şekilde çalışır: [HiveOS ve mmpOS rehberinin](/tr/blog/mine-blocknet-hiveos-mmpos/) gösterdiği gibi proxy'nin adresini HiveOS flight sheet'inin veya mmpOS profilinin havuz URL alanına yazın. seine havuzu cihazın ayarlarıyla birlikte kaydeder, böylece sonraki başlatmalar proxy'ye kendiliğinden bağlanır.
+
+## Proxy arkasındaki cihazlar nasıl ödenir?
+
+Her cihaz, giriş yaptığı tam Blocknet adresine ödenir. Farklı cüzdanlara kazan cihazlar, aynı anda en fazla 16 adresle tek bir proxy'yi paylaşabilir. Adres olmadan veya geçersiz bir adresle giriş yapan bir cihaz, proxy'nin `--address` adresine ödenir.
+
+16 adres kullanımdayken 17. adrese sahip bir cihaz, diğerlerinden biri 10 dakika boyunca hiç cihaza sahip olmayana kadar bekler. Havuz bir cihazın adresini reddederse proxy havuzun nedenini iletir, böylece sorunu o cihazda düzeltebilirsiniz.
+
+Proxy arkasındaki cihazlar bntpool.com'da solo da kazabilir: cihazın adresinin önüne `solo:` koyun, havuz o cihaza bulduğu her bloğun ödülünün tamamını öder. [bntpool.com'da solo madencilik](https://bntpool.com/blog/tr/solo-mine-blocknet-on-bntpool/) solo ödülleri açıklar. Borsaya ödemeler bir yatırma notu (memo) gerektirir ve proxy bunu taşımaz; bu yüzden borsa cihazlarını havuza doğrudan bağlayın.
+
+## Çiftliği nasıl takip edersiniz?
+
+bntpool.com'da her ödeme adresini [istatistik sayfasında](https://bntpool.com/stats) arayın. Proxy arkasındaki her cihaz, doğrudan bağlantılarda olduğu gibi Workers tablosunda kendi cihaz adıyla, hash gücü, payları ve son pay zamanıyla görünür. [Madenci takip rehberi](https://bntpool.com/blog/tr/track-your-miner-on-bntpool/) sayfayı açıklar.
+
+Proxy ayrıca her dakika kendi özetini günlüğe yazar: bağlı cihazlar, kabul edilen ve reddedilen paylar, tahmini hash gücü ve havuz bağlantıları. Her cihazın bağlanıp ayrılışını da kaydeder, böylece bir cihazın düştüğünü bir bakışta görebilirsiniz. Her cihazın kendi seine paneli, [panel rehberinin](/tr/blog/seine-dashboard-explained/) açıkladığı gibi yerel hash gücünü ve paylarını göstermeye devam eder.
+
+## Başka neleri bilmelisiniz?
+
+- **Havuz bağlantıları çiftlikle birlikte artar.** Proxy, her cihazın her yeni blokta iş alması için çiftliğin ihtiyaç duyduğu kadar havuz bağlantısı açar. Çoğu çiftlik için bu bir veya birkaç tanedir; çok büyük çiftlikler ödeme adresi başına 64'e kadar bağlantı alır.
+- **Her cihaz kendi ayarlarını korur.** İş parçacığı sayıları, GPU seçimi ve ayarlama cihazda kalır. [Ayarlar rehberi](/tr/blog/configure-seine-miner/) bunları, [sunucu madenciliği rehberi](/tr/blog/mine-blocknet-on-servers/) ise büyük CPU sunucularını anlatır.
+- **Ağ yükseltmeleri.** Faraday ağ yükseltmesinde proxy, onu desteklemeyen bir seine sürümündeki cihazlardan güncellemelerini, havuzun yaptığı gibi ister.
+
+<CTA target="seine" title="Çiftliğiniz için seine'i indirin" text="Bir seine'i çiftlik proxy'si olarak çalıştırın ve her cihazı ona yönlendirin: havuz ayarları için tek yer, bntpool.com'da cihaz başına istatistikler." />

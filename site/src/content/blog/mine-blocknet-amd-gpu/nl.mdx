@@ -1,0 +1,96 @@
+---
+title: 'Blocknet minen met een AMD-videokaart'
+description: 'Mine Blocknet op AMD Radeon RX 6000, RX 7000, RX 9000 en Radeon PRO met seine. Stel Windows of Linux in, kies kaarten en controleer dat elke GPU hasht.'
+tags: ['Mininghandleiding', 'AMD', 'Radeon', 'GPU']
+sourceHash: '60f795ed50a7'
+translation: draft
+faq:
+  - q: 'Welke AMD-videokaarten kunnen Blocknet minen?'
+    a: 'Seine minet op AMD Radeon RX 6000-, RX 7000- en RX 9000-kaarten en op de Radeon PRO-kaarten met dezelfde chips, op Windows x86_64 en Linux x86_64. Het vindt zelf elke losse AMD-kaart en minet erop naast de CPU. Geïntegreerde Radeon-graphics blijven uit, tenzij je --backend amd toevoegt.'
+  - q: 'Wat moet ik installeren voor AMD-GPU-mining op Windows?'
+    a: 'Alleen de AMD-grafische driver, Adrenalin of Radeon PRO. De driver bevat de HIP-runtime die seine gebruikt, en het releasebestand bevat al de GPU-kernels voor RX 6000-, RX 7000- en RX 9000-kaarten. Je hebt de HIP SDK of andere downloads niet nodig.'
+  - q: 'Wat moet ik installeren voor AMD-GPU-mining op Linux?'
+    a: 'De amdgpu-kerneldriver, die huidige distributies meeleveren, en de ROCm HIP-runtime van AMD, als pakket hip-runtime-amd of als volledige ROCm-installatie. Je gebruiker heeft ook toegang nodig tot de apparaatbestanden van de GPU, wat op de meeste distributies betekent dat je lid wordt van de groepen render en video.'
+  - q: 'Kan seine in één computer op AMD- en NVIDIA-kaarten minen?'
+    a: 'Ja. Zonder backendoptie minet seine op de CPU en op elke NVIDIA-kaart en losse AMD-kaart die het vindt. Start het met --backend nvidia,amd om de CPU vrij te laten. Elke kaart krijgt een eigen rij in het Devices-paneel, zodat je elke GPU apart kunt controleren.'
+---
+
+Seine minet Blocknet op AMD Radeon-videokaarten naast je CPU. Deze gids behandelt wat je installeert op Windows en Linux, hoe je kaarten kiest, hoe je controleert dat elke GPU hasht en wat je nakijkt als een kaart ontbreekt. Hij beschrijft seine v0.3.1.
+
+## Welke AMD-kaarten ondersteunt seine?
+
+<Answer>
+Seine minet op AMD Radeon RX 6000-, RX 7000- en RX 9000-kaarten en op de Radeon PRO-kaarten met dezelfde RDNA2-, RDNA3- en RDNA4-chips. Het draait op Windows x86_64 en Linux x86_64. Elke losse AMD-kaart wordt vanzelf gekozen en minet naast de CPU, zonder instellingen aan te passen.
+</Answer>
+
+Elke kaart minet met meerdere lanes, met één hash in bewerking per lane. Een lane heeft ongeveer 2 GB videogeheugen nodig, iets minder op RDNA2, RDNA3 en RDNA4, dus kaarten met meer geheugen draaien meer lanes tegelijk. Een kaart van 16 GB draait ongeveer 9 lanes. Seine bepaalt dit aan de hand van het vrije geheugen bij het starten, dus je hoeft het niet uit te rekenen.
+
+Geïntegreerde Radeon-graphics in Ryzen-processors staan standaard uit. Je kunt ze toevoegen met `--backend amd` als je dat wilt.
+
+## Hoe stel je AMD-GPU-mining in op Windows?
+
+Installeer de actuele AMD-grafische driver voor je kaart, Adrenalin voor Radeon RX-kaarten of de Radeon PRO-driver voor PRO-kaarten, via de [driverpagina van AMD](https://www.amd.com/en/support/download/drivers.html). De driver bevat de HIP-runtime die seine gebruikt, en het releasebestand bevat kant-en-klare GPU-kernels voor RX 6000-, RX 7000- en RX 9000-kaarten. Meer is niet nodig.
+
+Download `seine-windows-x86_64.zip` uit de [downloadsectie](/nl/#download), pak het hele archief uit in een map waarin je kunt schrijven en start het:
+
+```powershell
+.\seine.exe
+```
+
+Plak bij de eerste start je uitbetalingsadres en druk op Enter om bntpool.com te accepteren. De [Windows-installatiegids](/nl/blog/mine-blocknet-on-windows/) loopt stap voor stap door het downloaden en uitpakken.
+
+## Hoe stel je AMD-GPU-mining in op Linux?
+
+<Answer>
+Installeer de amdgpu-kerneldriver, die huidige distributies meeleveren, en de ROCm HIP-runtime van AMD, als pakket hip-runtime-amd of als volledige ROCm-installatie. Voeg je gebruiker toe aan de groepen render en video zodat seine de GPU kan openen, log opnieuw in en start het seine-archief voor Linux x86_64. Seine vindt je AMD-kaarten vanzelf.
+</Answer>
+
+1. **Installeer de runtime.** Voeg de ROCm-repository van AMD voor je distributie toe en installeer `hip-runtime-amd`, of de volledige ROCm-installatie als je die al gebruikt. De [ROCm-installatiegids](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/) van AMD noemt de ondersteunde distributies.
+2. **Geef je gebruiker toegang tot de GPU.** Seine opent `/dev/kfd` en `/dev/dri/renderD*`:
+
+   ```bash
+   sudo usermod -aG render,video $USER
+   ```
+
+   Log uit en weer in zodat de nieuwe groepen gelden.
+3. **Start seine.** Download `seine-linux-x86_64.tar.gz` uit de [downloadsectie](/nl/#download), pak het uit en voer uit:
+
+   ```bash
+   ./seine
+   ```
+
+Als hipRTC is geïnstalleerd, compileert seine bij het starten zijn kernel precies voor jouw kaart. RX 6000-, RX 7000- en RX 9000-kaarten draaien ook zonder, met de kernels die in de release zijn ingebouwd. De [Linux-mininggids](/nl/blog/mine-blocknet-on-linux/) behandelt het archief en de systeemvereisten.
+
+Op RX 7000- en Radeon PRO W7000-kaarten zet seine, als het als root draait, het vermogensniveau van de kaart op `high` zolang het minet, en zet het vorige niveau terug bij het afsluiten. Zonder root toont het de opdracht van één regel die hetzelfde doet, zodat je die zelf kunt toepassen.
+
+## Hoe kies je welke kaarten minen?
+
+Laat de backendoptie leeg om op de CPU en elke losse AMD-kaart te minen. Kies `amd` om de GPU's te laten minen en de CPU vrij te laten:
+
+```bash
+./seine --backend amd
+```
+
+Kies beide backends en de index van de kaart om op één kaart te minen en CPU-mining te behouden:
+
+```bash
+./seine --backend cpu,amd --amd-devices 0
+```
+
+`--amd-devices 0,1` kiest twee kaarten. In een computer met zowel NVIDIA- als AMD-kaarten minet `--backend nvidia,amd` op alle kaarten zonder de CPU. Beperk de lanes met `--amd-max-lanes 2` om videogeheugen vrij te houden voor een game of andere apps op dezelfde kaart. De [instellingengids](/nl/blog/configure-seine-miner/) laat zien hoe je deze opties voor elke start bewaart.
+
+## Hoe controleer je dat de AMD-GPU minet?
+
+AMD-kaarten starten op de achtergrond terwijl de CPU al minet. Elke kaart krijgt een eigen rij in het Devices-paneel, `amd#1`, `amd#2` enzovoort, en het logboek meldt wanneer hij online komt met zijn aantal lanes, bijvoorbeeld `amd#1: online (initialized in background, 9 lanes)`. De rij toont daarna de huidige en gemiddelde hashrate van de kaart.
+
+Geaccepteerde shares in het Mining-paneel bevestigen dat de pool je werk bijschrijft. De [dashboardgids](/nl/blog/seine-dashboard-explained/) legt elk paneel uit, en met de [gids voor het volgen van je miner](https://bntpool.com/blog/nl/track-your-miner-on-bntpool/) volg je je rigs op bntpool.com.
+
+## Wat controleer je als een AMD-kaart ontbreekt?
+
+- **Controleer de driver en runtime.** Installeer of update op Windows de AMD-driver. Installeer op Linux `hip-runtime-amd` en controleer dat je gebruiker in de groepen `render` en `video` zit. Zonder runtime minet seine op de CPU, en met `--backend amd` noemt het bij het starten de ontbrekende runtime.
+- **Controleer je opdracht.** `--backend cpu` minet alleen op de processor. Gebruik de standaardopdracht of neem `amd` op in de backendlijst. Als je `--amd-devices` hebt ingesteld, controleer dan dat die index bestaat.
+- **Noem amd zelf na een driverupdate.** Als de AMD-runtime seine twee keer achter elkaar afsluit, kiest seine AMD-kaarten niet meer vanzelf en blijft het minen op de rest, en probeert het ze na zijn volgende update opnieuw. Start het één keer met `--backend cpu,amd` om de kaarten meteen opnieuw te proberen.
+
+De [AMD-gids van seine](https://github.com/zpalmtree/seine/blob/master/docs/guides/amd.md) bevat alle vereisten, en gebruikers van een mining-OS kunnen bij elke release het pakket voor [HiveOS](https://github.com/zpalmtree/seine/blob/master/docs/guides/hiveos.md) of [mmpOS](https://github.com/zpalmtree/seine/blob/master/docs/guides/mmpos.md) installeren.
+
+<CTA target="seine" title="Download seine voor AMD-GPU-mining" text="Kies het archief voor Windows of Linux x86_64 en seine minet op je CPU en elke Radeon-kaart die het vindt." />

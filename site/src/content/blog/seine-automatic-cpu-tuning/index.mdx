@@ -1,63 +1,87 @@
 ---
 title: 'How seine automatically tunes CPU mining'
-description: 'Learn how seine tunes CPU threads during Blocknet mining, compares settings, reuses saved results, and adjusts to available RAM while your miner keeps working.'
+description: 'Learn how seine tunes CPU threads and kernels while it mines Blocknet, keeps the lowest thread count that hashes fastest, and stops testing once it is done.'
 date: 2026-10-26
+updated: 2026-11-04
 tags: ['Mining guide', 'CPU tuning', 'seine']
 faq:
   - q: 'Does seine mine while it tunes CPU threads?'
-    a: 'Yes. In v0.2.36, normal CPU mining starts from a compatible saved setting or a hardware-based estimate. The tuner compares thread counts using real mining work. Offline benchmark mode uses a separate tuning process, so its startup sequence should not be used to describe a normal mining session.'
+    a: 'Yes. Seine starts mining at once from the best starting point it knows, then compares thread counts and CPU kernels using real mining work. Every comparison earns shares. Most machines finish within minutes, after which the Tuning row reads done and the thread count stays put.'
   - q: 'Why does the CPU thread count change?'
-    a: 'Automatic tuning tests nearby thread counts and responds to available memory. A change can be a performance trial or a response to RAM pressure. Check the log alongside the thread count. Let the comparison finish before judging the result from a brief hashrate reading.'
+    a: 'While tuning, the thread count moves between two counts as seine measures them, and the Tuning row names the pair and the time left. After tuning it changes only for a reason the log names: a new version that changed something for your CPU, a lasting change in hashrate, or RAM that other programs need.'
   - q: 'Where does seine save CPU tuning results?'
-    a: 'By default, thread tuning results are stored in seine.cpu-autotune.json under the data directory. Kernel choices use the companion file ending in .kernels.json. Compatible results help future runs start. Keep the same data directory, and allow the miner to check whether saved settings still match the current environment.'
+    a: 'In seine.cpu-autotune.json in the data directory, seine-data by default. On the next start seine goes straight back to the saved result and the Tuning row reads done. Keep the same data directory between runs and updates so it can find the file.'
 related: [seine-dashboard-explained, how-much-ram-to-mine-blocknet, huge-pages-blocknet-mining, miner-cpu-usage]
 image: /assets/blog/cpu-autotuning.svg
 ---
 
-Understand what seine is doing when its CPU thread count changes during mining. This guide follows the public v0.2.36 release and explains productive tuning, saved choices and memory adjustments. For installation, start with the [mining guide](/blog/how-to-mine-blocknet/); for the meaning of each panel, use the [dashboard tour](/blog/seine-dashboard-explained/).
+Understand what seine is doing when its CPU thread count changes during mining. This guide follows the public v0.3.1 release and explains how seine finds the fastest settings for your CPU, why it keeps the lowest thread count that gets there, and when it looks again. For installation, start with the [mining guide](/blog/how-to-mine-blocknet/); for the meaning of each panel, use the [dashboard tour](/blog/seine-dashboard-explained/).
 
 ## How does automatic CPU tuning work?
 
 <Answer>
-With CPU tuning enabled, seine starts mining from a compatible saved count or a hardware-based estimate, then compares settings using real mining work. It measures a baseline, tries a candidate and measures the baseline again. Available RAM and configured bounds constrain the search as it learns which settings suit the machine.
+Seine starts mining right away and tunes on real mining work. It compares the CPU kernels your processor can run, then thread counts, measuring the current setting, the candidate, and the current setting again. It keeps the lowest thread count that hashes as fast as the best one, then stops testing until something changes.
 </Answer>
 
 <img src="/assets/blog/cpu-autotuning.svg" alt="A repeated baseline–candidate–baseline comparison leads to a saved setting, with memory availability checked throughout." width="1200" height="675" loading="lazy" />
 
-## Mining starts before the search finishes
+Leave `--threads` unset to use automatic tuning. There is nothing to configure. Seine starts from the best it knows: this machine's saved result, then a starting point for your CPU model, then an estimate from your cores and free RAM. From there it searches in growing steps until more threads stop helping, then narrows down.
 
-Leave `--threads` unset to use automatic thread tuning. During normal mining, seine chooses an initial count within the current resource budget and begins useful work without an offline thread-count sweep. A compatible cache can supply that starting point. A fresh machine starts from the miner's estimate and improves that choice through subsequent comparisons.
+Running the current setting on both sides of each candidate means a change in load, such as a browser tab or a background update, doesn't count for or against the candidate. A candidate that is clearly slower is cut short, so most machines finish within minutes.
 
-Each trial measures completed hashes over elapsed time. New arenas finish an initial hash before their measurement window begins. The baseline–candidate–baseline sequence helps distinguish a setting's effect from changing conditions. Substantial baseline drift, changing memory limits or sustained loss of work can discard a comparison. A short spike on the dashboard is therefore only one observation within a longer decision.
+## What does the Tuning row on the dashboard mean?
 
-## Why can more threads stop helping?
+The dashboard's `Tuning:` row says where tuning stands:
 
-Each active CPU thread uses a large memory arena, and those threads share the machine's memory bandwidth. Adding threads gives the miner more simultaneous work, but the useful result depends on the whole system. The tuner compares aggregate CPU H/s rather than assuming the largest thread count must deliver the highest rate. The [RAM guide](/blog/how-much-ram-to-mine-blocknet/) explains the memory budget.
+| Row | Meaning |
+|---|---|
+| `trying kernels, about 4 min left` | Comparing CPU kernels while mining |
+| `12 vs 16 threads, about 3 min left` | Comparing two thread counts; the count moves between them while seine measures |
+| `update: 12 vs 14 threads, ~2 min` | A new version changed something for your CPU and is testing just that |
+| `done` | Tuned. The thread count stays put unless something changes |
+| `low on RAM, best is 12 threads` | Running fewer threads until RAM is free again |
 
-The default profile is `balanced`. Profiles control tuning policy and runtime defaults; `efficiency` is an explicit choice for a policy that can favor fewer threads. Keep one profile while evaluating a run. Thread count, CPU placement and page backing interact, so a result from another machine or another configuration is a starting reference rather than a setting to copy automatically.
+The log has one line when tuning starts, saying why, and one when it finishes, for example `tuned to 12 threads`. The [dashboard guide](/blog/seine-dashboard-explained/) covers the other panels.
 
-## What happens when other programs need RAM?
+## Why does seine use fewer threads than it could?
 
-The automatic memory budget changes with available resources. Under memory pressure, CPU threads can finish their current hash, park and release their arenas. When sustained headroom returns, the miner can activate available slots and resume exploration. This is useful when the computer also runs other applications: the chosen operating count can follow conditions during the same session.
+Each CPU thread holds a large memory arena, and all threads share the machine's memory bandwidth. Past a certain count, more threads add no hashrate, and they take RAM that your other programs could use. Seine therefore treats any count that matches the fastest one as just as good, and keeps the lowest of them. You get the same hashrate with more memory left free.
 
-A temporary reduction does not have to erase a previously learned higher count. The cache and the active count serve different purposes. On Linux, released explicit HugeTLB arenas return to the reserved huge-page pool; seine does not resize that operating-system pool. Use the [huge-pages guide](/blog/huge-pages-blocknet-mining/) for reservation changes, and distinguish those settings from ordinary free RAM.
+That is why the best count is often below your core or thread total, and why it differs between machines that look alike. Thread count, memory channels and page backing all play a part, so a result from another computer is a reference, not a setting to copy. The [RAM guide](/blog/how-much-ram-to-mine-blocknet/) explains the memory budget per thread.
+
+If you prefer to save power and memory over the last few hashes, `--cpu-profile efficiency` keeps a lower count that is close to the fastest one.
 
 ## Does seine also tune the CPU kernel?
 
-Eligible CPUs can compare supported hashing code paths as well as thread counts. A kernel here means the software implementation of the hash computation. The miner checks the processor's supported instructions and compares eligible paths using repeated mining samples. Kernel and thread-count trials take turns, while memory handling remains active. The [technical tuning guide](https://github.com/zpalmtree/seine/blob/v0.2.36/docs/guides/autotuning.md) describes the release's candidate paths.
+Yes. A kernel here is the software implementation of the hash for a given set of processor instructions. Seine checks which instructions your CPU supports, never tries a kernel it can't run, and skips kernels that don't win on your CPU. It compares the rest while mining, before it settles the thread count. Kernel switches happen between complete hashes, so mining continues and the pool connection stays up.
 
-Automatic CPU changes preserve the pool connection and do not restart GPU backends. Kernel switches happen between complete hashes, keeping the allocated arenas. This behavior differs from manually pressing `+` or `-` in the dashboard: manual changes restart the mining backends, reconnect pool mining and disable automatic CPU adjustment for that run. Use the log to identify which kind of change occurred.
+## When does seine tune again?
+
+Once the row reads `done`, seine runs no scheduled tests. It looks again only when something changes:
+
+- **A new version changes something for your CPU.** The new release starts on your saved result and tests only what changed, such as a new or improved kernel. A version that changes nothing about hashing runs no tests at all.
+- **Hashrate moves for a sustained period,** for example when another program starts or stops using the CPU heavily.
+- **More RAM becomes free** after RAM was what held the thread count back.
+- **The hardware, operating system or CPU limits change,** such as a container's CPU limit.
+
+Each of these writes a log line that says why tuning started. Automatic updates keep your tuning, so updating seine doesn't send it back to the start. The [update guide](/blog/update-seine-miner/) explains how updates work.
+
+## What happens when other programs need RAM?
+
+Seine checks free RAM once per second. When other programs need memory, CPU threads finish their current hash, park and release their arenas, and the row shows `low on RAM`. When the memory is free again, the threads come back. The best count it learned stays saved, so a short squeeze doesn't erase it.
+
+On Linux, released explicit HugeTLB arenas return to the reserved huge-page pool; seine doesn't resize that pool. The [huge-pages guide](/blog/huge-pages-blocknet-mining/) covers reserving huge pages.
 
 ## How are saved tuning results reused?
 
-The default thread cache is `seine.cpu-autotune.json` under `--data-dir`; the companion kernel cache is `seine.cpu-autotune.json.kernels.json`. These hold learned choices separately from the saved pool connection settings. Keep a consistent data directory between launches so the miner can find them. The [update guide](/blog/update-seine-miner/) explains how to preserve that directory when replacing the application.
+Results are saved in `seine.cpu-autotune.json` in the data directory, `seine-data` by default. On the next start seine goes straight back to the saved result and the row reads `done`. If the hashrate is clearly different from last time, it tunes again and the log says why. Keep the same data directory between runs so seine can find the file, and let each rig build its own: copying another machine's file doesn't help, because the result depends on the exact hardware and settings.
 
-Reuse depends on compatibility, including hardware and build identity, placement and page settings. Current resource limits still constrain the active starting count. A cache miss after a meaningful configuration change can be expected; let the miner collect suitable evidence again. Avoid copying another rig's cache or editing measurements by hand. Read the startup and tuning messages before treating a fresh search as a problem.
+## Can you change the thread count yourself?
 
-## When should you set a fixed thread count?
+Yes. Press `-` or `+` in the dashboard to remove or add one CPU thread. Once tuning reads `done`, the change applies to the running threads at once, and GPUs and the pool connection keep running. While tuning is still choosing a count, the keys wait and the dashboard shows how long tuning has left. A key press lasts for that run only; the next start uses the saved result again.
 
-Use a fixed count when you deliberately need a repeatable configuration. For example, `--threads 4` requests four CPU threads and normally disables automatic thread and kernel tuning. `--cpu-autotune-threads` explicitly enables tuning even with a supplied count; `--disable-cpu-autotune-threads` disables automatic adjustment. The [flag reference](https://github.com/zpalmtree/seine/blob/v0.2.36/docs/MINER_FLAGS.md) documents the search bounds and their interactions.
+To fix a count from the start, use `--threads`, for example `--threads 4`. Seine then keeps that count and still picks the best kernel for it. `--disable-cpu-autotune-threads` turns off thread and kernel tuning altogether. The [flag reference](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/MINER_FLAGS.md) documents these options, and [mining while you use your PC](/blog/mine-while-using-pc/) shows how to share a desktop with mining.
 
-For everyday mining, start with defaults and give productive comparisons time to finish. Check the CPU device row, tuning messages and accepted shares together. Compare observations over similar workloads and memory conditions. Pool hashrate is estimated from arriving shares, so use the miner's CPU measurements to understand a tuning trial and [pool statistics](https://bntpool.com/blog/track-your-miner-on-bntpool/) to follow credited mining activity.
+For everyday mining, start with the defaults and let tuning reach `done`. Use the CPU device row to follow a tuning trial and the [pool statistics](https://bntpool.com/blog/track-your-miner-on-bntpool/) to follow credited mining activity.
 
-<CTA target="seine" title="Mine with automatic CPU tuning" text="Download seine, keep the default tuning settings and follow its decisions in the dashboard." />
+<CTA target="seine" title="Mine with automatic CPU tuning" text="Download seine, keep the default settings and it finds the fastest thread count and kernel for your CPU in minutes." />

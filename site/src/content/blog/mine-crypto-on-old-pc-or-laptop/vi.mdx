@@ -11,7 +11,7 @@ faq:
     a: 'Có. Các bản x86 của seine có một kernel portable chạy trên mọi bộ xử lý x86 64-bit, bên cạnh các kernel AVX2 và AVX-512 cho những chip có hỗ trợ. Nó kiểm tra bộ xử lý của bạn hỗ trợ tập lệnh nào và chọn kernel phù hợp, đồng thời so sánh các kernel trong lúc đào trên những chip có cả AVX2 lẫn AVX-512.'
   - q: 'Đào coin trên PC cũ tốn bao nhiêu điện?'
     a: 'Còn tùy máy. Hãy đo bằng một đồng hồ đo điện cắm ổ trong lúc seine chạy, rồi nhân số watt với 24 và chia cho 1.000 để ra số kilowatt giờ mỗi ngày. Nhân con số đó với giá điện của bạn để ra chi phí mỗi ngày, rồi so sánh với số coin dự kiến nhận được mỗi ngày.'
-sourceHash: 024eb1ee2b56
+sourceHash: e94745a9d6b9
 translation: reviewed
 ---
 
@@ -105,7 +105,7 @@ Chế độ mặc định chọn số luồng ít nhất đạt 99% hashrate t�
 
 ## Vì sao nên đào trên pool với máy nhỏ?
 
-Pool trả cho bạn theo phần công việc bạn đóng góp vào mỗi khối mà pool tìm được, nên một máy nhỏ được trả từ mỗi khối của pool thay vì phải chờ tự tìm được cả một khối. Hướng dẫn [đào coin hoạt động như thế nào](/vi/blog/how-crypto-mining-works/) giải thích kỹ hơn về pool và share. Trên bntpool.com, phần thưởng được chia theo các share gửi trong sáu giờ trước mỗi khối, và số dư của bạn được thanh toán khi đạt 0,1 BNT. Bạn có thể theo dõi hashrate và số dư bằng cách tra địa chỉ hoặc `@name` của mình trên [bntpool.com](https://bntpool.com).
+Pool trả cho bạn theo phần công việc bạn đóng góp vào mỗi khối mà pool tìm được, nên một máy nhỏ được trả từ mỗi khối của pool thay vì phải chờ tự tìm được cả một khối. Hướng dẫn [đào coin hoạt động như thế nào](/vi/blog/how-crypto-mining-works/) giải thích kỹ hơn về pool và share. Trên bntpool.com, phần thưởng được chia theo các share gửi trong sáu giờ trước mỗi khối, và số dư của bạn được thanh toán khi đạt 1 BNT. Bạn có thể theo dõi hashrate và số dư bằng cách tra địa chỉ hoặc `@name` của mình trên [bntpool.com](https://bntpool.com).
 
 Để ước tính sản lượng, hãy dùng hashrate mạng hiển thị trên bảng điều khiển của bntpool.com. Với khối năm phút, Blocknet tìm được 288 khối mỗi ngày, nên phần coin mới của mạng mà bạn dự kiến nhận được mỗi ngày là 288 × (H/s của bạn ÷ H/s của mạng) × phần thưởng khối, và phần thưởng khối giảm theo từng bậc mỗi tháng.
 

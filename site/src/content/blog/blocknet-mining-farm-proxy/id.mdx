@@ -1,0 +1,82 @@
+---
+title: 'Jalankan farm penambangan Blocknet melalui satu proxy'
+description: 'Jalankan seluruh farm penambangan Blocknet melalui satu farm proxy seine: atur pool dan alamat pembayaran di satu tempat, arahkan setiap rig ke sana, dan tetap dapat statistik per rig.'
+tags: ['Panduan penambangan', 'Farm proxy', 'seine', 'Server']
+sourceHash: '043973652634'
+translation: draft
+faq:
+  - q: 'Apa itu farm proxy seine?'
+    a: 'Ini adalah mode seine yang berjalan di satu mesin dalam jaringan lokal Anda dan terhubung ke pool untuk semua rig Anda. Setiap rig terhubung ke proxy alih-alih ke pool dan menambang bagian pekerjaannya sendiri. Pool melihat satu koneksi, dan Anda mengatur pool serta pool cadangan di satu tempat.'
+  - q: 'Apakah farm proxy memerlukan mesin yang kuat?'
+    a: 'Tidak. Proxy tidak menambang, jadi hanya memerlukan sedikit CPU atau memori. Proxy dapat berjalan di mesin mana pun yang dapat dijangkau rig di jaringan lokal, seperti server kecil atau salah satu rig itu sendiri di samping penambangnya.'
+  - q: 'Apakah rig di belakang proxy tetap tampil terpisah di bntpool.com?'
+    a: 'Ya. bntpool.com mengkreditkan share per rig, jadi setiap rig di belakang proxy muncul di halaman statistik dengan nama worker-nya sendiri, beserta hashrate dan share-nya, persis seperti dengan koneksi langsung. Proxy juga mencatat rig yang terhubung dan share-nya setiap menit.'
+  - q: 'Bisakah rig di belakang satu proxy membayar ke wallet berbeda?'
+    a: 'Bisa. Setiap rig dibayar ke alamat yang dipakainya untuk login, jadi rig yang menambang ke hingga 16 alamat berbeda dapat berbagi satu proxy. Rig yang login tanpa alamat valid dibayar ke alamat yang Anda berikan ke proxy dengan --address.'
+---
+
+Panduan ini menunjukkan cara menjalankan farm penambangan Blocknet melalui satu farm proxy seine. Anda menjalankan proxy di satu mesin dalam jaringan, mengarahkan setiap rig ke sana, dan proxy terhubung ke bntpool.com untuk seluruh farm. Anda mengatur pool, alamat pembayaran dan pool cadangan di satu tempat serta tetap mendapat statistik per rig di pool. Panduan ini mengikuti seine v0.3.1.
+
+## Apa yang dilakukan farm proxy?
+
+<Answer>
+Farm proxy adalah seine yang berjalan sebagai pool lokal untuk rig Anda. Proxy terhubung ke bntpool.com sekali untuk seluruh farm dan memberi setiap rig bagian pekerjaannya sendiri. Pool melihat satu koneksi, setiap rig tetap menambang dan dikreditkan sendiri, dan Anda mengubah pool atau pool cadangan untuk setiap rig di satu tempat.
+</Answer>
+
+Farm proxy cocok bagi siapa pun yang menjalankan lebih dari beberapa rig:
+
+- **Satu tempat untuk pengaturan.** Atur pool, pool cadangan dan alamat pembayaran default di proxy, dan setiap rig mengikutinya.
+- **Satu koneksi keluar.** Rig berkomunikasi dengan proxy melalui jaringan lokal, dan proxy hanya membuka koneksi pool yang diperlukan farm, biasanya satu atau beberapa.
+- **Statistik per rig di pool.** bntpool.com mengkreditkan share per rig, jadi setiap rig tetap tampil dengan nama worker-nya sendiri di [halaman statistik](https://bntpool.com/stats).
+
+Proxy sendiri tidak menambang. Proxy hanya memerlukan sedikit CPU atau memori, jadi dapat berjalan di mesin mana pun yang dapat dijangkau rig, termasuk salah satu rig.
+
+## Bagaimana menjalankan proxy?
+
+<Answer>
+Jalankan seine dengan --proxy-listen serta alamat dan port yang akan dihubungi rig, ditambah opsi pool, alamat pembayaran dan nama rig seperti biasa. Contohnya: ./seine --proxy-listen 0.0.0.0:3333 --pool-url stratum+tcp://bntpool.com:3333 --address YOUR_ADDRESS --pool-worker farm-1. Proxy lalu menunggu rig di port 3333.
+</Answer>
+
+Di mesin yang akan menjalankan proxy:
+
+```bash
+./seine --proxy-listen 0.0.0.0:3333 \
+        --pool-url stratum+tcp://bntpool.com:3333 \
+        --address YOUR_ADDRESS --pool-worker farm-1
+```
+
+`--proxy-listen` menentukan tempat proxy menerima rig; `0.0.0.0:3333` mendengarkan di setiap antarmuka jaringan pada port 3333. `--address` adalah alamat pembayaran default, dipakai untuk rig yang login tanpa alamat valid. Setiap opsi pool berlaku di proxy, termasuk pool cadangan: tulis berurutan, dipisahkan koma, dan proxy kembali ke yang pertama saat pulih. [Panduan konfigurasi seine](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/configuration.md) membahas opsi pool.
+
+Ikat proxy ke jaringan lokal Anda. Siapa pun yang dapat menjangkau port-nya dapat menambang melaluinya, jadi gunakan alamat LAN di `--proxy-listen`, atau pasang firewall pada port itu, alih-alih membukanya ke internet.
+
+## Bagaimana mengarahkan rig ke proxy?
+
+Di setiap rig, gunakan alamat lokal proxy sebagai pool dan beri rig namanya sendiri:
+
+```bash
+./seine --pool-url 192.168.1.10:3333 --address YOUR_ADDRESS --pool-worker rig-07
+```
+
+Ganti `192.168.1.10` dengan alamat mesin proxy di jaringan Anda. Rig dengan OS penambangan bekerja dengan cara yang sama: masukkan alamat proxy di kolom URL pool pada flight sheet HiveOS atau profile mmpOS, seperti ditunjukkan [panduan HiveOS dan mmpOS](/id/blog/mine-blocknet-hiveos-mmpos/). seine menyimpan pool bersama pengaturan rig, jadi run berikutnya terhubung ke proxy dengan sendirinya.
+
+## Bagaimana rig di belakang proxy dibayar?
+
+Setiap rig dibayar ke alamat Blocknet lengkap yang dipakainya untuk login. Rig yang menambang ke wallet berbeda dapat berbagi satu proxy, hingga 16 alamat sekaligus. Rig yang login tanpa alamat, atau dengan alamat tidak valid, dibayar ke `--address` milik proxy.
+
+Saat 16 alamat sedang dipakai, rig dengan alamat ke-17 menunggu sampai salah satu alamat lain tidak memiliki rig selama 10 menit. Jika pool menolak alamat sebuah rig, proxy meneruskan alasan dari pool, sehingga Anda dapat memperbaikinya di rig itu.
+
+Rig di belakang proxy juga dapat menambang solo di bntpool.com: tambahkan `solo:` di depan alamat rig, dan pool membayar rig itu seluruh imbalan setiap blok yang ditemukannya. [Penambangan solo di bntpool.com](https://bntpool.com/blog/id/solo-mine-blocknet-on-bntpool/) menjelaskan imbalan solo. Pembayaran ke bursa memerlukan memo deposit, yang tidak dibawa proxy, jadi hubungkan rig untuk bursa langsung ke pool.
+
+## Bagaimana memantau farm?
+
+Di bntpool.com, cari setiap alamat pembayaran di [halaman statistik](https://bntpool.com/stats). Setiap rig di belakang proxy muncul di tabel Workers dengan nama rig-nya sendiri, beserta hashrate, share dan waktu share terakhir, persis seperti koneksi langsung. [Panduan pelacakan penambang](https://bntpool.com/blog/id/track-your-miner-on-bntpool/) menjelaskan halaman itu.
+
+Proxy juga mencatat ringkasannya sendiri setiap menit: rig yang terhubung, share yang diterima dan ditolak, perkiraan hashrate, dan koneksi pool-nya. Proxy mencatat setiap rig saat terhubung dan terputus, sehingga Anda langsung tahu kapan sebuah rig terlepas. Dasbor seine di setiap rig tetap menampilkan hashrate dan share lokalnya, seperti dijelaskan [panduan dasbor](/id/blog/seine-dashboard-explained/).
+
+## Apa lagi yang perlu diketahui?
+
+- **Koneksi pool bertambah seiring farm.** Proxy membuka koneksi pool sebanyak yang diperlukan farm agar setiap rig mendapat pekerjaan pada setiap blok baru. Bagi sebagian besar farm itu berarti satu atau beberapa, dan farm yang sangat besar mendapat hingga 64 per alamat pembayaran.
+- **Setiap rig menyimpan pengaturannya sendiri.** Jumlah thread, pemilihan GPU dan penyetelan tetap di rig. [Panduan pengaturan](/id/blog/configure-seine-miner/) membahasnya, dan [panduan penambangan di server](/id/blog/mine-blocknet-on-servers/) membahas server CPU besar.
+- **Upgrade jaringan.** Pada upgrade jaringan Faraday, proxy meminta rig yang memakai rilis seine tanpa dukungan untuk upgrade itu agar memperbarui, sama seperti pool.
+
+<CTA target="seine" title="Unduh seine untuk farm Anda" text="Jalankan satu seine sebagai farm proxy dan arahkan setiap rig ke sana: satu tempat untuk pengaturan pool, statistik per rig di bntpool.com." />

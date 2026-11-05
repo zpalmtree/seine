@@ -11,7 +11,7 @@ faq:
     a: 'seine가 스레드 수를 자동으로 정하므로, 다른 작업을 위해 여유를 남기고 싶을 때만 설정하면 됩니다. 스레드 하나는 약 2 GB의 RAM을 사용합니다. 대시보드에서 마이너스 키를 눌러 컴퓨터가 알맞게 느껴질 때까지 줄인 뒤 그 숫자를 사용하세요.'
   - q: 'seine는 설정을 어디에 저장합니까?'
     a: 'seine는 주소, 풀, 워커 이름을 시작한 폴더 안의 seine-data/seine.config.json에 저장합니다. 스레드와 backend 옵션은 여기에 저장되지 않으므로, 매번 시작할 때 쓰려면 작은 시작 파일에 넣어 두세요.'
-sourceHash: b5ca5a9a16d8
+sourceHash: cbfaa904cdbf
 translation: draft
 ---
 
@@ -129,6 +129,8 @@ seine를 닫고 텍스트 편집기에서 `seine-data/seine.config.json`을 여�
 ```
 
 나머지 두 설정은 `--address`와 `--pool-url`입니다. 주소를 바꾼 뒤 풀이 작업을 어떻게 반영하는지는 [주소 변경 가이드](https://bntpool.com/blog/ko/change-mining-wallet-address/)에서 설명합니다.
+
+bntpool.com에서 솔로 채굴하려면 주소 앞에 `solo:`를 붙이세요. 예를 들어 파일에서는 `"address": "solo:@yourname"`, 명령줄에서는 `--address solo:YOUR_ADDRESS`입니다. 그러면 풀이 장비가 찾은 모든 블록의 전체 보상을 지급합니다. 솔로 블록의 지급 방식은 [bntpool.com에서 솔로 채굴하기](https://bntpool.com/blog/ko/solo-mine-blocknet-on-bntpool/)에서 설명합니다.
 
 ## 설정이 작동하지 않으면 어떻게 합니까?
 

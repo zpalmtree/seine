@@ -11,7 +11,7 @@ faq:
     a: 'Seine memilih jumlah thread untuk Anda, jadi Anda hanya perlu mengaturnya saat ingin menyisakan ruang untuk pekerjaan lain. Setiap thread memakai sekitar 2 GB RAM. Tekan tombol minus di dasbor sampai komputer terasa nyaman, lalu gunakan angka itu.'
   - q: 'Di mana seine menyimpan pengaturannya?'
     a: 'Seine menyimpan alamat, pool, dan nama worker Anda di seine-data/seine.config.json, di dalam folder tempat Anda menjalankannya. Opsi thread dan backend tidak disimpan di sana, jadi taruh di file start kecil jika Anda menginginkannya di setiap start.'
-sourceHash: b5ca5a9a16d8
+sourceHash: cbfaa904cdbf
 translation: draft
 ---
 
@@ -129,6 +129,8 @@ Untuk memakai nilai berbeda hanya sekali jalan, tambahkan ke perintah. File yang
 ```
 
 Dua pengaturan lainnya adalah `--address` dan `--pool-url`. [Panduan mengubah alamat](https://bntpool.com/blog/id/change-mining-wallet-address/) menjelaskan bagaimana pool mengkreditkan pekerjaan Anda setelah Anda mengubah alamat.
+
+Untuk menambang solo di bntpool.com, tambahkan `solo:` di depan alamat, misalnya `"address": "solo:@yourname"` di file atau `--address solo:YOUR_ADDRESS` di baris perintah. Pool lalu membayar Anda seluruh imbalan setiap blok yang ditemukan rig Anda. [Penambangan solo di bntpool.com](https://bntpool.com/blog/id/solo-mine-blocknet-on-bntpool/) menjelaskan cara blok solo dibayar.
 
 ## Bagaimana jika sebuah pengaturan tidak berfungsi?
 

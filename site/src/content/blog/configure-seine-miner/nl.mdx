@@ -11,7 +11,7 @@ faq:
     a: 'Seine kiest het aantal threads voor je, dus je hoeft het alleen in te stellen als je ruimte wilt laten voor ander werk. Elke thread gebruikt ongeveer 2 GB RAM. Druk in het dashboard op de min-toets tot je computer prettig aanvoelt en gebruik dan dat aantal.'
   - q: 'Waar bewaart seine zijn instellingen?'
     a: 'Seine bewaart je adres, pool en workernaam in seine-data/seine.config.json, in de map waaruit je het start. Thread- en backendopties worden daar niet bewaard, zet ze dus in een klein startbestand als je ze bij elke start wilt.'
-sourceHash: b5ca5a9a16d8
+sourceHash: 'cbfaa904cdbf'
 translation: draft
 ---
 
@@ -129,6 +129,8 @@ Om voor één run een andere waarde te gebruiken, voeg je die toe aan het comman
 ```
 
 De andere twee instellingen zijn `--address` en `--pool-url`. De [handleiding voor adreswijziging](https://bntpool.com/blog/nl/change-mining-wallet-address/) legt uit hoe de pool je werk bijschrijft nadat je je adres hebt gewijzigd.
+
+Om solo te minen op bntpool.com zet je `solo:` voor het adres, bijvoorbeeld `"address": "solo:@yourname"` in het bestand of `--address solo:YOUR_ADDRESS` op de opdrachtregel. De pool betaalt je dan de volledige beloning van elk blok dat je rig vindt. [Solo minen op bntpool.com](https://bntpool.com/blog/nl/solo-mine-blocknet-on-bntpool/) legt uit hoe soloblokken worden uitbetaald.
 
 ## Wat als een instelling niet werkt?
 

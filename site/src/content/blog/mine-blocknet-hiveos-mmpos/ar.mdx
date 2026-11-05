@@ -1,0 +1,107 @@
+---
+title: 'كيفية تعدين Blocknet على HiveOS وmmpOS'
+description: 'عدّن Blocknet على HiveOS أو mmpOS بحزمة seine المرفقة مع كل إصدار. أعدّ flight sheet أو miner profile، واختر GPU أو المعالج، وحدّث بخطوة واحدة.'
+tags: ['دليل التعدين', 'HiveOS', 'mmpOS', 'GPU']
+sourceHash: 'e49fce300603'
+translation: draft
+faq:
+  - q: 'هل يمكنني تعدين Blocknet على HiveOS؟'
+    a: 'نعم. يتضمن كل إصدار من seine حزمة HiveOS. أضف محفظة BNT، وأنشئ flight sheet مع ضبط Pool على Configure in miner وMiner على Custom، وألصق رابط الحزمة في Installation URL، ثم طبّقها على أجهزتك. تعرض لوحة HiveOS بعدها معدل التجزئة لكل GPU والحصص المقبولة.'
+  - q: 'هل يمكنني تعدين Blocknet على mmpOS؟'
+    a: 'نعم. يتضمن كل إصدار من seine حزمة mmpOS. استورد miner profile الجاهز من دليل mmpOS في seine، الذي يضيف محفظة BNT ومجمع bntpool.com وبرنامج seine بخطوة واحدة، ثم اجعله Active miner profile على أجهزتك.'
+  - q: 'هل تعدّن حزمة HiveOS على المعالج أيضًا؟'
+    a: 'على أجهزة GPU تعدّن الحزمة على البطاقات فقط، لأن كل خيط معالجة يحتاج إلى 2 GB من ذاكرة النظام وكثير من أجهزة GPU ذاكرتها قليلة. الأجهزة دون GPU تعدّن على المعالج. لإضافة تعدين المعالج إلى جهاز GPU، ضع --backend nvidia,cpu --threads 2 في Extra config arguments.'
+  - q: 'كيف أحدّث seine على HiveOS أو mmpOS؟'
+    a: 'غيّر رقم الإصدار في رابط التثبيت أو التنزيل إلى أحدث إصدار وطبّق flight sheet أو الـprofile مجددًا. ينزّل نظام التعدين الحزمة الجديدة، ويحتفظ seine بنتائج الضبط المحفوظة، فتعود الأجهزة إلى التجزئة خلال ثوانٍ.'
+---
+
+يوضح هذا الدليل كيف تعدّن Blocknet على HiveOS وmmpOS باستخدام seine. يتضمن كل إصدار من seine حزمة لكلا نظامي التعدين، فتضيف seine برنامجًا مخصصًا برابط واحد، وتُبلغ أجهزتك عن معدل التجزئة والحصص في اللوحة التي تستخدمها أصلًا. يتبع الدليل seine v0.3.1.
+
+## ما الحزمة التي تحتاجها؟
+
+يحمل كل إصدار في [صفحة إصدارات seine](https://github.com/zpalmtree/seine/releases/latest) حزمتين لأنظمة التعدين:
+
+| نظام التعدين | الحزمة |
+|---|---|
+| HiveOS | `seine-hiveos-X.Y.Z.tar.gz` |
+| mmpOS | `seine-mmpos-X.Y.Z.tar.gz` |
+
+`X.Y.Z` هو رقم الإصدار، مثل `0.3.1`. تضم كل حزمة نسخة seine مبنية لمكتبات نظام التعدين، ومكتبة مترجم نوى NVIDIA التي يستخدمها seine، والسكربتات التي تربط seine باللوحة. لا تثبّت شيئًا آخر على الجهاز.
+
+## كيف تعدّن Blocknet على HiveOS؟
+
+<Answer>
+أضف عنوان Blocknet محفظةَ BNT، ثم أنشئ flight sheet مع ضبط Pool على Configure in miner وMiner على Custom. في Setup Miner Config، ألصق رابط حزمة seine-hiveos في Installation URL، واستخدم %WAL%.%WORKER_NAME% قالبًا للمحفظة والـworker، واضبط Pool URL. طبّق flight sheet على أجهزتك.
+</Answer>
+
+1. **أضف محفظة.** افتح **Wallets** وأضف عنوان دفع Blocknet. إذا لم تكن BNT في قائمة العملات، فاكتب `BNT` اسمًا للعملة. يعمل أيضًا اسم Blocknet ID مثل `@name`؛ استخدم صيغة `@` لأن HiveOS يعامل `$` معاملة خاصة.
+2. **أنشئ flight sheet.** اختر عملة BNT ومحفظتك، واضبط **Pool** على *Configure in miner* و**Miner** على *Custom*.
+3. **انقر Setup Miner Config** واملأ:
+
+   | Field | القيمة |
+   |---|---|
+   | Miner name | `seine-hiveos` (يملؤه HiveOS من الرابط) |
+   | Installation URL | `https://github.com/zpalmtree/seine/releases/download/vX.Y.Z/seine-hiveos-X.Y.Z.tar.gz` |
+   | Hash algorithm | اتركه فارغًا |
+   | Wallet and worker template | `%WAL%.%WORKER_NAME%` |
+   | Pool URL | `stratum+tcp://bntpool.com:3333` |
+   | Pass | اتركه فارغًا |
+
+4. **طبّق flight sheet** على أجهزتك.
+
+استبدل `X.Y.Z` بأحدث إصدار، أو انسخ رابط الحزمة من صفحة الإصدارات. تُكتب المجمعات الاحتياطية في أسطر منفصلة داخل **Pool URL**؛ يجربها seine بالترتيب ويعود إلى الأول عند تعافيه. إذا كان **Pool URL** فارغًا، يعدّن seine على bntpool.com.
+
+تعرض لوحة HiveOS بعدها معدل تجزئة seine لكل GPU، والحصص المقبولة والمرفوضة، ودرجات حرارة البطاقات ومراوحها.
+
+## كيف تعدّن Blocknet على mmpOS؟
+
+<Answer>
+لا تتضمن قوائم العملات في mmpOS عملة BNT بعد، لذا تستورد profile جاهزًا. انسخ JSON الخاص بـminer profile من دليل mmpOS في seine، وضع عنوان Blocknet ورقم الإصدار، واستورده في Miner profiles. أضف المحفظة والمجمع والـprofile الذي ينشئه، ثم اجعل seine BNT هو Active miner profile على أجهزتك.
+</Answer>
+
+1. **حرّر الـprofile.** انسخ JSON الـprofile من [دليل mmpOS في seine](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/mmpos.md). استبدل `YOUR_BLOCKNET_ADDRESS` بعنوان الدفع أو `@name`، وكلا `X.Y.Z` في `custom_url` بأحدث إصدار.
+2. **استورده.** افتح **Miner profiles**، وانقر **Import from JSON**، وألصق الـprofile وانقر **Import**.
+3. **أضف كل جزء** من نتيجة الاستيراد بالترتيب: **Add wallet**، ثم **Add pool** (تُملأ محفظة BNT تلقائيًا)، ثم **Add miner profile** مع اختيار المجمع `bntpool`. تبدو حقول العملة والبرنامج فارغة لأن BNT ليست في قوائم mmpOS؛ لكن القيم المستوردة تُحفظ.
+4. **عيّن الـprofile.** على كل جهاز، اضبط **Active miner profile** على `seine BNT`.
+
+يملأ الـprofile محفظتك واسم الجهاز والمجمع عندما يشغّل mmpOS البرنامج، وتعرض لوحة mmpOS معدل تجزئة seine لكل GPU وحصصه. تحتاج حزمة mmpOS إلى صورة نظام مبنية على Ubuntu 20.04 أو أحدث.
+
+## على ماذا تعدّن الحزمة؟
+
+تختار الحزمة الأجهزة من العتاد الذي يكتشفه نظام التعدين:
+
+- **أجهزة GPU تعدّن على البطاقات.** تحتاج كل تجزئة Blocknet إلى 2 GB من الذاكرة، ذاكرة الفيديو على GPU وذاكرة النظام على المعالج. لدى كثير من أجهزة GPU ذاكرة من 4 إلى 8 GB، لذا تترك الحزمة المعالج للنظام.
+- **الأجهزة دون GPU تعدّن على المعالج،** مع ضبط عدد الخيوط وفق الذاكرة الحرة.
+- **بطاقات NVIDIA** تحتاج إلى تعريف يدعم CUDA 12؛ وبطاقات سلسلة RTX 50 تحتاج إلى التعريف 570 أو أحدث.
+- **بطاقات AMD Radeon RX 6000 وRX 7000 وRX 9000** تحتاج إلى بيئة ROCm HIP على الجهاز. يشرح [دليل AMD GPU](/ar/blog/mine-blocknet-amd-gpu/) ما تحتاجه هذه البطاقات.
+
+في التشغيل الأول، يضبط seine نفسه لكل GPU لبضع دقائق قبل ظهور معدل التجزئة، ثم يحفظ النتيجة فتبدأ التشغيلات اللاحقة التجزئة خلال ثوانٍ. إذا كنت تستخدم إعادة التشغيل عند انخفاض المعدل في watchdog الخاص بـHiveOS، فامنحه أكثر من 10 دقائق حتى لا يقطع جولة الضبط الأولى.
+
+## كيف تضيف تعدين المعالج أو إعدادات أخرى؟
+
+كل ما تضعه في **Extra config arguments** في HiveOS، أو في نهاية وسائط الـprofile في mmpOS، يصل إلى seine كما هو ويتقدّم على القيم الافتراضية للحزمة. للتعدين أيضًا على معالج جهاز GPU، اذكر الواجهتين وعدد خيوط يناسب الذاكرة الفائضة، خيطًا لكل 2 GB، مع ترك 2 GB على الأقل للنظام:
+
+```text
+--backend nvidia,cpu --threads 2
+```
+
+استخدم `amd,cpu` على أجهزة AMD أو `nvidia,amd,cpu` على الأجهزة المختلطة. إذا حذفت `--threads`، يحدد seine خيوط المعالج ويضبطها وفق الذاكرة الحرة بنفسه. وسائط مفيدة أخرى:
+
+| الوسيط | الأثر |
+|---|---|
+| `--backend nvidia --nvidia-devices 0,1,3` | التعدين على بعض بطاقات NVIDIA فقط |
+| `--nvidia-max-lanes 4` | استخدام ذاكرة فيديو أقل على كل بطاقة NVIDIA |
+
+تضبط الحزمة اتصال اللوحة ومخرجات السجل النصية ومجلد البيانات نيابة عنك. اترك `--api-bind` و`--api-cookie` و`--api-token` كما تضبطها الحزمة، لأن اللوحة تقرأ إحصاءات seine عبرها. يشرح [دليل الإعدادات](/ar/blog/configure-seine-miner/) خيارات seine الأخرى.
+
+## كيف تحدّث seine على نظام تعدين؟
+
+على HiveOS وmmpOS تصل الإصدارات الجديدة عبر الحزمة. عند صدور إصدار أحدث، يسجّل seine إشعارًا. غيّر الإصدار في Installation URL، أو في رابط التنزيل في profile الخاص بـmmpOS، إلى الإصدار الجديد وطبّق flight sheet أو الـprofile مجددًا. ينزّل نظام التعدين الحزمة الجديدة، ويحتفظ seine بنتائج الضبط والإعدادات في مجلد البيانات، فتعود الأجهزة إلى معدلها الكامل خلال ثوانٍ.
+
+إذا كانت أجهزتك تشغّل حزمة v0.3.0، فانقل flight sheet أو الـprofile إلى حزمة v0.3.1؛ فسكربتات التشغيل فيها محدّثة أيضًا.
+
+## أين ترى الحصص والدفعات؟
+
+تعرض لوحة نظام التعدين معدل تجزئة كل جهاز وحصصه. للعمل المحتسب والرصيد والدفعات، ابحث عن عنوانك على [bntpool.com](https://bntpool.com/stats). يظهر كل جهاز باسم الـworker في HiveOS أو اسم الـrig في mmpOS، ويشرح [دليل متابعة جهاز التعدين](https://bntpool.com/blog/ar/track-your-miner-on-bntpool/) صفحة الإحصاءات. السجلات الكاملة في سجل البرنامج في نظام التعدين؛ وعلى HiveOS في `/var/log/miner/custom/seine-hiveos.log`.
+
+<CTA target="seine" title="احصل على حزم seine لأنظمة التعدين" text="يتضمن كل إصدار حزمتي HiveOS وmmpOS: ألصق رابطًا واحدًا في flight sheet أو الـprofile فتعدّن أجهزتك Blocknet." />

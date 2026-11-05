@@ -1,0 +1,96 @@
+---
+title: 'Jak kopać Blocknet na karcie graficznej AMD'
+description: 'Kop Blocknet na kartach AMD Radeon RX 6000, RX 7000, RX 9000 i Radeon PRO z seine. Skonfiguruj Windows lub Linux, wybierz karty i sprawdź, że każde GPU kopie.'
+tags: ['Poradnik kopania', 'AMD', 'Radeon', 'GPU']
+sourceHash: '60f795ed50a7'
+translation: draft
+faq:
+  - q: 'Które karty graficzne AMD mogą kopać Blocknet?'
+    a: 'Seine kopie na kartach AMD Radeon RX 6000, RX 7000 i RX 9000 oraz na kartach Radeon PRO zbudowanych na tych samych układach, w systemach Windows x86_64 i Linux x86_64. Sam znajduje każdą dedykowaną kartę AMD i kopie na niej razem z CPU. Zintegrowana grafika Radeon pozostaje wyłączona, chyba że dodasz --backend amd.'
+  - q: 'Co trzeba zainstalować do kopania na GPU AMD w Windows?'
+    a: 'Tylko sterownik graficzny AMD, Adrenalin lub Radeon PRO. Sterownik zawiera środowisko uruchomieniowe HIP, którego używa seine, a plik wydania zawiera już kernele GPU dla kart RX 6000, RX 7000 i RX 9000. Nie potrzebujesz HIP SDK ani innych pobrań.'
+  - q: 'Co trzeba zainstalować do kopania na GPU AMD w Linuksie?'
+    a: 'Sterownik jądra amdgpu, który zawierają obecne dystrybucje, oraz środowisko uruchomieniowe ROCm HIP od AMD: pakiet hip-runtime-amd lub pełną instalację ROCm. Twój użytkownik potrzebuje też dostępu do plików urządzeń GPU, co w większości dystrybucji oznacza dołączenie do grup render i video.'
+  - q: 'Czy seine może kopać na kartach AMD i NVIDIA w jednym komputerze?'
+    a: 'Tak. Bez opcji backend seine kopie na CPU oraz na każdej znalezionej karcie NVIDIA i dedykowanej karcie AMD. Aby zostawić CPU wolne, uruchom go z --backend nvidia,amd. Każda karta ma własny wiersz w panelu Devices, więc każde GPU możesz sprawdzić osobno.'
+---
+
+Seine kopie Blocknet na kartach graficznych AMD Radeon razem z Twoim CPU. Ten poradnik opisuje, co zainstalować w Windows i Linuksie, jak wybrać karty, jak potwierdzić, że każde GPU liczy hashe, i co sprawdzić, gdy karty brakuje. Dotyczy seine v0.3.1.
+
+## Które karty AMD obsługuje seine?
+
+<Answer>
+Seine kopie na kartach AMD Radeon RX 6000, RX 7000 i RX 9000 oraz na kartach Radeon PRO zbudowanych na tych samych układach RDNA2, RDNA3 i RDNA4. Działa w systemach Windows x86_64 i Linux x86_64. Każda dedykowana karta AMD jest wybierana automatycznie i kopie razem z CPU, bez zmiany ustawień.
+</Answer>
+
+Każda karta kopie kilkoma lanes, po jednym hashu w toku na lane. Lane potrzebuje około 2 GB pamięci wideo, nieco mniej na RDNA2, RDNA3 i RDNA4, więc karty z większą pamięcią uruchamiają więcej lanes jednocześnie. Karta 16 GB uruchamia około 9 lanes. Seine dobiera to na podstawie pamięci wolnej przy starcie, więc nie musisz tego liczyć.
+
+Zintegrowana grafika Radeon w procesorach Ryzen jest domyślnie wyłączona. Jeśli chcesz, możesz ją dodać za pomocą `--backend amd`.
+
+## Jak skonfigurować kopanie na GPU AMD w Windows?
+
+Zainstaluj aktualny sterownik graficzny AMD dla swojej karty, Adrenalin dla kart Radeon RX lub sterownik Radeon PRO dla kart PRO, ze [strony sterowników AMD](https://www.amd.com/en/support/download/drivers.html). Sterownik zawiera środowisko uruchomieniowe HIP, którego używa seine, a plik wydania zawiera gotowe kernele GPU dla kart RX 6000, RX 7000 i RX 9000. Nic więcej nie jest potrzebne.
+
+Pobierz `seine-windows-x86_64.zip` z [sekcji pobierania](/pl/#download), rozpakuj całe archiwum do folderu z prawem zapisu i uruchom:
+
+```powershell
+.\seine.exe
+```
+
+Przy pierwszym uruchomieniu wklej adres wypłat i naciśnij Enter, aby zaakceptować bntpool.com. [Poradnik konfiguracji w Windows](/pl/blog/mine-blocknet-on-windows/) krok po kroku opisuje pobieranie i rozpakowanie.
+
+## Jak skonfigurować kopanie na GPU AMD w Linuksie?
+
+<Answer>
+Zainstaluj sterownik jądra amdgpu, który zawierają obecne dystrybucje, oraz środowisko uruchomieniowe ROCm HIP od AMD: pakiet hip-runtime-amd lub pełną instalację ROCm. Dodaj użytkownika do grup render i video, aby seine mógł otworzyć GPU, zaloguj się ponownie i uruchom archiwum seine dla Linux x86_64. Seine sam znajdzie Twoje karty AMD.
+</Answer>
+
+1. **Zainstaluj środowisko uruchomieniowe.** Dodaj repozytorium ROCm od AMD dla swojej dystrybucji i zainstaluj `hip-runtime-amd` albo pełną instalację ROCm, jeśli już jej używasz. [Poradnik instalacji ROCm](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/) od AMD wymienia obsługiwane dystrybucje.
+2. **Daj użytkownikowi dostęp do GPU.** Seine otwiera `/dev/kfd` i `/dev/dri/renderD*`:
+
+   ```bash
+   sudo usermod -aG render,video $USER
+   ```
+
+   Wyloguj się i zaloguj ponownie, aby nowe grupy zaczęły działać.
+3. **Uruchom seine.** Pobierz `seine-linux-x86_64.tar.gz` z [sekcji pobierania](/pl/#download), rozpakuj i uruchom:
+
+   ```bash
+   ./seine
+   ```
+
+Gdy zainstalowany jest hipRTC, seine przy starcie kompiluje kernel dokładnie pod Twoją kartę. Karty RX 6000, RX 7000 i RX 9000 działają też bez niego, korzystając z kerneli wbudowanych w wydanie. [Poradnik kopania w Linuksie](/pl/blog/mine-blocknet-on-linux/) opisuje archiwum i wymagania systemowe.
+
+Na kartach RX 7000 i Radeon PRO W7000 seine uruchomiony jako root ustawia na czas kopania poziom zasilania karty na `high` i przywraca poprzedni poziom przy zamknięciu. Bez uprawnień root wypisuje jednowierszowe polecenie, które robi to samo, abyś mógł je zastosować sam.
+
+## Jak wybrać karty do kopania?
+
+Nie ustawiaj opcji backend, aby kopać na CPU i każdej dedykowanej karcie AMD. Aby kopać na GPU i zostawić CPU wolne, wybierz `amd`:
+
+```bash
+./seine --backend amd
+```
+
+Aby kopać na jednej karcie i zachować kopanie na CPU, wybierz oba backendy i indeks karty:
+
+```bash
+./seine --backend cpu,amd --amd-devices 0
+```
+
+`--amd-devices 0,1` wybiera dwie karty. W komputerze z kartami NVIDIA i AMD `--backend nvidia,amd` kopie na wszystkich bez CPU. Aby zostawić pamięć wideo dla gry lub innych aplikacji na tej samej karcie, ogranicz liczbę lanes za pomocą `--amd-max-lanes 2`. [Poradnik ustawień](/pl/blog/configure-seine-miner/) pokazuje, jak zachować te opcje przy każdym uruchomieniu.
+
+## Jak potwierdzić, że GPU AMD kopie?
+
+Karty AMD uruchamiają się w tle, gdy CPU już kopie. Każda karta ma własny wiersz w panelu Devices, `amd#1`, `amd#2` i tak dalej, a log zgłasza jej podłączenie wraz z liczbą lanes, na przykład `amd#1: online (initialized in background, 9 lanes)`. Wiersz pokazuje potem bieżący i średni hashrate karty.
+
+Zaakceptowane udziały w panelu Mining potwierdzają, że pula zalicza Twoją pracę. [Poradnik panelu](/pl/blog/seine-dashboard-explained/) objaśnia każdy panel, a swoje koparki na bntpool.com możesz śledzić dzięki [poradnikowi śledzenia koparki](https://bntpool.com/blog/pl/track-your-miner-on-bntpool/).
+
+## Co sprawdzić, gdy brakuje karty AMD?
+
+- **Sprawdź sterownik i środowisko uruchomieniowe.** W Windows zainstaluj lub zaktualizuj sterownik AMD. W Linuksie zainstaluj `hip-runtime-amd` i sprawdź, czy użytkownik należy do grup `render` i `video`. Bez środowiska uruchomieniowego seine kopie na CPU, a z `--backend amd` podaje przy starcie brakujące środowisko.
+- **Sprawdź polecenie.** `--backend cpu` kopie tylko na procesorze. Użyj domyślnego polecenia albo dodaj `amd` do listy backendów. Jeśli ustawiłeś `--amd-devices`, sprawdź, czy taki indeks istnieje.
+- **Podaj amd samodzielnie po aktualizacji sterownika.** Jeśli środowisko uruchomieniowe AMD dwa razy z rzędu zamknie seine, przestaje on sam wybierać karty AMD i kopie dalej na pozostałym sprzęcie, a po kolejnej aktualizacji próbuje ich ponownie. Uruchom go raz z `--backend cpu,amd`, aby od razu spróbować kart ponownie.
+
+[Poradnik seine dla AMD](https://github.com/zpalmtree/seine/blob/master/docs/guides/amd.md) zawiera pełne wymagania, a użytkownicy systemów do kopania mogą zainstalować pakiet dla [HiveOS](https://github.com/zpalmtree/seine/blob/master/docs/guides/hiveos.md) lub [mmpOS](https://github.com/zpalmtree/seine/blob/master/docs/guides/mmpos.md) z każdego wydania.
+
+<CTA target="seine" title="Pobierz seine do kopania na GPU AMD" text="Wybierz archiwum dla Windows lub Linux x86_64, a seine będzie kopał na CPU i na każdej znalezionej karcie Radeon." />

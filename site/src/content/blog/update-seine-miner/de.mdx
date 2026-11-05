@@ -1,31 +1,47 @@
 ---
 title: 'Den Blocknet-Miner aktualisieren'
-description: 'Aktualisiere den seine-Miner für Blocknet, behalte deine Einstellungen, prüfe den offiziellen Download und kontrolliere Verbindung und akzeptierte Shares.'
+description: 'Halte den seine-Miner für Blocknet aktuell: wie automatische Updates neue Releases installieren, wie du von Hand aktualisierst und wie du prüfst, dass die neue Version mint.'
 tags: ['Mining-Anleitung', 'seine', 'Updates']
 faq:
   - q: 'Installiert seine Updates automatisch?'
-    a: 'Die Versionsprüfung meldet neue Releases im Dashboard und Log. Du bestimmst den Zeitpunkt der Installation. Lade das offizielle Archiv herunter, prüfe es, stoppe den Miner und ersetze die Programmdateien. Starte danach mit demselben Datenverzeichnis und denselben Startoptionen.'
+    a: 'Ja, seit v0.3.0. Ist ein neues Release da, zählt das Dashboard 60 Sekunden herunter, während das Mining weiterläuft; dann prüft seine den signierten Download, beendet sich sauber und startet mit denselben Einstellungen in der neuen Version. Drücke u, um sofort zu aktualisieren, s, um diese Version zu überspringen, oder starte seine mit --no-auto-update, um von Hand zu aktualisieren.'
   - q: 'Welche Dateien speichern meine Einstellungen?'
     a: 'Standardmäßig liegt die Konfiguration unter seine-data/seine.config.json relativ zum Startverzeichnis. data-dir ändert diesen Ort. Bewahre das Datenverzeichnis sowie Startskript oder Dienstkonfiguration auf: Backend- und Thread-Optionen sind von den gespeicherten Verbindungsdaten getrennt.'
   - q: 'Warum wird nach dem Update erneut nach meiner Adresse gefragt?'
     a: 'Prüfe Arbeitsverzeichnis und data-dir. Beim Start aus einem neu entpackten Ordner kann seine an einem anderen Ort nach der Konfiguration suchen. Stoppe diese Instanz, finde das ursprüngliche Datenverzeichnis und starte mit dem richtigen Pfad. Kontrolliere Adresse und Pool vor dem Weiterbetrieb.'
-sourceHash: '1d2a2deba793'
+sourceHash: '37fa2d9966c0'
 translation: draft
 ---
 
-Aktualisiere seine und behalte deine funktionierende Poolverbindung und Startoptionen. Diese Anleitung behandelt Vorbereitung, Dateiaustausch und Kontrolle anhand des öffentlichen Releases v0.2.36. Für die Erstinstallation nutze die Anleitung für [Windows](/de/blog/mine-blocknet-on-windows/), [Linux](/de/blog/mine-blocknet-on-linux/) oder [Mac](/de/blog/mine-blocknet-on-mac/).
+Halte seine auf dem neuesten Release, mit der Poolverbindung und den Startoptionen, die auf deinem Rechner schon funktionieren. Diese Anleitung folgt dem öffentlichen Release v0.3.1: wie automatische Updates funktionieren, was du einmalig tust, wenn du von einer älteren Version kommst, und wie du von Hand aktualisierst. Für die Erstinstallation nutze die Anleitung für [Windows](/de/blog/mine-blocknet-on-windows/), [Linux](/de/blog/mine-blocknet-on-linux/) oder [Mac](/de/blog/mine-blocknet-on-mac/).
 
 ## Wie aktualisierst du den seine-Miner?
 
 <Answer>
-Lade das offizielle Archiv für dein Betriebssystem herunter und prüfe es. Stoppe den Miner, bewahre sein Datenverzeichnis und ersetze die Programmdateien. Starte mit demselben Arbeitsverzeichnis und denselben Argumenten. Prüfe Version, Auszahlungsziel, Poolverbindung und akzeptierte Shares, bevor du einen weiteren Rechner aktualisierst.
+Lass seine laufen. Es prüft beim Start und alle 12 Stunden auf ein neues Release, zählt in der Kopfzeile des Dashboards 60 Sekunden herunter, während es weiter mint, installiert dann das signierte Release und startet mit denselben Argumenten und Einstellungen neu. Um stattdessen von Hand zu aktualisieren, beende seine, ersetze seine Dateien aus dem offiziellen Archiv und starte es auf dieselbe Weise.
 </Answer>
+
+## Wie funktionieren automatische Updates?
+
+Ist ein neueres Release verfügbar, zeigt die Kopfzeile `update vX.Y.Z available`, das Log verlinkt das Release, und dann zählt die Kopfzeile herunter: `updating to vX.Y.Z in 42s`. Während des Countdowns läuft das Mining weiter. Drücke `u`, um sofort zu aktualisieren, oder `s`, um diese Version zu überspringen; seine merkt sich das in seinem Datenverzeichnis und bietet das nächste Release wie gewohnt an.
+
+Nach dem Countdown prüft seine die Signatur des Releases, stellt sicher, dass die neue Programmdatei startet, und ersetzt erst dann die alte. Es beendet das Mining sauber und startet mit denselben Argumenten neu, und das neue Dashboard protokolliert `updated to seine vX.Y.Z`. Die neue Version startet mit deiner gespeicherten Abstimmung und testet nur, was das Release geändert hat, daher ist sie schnell wieder auf voller Geschwindigkeit.
+
+Schickt ein Pool Arbeit, die ein neueres Release braucht, etwa bei einem Netzwerk-Upgrade, pausiert seine das Mining und installiert das Update sofort, auch eine Version, die du übersprungen hast. Übergib `--no-auto-update`, um nur den Hinweis zu behalten, oder `--disable-update-check`, um die Prüfung abzuschalten. Selbst kompilierte Builds zeigen den Hinweis und überlassen das Update dir.
+
+## Was tust du einmalig, wenn du von einer älteren Version kommst?
+
+Die meisten Rigs brauchen nichts. Einige Setups brauchen beim ersten automatischen Update auf v0.3.1 einen Schritt:
+
+- **Linux, ab v0.2.45:** v0.2.45 installiert die neue Version und beendet sich dann. Starte seine noch einmal. Setups, die seine selbst neu starten, etwa ein systemd-Dienst, brauchen nichts.
+- **Windows, ab v0.2.45 oder v0.3.0:** Die alte Version startet die neue und beendet sich. Startet zusätzlich ein Skript oder Dienst seine beim Beenden neu, stoppe ihn nach dem Update einmal, damit nur ein seine weiterläuft.
+- **HiveOS und mmpOS, ab dem Paket v0.3.0:** Stelle dein Flight Sheet oder Profil auf das Paket v0.3.1 von der [Release-Seite](https://github.com/zpalmtree/seine/releases) um. Ab v0.3.1 wird das Paket über das Mining-Betriebssystem aktualisiert: Ändere die Version in seiner URL, wie die [Anleitung für HiveOS und mmpOS](/de/blog/mine-blocknet-hiveos-mmpos/) zeigt.
 
 <img src="/assets/blog/miner-update.svg" alt="Das Anwendungspaket wird ersetzt, der Konfigurationsordner bleibt erhalten und anschließend wird die Verbindung geprüft." width="1200" height="675" loading="lazy" />
 
 ## Wie prüfst du deine aktuelle Version?
 
-Führe den Versionsbefehl für die tatsächlich verwendete Programmdatei aus. Eine alte Kopie in einem anderen Ordner kann von der per Verknüpfung oder Dienst gestarteten Version abweichen. Notiere Programmpfad, Arbeitsverzeichnis und Startargumente zusammen; so bleibt das Update nachvollziehbar. Öffne unter Windows PowerShell im aktuellen Miner-Ordner:
+Die Kopfzeile des Dashboards zeigt die laufende Version. Du kannst auch den Versionsbefehl für die tatsächlich verwendete Programmdatei ausführen. Eine alte Kopie in einem anderen Ordner kann von der per Verknüpfung oder Dienst gestarteten Version abweichen. Notiere Programmpfad, Arbeitsverzeichnis und Startargumente zusammen; so bleibt das Update nachvollziehbar. Öffne unter Windows PowerShell im aktuellen Miner-Ordner:
 
 ```powershell
 .\seine.exe --version
@@ -37,7 +53,7 @@ Unter Linux oder macOS öffnest du dort ein Terminal:
 ./seine --version
 ```
 
-Vergleiche das Ergebnis mit den [offiziellen Releases](https://github.com/zpalmtree/seine/releases). seine prüft beim Start und alle 12 Stunden auf eine neue Version und meldet sie im Dashboard und Log. Die Meldung liefert einen Downloadlink; du bestimmst die Installation. Lies die Release-Hinweise zu Plattform, Laufzeitbibliotheken und Startoptionen.
+Vergleiche das Ergebnis mit den [offiziellen Releases](https://github.com/zpalmtree/seine/releases) und lies die Release-Hinweise zu Plattform, Laufzeitbibliotheken und Startoptionen.
 
 ## Welche Einstellungen solltest du behalten?
 
@@ -45,11 +61,11 @@ Standardmäßig liest seine `./seine-data/seine.config.json`. `./` steht für da
 
 Die Konfiguration speichert etwa Mining-Modus, Auszahlungsadresse, Pool-URL und Gerätenamen. Bewahre das gesamte Datenverzeichnis einschließlich Tuning-Dateien auf. Sichere außerdem Startbefehl, Skript oder Dienstdefinition: `--backend` und `--threads` gehören nicht zu diesen gespeicherten Verbindungsfeldern. Beides zusammen erhält die beabsichtigte Einrichtung nach dem Neustart.
 
-## Neue Version herunterladen und prüfen
+## Wie aktualisierst du seine von Hand?
 
-Wähle auf der [Downloadseite](/de/#download) oder offiziellen Release-Seite das Archiv für Betriebssystem und CPU-Architektur. Lade die separate Datei `SHA256SUMS.txt` desselben Releases herunter. Vergleiche die Archiv-Prüfsumme, bevor du es in einen separaten Ordner entpackst. Die [Download-Prüfanleitung](/de/blog/antivirus-flags-crypto-miner/) erklärt das Windows-Verfahren und den Umgang mit Downloadwarnungen.
+Wenn du mit `--no-auto-update` arbeitest oder den Zeitpunkt lieber selbst wählst, aktualisiere von Hand. Wähle auf der [Downloadseite](/de/#download) oder offiziellen Release-Seite das Archiv für Betriebssystem und CPU-Architektur. Lade die separate Datei `SHA256SUMS.txt` desselben Releases herunter. Vergleiche die Archiv-Prüfsumme, bevor du es in einen separaten Ordner entpackst. Die [Download-Prüfanleitung](/de/blog/antivirus-flags-crypto-miner/) erklärt das Windows-Verfahren und den Umgang mit Downloadwarnungen.
 
-Halte alle mitgelieferten Dateien zusammen. Das Windows-Paket enthält NVIDIA-Laufzeitbibliotheken neben `seine.exe`; nur die Programmdatei zu kopieren kann verschiedene Versionen vermischen. Die [NVIDIA-Anleitung](/de/blog/mine-blocknet-nvidia-gpu/) behandelt die Laufzeitumgebung. Die [Konfigurationsreferenz v0.2.36](https://github.com/zpalmtree/seine/blob/v0.2.36/docs/guides/configuration.md) dokumentiert gespeicherte Einstellungen und das hier beschriebene Startverhalten.
+Halte alle mitgelieferten Dateien zusammen. Das Windows-Paket enthält NVIDIA-Laufzeitbibliotheken neben `seine.exe`; nur die Programmdatei zu kopieren kann verschiedene Versionen vermischen. Die [NVIDIA-Anleitung](/de/blog/mine-blocknet-nvidia-gpu/) behandelt die Laufzeitumgebung. Die [Konfigurationsreferenz v0.3.1](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/configuration.md) dokumentiert gespeicherte Einstellungen, automatische Updates und das hier beschriebene Startverhalten.
 
 ## Stoppen, sichern und ersetzen
 

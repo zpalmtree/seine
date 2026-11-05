@@ -1,62 +1,85 @@
 ---
-title: 'Jak seine automatycznie dostraja kopanie na CPU'
-description: 'Sprawdź, jak seine dobiera wątki CPU podczas kopania Blocknet, porównuje ustawienia, wykorzystuje zapisane wyniki i reaguje na dostępną pamięć RAM.'
+title: 'Jak seine automatycznie stroi kopanie na CPU'
+description: 'Dowiedz się, jak seine stroi wątki i kernele CPU podczas kopania Blocknet, zachowuje najmniejszą najszybszą liczbę wątków i kończy testy, gdy skończy strojenie.'
 tags: ['Poradnik kopania', 'Strojenie CPU', 'seine']
+sourceHash: 'd974c5518636'
+translation: draft
 faq:
   - q: 'Czy seine kopie podczas strojenia wątków CPU?'
-    a: 'Tak. W v0.2.36 zwykłe kopanie CPU zaczyna od zgodnego zapisanego ustawienia lub oszacowania sprzętowego. Strojenie porównuje liczby wątków podczas rzeczywistej pracy. Benchmarki offline stosują osobny proces, więc ich rozruch nie opisuje zwykłej sesji kopania.'
+    a: 'Tak. Seine od razu zaczyna kopać od najlepszego znanego mu punktu startowego, a potem porównuje liczby wątków i kernele CPU na prawdziwej pracy kopania. Każde porównanie przynosi udziały. Większość komputerów kończy w ciągu kilku minut, po czym wiersz Tuning pokazuje done, a liczba wątków się nie zmienia.'
   - q: 'Dlaczego liczba wątków CPU się zmienia?'
-    a: 'Automatyczne strojenie sprawdza sąsiednie liczby wątków i reaguje na dostępną pamięć. Zmiana może być próbą wydajności albo reakcją na presję RAM. Czytaj dziennik wraz z liczbą wątków. Zaczekaj na koniec porównania, zanim ocenisz krótki odczyt hashrate.'
+    a: 'Podczas strojenia liczba wątków przełącza się między dwiema wartościami, gdy seine je mierzy, a wiersz Tuning podaje tę parę i pozostały czas. Po strojeniu zmienia się tylko z powodu podanego w logu: nowa wersja zmieniła coś dla Twojego CPU, hashrate trwale się zmienił albo pamięć RAM jest potrzebna innym programom.'
   - q: 'Gdzie seine zapisuje wyniki strojenia CPU?'
-    a: 'Domyślnie wyniki wątków trafiają do seine.cpu-autotune.json w katalogu danych. Wybory kernela korzystają z pliku towarzyszącego zakończonego .kernels.json. Zgodne wyniki pomagają przy kolejnych uruchomieniach. Zachowaj ten sam katalog i pozwól programowi sprawdzić zgodność ustawień z aktualnym środowiskiem.'
-sourceHash: '41f9cc188856'
-translation: draft
+    a: 'W pliku seine.cpu-autotune.json w katalogu danych, domyślnie seine-data. Przy kolejnym starcie seine od razu wraca do zapisanego wyniku, a wiersz Tuning pokazuje done. Używaj tego samego katalogu danych między uruchomieniami i aktualizacjami, aby seine mógł znaleźć plik.'
 ---
 
-Zrozum, co robi seine, gdy podczas kopania zmienia liczbę wątków CPU. Poradnik dotyczy publicznej wersji v0.2.36 i wyjaśnia strojenie podczas pracy, zapisane wybory oraz reakcje na pamięć. Instalację opisuje [poradnik kopania](/pl/blog/how-to-mine-blocknet/), a panele — [przewodnik po pulpicie](/pl/blog/seine-dashboard-explained/).
+Zrozum, co robi seine, gdy liczba wątków CPU zmienia się podczas kopania. Poradnik opiera się na publicznym wydaniu v0.3.1 i wyjaśnia, jak seine znajduje najszybsze ustawienia dla Twojego CPU, dlaczego zachowuje najmniejszą liczbę wątków, która je osiąga, i kiedy sprawdza ponownie. Instalację opisuje [poradnik kopania](/pl/blog/how-to-mine-blocknet/), a znaczenie każdego panelu [przewodnik po panelu](/pl/blog/seine-dashboard-explained/).
 
 ## Jak działa automatyczne strojenie CPU?
 
 <Answer>
-Przy włączonym strojeniu seine zaczyna od zgodnej zapisanej liczby wątków lub oceny sprzętu, a następnie porównuje ustawienia na rzeczywistej pracy. Mierzy ustawienie bazowe, próbuje kandydata i ponownie mierzy bazę. Dostępny RAM i skonfigurowane granice ograniczają poszukiwanie ustawień odpowiednich dla maszyny.
+Seine od razu zaczyna kopać i stroi się na prawdziwej pracy kopania. Porównuje kernele, które może wykonywać Twój procesor, a potem liczby wątków, mierząc bieżące ustawienie, kandydata i ponownie bieżące ustawienie. Zachowuje najmniejszą liczbę wątków, która liczy hashe tak szybko jak najlepsza, i przestaje testować, dopóki coś się nie zmieni.
 </Answer>
 
-<img src="/assets/blog/cpu-autotuning.svg" alt="Powtarzane porównanie baza–kandydat–baza prowadzi do zapisanego ustawienia, z kontrolą dostępnej pamięci przez cały proces." width="1200" height="675" loading="lazy" />
+<img src="/assets/blog/cpu-autotuning.svg" alt="Powtarzane porównanie ustawienia bazowego, kandydata i znów ustawienia bazowego prowadzi do zapisanego ustawienia, a dostępna pamięć jest sprawdzana przez cały czas." width="1200" height="675" loading="lazy" />
 
-## Kopanie zaczyna się przed końcem poszukiwań
+Nie ustawiaj `--threads`, aby korzystać z automatycznego strojenia. Nie ma czego konfigurować. Seine zaczyna od najlepszego, co zna: zapisanego wyniku tego komputera, potem punktu startowego dla Twojego modelu CPU, potem szacunku na podstawie rdzeni i wolnej pamięci RAM. Stamtąd szuka rosnącymi krokami, aż kolejne wątki przestaną pomagać, a potem zawęża wynik.
 
-Pomiń `--threads`, aby użyć automatycznego strojenia. Przy zwykłym kopaniu seine wybiera początkową liczbę w budżecie zasobów i zaczyna pracę bez wcześniejszego przeglądu wątków offline. Zgodna pamięć podręczna może dostarczyć punkt startowy. Nowy komputer zaczyna od oszacowania poprawianego przez kolejne porównania.
+Bieżące ustawienie działa po obu stronach każdego kandydata, więc zmiana obciążenia, na przykład karta przeglądarki lub aktualizacja w tle, nie liczy się ani na korzyść, ani na niekorzyść kandydata. Wyraźnie wolniejszy kandydat jest przerywany wcześniej, więc większość komputerów kończy w ciągu kilku minut.
 
-Każda próba mierzy ukończone hashe w czasie rzeczywistym. Nowe obszary pamięci kończą pierwszy hash przed rozpoczęciem okna pomiaru. Sekwencja baza–kandydat–baza oddziela wpływ ustawienia od zmiennych warunków. Duży dryf bazy, zmiany limitów pamięci lub długotrwały brak pracy mogą unieważnić porównanie. Krótki skok na pulpicie jest tylko jedną obserwacją w dłuższej decyzji.
+## Co oznacza wiersz Tuning w panelu?
 
-## Dlaczego dodatkowe wątki nie zawsze pomagają?
+Wiersz `Tuning:` w panelu pokazuje stan strojenia:
 
-Każdy aktywny wątek CPU używa dużego obszaru pamięci i współdzieli jej przepustowość. Więcej wątków daje równoległą pracę, ale wynik zależy od całego systemu. Strojenie porównuje łączne H/s CPU, zamiast zakładać, że największa liczba będzie najszybsza. [Poradnik RAM](/pl/blog/how-much-ram-to-mine-blocknet/) wyjaśnia budżet pamięci.
+| Wiersz | Znaczenie |
+|---|---|
+| `trying kernels, about 4 min left` | Porównywanie kerneli CPU podczas kopania |
+| `12 vs 16 threads, about 3 min left` | Porównywanie dwóch liczb wątków; liczba przełącza się między nimi, gdy seine mierzy |
+| `update: 12 vs 14 threads, ~2 min` | Nowa wersja zmieniła coś dla Twojego CPU i testuje tylko to |
+| `done` | Strojenie zakończone. Liczba wątków się nie zmienia, chyba że coś się zmieni |
+| `low on RAM, best is 12 threads` | Działa mniej wątków, dopóki RAM znów nie będzie wolna |
 
-Domyślny profil to `balanced`. Profile sterują polityką strojenia i parametrami działania; `efficiency` jest świadomym wyborem mogącym preferować mniej wątków. Podczas oceny zachowaj jeden profil. Liczba wątków, ich rozmieszczenie i strony pamięci oddziałują na siebie: wynik innej maszyny lub konfiguracji jest punktem odniesienia, nie ustawieniem do automatycznego skopiowania.
+Log zawiera jeden wiersz na początku strojenia, podający przyczynę, i jeden po jego zakończeniu, na przykład `tuned to 12 threads`. [Poradnik panelu](/pl/blog/seine-dashboard-explained/) opisuje pozostałe panele.
+
+## Dlaczego seine używa mniej wątków, niż mógłby?
+
+Każdy wątek CPU utrzymuje dużą arenę pamięci, a wszystkie wątki dzielą przepustowość pamięci komputera. Powyżej pewnej liczby kolejne wątki nie dodają hashrate, a zajmują RAM, z której mogłyby korzystać inne programy. Dlatego seine traktuje każdą liczbę dorównującą najszybszej jako równie dobrą i zachowuje najmniejszą z nich. Dostajesz ten sam hashrate i więcej wolnej pamięci.
+
+Dlatego najlepsza liczba często jest niższa niż łączna liczba rdzeni lub wątków i różni się między podobnie wyglądającymi komputerami. Liczba wątków, kanały pamięci i rodzaj stron mają wpływ na wynik, więc wynik z innego komputera jest punktem odniesienia, a nie ustawieniem do skopiowania. [Poradnik RAM](/pl/blog/how-much-ram-to-mine-blocknet/) wyjaśnia budżet pamięci na wątek.
+
+Jeśli wolisz oszczędzić energię i pamięć zamiast ostatnich kilku hashy, `--cpu-profile efficiency` zachowuje niższą liczbę, bliską najszybszej.
+
+## Czy seine stroi także kernel CPU?
+
+Tak. Kernel to tutaj programowa implementacja hasha dla danego zestawu instrukcji procesora. Seine sprawdza, które instrukcje obsługuje Twój CPU, nigdy nie próbuje kernela, którego ten nie może wykonać, i pomija kernele, które nie wygrywają na Twoim CPU. Pozostałe porównuje podczas kopania, zanim ustali liczbę wątków. Przełączenia kerneli odbywają się między pełnymi hashami, więc kopanie trwa, a połączenie z pulą pozostaje aktywne.
+
+## Kiedy seine stroi się ponownie?
+
+Gdy wiersz pokazuje `done`, seine nie uruchamia zaplanowanych testów. Sprawdza ponownie tylko wtedy, gdy coś się zmienia:
+
+- **Nowa wersja zmienia coś dla Twojego CPU.** Nowe wydanie startuje z zapisanego wyniku i testuje tylko to, co się zmieniło, na przykład nowy lub ulepszony kernel. Wersja, która nic nie zmienia w hashowaniu, nie uruchamia żadnych testów.
+- **Hashrate zmienia się na dłużej,** na przykład gdy inny program zaczyna lub przestaje mocno używać CPU.
+- **Zwalnia się więcej RAM** po tym, jak to właśnie RAM ograniczała liczbę wątków.
+- **Zmienia się sprzęt, system operacyjny lub limity CPU,** na przykład limit CPU kontenera.
+
+Każda z tych sytuacji zapisuje w logu wiersz z przyczyną rozpoczęcia strojenia. Automatyczne aktualizacje zachowują Twoje strojenie, więc aktualizacja seine nie cofa go do początku. [Poradnik aktualizacji](/pl/blog/update-seine-miner/) wyjaśnia, jak działają aktualizacje.
 
 ## Co się dzieje, gdy inne programy potrzebują RAM?
 
-Automatyczny budżet zmienia się wraz z dostępnymi zasobami. Przy presji pamięci wątki mogą skończyć aktualny hash, zaparkować i zwolnić obszary. Po trwałym powrocie zapasu miner może aktywować dostępne miejsca i wznowić poszukiwania. Na komputerze z innymi aplikacjami aktywna liczba może więc dopasowywać się w tej samej sesji.
+Seine sprawdza wolną RAM raz na sekundę. Gdy inne programy potrzebują pamięci, wątki CPU kończą bieżący hash, wstrzymują się i zwalniają swoje areny, a wiersz pokazuje `low on RAM`. Gdy pamięć znów jest wolna, wątki wracają. Ustalona najlepsza liczba pozostaje zapisana, więc krótki niedobór jej nie kasuje.
 
-Chwilowe zmniejszenie nie musi usuwać wcześniej poznanej większej liczby. Pamięć podręczna i liczba aktywna mają inne zadania. W Linuksie zwolnione jawne obszary HugeTLB wracają do zarezerwowanej puli dużych stron; seine nie zmienia rozmiaru tej puli systemowej. [Poradnik huge pages](/pl/blog/huge-pages-blocknet-mining/) opisuje zmianę rezerwacji, odrębną od zwykłego wolnego RAM.
+W Linuksie zwolnione jawne areny HugeTLB wracają do zarezerwowanej puli huge pages; seine nie zmienia rozmiaru tej puli. [Poradnik huge pages](/pl/blog/huge-pages-blocknet-mining/) opisuje rezerwowanie huge pages.
 
-## Czy seine stroi również kernel CPU?
+## Jak wykorzystywane są zapisane wyniki strojenia?
 
-Zgodne CPU mogą porównywać ścieżki kodu haszowania i liczby wątków. Kernel oznacza tu programową implementację obliczania hashy. Miner sprawdza instrukcje procesora i porównuje dopuszczalne ścieżki przez powtarzane pomiary kopania. Próby kerneli i wątków odbywają się naprzemiennie, z aktywną obsługą pamięci. [Przewodnik techniczny](https://github.com/zpalmtree/seine/blob/v0.2.36/docs/guides/autotuning.md) opisuje kandydatów tej wersji.
+Wyniki są zapisywane w `seine.cpu-autotune.json` w katalogu danych, domyślnie `seine-data`. Przy kolejnym starcie seine od razu wraca do zapisanego wyniku, a wiersz pokazuje `done`. Jeśli hashrate wyraźnie różni się od poprzedniego razu, stroi się ponownie, a log podaje przyczynę. Używaj tego samego katalogu danych między uruchomieniami, aby seine mógł znaleźć plik, i pozwól każdej koparce utworzyć własny: skopiowanie pliku z innego komputera nie pomaga, bo wynik zależy od konkretnego sprzętu i ustawień.
 
-Automatyczne zmiany CPU zachowują połączenie z poolem i nie restartują backendów GPU. Kernel przełącza się między pełnymi hashami, zachowując przydzieloną pamięć. Ręczne `+` lub `-` działa inaczej: restartuje backendy, ponownie łączy pool i wyłącza automatyczną regulację CPU na ten przebieg. Dziennik pozwala rozpoznać rodzaj zmiany.
+## Czy możesz sam zmienić liczbę wątków?
 
-## Jak ponownie używane są zapisane wyniki?
+Tak. Naciśnij `-` lub `+` w panelu, aby usunąć lub dodać jeden wątek CPU. Gdy strojenie pokazuje `done`, zmiana od razu dotyczy działających wątków, a GPU i połączenie z pulą działają dalej. Gdy strojenie wciąż wybiera liczbę, klawisze czekają, a panel pokazuje, ile czasu zostało do końca strojenia. Naciśnięcie działa tylko w bieżącym uruchomieniu; kolejny start znów korzysta z zapisanego wyniku.
 
-Domyślny plik wątków to `seine.cpu-autotune.json` w `--data-dir`, a kerneli — `seine.cpu-autotune.json.kernels.json`. Zapisują poznane ustawienia osobno od konfiguracji połączenia. Zachowaj stały katalog danych między uruchomieniami. [Poradnik aktualizacji](/pl/blog/update-seine-miner/) wyjaśnia jego zachowanie podczas wymiany aplikacji.
+Aby ustalić liczbę od początku, użyj `--threads`, na przykład `--threads 4`. Seine zachowuje wtedy tę liczbę i nadal wybiera dla niej najlepszy kernel. `--disable-cpu-autotune-threads` całkowicie wyłącza strojenie wątków i kerneli. [Opis flag](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/MINER_FLAGS.md) dokumentuje te opcje, a poradnik [kopania podczas korzystania z komputera](/pl/blog/mine-while-using-pc/) pokazuje, jak dzielić komputer z kopaniem.
 
-Ponowne użycie zależy m.in. od sprzętu, kompilacji, rozmieszczenia i stron pamięci. Bieżące limity nadal ograniczają początkową aktywną liczbę. Po istotnej zmianie brak zgodnego zapisu jest spodziewany; pozwól zebrać nowe pomiary. Nie kopiuj danych innego riga ani nie edytuj pomiarów ręcznie. Przeczytaj komunikaty startu i strojenia przed uznaniem nowej analizy za problem.
+Na co dzień zacznij od ustawień domyślnych i pozwól strojeniu dojść do `done`. Śledź próby strojenia w wierszu urządzenia CPU, a zaliczoną pracę w [statystykach puli](https://bntpool.com/blog/pl/track-your-miner-on-bntpool/).
 
-## Kiedy ustawić stałą liczbę wątków?
-
-Użyj stałej liczby, gdy celowo potrzebujesz powtarzalnej konfiguracji. `--threads 4` żąda czterech wątków i zwykle wyłącza automatyczne strojenie wątków i kerneli. `--cpu-autotune-threads` włącza strojenie nawet z podaną liczbą; `--disable-cpu-autotune-threads` wyłącza regulację. [Opis flag](https://github.com/zpalmtree/seine/blob/v0.2.36/docs/MINER_FLAGS.md) dokumentuje granice i zależności.
-
-Na co dzień zacznij od wartości domyślnych i pozwól zakończyć produktywne porównania. Oceniaj razem wiersz CPU, komunikaty strojenia i zaakceptowane udziały. Porównuj podobne obciążenia i stan pamięci. Hashrate poola jest szacowany z udziałów: lokalne pomiary CPU wyjaśniają próbę, a [statystyki poola](https://bntpool.com/blog/pl/track-your-miner-on-bntpool/) pokazują zaliczoną pracę.
-
-<CTA target="seine" title="Kop z automatycznym strojeniem CPU" text="Pobierz seine, zachowaj domyślne strojenie i śledź decyzje na pulpicie." />
+<CTA target="seine" title="Kop z automatycznym strojeniem CPU" text="Pobierz seine, zostaw ustawienia domyślne, a w kilka minut znajdzie najszybszą liczbę wątków i kernel dla Twojego CPU." />

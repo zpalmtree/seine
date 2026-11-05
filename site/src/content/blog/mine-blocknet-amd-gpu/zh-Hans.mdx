@@ -1,0 +1,96 @@
+---
+title: '如何使用 AMD GPU 挖掘 Blocknet'
+description: '使用 seine 在 AMD Radeon RX 6000、RX 7000、RX 9000 和 Radeon PRO 显卡上挖掘 Blocknet。了解 Windows 或 Linux 设置、选择显卡以及检查每块 GPU 是否在计算哈希。'
+tags: ['挖矿指南', 'AMD', 'Radeon', 'GPU']
+sourceHash: 60f795ed50a7
+translation: draft
+faq:
+  - q: '哪些 AMD 显卡可以挖 Blocknet？'
+    a: 'seine 可以在 Windows x86_64 和 Linux x86_64 上，用 AMD Radeon RX 6000、RX 7000、RX 9000 显卡以及采用相同芯片的 Radeon PRO 显卡挖矿。它会自动找到每一块独立 AMD 显卡，并与 CPU 同时挖矿。除非你加上 --backend amd，集成 Radeon 显卡默认不参与。'
+  - q: '在 Windows 上用 AMD GPU 挖矿需要安装什么？'
+    a: '只需要 AMD 显卡驱动（Adrenalin 或 Radeon PRO）。驱动包含 seine 使用的 HIP 运行时，发布版程序已经内置了适用于 RX 6000、RX 7000 和 RX 9000 显卡的 GPU 内核。你不需要 HIP SDK 或其他任何下载。'
+  - q: '在 Linux 上用 AMD GPU 挖矿需要安装什么？'
+    a: '需要 amdgpu 内核驱动（当前的发行版都已包含）以及 AMD 的 ROCm HIP 运行时，可以是 hip-runtime-amd 软件包，也可以是完整的 ROCm 安装。你的用户还需要访问 GPU 设备文件，在大多数发行版上就是加入 render 和 video 用户组。'
+  - q: 'seine 能在同一台电脑上同时用 AMD 和 NVIDIA 显卡挖矿吗？'
+    a: '可以。不设置 backend 选项时，seine 会用 CPU 以及它找到的每一块 NVIDIA 显卡和独立 AMD 显卡挖矿。如果想让 CPU 空闲，用 --backend nvidia,amd 启动。每块显卡在 Devices 面板上都有单独的一行，方便你分别检查每块 GPU。'
+---
+
+seine 可以在 CPU 挖矿的同时，用 AMD Radeon 显卡挖掘 Blocknet。本指南介绍在 Windows 和 Linux 上需要安装什么、如何选择显卡、如何确认每块 GPU 都在计算哈希，以及显卡没有出现时该检查什么。内容基于 seine v0.3.1。
+
+## seine 支持哪些 AMD 显卡？
+
+<Answer>
+seine 支持 AMD Radeon RX 6000、RX 7000 和 RX 9000 显卡，以及采用相同 RDNA2、RDNA3 和 RDNA4 芯片的 Radeon PRO 显卡，运行在 Windows x86_64 和 Linux x86_64 上。每一块独立 AMD 显卡都会被自动选中，与 CPU 同时挖矿，无需修改任何设置。
+</Answer>
+
+每块显卡用多个通道（lane）挖矿，每个通道同时计算一个哈希。一个通道大约需要 2 GB 显存，在 RDNA2、RDNA3 和 RDNA4 上略少一些，因此显存越大的显卡能同时运行的通道越多。16 GB 的显卡大约运行 9 个通道。seine 会根据启动时的可用显存自动确定数量，你不需要自己计算。
+
+Ryzen 处理器中的集成 Radeon 显卡默认不参与挖矿。如果需要，可以用 `--backend amd` 把它加进来。
+
+## 如何在 Windows 上设置 AMD GPU 挖矿？
+
+从 [AMD 驱动页面](https://www.amd.com/en/support/download/drivers.html)为你的显卡安装最新的 AMD 显卡驱动：Radeon RX 显卡用 Adrenalin，PRO 显卡用 Radeon PRO 驱动。驱动包含 seine 使用的 HIP 运行时，发布版程序自带为 RX 6000、RX 7000 和 RX 9000 显卡预先编译好的 GPU 内核，无需其他任何东西。
+
+从[下载区域](/zh-hans/#download)下载 `seine-windows-x86_64.zip`，把整个压缩包解压到一个可写入的文件夹，然后启动：
+
+```powershell
+.\seine.exe
+```
+
+首次运行时，粘贴你的收款地址，按 Enter 接受 bntpool.com。[Windows 设置指南](/zh-hans/blog/mine-blocknet-on-windows/)一步步介绍了下载和解压过程。
+
+## 如何在 Linux 上设置 AMD GPU 挖矿？
+
+<Answer>
+安装 amdgpu 内核驱动（当前的发行版都已包含）以及 AMD 的 ROCm HIP 运行时，可以是 hip-runtime-amd 软件包，也可以是完整的 ROCm 安装。把你的用户加入 render 和 video 用户组，让 seine 能够打开 GPU，重新登录后启动 Linux x86_64 版 seine。seine 会自动找到你的 AMD 显卡。
+</Answer>
+
+1. **安装运行时。** 为你的发行版添加 AMD 的 ROCm 软件源并安装 `hip-runtime-amd`；如果你已经在使用完整的 ROCm，也可以直接用它。AMD 的 [ROCm 安装指南](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/)列出了支持的发行版。
+2. **授予用户访问 GPU 的权限。** seine 会打开 `/dev/kfd` 和 `/dev/dri/renderD*`：
+
+   ```bash
+   sudo usermod -aG render,video $USER
+   ```
+
+   注销后重新登录，让新的用户组生效。
+3. **启动 seine。** 从[下载区域](/zh-hans/#download)下载 `seine-linux-x86_64.tar.gz`，解压后运行：
+
+   ```bash
+   ./seine
+   ```
+
+如果安装了 hipRTC，seine 会在启动时为你的显卡型号编译专用内核。RX 6000、RX 7000 和 RX 9000 显卡在没有 hipRTC 时也能运行，使用发布版内置的内核。[Linux 挖矿指南](/zh-hans/blog/mine-blocknet-on-linux/)介绍了压缩包和系统要求。
+
+在 RX 7000 和 Radeon PRO W7000 显卡上，如果 seine 以 root 身份运行，它会在挖矿期间把显卡的功耗级别设为 `high`，退出时恢复原来的级别。不以 root 运行时，它会打印一条完成同样操作的单行命令，供你自己执行。
+
+## 如何选择用哪些显卡挖矿？
+
+不设置 backend 选项时，seine 会用 CPU 和每一块独立 AMD 显卡挖矿。如果想让 GPU 继续挖矿、CPU 保持空闲，选择 `amd`：
+
+```bash
+./seine --backend amd
+```
+
+如果只用一块显卡挖矿，同时保留 CPU 挖矿，选择两个后端并指定显卡的索引：
+
+```bash
+./seine --backend cpu,amd --amd-devices 0
+```
+
+`--amd-devices 0,1` 会选择两块显卡。在同时装有 NVIDIA 和 AMD 显卡的电脑上，`--backend nvidia,amd` 会用所有显卡挖矿而不使用 CPU。如果要在同一块显卡上为游戏或其他应用留出显存，可以用 `--amd-max-lanes 2` 限制通道数。[设置指南](/zh-hans/blog/configure-seine-miner/)介绍了如何让这些选项在每次启动时都生效。
+
+## 如何确认 AMD GPU 正在挖矿？
+
+AMD 显卡会在 CPU 已经开始挖矿时在后台启动。每块显卡在 Devices 面板上都有自己的一行，依次为 `amd#1`、`amd#2` 等；显卡上线时，日志会报告它的通道数，例如 `amd#1: online (initialized in background, 9 lanes)`。之后这一行会显示该显卡的当前算力和平均算力。
+
+Mining 面板中被接受的份额可以确认矿池已经计入你的工作量。[仪表盘指南](/zh-hans/blog/seine-dashboard-explained/)介绍了每个面板，你还可以按照[矿机追踪指南](https://bntpool.com/blog/zh-hans/track-your-miner-on-bntpool/)在 bntpool.com 上查看你的矿机。
+
+## AMD 显卡没有出现时该检查什么？
+
+- **检查驱动和运行时。** 在 Windows 上安装或更新 AMD 驱动。在 Linux 上安装 `hip-runtime-amd`，并检查你的用户是否在 `render` 和 `video` 用户组中。没有运行时时，seine 会用 CPU 挖矿；如果加上 `--backend amd`，它会在启动时指出缺少的运行时。
+- **检查你的命令。** `--backend cpu` 只用处理器挖矿。请使用默认命令，或在后端列表中包含 `amd`。如果设置了 `--amd-devices`，请确认该索引存在。
+- **驱动更新后自己指定 amd。** 如果 AMD 运行时连续两次导致 seine 退出，seine 会停止自动选择 AMD 显卡，继续用其余设备挖矿，并在下一次更新后再次尝试这些显卡。要立即重新尝试，用 `--backend cpu,amd` 启动一次即可。
+
+完整的要求见 [seine AMD 指南](https://github.com/zpalmtree/seine/blob/master/docs/guides/amd.md)。使用挖矿操作系统的用户可以从每个版本中安装 [HiveOS](https://github.com/zpalmtree/seine/blob/master/docs/guides/hiveos.md) 或 [mmpOS](https://github.com/zpalmtree/seine/blob/master/docs/guides/mmpos.md) 软件包。
+
+<CTA target="seine" title="下载 seine 用 AMD GPU 挖矿" text="选择 Windows 或 Linux x86_64 压缩包，seine 就会用你的 CPU 和它找到的每一块 Radeon 显卡挖矿。" />

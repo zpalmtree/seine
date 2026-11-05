@@ -6,10 +6,10 @@ faq:
   - q: 'Berapa banyak RAM yang dibutuhkan untuk menambang Blocknet?'
     a: 'Setiap thread penambangan membutuhkan sekitar 2 GB RAM, karena setiap hash Argon2id bekerja di atas blok memori 2 GiB. Jadi komputer dengan 16 GB bisa menjalankan sekitar enam sampai tujuh thread setelah menyisakan ruang untuk sistem. seine mengukur memori Anda dan memilih jumlah thread yang aman secara otomatis.'
   - q: 'Kapan pembayaran hasil menambang Blocknet di bntpool.com masuk?'
-    a: 'Pool bntpool.com membayar dengan PPLNS dalam jendela enam jam. Imbalan sebuah blok baru bisa dibayarkan setelah blok itu tertimbun 60 blok, sekitar lima jam dengan waktu blok lima menit, dan saldo dikirim setelah mencapai 0,1 BNT. Pembayaran pertama biasanya masuk beberapa jam setelah share pertama Anda diterima.'
+    a: 'Pool bntpool.com membayar dengan PPLNS dalam jendela enam jam. Imbalan sebuah blok baru bisa dibayarkan setelah blok itu tertimbun 60 blok, sekitar lima jam dengan waktu blok lima menit, dan saldo dikirim setelah mencapai 1 BNT. Pembayaran pertama biasanya masuk beberapa jam setelah share pertama Anda diterima.'
   - q: 'Bisakah saya menambang Blocknet dengan CPU dan GPU sekaligus?'
     a: 'Bisa. Di Windows dan Linux, seine menambang dengan setiap core CPU dan setiap kartu grafis NVIDIA di komputer secara bersamaan, dan kedua hashrate-nya dijumlahkan. seine menyetel prosesor dan setiap kartu secara terpisah selama berjalan, sehingga Anda mendapatkan hasil maksimal dari seluruh perangkat keras tanpa mengubah satu pengaturan pun.'
-sourceHash: bff032ea0960
+sourceHash: 42d41a1c403b
 translation: draft
 ---
 
@@ -49,7 +49,7 @@ Sejak itu seine terus menyetel dirinya sambil menambang. seine membandingkan jum
 
 ## Berapa lama sampai Anda dibayar?
 
-Pool bntpool.com memakai PPLNS: imbalan setiap blok dibagi di antara share yang dikirim dalam enam jam sebelum blok itu ditemukan. Imbalan belum bisa dibelanjakan sampai bloknya tertimbun 60 blok, sekitar lima jam dengan waktu blok Blocknet lima menit. Setelah saldo terkonfirmasi Anda mencapai 0,1 BNT, pool mengirimkannya ke alamat Anda.
+Pool bntpool.com memakai PPLNS: imbalan setiap blok dibagi di antara share yang dikirim dalam enam jam sebelum blok itu ditemukan. Imbalan belum bisa dibelanjakan sampai bloknya tertimbun 60 blok, sekitar lima jam dengan waktu blok Blocknet lima menit. Setelah saldo terkonfirmasi Anda mencapai 1 BNT, pool mengirimkannya ke alamat Anda.
 
 Anda bisa memantau hashrate, share, dan saldo di [bntpool.com](https://bntpool.com) dengan mencari alamat Anda. Pool menampilkan imbalan dari blok yang belum terkonfirmasi secara terpisah, karena jumlahnya masih bisa berubah.
 
@@ -78,10 +78,10 @@ Hasil untuk setiap CPU yang diuji ada di [halaman performa](https://github.com/z
 
 ## Bisakah Anda menambang Blocknet secara solo?
 
-Bisa. Jika Anda menjalankan node Blocknet sendiri yang sudah tersinkron, jalankan seine dengan `./seine --mode daemon` dan seine akan menambang langsung ke node itu, bukan ke pool. Anda menyimpan setiap blok yang Anda temukan, tetapi pembayaran baru masuk saat Anda menemukan satu blok utuh, jadi kebanyakan orang memulai di pool. [Panduan penambangan solo](https://github.com/zpalmtree/seine/blob/master/docs/guides/solo-mining.md) menjelaskan cara menyiapkannya.
+Bisa, dengan dua cara. Yang paling mudah adalah menambang solo di bntpool.com: tambahkan `solo:` di depan alamat Anda, seperti `./seine --address solo:YOUR_ADDRESS`, dan pool membayar Anda seluruh imbalan setiap blok yang ditemukan rig Anda, tanpa node yang perlu dijalankan. [Penambangan solo di bntpool.com](https://bntpool.com/blog/id/solo-mine-blocknet-on-bntpool/) menjelaskan cara menyiapkannya. Jika Anda menjalankan node Blocknet sendiri yang sudah tersinkron, `./seine --mode daemon` menambang langsung ke node itu, seperti dijelaskan [panduan penambangan solo](https://github.com/zpalmtree/seine/blob/master/docs/guides/solo-mining.md). Imbalan solo datang sebagai blok utuh, jadi cocok bagi penambang dengan bagian besar jaringan.
 
 <Note>
-Blocknet merencanakan upgrade jaringan bernama Faraday sekitar 2027-02-16, menurut [blocknetcrypto.com](https://blocknetcrypto.com/#faraday). Upgrade ini direncanakan mengubah proof of work, jadi pastikan seine selalu terbaru: seine memeriksa rilis baru saat dijalankan dan setiap 12 jam.
+Blocknet merencanakan upgrade jaringan bernama Faraday sekitar 16 Februari 2027, menurut [blocknetcrypto.com](https://blocknetcrypto.com/#faraday). Upgrade ini direncanakan mengubah proof of work. seine v0.3.1 sudah siap: penambangan pool beralih ke proof of work baru dengan sendirinya, dan dengan pembaruan otomatis aktif, seine memasang rilis baru untuk Anda.
 </Note>
 
 <CTA target="seine" title="Unduh seine" text="Gratis untuk Windows, macOS, dan Linux. Jalankan, tempel alamat Anda, dan Anda langsung menambang di bntpool.com." />

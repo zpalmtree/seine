@@ -1,62 +1,85 @@
 ---
 title: 'Wie seine CPU-Mining automatisch abstimmt'
-description: 'Erfahre, wie seine beim Blocknet-Mining CPU-Threads abstimmt, Einstellungen vergleicht, Ergebnisse wiederverwendet und auf verfügbaren RAM reagiert.'
+description: 'Erfahre, wie seine beim Blocknet-Mining CPU-Threads und Kernel abstimmt, die niedrigste Thread-Zahl mit der höchsten Hashrate behält und danach mit dem Testen aufhört.'
 tags: ['Mining-Anleitung', 'CPU-Abstimmung', 'seine']
+sourceHash: 'd974c5518636'
+translation: draft
 faq:
   - q: 'Mint seine während der CPU-Abstimmung?'
-    a: 'Ja. In v0.2.36 beginnt normales CPU-Mining mit einer passenden gespeicherten Einstellung oder einer hardwarebasierten Schätzung. Der Tuner vergleicht Thread-Zahlen anhand echter Mining-Arbeit. Offline-Benchmarks verwenden ein eigenes Verfahren; deren Startablauf beschreibt deshalb keine normale Mining-Sitzung.'
+    a: 'Ja. seine beginnt sofort mit dem besten Startpunkt, den es kennt, und vergleicht dann Thread-Zahlen und CPU-Kernel anhand echter Mining-Arbeit. Jeder Vergleich bringt Shares. Die meisten Rechner sind in wenigen Minuten fertig; danach zeigt die Zeile Tuning done, und die Thread-Zahl bleibt, wie sie ist.'
   - q: 'Warum ändert sich die CPU-Thread-Zahl?'
-    a: 'Die automatische Abstimmung testet benachbarte Thread-Zahlen und reagiert auf verfügbaren Arbeitsspeicher. Eine Änderung kann ein Leistungstest oder eine Reaktion auf Speicherdruck sein. Lies das Protokoll zusammen mit der Thread-Zahl und warte das Vergleichsende ab, bevor du einen kurzen Hashrate-Ausschlag bewertest.'
+    a: 'Während der Abstimmung wechselt die Thread-Zahl zwischen zwei Werten, die seine misst, und die Zeile Tuning nennt das Paar und die verbleibende Zeit. Nach der Abstimmung ändert sie sich nur aus einem Grund, den das Log nennt: eine neue Version, die für deine CPU etwas geändert hat, eine anhaltende Änderung der Hashrate oder RAM, den andere Programme brauchen.'
   - q: 'Wo speichert seine CPU-Abstimmungsergebnisse?'
-    a: 'Standardmäßig stehen Thread-Ergebnisse in seine.cpu-autotune.json im Datenverzeichnis. Kernel-Entscheidungen nutzen die Begleitdatei mit der Endung .kernels.json. Passende Ergebnisse erleichtern spätere Starts. Behalte dasselbe Datenverzeichnis bei und lasse den Miner prüfen, ob die gespeicherten Einstellungen zur aktuellen Umgebung passen.'
-sourceHash: '41f9cc188856'
-translation: draft
+    a: 'In seine.cpu-autotune.json im Datenverzeichnis, standardmäßig seine-data. Beim nächsten Start kehrt seine direkt zum gespeicherten Ergebnis zurück, und die Zeile Tuning zeigt done. Behalte zwischen Starts und Updates dasselbe Datenverzeichnis, damit es die Datei findet.'
 ---
 
-Verstehe, was seine macht, wenn sich beim Mining die CPU-Thread-Zahl ändert. Diese Anleitung folgt der veröffentlichten v0.2.36 und erklärt produktive Abstimmung, gespeicherte Entscheidungen und Speicheranpassungen. Zur Installation dient die [Mining-Anleitung](/de/blog/how-to-mine-blocknet/); die Anzeigen erklärt der [Dashboard-Rundgang](/de/blog/seine-dashboard-explained/).
+Verstehe, was seine macht, wenn sich beim Mining die CPU-Thread-Zahl ändert. Diese Anleitung folgt dem öffentlichen Release v0.3.1 und erklärt, wie seine die schnellsten Einstellungen für deine CPU findet, warum es die niedrigste Thread-Zahl behält, die dorthin kommt, und wann es erneut sucht. Zur Installation dient die [Mining-Anleitung](/de/blog/how-to-mine-blocknet/); die Bedeutung jedes Panels erklärt der [Dashboard-Rundgang](/de/blog/seine-dashboard-explained/).
 
 ## Wie funktioniert die automatische CPU-Abstimmung?
 
 <Answer>
-Bei aktivierter CPU-Abstimmung beginnt seine mit einer passenden gespeicherten Thread-Zahl oder einer hardwarebasierten Schätzung und vergleicht Einstellungen mit echter Mining-Arbeit. Es misst die Ausgangseinstellung, testet einen Kandidaten und misst die Ausgangseinstellung erneut. Verfügbarer RAM und konfigurierte Grenzen begrenzen die Suche nach passenden Einstellungen.
+seine beginnt sofort zu minen und stimmt sich anhand echter Mining-Arbeit ab. Es vergleicht die CPU-Kernel, die dein Prozessor ausführen kann, und dann Thread-Zahlen, indem es die aktuelle Einstellung, den Kandidaten und wieder die aktuelle Einstellung misst. Es behält die niedrigste Thread-Zahl, die so schnell hasht wie die beste, und testet dann nicht weiter, bis sich etwas ändert.
 </Answer>
 
 <img src="/assets/blog/cpu-autotuning.svg" alt="Ein wiederholter Ausgangswert–Kandidat–Ausgangswert-Vergleich führt zu einer gespeicherten Einstellung; verfügbarer Speicher wird laufend geprüft." width="1200" height="675" loading="lazy" />
 
-## Mining beginnt vor dem Ende der Suche
+Lass `--threads` weg, um die automatische Abstimmung zu nutzen. Es gibt nichts einzustellen. seine startet mit dem Besten, das es kennt: dem gespeicherten Ergebnis dieses Rechners, dann einem Startpunkt für dein CPU-Modell, dann einer Schätzung aus Kernen und freiem RAM. Von dort sucht es in wachsenden Schritten, bis mehr Threads nicht mehr helfen, und grenzt dann ein.
 
-Lasse `--threads` weg, um Threads automatisch abzustimmen. Beim normalen Mining wählt seine eine anfängliche Zahl innerhalb des Ressourcenbudgets und beginnt produktive Arbeit ohne vorherigen Offline-Thread-Testlauf. Ein kompatibler Cache kann den Startwert liefern. Ein neuer Rechner beginnt mit einer Schätzung, die spätere Vergleiche verbessern.
+Weil die aktuelle Einstellung vor und nach jedem Kandidaten läuft, zählt eine Laständerung, etwa ein Browser-Tab oder ein Update im Hintergrund, weder für noch gegen den Kandidaten. Ein deutlich langsamerer Kandidat wird früh abgebrochen, daher sind die meisten Rechner in wenigen Minuten fertig.
 
-Jeder Versuch misst abgeschlossene Hashes über die verstrichene Zeit. Neue Speicherarenen schließen vor dem Messfenster einen ersten Hash ab. Die Folge Ausgangswert–Kandidat–Ausgangswert trennt Einstellungseffekte von wechselnden Bedingungen. Starke Abweichungen der Ausgangsmessung, geänderte Speichergrenzen oder anhaltender Arbeitsausfall können den Vergleich verwerfen. Ein kurzer Dashboard-Spitzenwert ist daher nur eine Beobachtung innerhalb einer längeren Entscheidung.
+## Was bedeutet die Zeile Tuning im Dashboard?
 
-## Warum helfen zusätzliche Threads nicht unbegrenzt?
+Die Zeile `Tuning:` im Dashboard zeigt, wo die Abstimmung steht:
 
-Jeder aktive CPU-Thread nutzt eine große Speicherarena; alle teilen sich die Speicherbandbreite. Mehr Threads ermöglichen mehr gleichzeitige Arbeit, doch das Ergebnis hängt vom gesamten System ab. Der Tuner vergleicht die gesamten CPU-H/s, statt die größte Thread-Zahl automatisch für die schnellste zu halten. Die [RAM-Anleitung](/de/blog/how-much-ram-to-mine-blocknet/) erklärt das Speicherbudget.
+| Zeile | Bedeutung |
+|---|---|
+| `trying kernels, about 4 min left` | Vergleicht CPU-Kernel während des Minens |
+| `12 vs 16 threads, about 3 min left` | Vergleicht zwei Thread-Zahlen; die Zahl wechselt zwischen beiden, während seine misst |
+| `update: 12 vs 14 threads, ~2 min` | Eine neue Version hat für deine CPU etwas geändert und testet nur das |
+| `done` | Abgestimmt. Die Thread-Zahl bleibt, solange sich nichts ändert |
+| `low on RAM, best is 12 threads` | Läuft mit weniger Threads, bis wieder RAM frei ist |
 
-Das Standardprofil heißt `balanced`. Profile steuern Abstimmungsregeln und Laufzeitvorgaben; `efficiency` ist eine ausdrückliche Wahl, die weniger Threads bevorzugen kann. Behalte bei der Bewertung dasselbe Profil. Thread-Zahl, CPU-Platzierung und Speicherseiten wirken zusammen: Das Ergebnis eines anderen Rechners oder einer anderen Konfiguration ist eine Referenz, keine automatisch zu übernehmende Einstellung.
+Das Log hat eine Zeile, wenn die Abstimmung beginnt, mit dem Grund, und eine, wenn sie endet, zum Beispiel `tuned to 12 threads`. Die [Dashboard-Anleitung](/de/blog/seine-dashboard-explained/) behandelt die übrigen Panels.
 
-## Was passiert, wenn andere Programme RAM brauchen?
+## Warum nutzt seine weniger Threads, als es könnte?
 
-Das automatische Speicherbudget folgt den verfügbaren Ressourcen. Bei Speicherdruck können CPU-Threads ihren aktuellen Hash beenden, parken und ihre Arenen freigeben. Kehrt ausreichend Spielraum dauerhaft zurück, kann der Miner verfügbare Slots aktivieren und weiter suchen. Auf einem auch anderweitig genutzten Rechner kann sich die aktive Zahl so innerhalb derselben Sitzung anpassen.
+Jeder CPU-Thread belegt einen großen Speicherbereich, und alle Threads teilen sich die Speicherbandbreite des Rechners. Ab einer gewissen Zahl bringen mehr Threads keine Hashrate mehr und belegen RAM, den deine anderen Programme nutzen könnten. seine wertet daher jede Zahl, die mit der schnellsten gleichzieht, als genauso gut und behält die niedrigste davon. Du bekommst dieselbe Hashrate mit mehr freiem Speicher.
 
-Eine vorübergehende Reduktion muss eine zuvor gelernte höhere Zahl nicht löschen. Cache und aktive Zahl erfüllen verschiedene Aufgaben. Unter Linux kehren freigegebene explizite HugeTLB-Arenen in den reservierten Huge-Page-Pool zurück; seine verändert dessen Betriebssystemgröße nicht. Die [Huge-Pages-Anleitung](/de/blog/huge-pages-blocknet-mining/) erklärt Reservierungsänderungen. Unterscheide diese von gewöhnlichem freiem RAM.
+Deshalb liegt die beste Zahl oft unter deiner Gesamtzahl an Kernen oder Threads, und deshalb unterscheidet sie sich zwischen Rechnern, die gleich aussehen. Thread-Zahl, Speicherkanäle und die Art der Speicherseiten spielen alle mit, daher ist ein Ergebnis von einem anderen Rechner ein Anhaltspunkt, keine Einstellung zum Übernehmen. Die [RAM-Anleitung](/de/blog/how-much-ram-to-mine-blocknet/) erklärt den Speicherbedarf pro Thread.
+
+Wenn du lieber Strom und Speicher sparst, statt die letzten Hashes herauszuholen, behält `--cpu-profile efficiency` eine niedrigere Zahl nahe an der schnellsten.
 
 ## Stimmt seine auch den CPU-Kernel ab?
 
-Geeignete CPUs können neben Thread-Zahlen auch unterstützte Hashing-Codepfade vergleichen. Kernel bezeichnet hier die Softwareimplementierung der Hashberechnung. Der Miner prüft unterstützte Prozessorbefehle und vergleicht geeignete Pfade mit wiederholten Mining-Messungen. Kernel- und Thread-Versuche wechseln sich ab; die Speicherverwaltung bleibt aktiv. Die [technische Anleitung](https://github.com/zpalmtree/seine/blob/v0.2.36/docs/guides/autotuning.md) beschreibt die Kandidaten dieser Version.
+Ja. Ein Kernel ist hier die Software-Implementierung des Hashes für einen bestimmten Satz von Prozessorbefehlen. seine prüft, welche Befehle deine CPU unterstützt, probiert nie einen Kernel, den sie nicht ausführen kann, und überspringt Kernel, die auf deiner CPU nicht gewinnen. Die übrigen vergleicht es während des Minens, bevor es die Thread-Zahl festlegt. Kernel-Wechsel erfolgen zwischen vollständigen Hashes, daher läuft das Mining weiter und die Pool-Verbindung bleibt bestehen.
 
-Automatische CPU-Änderungen erhalten die Poolverbindung und starten GPU-Backends nicht neu. Kernel wechseln zwischen vollständigen Hashes und behalten ihre Arenen. Anders arbeitet ein manueller Druck auf `+` oder `-`: Er startet Mining-Backends neu, verbindet den Pool erneut und deaktiviert die automatische CPU-Anpassung für diesen Lauf. Das Protokoll zeigt, welche Änderung stattfand.
+## Wann stimmt seine erneut ab?
+
+Sobald die Zeile `done` zeigt, führt seine keine geplanten Tests mehr aus. Es sucht nur erneut, wenn sich etwas ändert:
+
+- **Eine neue Version ändert etwas für deine CPU.** Das neue Release startet mit deinem gespeicherten Ergebnis und testet nur, was sich geändert hat, etwa einen neuen oder verbesserten Kernel. Eine Version, die am Hashen nichts ändert, führt gar keine Tests aus.
+- **Die Hashrate ändert sich über längere Zeit,** etwa wenn ein anderes Programm die CPU stark zu nutzen beginnt oder damit aufhört.
+- **Mehr RAM wird frei,** nachdem RAM die Thread-Zahl begrenzt hatte.
+- **Hardware, Betriebssystem oder CPU-Limits ändern sich,** etwa das CPU-Limit eines Containers.
+
+Jeder dieser Fälle schreibt eine Log-Zeile, die sagt, warum die Abstimmung begonnen hat. Automatische Updates behalten deine Abstimmung, ein Update von seine wirft sie also nicht an den Anfang zurück. Die [Update-Anleitung](/de/blog/update-seine-miner/) erklärt, wie Updates funktionieren.
+
+## Was passiert, wenn andere Programme RAM brauchen?
+
+seine prüft einmal pro Sekunde den freien RAM. Brauchen andere Programme Speicher, beenden die CPU-Threads ihren aktuellen Hash, pausieren und geben ihre Speicherbereiche frei, und die Zeile zeigt `low on RAM`. Ist der Speicher wieder frei, kommen die Threads zurück. Die beste gelernte Zahl bleibt gespeichert, ein kurzer Engpass löscht sie also nicht.
+
+Unter Linux gehen freigegebene explizite HugeTLB-Bereiche in den reservierten Huge-Pages-Pool zurück; seine ändert die Größe dieses Pools nicht. Die [Huge-Pages-Anleitung](/de/blog/huge-pages-blocknet-mining/) erklärt das Reservieren von Huge Pages.
 
 ## Wie werden gespeicherte Ergebnisse wiederverwendet?
 
-Der Thread-Cache heißt standardmäßig `seine.cpu-autotune.json` unter `--data-dir`; der Kernel-Cache heißt `seine.cpu-autotune.json.kernels.json`. Beide speichern gelernte Entscheidungen getrennt von den Pool-Verbindungsdaten. Verwende bei jedem Start dasselbe Datenverzeichnis. Die [Update-Anleitung](/de/blog/update-seine-miner/) erklärt, wie du es beim Austausch der Anwendung erhältst.
+Ergebnisse werden in `seine.cpu-autotune.json` im Datenverzeichnis gespeichert, standardmäßig `seine-data`. Beim nächsten Start kehrt seine direkt zum gespeicherten Ergebnis zurück, und die Zeile zeigt `done`. Ist die Hashrate deutlich anders als beim letzten Mal, stimmt es erneut ab, und das Log nennt den Grund. Behalte zwischen den Starts dasselbe Datenverzeichnis, damit seine die Datei findet, und lass jedes Rig seine eigene anlegen: Die Datei eines anderen Rechners zu kopieren hilft nicht, weil das Ergebnis von der genauen Hardware und den Einstellungen abhängt.
 
-Wiederverwendung hängt unter anderem von Hardware- und Build-Identität, Platzierung und Seiteneinstellungen ab. Aktuelle Ressourcengrenzen beschränken weiterhin die aktive Startzahl. Nach einer wesentlichen Konfigurationsänderung kann ein Cache-Treffer ausbleiben; lasse passende Messungen neu sammeln. Kopiere keinen fremden Rig-Cache und ändere Messwerte nicht von Hand. Lies Start- und Tuning-Meldungen, bevor du eine neue Suche als Problem bewertest.
+## Kannst du die Thread-Zahl selbst ändern?
 
-## Wann solltest du eine feste Thread-Zahl setzen?
+Ja. Drücke im Dashboard `-` oder `+`, um einen CPU-Thread zu entfernen oder hinzuzufügen. Sobald die Abstimmung `done` zeigt, gilt die Änderung sofort für die laufenden Threads, und GPUs und Pool-Verbindung laufen weiter. Solange die Abstimmung noch eine Zahl wählt, warten die Tasten, und das Dashboard zeigt, wie lange die Abstimmung noch braucht. Ein Tastendruck gilt nur für diesen Lauf; der nächste Start nutzt wieder das gespeicherte Ergebnis.
 
-Nutze eine feste Zahl für eine bewusst reproduzierbare Konfiguration. `--threads 4` fordert beispielsweise vier CPU-Threads an und deaktiviert normalerweise Thread- und Kernel-Autotuning. `--cpu-autotune-threads` aktiviert Tuning ausdrücklich auch bei angegebener Zahl; `--disable-cpu-autotune-threads` deaktiviert automatische Anpassungen. Die [Flag-Referenz](https://github.com/zpalmtree/seine/blob/v0.2.36/docs/MINER_FLAGS.md) dokumentiert Suchgrenzen und Wechselwirkungen.
+Um eine Zahl ab dem Start festzulegen, nutze `--threads`, zum Beispiel `--threads 4`. seine behält dann diese Zahl und wählt weiterhin den besten Kernel dafür. `--disable-cpu-autotune-threads` schaltet die Abstimmung von Threads und Kerneln ganz ab. Die [Flag-Referenz](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/MINER_FLAGS.md) dokumentiert diese Optionen, und [Minen, während du den PC nutzt](/de/blog/mine-while-using-pc/) zeigt, wie du einen Desktop mit dem Mining teilst.
 
-Beginne im Alltag mit den Vorgaben und lasse produktive Vergleiche fertig werden. Betrachte CPU-Gerätezeile, Tuning-Meldungen und akzeptierte Shares gemeinsam. Vergleiche ähnliche Last- und Speicherbedingungen. Die Pool-Hashrate wird aus eingehenden Shares geschätzt: Nutze lokale CPU-Messungen zum Verstehen eines Versuchs und die [Poolstatistik](https://bntpool.com/blog/de/track-your-miner-on-bntpool/) für gutgeschriebene Mining-Aktivität.
+Fürs tägliche Mining startest du mit den Standardwerten und lässt die Abstimmung `done` erreichen. Verfolge einen Abstimmungstest in der Zeile des CPU-Geräts und die gutgeschriebene Mining-Aktivität in den [Pool-Statistiken](https://bntpool.com/blog/de/track-your-miner-on-bntpool/).
 
-<CTA target="seine" title="Mit automatischer CPU-Abstimmung minen" text="Lade seine herunter, behalte die Tuning-Vorgaben und verfolge die Entscheidungen im Dashboard." />
+<CTA target="seine" title="Mit automatischer CPU-Abstimmung minen" text="Lade seine herunter, behalte die Standardeinstellungen, und es findet in Minuten die schnellste Thread-Zahl und den schnellsten Kernel für deine CPU." />

@@ -1,125 +1,120 @@
 ---
 title: seine paneli açıklaması
-description: seine madencilik panelinin bölüm bölüm turu (hashrate, share'ler, durum, iş parçacıkları, havuz bakiyesi, günlük) ve madencilik yaparken kendini nasıl ayarladığını izleme.
+description: seine madencilik panelinin bölüm bölüm turu (hash gücü, paylar, durum, iş parçacıkları, ayarlama, havuz bakiyesi, günlük) ve kazarken paneli yöneten tuşlar.
 tags: [seine, Madencilik rehberi, Panel, Otomatik ayar]
 faq:
-  - q: 'seine''in ortalama hashrate''i neden anlık hashrate''inden düşük?'
-    a: 'Average, bu oturumda tamamlanan tüm hash''leri madencilikle geçen süreye böler; bu yüzden her iş parçacığının ilk hash''ini bitirdiği ve ayarlayıcının tam kapasitenin altında başlayıp yukarı çıktığı ilk dakikaları da içerir. Current yalnızca son beş saniyeye bakar. seine ne kadar uzun çalışırsa ikisi o kadar birbirine yaklaşır.'
+  - q: 'seine''in ortalama hash gücü neden anlık hash gücünden düşük?'
+    a: 'Average, bu oturumda tamamlanan tüm hash''leri madencilik süresine böler; bu yüzden her iş parçacığının ilk hash''ini bitirdiği ve ayarlamanın hâlâ iş parçacığı sayısını seçtiği ilk dakikaları da içerir. Current yalnızca son beş saniyeye bakar. seine ne kadar uzun çalışırsa ikisi o kadar yaklaşır.'
   - q: 'seine çalışırken iş parçacığı sayısını nasıl değiştiririm?'
-    a: 'CPU backend''i başına bir iş parçacığı eklemek için artı veya eşittir tuşuna, bir tane çıkarmak için eksi tuşuna basın. seine madencilik backend''lerini yeni sayıyla yeniden başlatır ve oturum istatistiklerinizi, çalışma sürenizi ve ortalamanızı korur. Elle yapılan bir değişiklik o çalıştırma için iş parçacığı otomatik ayarını kapatır ve yeni varsayılanınız olarak kaydedilmez.'
-  - q: 'Başlıktaki altın rengi elmaslar ne anlama geliyor?'
-    a: 'Her elmas, havuzda madencilik yaparken kabul edilen bir share''i, solo madencilikte ise kabul edilen bir bloğu işaretler. Dalganın sağ kenarında belirir ve her saniye bir sütun sola kayar; bu yüzden görebildiğiniz elmaslar son birkaç dakikada kabul edilen iştir.'
+    a: 'Bir CPU iş parçacığı eklemek için artı veya eşittir tuşuna, birini çıkarmak için eksi tuşuna basın. Tuning satırı done gösterdiğinde değişiklik çalışan iş parçacıklarına hemen uygulanır; GPU''lar ve havuz bağlantısı çalışmaya devam eder. Değişiklik yalnızca o çalıştırma için geçerlidir.'
+  - q: 'Başlıktaki altın elmaslar ne anlama gelir?'
+    a: 'Her elmas, havuzun kabul ettiği bir payı veya cihazınızın bulduğu bir bloğu gösterir. Dalganın sağ kenarında belirir ve her saniye bir sütun sola kayar; bu yüzden gördüğünüz elmaslar son birkaç dakikada kabul edilen iştir.'
   - q: 'seine''i panel olmadan çalıştırabilir miyim?'
-    a: 'Evet. Tam ekran panel yerine düz, kayan bir günlük almak için --ui plain ile başlatın. Bu sunuculara, günlük dosyalarına ve süreç yöneticilerine uygundur. Varsayılan --ui auto paneli yalnızca seine etkileşimli bir terminalde çalıştığında gösterir, bu yüzden yönlendirilen çıktı zaten düz günlük alır.'
-sourceHash: '024e87683a82'
+    a: 'Evet. Tam ekran panel yerine düz, kayan bir günlük için --ui plain ile başlatın. Bu; sunucular, günlük dosyaları ve süreç yöneticileri için uygundur. Varsayılan --ui auto, paneli yalnızca seine etkileşimli bir terminalde çalıştığında gösterir; yönlendirilmiş çıktı zaten düz günlük alır.'
+sourceHash: '7f9d55be8e18'
 translation: draft
 ---
 
-seine'i başlattığınızda terminali canlı bir panelle doldurur: ne kadar hızlı hash hesapladığınız, havuzun kaç share'inizi kabul ettiği, alacağınız miktar ve yaptığı her şeyin günlüğü. Bu tur, seine v0.2.22'yi bölüm bölüm gezer, her etiketin ne anlama geldiğini ve sayısının nereden geldiğini açıklar ve madencilik yaparken otomatik ayarın ve klavye kontrollerinin nasıl göründüğünü gösterir.
+seine'i başlattığınızda hemen canlı bir panel açar: ne kadar hızlı hash hesapladığınızı, havuzun kaç payınızı kabul ettiğini, ne kadar alacağınız olduğunu, ayarlamanın nasıl gittiğini ve yaptıklarının günlüğünü gösterir. Bu tur seine v0.3.1 panelini bölüm bölüm gezer, her etiketin ne anlama geldiğini ve her sayının nereden geldiğini açıklar ve kazarken kullanabileceğiniz tuşları anlatır.
 
-![bntpool.com'da madencilik yapan bir Apple M4 Max üzerinde seine'in terminal paneli: anlık hashrate 30,63 H/s, 14 iş parçacığı, 5 share gönderildi, 0 reddedildi ve 5 kabul edildi; altında havuz bakiyesi ve işler ile kabul edilen share'lerin günlüğü](/assets/blog/seine-dashboard.webp "Apple M4 Max üzerinde seine paneli")
+![bntpool.com'da kazan seine v0.3.1 terminal paneli: 21 CPU iş parçacığında anlık hash gücü 16,63 H/s, ayarlama tamamlandı, 222 kabul edilen ve 1 reddedilen pay, 1 BNT minimum ödemeli havuz bakiyesi ve kabul edilen payların günlüğü](/assets/blog/seine-dashboard-v031.webp "seine v0.3.1 paneli")
 
-Ekran görüntüsü, bntpool.com'da madencilik yapan bir Apple M4 Max'i başlatıldıktan yaklaşık on dakika sonra gösteriyor ve Ekim 2026'da seine'in README'si için alındı. Bu yazının geri kalanı için referans odur.
+Görsel, seine v0.3.1'in kendi panel kodunun demo değerlerle 120 × 26 karakterde çizilmiş halidir: bntpool.com'daki bir oturumun ikinci saatinde, 21 iş parçacığında ölçülen 16,63 H/s ile çalışan bir Ryzen 9 9950X. Adres kısaltılmış ve kurgusaldır. Yazının geri kalanında bu görsele başvurulur.
 
-## seine paneli neyi gösterir?
+## seine paneli neler gösterir?
 
 <Answer>
-seine paneli canlı ve ortalama hashrate'inizi, tamamlanan hash'leri, zincir yüksekliğini ve ağ hashrate'ini, madencinin durumunu, gönderilen, reddedilen ve kabul edilen share'leri, her cihazın hashrate'ini, havuz uç noktanızı ve iş parçacığı sayınızı, bntpool.com bakiyenizi ve zaman damgalı bir günlüğü gösterir. Madencilik yaparken yaklaşık saniyede bir yenilenir.
+seine paneli anlık ve ortalama hash gücünüzü, tamamlanan hash'leri, zincir yüksekliğini ve ağ hash gücünü, madencinin durumunu, reddedilen ve kabul edilen paylarla birlikte pay zorluğunuzu, her aygıtın hash gücünü, havuzunuzu, iş parçacığı sayınızı ve ayarlama durumunu, bntpool.com bakiyenizi ve geriye kaydırabileceğiniz bir günlüğü gösterir. Yaklaşık saniyede bir yenilenir.
 </Answer>
 
-Yukarıdan aşağıya bölümler şunlardır: başlık, üç istatistik bölümünden oluşan bir satır (`HASHRATE`, `NETWORK`, `MINING`), `DEVICES`, `CONFIG`, `POOL BALANCE` ve `LOG`. En az 148 sütun genişliğindeki bir terminalde `CONFIG` ve bakiye bölümü yan yana durur.
+Yukarıdan aşağıya paneller şunlardır: başlık, üç istatistik panelinden oluşan bir sıra (`HASHRATE`, `NETWORK`, `MINING`), `DEVICES`, `CONFIG`, `POOL BALANCE` ve `LOG`. Geniş bir terminalde `CONFIG` ve bakiye paneli yan yana durur.
 
-## Başlık: sürüm, dalgalar ve çalışma süresi
+Panel madencilik başlamadan açılır. İlk çalıştırmada seine ödeme adresinizi ve havuzu panelin içinde sorar, ardından donanım kontrollerini ve başlangıç ilerlemesini ekranda gösterir; böylece her adımı izleyebilirsiniz.
 
-Başlık alanının üst satırı seine sürümünü gösterir, örneğin `seine v0.2.22`. Daha yeni bir sürüm çıktığında yanında vurgulanmış bir `update vX.Y.Z available` rozeti belirir ve günlüğe indirme bağlantısını içeren bir satır eklenir. seine GitHub'ı başlangıçta ve her 12 saatte bir kontrol eder; bu kontrol madenciliği hiçbir zaman kesintiye uğratmaz.
+## Başlık: sürüm, dalgalar ve güncellemeler
 
-Bu satırın altında iki sıra dalga saniyede bir adım kayar. Havuz share'lerinizden birini her kabul ettiğinde (veya solo modda düğüm bloğunuzu kabul ettiğinde) üst sıranın sağ kenarına altın rengi bir elmas düşer ve saniyede bir sütun sola kayar. Yaklaşık 130 sütun genişliğindeki bir terminalde bu, görebildiğiniz elmasların kabul edilen işin son iki dakika kadarı olduğu anlamına gelir. `uptime` alt sıranın sonunda durur.
+Başlık seine sürümünü gösterir, burada `seine v0.3.1`. Daha yeni bir sürüm çıktığında `update vX.Y.Z available` gösterir, ardından otomatik kuruluma geri sayar: `updating to vX.Y.Z in 42s`, yanında `u now  s skip`. Hemen kurmak için `u`, o sürümü atlamak için `s` tuşuna basın. Geri sayım sırasında madencilik sürer; [güncelleme rehberi](/tr/blog/update-seine-miner/) sonra ne olduğunu açıklar.
 
-## seine hashrate'i nasıl ölçer?
+Başlığın altında iki sıra dalga saniyede bir adım kayar. Havuz paylarınızdan birini her kabul ettiğinde veya cihazınız bir blok bulduğunda, üst sıranın sağ kenarına altın bir elmas düşer ve saniyede bir sütun sola kayar. Yaklaşık 120 sütun genişliğinde bir terminalde gördüğünüz elmaslar kabaca son iki dakikadaki kabul edilen iştir. `uptime` alt sıranın sonunda durur.
 
-`HASHRATE` bölümünde üç satır vardır:
+## seine hash gücünü nasıl ölçer?
 
-- **Current**, beş saniyelik kayan bir penceredeki hashrate'inizdir. Buradaki bir hash, tam bir 2 GiB Argon2id hesaplamasıdır; yani H/s saniyede tamamlanan hash'leri sayar. NVIDIA GPU'lar işi patlamalar halinde bitirir, bu yüzden onların anlık hızı sabit kalmak için 30 saniyelik bir pencere kullanır.
-- **Average**, bu oturumdaki tüm hash'lerin madencilikle geçen süreye bölünmesidir. Bekleyerek geçen süre (bir düğümün senkronize olması, bir cüzdan parolası veya geçersiz bir adresten sonrası için) hesaba katılmaz ve iş parçacığı sayısını değiştirdiğinizde ortalama korunur.
-- **Total**, seine'i başlattığınızdan beri tamamlanan hash sayısıdır.
+`HASHRATE` panelinde üç satır vardır:
 
-Ekran görüntüsünde Current 30,63 H/s, Average 29,33 H/s gösteriyor. Average daha düşük başlar, çünkü her iş parçacığının ilk hash'ini bitirdiği ve ayarlayıcının tam kapasitenin altında başlayıp yukarı çıktığı ilk dakikaları da içerir. seine ne kadar uzun çalışırsa ikisi o kadar yaklaşır.
+- **Current** (anlık), kayan beş saniyelik bir penceredeki hash gücünüzdür. Buradaki bir hash, 2 GiB'lık tam bir Argon2id hesaplamasıdır; bu yüzden H/s saniyede tamamlanan hash'leri sayar. NVIDIA GPU'lar işi parça parça bitirdiği için anlık değerleri sabit kalsın diye 30 saniyelik bir pencere kullanır.
+- **Average** (ortalama), bu oturumdaki tüm hash'lerin madencilik süresine bölümüdür. Bekleme süresi, örneğin bir düğümün eşitlenmesi veya geçersiz bir adresten sonra geçen süre, dahil edilmez.
+- **Total** (toplam), seine'i başlattığınızdan beri tamamlanan hash sayısıdır.
 
-## Ağ ve durum
+Görselde Current 16,63 H/s, Average 16,41 H/s gösterir. Average daha düşük başlar, çünkü her iş parçacığının ilk hash'ini bitirdiği ve ayarlamanın hâlâ iş parçacığı sayısını seçtiği ilk dakikaları içerir. seine ne kadar uzun çalışırsa ikisi o kadar yaklaşır.
 
-`NETWORK` bölümü, üzerinde madencilik yaptığınız zincir yüksekliğini (`Height`) ve ağın toplam hashrate'ini (`Global`) gösterir. Havuz modunda seine ağ hashrate'ini bntpool.com'un herkese açık istatistiklerinden okur ve en fazla 30 saniyede bir yeniler.
+## Ağ, durum ve paylar
 
-`State`, madencinin ne yaptığını söyler. Görmek istediğiniz durum yeşil `working`'dir. Havuz modunda başlangıç ve yeniden bağlanma sırasında şunları da görürsünüz:
+`NETWORK` paneli üzerinde kazdığınız zincir yüksekliğini `Height` ve seine'in havuz modunda bntpool.com'un genel istatistiklerinden okuduğu ağ hash gücünü `Global` gösterir.
+
+`State` madencinin ne yaptığını söyler. Görmek istediğiniz yeşil `working` durumudur. Havuz modunda başlangıç ve yeniden bağlanma sırasında şunları da görürsünüz:
 
 | Durum | Anlamı |
 |---|---|
 | `pool-connecting` | Stratum bağlantısı açılıyor |
-| `pool-connected` | Bağlandı, oturum açılıyor |
-| `pool-authenticated` | Oturum açma kabul edildi, ilk iş bekleniyor |
+| `pool-connected` | Bağlandı, giriş yapılıyor |
+| `pool-authenticated` | Giriş kabul edildi, ilk iş bekleniyor |
 | `working` | Mevcut iş üzerinde hash hesaplanıyor |
-| `pool-disconnected` | Bağlantı koptu; seine kendisi yeniden bağlanır |
-| `pool-login-rejected` | Havuz oturum açmayı reddetti; nedeni günlükteki `AUTH` satırında yazar |
+| `pool-disconnected` | Bağlantı koptu; seine kendiliğinden yeniden bağlanır |
+| `pool-login-rejected` | Havuz girişi reddetti; nedeni günlükte yazar |
 
-Kendi düğümünüze karşı solo madencilik, `daemon-syncing`, `stale-tip` (yeni bir blok geldi, yeni bir şablon alınıyor) ve `solved` gibi durumlar ekler. seine bir şey beklerken Current sıfıra düşer; böylece üretmediği bir hızı asla göstermez.
+Kendi düğümünüze karşı solo madencilik `daemon-syncing` ve `stale-tip` gibi durumlar ekler. seine bir şey beklerken Current sıfıra düşer, böylece üretmediği bir hızı asla göstermez.
 
-## Submitted, Rejected ve Accepted ne anlama gelir?
+`MINING` paneli bu oturumun paylarını sayar:
 
-`MINING` bölümü bu oturumun share'lerini sayar:
+- **Difficulty** (zorluk): havuzun bu cihaz için belirlediği pay zorluğu.
+- **Rejected** (reddedilen): havuzun kabul etmediği paylar.
+- **Accepted** (kabul edilen): havuzun hesabınıza yazdığı paylar.
 
-- **Submitted:** seine'in havuza gönderdiği share'ler.
-- **Rejected:** havuzun kabul etmediği share'ler. Solo modda bu satırın etiketi `Stale`'dir ve zincir ilerledikten sonra düğüme ulaşan çözümleri sayar.
-- **Accepted:** havuzun size kredilendirdiği share'ler.
+bntpool.com her cihazın pay zorluğunu, hash gücü ne olursa olsun düzenli bir pay akışı gönderecek şekilde ayarlar; bu yüzden daha hızlı bir cihaz daha yüksek bir zorluk alır. Ödemeniz kabul edilen payları izler. Daemon modunda panel bunların yerine kendi düğümünüze gönderilen çözümleri sayan `Submitted`, `Stale` ve `Accepted` gösterir.
 
-bntpool.com her bağlantının share zorluğunu beş dakikada yaklaşık 10 share hedefleyecek şekilde ayarlar; bu yüzden hashrate'iniz ne olursa olsun yaklaşık 30 saniyede bir share normaldir. Ekran görüntüsündeki on dakika sonra 5 gönderilmiş ve 5 kabul edilmiş share sağlıklı bir başlangıçtır. Ödemeniz kabul edilen share'leri izler ve sıfır Rejected sayısı, gönderdiğiniz her share'in kredilendirildiği anlamına gelir.
+## Aygıtlar, yapılandırma ve havuz bakiyesi
 
-## Cihazlar, yapılandırma ve havuz bakiyesi
+`DEVICES` her madencilik arka ucunu anlık ve ortalama hash gücüyle listeler: CPU için `cpu#1`, ardından her GPU için `nvidia#1`, `amd#1` ve devamı. GPU'lar CPU zaten kazarken arka planda başlar; hâlâ başlamakta olan bir kart çevrimiçi olana kadar ilerlemesini gösterir.
 
-`DEVICES`, her madencilik backend'ini anlık ve ortalama hashrate'iyle listeler: CPU için `cpu#1`, ardından her NVIDIA GPU için `nvidia#1`, `nvidia#2` vb. Hâlâ başlamakta olan bir GPU bunun yerine `starting CUDA runtime` aşamasından `preparing NVIDIA backend` aşamasına kadar ilerlemesini gösterir. İlk açılışta GPU kernel'leri derlenir ve ayarlanır, bu yüzden sonraki başlatmalardan daha uzun sürer.
+`CONFIG` bu çalıştırmanın nasıl kurulduğunu gösterir:
 
-`CONFIG`, bu çalıştırmanın nasıl kurulduğunu gösterir:
+- **Pool** (havuz), havuz adresidir; varsayılan `bntpool.com:3333`, daemon modunda ise düğümünüzün API adresiyle `Daemon`.
+- **Threads** (iş parçacıkları), CPU madencilik iş parçacığı sayısıdır. Tuşlar kullanılabilir olduğunda yanında `[+] [-]` belirir. **Worker**, bu makinenin havuza giriş yaptığı cihaz adıdır.
+- **Tuning** (ayarlama), otomatik CPU ayarını gösterir: neyi karşılaştırdığını ve ne kadar süre kaldığını, ardından `done`. [CPU ayarı rehberi](/tr/blog/seine-automatic-cpu-tuning/) her durumu açıklar.
 
-- **Endpoint**, havuz adresidir (varsayılan olarak `stratum+tcp://bntpool.com:3333`) veya solo modda düğümünüzün API adresidir. Yanında bu rig'in havuzda oturum açtığı ad bulunur.
-- **Threads**, CPU madencilik iş parçacıklarının sayısıdır; ardından klavye kontrolleri için `[+] [-]` ipucu gelir.
-- **Backends**, her backend'i tanımlar. `cpu#1 (14 lanes, ~28.0 GiB RAM)`, her biri 2 GiB'lık bir bellek alanı tutan 14 iş parçacığı demektir; yani 14 × 2 GiB = 28 GiB.
-
-Bir rig'e havuzda tanınabilir bir ad vermek için onu başlangıçta belirtin:
+Bir cihaza havuzda tanınabilir bir ad vermek için başlangıçta belirtin:
 
 ```sh
 ./seine --pool-worker rig-01
 ```
 
-`POOL BALANCE`, bakiyenizi birkaç saniyede bir bntpool.com'dan okur. `Pending` kazandığınız ama henüz ödenmemiş miktardır, `Paid` havuzun adresinize gönderdiği miktardır ve sağdaki `Miner`, ilk ve son altı karakterine kısaltılmış adresinizdir. bntpool.com bakiyeniz 0,1 BNT'ye ulaştığında ödeme yapar. Solo modda bu bölüm, düğüm cüzdanınızın `Pending` ve `Unlocked` bakiyelerini gösteren `WALLET` bölümüne dönüşür.
+`POOL BALANCE`, bakiyenizi birkaç saniyede bir bntpool.com'dan okur. `Pending` kazandığınız ama henüz ödenmemiş miktardır ve hâlâ olgunlaşan bloklardan gelen tahmini ödülleri de içerir, `Paid` havuzun adresinize gönderdiği miktardır ve sağdaki `Miner`, ilk ve son altı karakterine kısaltılmış adresinizdir. Adresinizin önünde `solo:` ile havuzda solo kazdığınızda bu etiket `Solo` olur. `Min payout` havuzun minimum ödemesini gösterir; bntpool.com'da 1 BNT. Daemon modunda bu bölüm, düğüm cüzdanınızın `Pending` ve `Unlocked` bakiyelerini gösteren `WALLET` bölümüne dönüşür.
 
 ## Günlüğü okumak
 
-`LOG`, en yenisi en altta olmak üzere son 200 girdiyi tutar; her girdinin bir seviye rozeti, bir etiketi ve ne kadar önce gerçekleştiği bilgisi vardır. Rozetler `INFO`, `OK` (bir şey başarılı oldu), `WARN`, `ERR` ve çözülen bir blok için `**`'dır. Havuzda en sık göreceğiniz etiketler şunlardır:
+`LOG`, seine'in ne yaptığını listeler; en yenisi en altta, her satır bir etiket ve ne kadar önce olduğuyla. Tekrarlanan satırlar sayaçlı tek bir satıra katlanır, örneğin `share accepted ×104`; böylece günlük uzun bir oturumda okunabilir kalır. Bir havuzda en sık göreceğiniz etiketler şunlardır:
 
-- `AUTH`: havuzda oturum açma, örneğin `login accepted (protocol v2, required=submit_claimed_hash)`
-- `JOB`: havuzdan gelen yeni bir iş, yüksekliği ve zorluğuyla birlikte
-- `SHARE`: `submitted (backend=cpu#1)` ve ardından `accepted (backend=cpu#1)`
-- `VARDIFF`: havuz share zorluğunuzu değiştirdi
-- `MINER`: otomatik ayar kararları
+- `CONN`: havuz bağlantısı, örneğin `connected to pool`
+- `SHARE`: `share accepted` veya nedeniyle birlikte bir ret
+- `CPU`: ayarlama sonuçları, örneğin `tuned to 21 threads`
+- `BACKEND`: başlayan aygıtlar, örneğin `cpu: starting 21 threads (~42.0 GiB RAM)`
 
-## seine çalışırken otomatik ayar nasıl görünür?
+Günlük varsayılan olarak ihtiyacınız olanı gösterir. İç ayarları ve her yeni iş gibi rutin etkinlikleri görmek için `--verbose` ekleyin.
 
-seine hemen madenciliğe başlar ve gerçek madencilik işi üzerinde ayar yapar; bunu günlükte izleyebilirsiniz. İlk `MINER` satırı `cpu-autotune | starting with N threads` şeklindedir; ardından yeni bir makinede `initial estimate`, seine makineyi zaten tanıyorsa `cached starting point` gelir.
-
-Oradan sonra ayarları sırayla karşılaştırır: mevcut iş parçacığı sayısı, bir aday, ardından yine mevcut sayı. Her pencere en az 30 saniye sürer ve en az 20 hash toplar. `measuring useful mining work` ve `checking baseline again` gibi satırlar görürsünüz ve `CONFIG` içindeki Threads sayısı da buna eşlik eder. Ayar oturduğunda günlükte `done` yazar ve tutulan iş parçacığı sayısı belirtilir.
-
-CPU kernel'leri de aynı şekilde karşılaştırılır, örneğin `comparing avx2 and avx512 while mining`, ve seine yalnızca iki karşılaştırma kazancı doğruladıktan sonra geçiş yapar: `confirmed faster ... path in two comparisons`. Seçimler önbelleğe alınır, böylece bir sonraki başlangıç bu çalıştırmanın bıraktığı yerden devam eder. Ayar hiçbir zaman havuza yeniden bağlanmaz veya bir GPU'yu yeniden başlatmaz. [Otomatik ayar rehberi](https://github.com/zpalmtree/seine/blob/master/docs/guides/autotuning.md) ayrıntıları anlatır, [Argon2id açıklaması](/tr/blog/argon2id-proof-of-work-explained/) ise en iyi iş parçacığı sayısının nereye düşeceğine neden bellek bant genişliğinin karar verdiğini açıklar.
-
-## İş parçacıkları panelden değiştirilebilir mi?
+## Panelde hangi tuşlar çalışır?
 
 <Answer>
-Evet. CPU backend'i başına bir iş parçacığı eklemek için + (veya Shift gerektirmeyen =) tuşuna, bir tane çıkarmak için - tuşuna basın. seine madencilik backend'lerini oturum istatistiklerini, çalışma süresini ve ortalama hashrate'i koruyarak yeni sayıyla yeniden başlatır. Çıkmak için q veya Ctrl+C tuşlarına basın. Elle yapılan bir değişiklik o çalıştırma için iş parçacığı otomatik ayarını kapatır.
+Tuning satırı done gösterdiğinde bir CPU iş parçacığı eklemek için + veya =, birini çıkarmak için - tuşuna basın. Günlükte geriye kaydırmak için ok tuşlarını, PgUp, PgDn ve Home tuşlarını, yeni satırları yeniden izlemek için End tuşunu kullanın. Güncelleme geri sayımı sırasında u hemen kurar, s o sürümü atlar. Çıkmak için q veya Ctrl+C tuşuna basın.
 </Answer>
 
-Değişiklik uygulanırken `CONFIG`, `Restarting: 14 -> 15 threads...` gösterir ve işlem bitene kadar sonraki tuş basışları yok sayılır. Artışlar otomatik CPU ve RAM sınırında durur ve seçtiğiniz sayı yeni varsayılan olarak kaydedilmez. Baştan sabit bir sayı için `--threads` kullanın.
+İş parçacığı değişiklikleri çalışan CPU iş parçacıklarına hemen uygulanır; GPU'lar ve havuz bağlantısı çalışmaya devam eder. Ayarlama hâlâ bir sayı seçerken tuşlar bekler ve panel ayarlamanın ne kadar süresi kaldığını söyler. Bir tuş basışı yalnızca o çalıştırma için geçerlidir; sonraki başlangıç yine kayıtlı ayarınızı kullanır. En baştan sabit bir sayı için `--threads` kullanın.
+
+Geriye kaydırırken günlüğün başlığı `LOG  paused, End to follow` olur ve siz `End` tuşuna basana kadar görünüm sabit kalır.
 
 ## Küçük terminaller ve düz çıktı
 
-80 sütundan dar bir terminalde üç istatistik bölümü dikey olarak üst üste dizilir. Kısa bir pencerede seine; Threads, State, Current, Average, share sayıları ve Height'i günlüğün üstünde ekranda tutan kompakt bir görünüme geçer. Varsayılan `--ui auto` paneli yalnızca etkileşimli bir terminalde gösterir; `--ui plain` sunucular, günlük dosyaları ve süreç yöneticileri için düz, kayan bir günlük verir.
+80 sütundan dar bir terminalde üç istatistik paneli alt alta dizilir. Kısa bir pencerede seine, günlüğün üstünde Threads, State, Current ve Average değerlerini ekranda tutan kompakt bir görünüme geçer. Varsayılan `--ui auto`, paneli yalnızca etkileşimli bir terminalde gösterir; `--ui plain` sunucular, günlük dosyaları ve süreç yöneticileri için düz, kayan bir günlük verir.
 
-seine'i henüz kurmadıysanız [Blocknet madenciliği rehberi](/tr/blog/how-to-mine-blocknet/) indirmeden kabul edilen ilk share'inize kadar her adımı anlatır.
+seine'i henüz kurmadıysanız [Blocknet madencilik rehberi](/tr/blog/how-to-mine-blocknet/) indirmeden ilk kabul edilen payınıza kadar götürür.
 
-<CTA target="seine" title="seine'i indirin ve ayar yapmasını izleyin" text="Tek bir komutla madenciliğe başlayın; seine makineniz için iş parçacıklarını ve kernel'leri ayarlarken panel hashrate'inizi, share'lerinizi ve bntpool.com bakiyenizi gösterir." />
+<CTA target="seine" title="seine'i indirin ve kendini ayarlamasını izleyin" text="Tek komutla kazmaya başlayın; seine makineniz için iş parçacıklarını ve kernelleri ayarlarken panel hash gücünüzü, paylarınızı ve bntpool.com bakiyenizi gösterir." />

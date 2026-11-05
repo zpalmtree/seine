@@ -1,0 +1,96 @@
+---
+title: 'Cara menambang Blocknet dengan GPU AMD'
+description: 'Tambang Blocknet dengan kartu AMD Radeon RX 6000, RX 7000, RX 9000 dan Radeon PRO memakai seine. Siapkan Windows atau Linux, pilih kartu, dan pastikan tiap GPU menambang.'
+tags: ['Panduan penambangan', 'AMD', 'Radeon', 'GPU']
+sourceHash: '60f795ed50a7'
+translation: draft
+faq:
+  - q: 'Kartu grafis AMD mana yang bisa menambang Blocknet?'
+    a: 'seine menambang dengan kartu AMD Radeon RX 6000, RX 7000 dan RX 9000 serta kartu Radeon PRO yang dibuat dengan chip yang sama, di Windows x86_64 dan Linux x86_64. seine menemukan setiap kartu AMD diskret dengan sendirinya dan menambang dengannya bersama CPU. Grafis Radeon terintegrasi tetap nonaktif kecuali Anda menambahkan --backend amd.'
+  - q: 'Apa yang perlu dipasang untuk menambang dengan GPU AMD di Windows?'
+    a: 'Hanya driver grafis AMD, Adrenalin atau Radeon PRO. Driver itu sudah menyertakan runtime HIP yang dipakai seine, dan binary rilis sudah berisi kernel GPU untuk kartu RX 6000, RX 7000 dan RX 9000. Anda tidak memerlukan HIP SDK atau unduhan lain.'
+  - q: 'Apa yang perlu dipasang untuk menambang dengan GPU AMD di Linux?'
+    a: 'Driver kernel amdgpu, yang sudah ada di distribusi saat ini, dan runtime ROCm HIP dari AMD, baik paket hip-runtime-amd maupun instalasi ROCm lengkap. Pengguna Anda juga memerlukan akses ke file perangkat GPU, yang di sebagian besar distribusi berarti bergabung ke grup render dan video.'
+  - q: 'Bisakah seine menambang dengan kartu AMD dan NVIDIA di komputer yang sama?'
+    a: 'Ya. Tanpa opsi backend, seine menambang dengan CPU serta setiap kartu NVIDIA dan AMD diskret yang ditemukannya. Untuk membiarkan CPU bebas, jalankan dengan --backend nvidia,amd. Setiap kartu mendapat baris sendiri di panel Devices, jadi Anda dapat memeriksa setiap GPU secara terpisah.'
+---
+
+seine menambang Blocknet dengan kartu grafis AMD Radeon bersama CPU Anda. Panduan ini membahas apa yang perlu dipasang di Windows dan Linux, cara memilih kartu, cara memastikan setiap GPU menambang, dan apa yang perlu diperiksa jika sebuah kartu tidak muncul. Panduan ini menjelaskan seine v0.3.1.
+
+## Kartu AMD mana yang didukung seine?
+
+<Answer>
+seine menambang dengan kartu AMD Radeon RX 6000, RX 7000 dan RX 9000, serta kartu Radeon PRO yang dibuat dengan chip RDNA2, RDNA3 dan RDNA4 yang sama. Program berjalan di Windows x86_64 dan Linux x86_64. Setiap kartu AMD diskret dipilih dengan sendirinya dan menambang bersama CPU, tanpa pengaturan yang perlu diubah.
+</Answer>
+
+Setiap kartu menambang dengan beberapa lane, satu hash berjalan per lane. Satu lane memerlukan sekitar 2 GB memori video, sedikit lebih kecil pada RDNA2, RDNA3 dan RDNA4, sehingga kartu dengan memori lebih besar menjalankan lebih banyak lane sekaligus. Kartu 16 GB menjalankan sekitar 9 lane. seine menghitungnya dari memori yang bebas saat dimulai, jadi Anda tidak perlu menghitungnya sendiri.
+
+Grafis Radeon terintegrasi pada prosesor Ryzen nonaktif secara default. Anda dapat menambahkannya dengan `--backend amd` jika mau.
+
+## Bagaimana menyiapkan penambangan GPU AMD di Windows?
+
+Pasang driver grafis AMD terbaru untuk kartu Anda, Adrenalin untuk kartu Radeon RX atau driver Radeon PRO untuk kartu PRO, dari [halaman driver AMD](https://www.amd.com/en/support/download/drivers.html). Driver itu menyertakan runtime HIP yang dipakai seine, dan binary rilis membawa kernel GPU siap pakai untuk kartu RX 6000, RX 7000 dan RX 9000. Tidak ada lagi yang diperlukan.
+
+Unduh `seine-windows-x86_64.zip` dari [bagian unduhan](/id/#download), ekstrak seluruh arsip ke folder yang dapat ditulisi, lalu jalankan:
+
+```powershell
+.\seine.exe
+```
+
+Saat pertama dijalankan, tempel alamat pembayaran Anda dan tekan Enter untuk menerima bntpool.com. [Panduan penyiapan Windows](/id/blog/mine-blocknet-on-windows/) menjelaskan unduhan dan ekstraksi langkah demi langkah.
+
+## Bagaimana menyiapkan penambangan GPU AMD di Linux?
+
+<Answer>
+Pasang driver kernel amdgpu, yang sudah ada di distribusi saat ini, dan runtime ROCm HIP dari AMD, baik paket hip-runtime-amd maupun instalasi ROCm lengkap. Tambahkan pengguna Anda ke grup render dan video agar seine dapat membuka GPU, login ulang, lalu jalankan arsip seine Linux x86_64. seine menemukan kartu AMD Anda dengan sendirinya.
+</Answer>
+
+1. **Pasang runtime.** Tambahkan repositori ROCm AMD untuk distribusi Anda dan pasang `hip-runtime-amd`, atau instalasi ROCm lengkap jika Anda sudah memakainya. [Panduan instalasi ROCm](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/) dari AMD mencantumkan distribusi yang didukung.
+2. **Beri pengguna Anda akses ke GPU.** seine membuka `/dev/kfd` dan `/dev/dri/renderD*`:
+
+   ```bash
+   sudo usermod -aG render,video $USER
+   ```
+
+   Logout lalu login lagi agar grup baru berlaku.
+3. **Jalankan seine.** Unduh `seine-linux-x86_64.tar.gz` dari [bagian unduhan](/id/#download), ekstrak, lalu jalankan:
+
+   ```bash
+   ./seine
+   ```
+
+Jika hipRTC terpasang, seine mengompilasi kernelnya untuk kartu Anda secara tepat saat dimulai. Kartu RX 6000, RX 7000 dan RX 9000 juga berjalan tanpanya, memakai kernel bawaan rilis. [Panduan penambangan Linux](/id/blog/mine-blocknet-on-linux/) membahas arsip dan kebutuhan sistem.
+
+Pada kartu RX 7000 dan Radeon PRO W7000, seine mengatur level daya kartu ke `high` selama menambang jika dijalankan sebagai root, dan mengembalikan level sebelumnya saat keluar. Tanpa root, seine mencetak perintah satu baris yang melakukan hal sama, sehingga Anda dapat menerapkannya sendiri.
+
+## Bagaimana memilih kartu yang menambang?
+
+Biarkan opsi backend tidak diatur untuk menambang dengan CPU dan setiap kartu AMD diskret. Untuk tetap menambang dengan GPU dan membiarkan CPU bebas, pilih `amd`:
+
+```bash
+./seine --backend amd
+```
+
+Untuk menambang dengan satu kartu dan tetap menambang dengan CPU, pilih kedua backend dan indeks kartunya:
+
+```bash
+./seine --backend cpu,amd --amd-devices 0
+```
+
+`--amd-devices 0,1` memilih dua kartu. Di komputer dengan kartu NVIDIA dan AMD sekaligus, `--backend nvidia,amd` menambang dengan semuanya tanpa CPU. Untuk menyisakan memori video bagi game atau aplikasi lain pada kartu yang sama, batasi lane dengan `--amd-max-lanes 2`. [Panduan pengaturan](/id/blog/configure-seine-miner/) menunjukkan cara menyimpan opsi ini untuk setiap kali dijalankan.
+
+## Bagaimana memastikan GPU AMD menambang?
+
+Kartu AMD dimulai di latar belakang saat CPU sudah menambang. Setiap kartu mendapat baris sendiri di panel Devices, `amd#1`, `amd#2` dan seterusnya, dan log melaporkan saat kartu aktif beserta jumlah lane-nya, misalnya `amd#1: online (initialized in background, 9 lanes)`. Baris itu lalu menampilkan hashrate kartu saat ini dan rata-ratanya.
+
+Share yang diterima di panel Mining memastikan pool mengkreditkan pekerjaan Anda. [Panduan dasbor](/id/blog/seine-dashboard-explained/) menjelaskan setiap panel, dan Anda dapat memantau rig di bntpool.com dengan [panduan pelacakan penambang](https://bntpool.com/blog/id/track-your-miner-on-bntpool/).
+
+## Apa yang perlu diperiksa jika kartu AMD tidak muncul?
+
+- **Periksa driver dan runtime.** Di Windows, pasang atau perbarui driver AMD. Di Linux, pasang `hip-runtime-amd` dan pastikan pengguna Anda ada di grup `render` dan `video`. Tanpa runtime, seine menambang dengan CPU, dan dengan `--backend amd` seine menyebutkan runtime yang tidak ada saat dimulai.
+- **Periksa perintah Anda.** `--backend cpu` hanya menambang dengan prosesor. Gunakan perintah default atau sertakan `amd` dalam daftar backend. Jika Anda mengatur `--amd-devices`, pastikan indeksnya ada.
+- **Sebutkan amd sendiri setelah pembaruan driver.** Jika runtime AMD menutup seine dua kali berturut-turut, seine berhenti memilih kartu AMD dengan sendirinya dan tetap menambang dengan yang lain, lalu mencobanya lagi setelah pembaruan berikutnya. Jalankan sekali dengan `--backend cpu,amd` untuk langsung mencoba kartu lagi.
+
+[Panduan AMD seine](https://github.com/zpalmtree/seine/blob/master/docs/guides/amd.md) berisi kebutuhan lengkap, dan pengguna OS penambangan dapat memasang paket [HiveOS](https://github.com/zpalmtree/seine/blob/master/docs/guides/hiveos.md) atau [mmpOS](https://github.com/zpalmtree/seine/blob/master/docs/guides/mmpos.md) dari setiap rilis.
+
+<CTA target="seine" title="Unduh seine untuk penambangan GPU AMD" text="Pilih arsip Windows atau Linux x86_64, dan seine menambang dengan CPU serta setiap kartu Radeon yang ditemukannya." />

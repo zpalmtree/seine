@@ -10,7 +10,7 @@ faq:
   - q: How many words is a Blocknet recovery seed?
     a: A Blocknet recovery seed is 12 words. In the command-line wallet, the seed command shows it after a warning and your wallet password. Write the words on paper and store them offline. With those 12 words, the import command can rebuild your wallet on any machine, even if the wallet file and password are lost.
   - q: When do bntpool.com payouts show up in my wallet?
-    a: A pool block needs 60 confirmations, about five hours at Blocknet's five-minute block time, before its rewards are paid. Once your confirmed pool balance reaches 0.1 BNT, the pool sends it to your address. The payout appears in history as a regular transaction and becomes spendable after 10 confirmations, about 50 minutes.
+    a: A pool block needs 60 confirmations, about five hours at Blocknet's five-minute block time, before its rewards are paid. Once your confirmed pool balance reaches 1 BNT, the pool sends it to your address. The payout appears in history as a regular transaction and becomes spendable after 10 confirmations, about 50 minutes.
   - q: Can I use the same address on several mining machines?
     a: Yes. Every machine running seine can mine to the same address or Blocknet ID shortname, and bntpool.com adds their shares to one balance. The pool's stats page lists each connected machine under your address. The wallet and its recovery seed stay on your own computer the whole time.
 related: [blocknet-desktop-wallet, blocknet-wallet-node-miner, blocknet-wallet-backup-restore, blocknet-sign-verify-message]
@@ -152,7 +152,7 @@ A mining machine only needs your address. Seine needs only an address or shortna
 
 ## How do mining payouts show up in your wallet?
 
-bntpool.com pays rewards once their block has matured. A pool block needs 60 confirmations, about five hours at Blocknet's five-minute block time. When your confirmed balance reaches the 0.1 BNT minimum, the pool sends it to your address as a normal Blocknet transaction.
+bntpool.com pays rewards once their block has matured. A pool block needs 60 confirmations, about five hours at Blocknet's five-minute block time. When your confirmed balance reaches the 1 BNT minimum, the pool sends it to your address as a normal Blocknet transaction.
 
 In the wallet, check `balance` (or `bal`):
 
@@ -171,4 +171,4 @@ Your wallet lists a payout once its node has caught up with the chain. `status` 
 
 New to mining? The [guide to mining Blocknet](/blog/how-to-mine-blocknet/) covers downloading seine, choosing threads and what to expect on bntpool.com.
 
-<CTA target="pool" title="Mine to your new address" text="Paste your Blocknet address into seine, accept bntpool.com, and watch payouts arrive in your wallet once your balance reaches 0.1 BNT." />
+<CTA target="pool" title="Mine to your new address" text="Paste your Blocknet address into seine, accept bntpool.com, and watch payouts arrive in your wallet once your balance reaches 1 BNT." />

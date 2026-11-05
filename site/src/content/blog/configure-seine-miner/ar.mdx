@@ -11,7 +11,7 @@ faq:
     a: 'يختار seine عدد الخيوط لك، فلا تحتاج إلى تحديده إلا إذا أردت ترك مساحة لأعمال أخرى. يستخدم كل خيط نحو 2 GB من الذاكرة. اضغط مفتاح الناقص في اللوحة حتى يصبح جهازك مريحًا، ثم استخدم هذا الرقم.'
   - q: 'أين يحفظ seine إعداداته؟'
     a: 'يحفظ seine عنوانك والمجمع واسم العامل في seine-data/seine.config.json داخل المجلد الذي تشغّله منه. لا تُحفظ هناك خيارات الخيوط وbackend، فضعها في ملف تشغيل صغير إذا أردتها عند كل تشغيل.'
-sourceHash: b5ca5a9a16d8
+sourceHash: cbfaa904cdbf
 translation: draft
 ---
 
@@ -129,6 +129,8 @@ cd "$(dirname "$0")"
 ```
 
 الإعدادان الآخران هما `--address` و`--pool-url`. يشرح [دليل تغيير العنوان](https://bntpool.com/blog/ar/change-mining-wallet-address/) كيف يحتسب المجمع عملك بعد تغيير العنوان.
+
+للتعدين الفردي على bntpool.com، ضع `solo:` قبل العنوان، مثل `"address": "solo:@yourname"` في الملف أو `--address solo:YOUR_ADDRESS` في سطر الأوامر. يدفع لك المجمع حينها المكافأة الكاملة لكل كتلة يجدها جهازك. يشرح [التعدين الفردي على bntpool.com](https://bntpool.com/blog/ar/solo-mine-blocknet-on-bntpool/) كيف تُدفع الكتل الفردية.
 
 ## ماذا لو لم يعمل إعداد ما؟
 

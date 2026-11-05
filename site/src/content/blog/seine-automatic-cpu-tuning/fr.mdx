@@ -1,62 +1,85 @@
 ---
 title: 'Comment seine règle automatiquement le minage CPU'
-description: 'Découvrez comment seine ajuste les threads CPU pendant le minage Blocknet, compare les réglages, réutilise les résultats et suit la mémoire disponible.'
+description: 'Découvrez comment seine règle threads et kernels CPU pendant qu’il mine Blocknet, garde le plus petit nombre de threads qui hache au plus vite et arrête les tests une fois fini.'
 tags: ['Guide de minage', 'Réglage CPU', 'seine']
-faq:
-  - q: 'seine mine-t-il pendant le réglage des threads CPU ?'
-    a: 'Oui. Dans v0.2.36, le minage CPU normal part d''un réglage enregistré compatible ou d''une estimation matérielle. Le réglage compare les nombres de threads avec du travail de minage réel. Les benchmarks hors ligne emploient un autre processus ; leur démarrage ne décrit donc pas une session normale.'
-  - q: 'Pourquoi le nombre de threads CPU change-t-il ?'
-    a: 'Le réglage automatique teste des nombres de threads voisins et réagit à la mémoire disponible. Un changement peut correspondre à un essai de performance ou à une pression sur la RAM. Consultez le journal avec le nombre de threads et attendez la fin du test avant de juger une brève variation du hashrate.'
-  - q: 'Où seine enregistre-t-il les réglages CPU ?'
-    a: 'Par défaut, les résultats des threads sont dans seine.cpu-autotune.json, dans le répertoire de données. Les choix de kernel utilisent le fichier associé finissant par .kernels.json. Les résultats compatibles aident les prochains démarrages. Gardez le même répertoire et laissez le mineur vérifier leur compatibilité avec l''environnement actuel.'
-sourceHash: '41f9cc188856'
+sourceHash: 'd974c5518636'
 translation: draft
+faq:
+  - q: 'seine mine-t-il pendant le réglage des threads CPU ?'
+    a: 'Oui. seine commence à miner tout de suite à partir du meilleur point de départ qu’il connaît, puis compare nombres de threads et kernels CPU sur un vrai travail de minage. Chaque comparaison rapporte des shares. La plupart des machines terminent en quelques minutes ; la ligne Tuning affiche alors done et le nombre de threads ne bouge plus.'
+  - q: 'Pourquoi le nombre de threads CPU change-t-il ?'
+    a: 'Pendant le réglage, le nombre de threads alterne entre deux valeurs que seine mesure, et la ligne Tuning indique la paire et le temps restant. Après le réglage, il ne change que pour une raison indiquée dans le journal : une nouvelle version qui a modifié quelque chose pour votre CPU, une variation durable du hashrate ou de la RAM dont d’autres programmes ont besoin.'
+  - q: 'Où seine enregistre-t-il les résultats du réglage CPU ?'
+    a: 'Dans seine.cpu-autotune.json, dans le répertoire de données, seine-data par défaut. Au démarrage suivant, seine revient directement au résultat enregistré et la ligne Tuning affiche done. Gardez le même répertoire de données entre les lancements et les mises à jour pour qu’il retrouve le fichier.'
 ---
 
-Comprenez ce que fait seine lorsque son nombre de threads CPU change pendant le minage. Ce guide suit la version publique v0.2.36 et explique les essais productifs, les choix enregistrés et les adaptations à la mémoire. Pour l'installation, consultez le [guide de minage](/fr/blog/how-to-mine-blocknet/) ; pour les panneaux, la [visite du tableau de bord](/fr/blog/seine-dashboard-explained/).
+Comprenez ce que fait seine quand son nombre de threads CPU change pendant le minage. Ce guide suit la version publique v0.3.1 et explique comment seine trouve les réglages les plus rapides pour votre CPU, pourquoi il garde le plus petit nombre de threads qui y parvient et quand il recommence à chercher. Pour l’installation, commencez par le [guide de minage](/fr/blog/how-to-mine-blocknet/) ; pour le sens de chaque panneau, consultez la [visite du tableau de bord](/fr/blog/seine-dashboard-explained/).
 
-## Comment fonctionne le réglage automatique du CPU ?
+## Comment fonctionne le réglage automatique du CPU ?
 
 <Answer>
-Quand le réglage CPU est actif, seine commence avec un nombre enregistré compatible ou une estimation matérielle, puis compare les réglages avec du travail réel. Il mesure une référence, essaie un candidat et mesure à nouveau la référence. La RAM disponible et les bornes configurées encadrent la recherche d'un réglage adapté.
+seine commence à miner tout de suite et se règle sur un vrai travail de minage. Il compare les kernels CPU que votre processeur peut exécuter, puis les nombres de threads, en mesurant le réglage actuel, le candidat, puis de nouveau le réglage actuel. Il garde le plus petit nombre de threads qui hache aussi vite que le meilleur, puis cesse les tests jusqu’à ce que quelque chose change.
 </Answer>
 
 <img src="/assets/blog/cpu-autotuning.svg" alt="Une comparaison répétée référence–candidat–référence conduit à un réglage enregistré, avec contrôle continu de la mémoire disponible." width="1200" height="675" loading="lazy" />
 
-## Le minage commence avant la fin de la recherche
+Laissez `--threads` non défini pour utiliser le réglage automatique. Il n’y a rien à configurer. seine part du meilleur qu’il connaît : le résultat enregistré de cette machine, puis un point de départ pour votre modèle de CPU, puis une estimation à partir de vos cœurs et de la RAM libre. Ensuite, il cherche par pas croissants jusqu’à ce que des threads supplémentaires n’apportent plus rien, puis il affine.
 
-Omettez `--threads` pour activer le réglage automatique. En minage normal, seine choisit un nombre initial dans le budget de ressources et commence à travailler sans balayage préalable hors ligne. Un cache compatible peut fournir ce point de départ. Sur une nouvelle machine, le mineur part d'une estimation améliorée par les comparaisons suivantes.
+Exécuter le réglage actuel avant et après chaque candidat fait qu’une variation de charge, comme un onglet du navigateur ou une mise à jour en arrière-plan, ne compte ni pour ni contre le candidat. Un candidat nettement plus lent est interrompu tôt, si bien que la plupart des machines terminent en quelques minutes.
 
-Chaque essai mesure les hashes terminés sur le temps écoulé. Une nouvelle arène mémoire termine un premier hash avant le début de sa fenêtre de mesure. La séquence référence–candidat–référence aide à distinguer l'effet du réglage des conditions changeantes. Une forte dérive de la référence, de nouvelles limites mémoire ou une perte durable de travail peuvent invalider la comparaison. Un bref pic affiché n'est qu'une observation dans une décision plus longue.
+## Que signifie la ligne Tuning du tableau de bord ?
 
-## Pourquoi davantage de threads ne suffit-il pas toujours ?
+La ligne `Tuning:` du tableau de bord indique où en est le réglage :
 
-Chaque thread CPU actif utilise une grande arène mémoire, et tous partagent la bande passante mémoire. Ajouter des threads permet davantage de travail simultané, mais le résultat dépend du système entier. Le réglage compare les H/s CPU totaux sans supposer que le nombre maximal de threads donne le meilleur débit. Le [guide RAM](/fr/blog/how-much-ram-to-mine-blocknet/) explique le budget mémoire.
+| Ligne | Signification |
+|---|---|
+| `trying kernels, about 4 min left` | Compare les kernels CPU pendant le minage |
+| `12 vs 16 threads, about 3 min left` | Compare deux nombres de threads ; le nombre alterne entre eux pendant que seine mesure |
+| `update: 12 vs 14 threads, ~2 min` | Une nouvelle version a modifié quelque chose pour votre CPU et teste uniquement ce point |
+| `done` | Réglé. Le nombre de threads ne bouge plus, sauf si quelque chose change |
+| `low on RAM, best is 12 threads` | Utilise moins de threads jusqu’à ce que la RAM se libère |
 
-Le profil par défaut est `balanced`. Les profils contrôlent la politique de réglage et les paramètres d'exécution ; `efficiency` est un choix explicite pouvant privilégier moins de threads. Gardez un même profil pour évaluer une session. Nombre de threads, placement CPU et pages mémoire interagissent : le résultat d'une autre machine ou configuration constitue une référence, pas un réglage à copier automatiquement.
+Le journal contient une ligne au début du réglage, avec sa raison, et une autre à la fin, par exemple `tuned to 12 threads`. Le [guide du tableau de bord](/fr/blog/seine-dashboard-explained/) présente les autres panneaux.
 
-## Que se passe-t-il si d'autres programmes ont besoin de RAM ?
+## Pourquoi seine utilise-t-il moins de threads qu’il ne pourrait ?
 
-Le budget mémoire automatique suit les ressources disponibles. Sous pression mémoire, des threads peuvent terminer leur hash, se mettre en attente et libérer leurs arènes. Si une marge durable revient, le mineur peut activer les emplacements disponibles et reprendre les essais. Sur un ordinateur partagé avec d'autres applications, le nombre actif peut donc suivre les conditions pendant la même session.
+Chaque thread CPU occupe une grande zone de mémoire, et tous les threads partagent la bande passante mémoire de la machine. Au-delà d’un certain nombre, des threads supplémentaires n’ajoutent aucun hashrate et prennent de la RAM que vos autres programmes pourraient utiliser. seine considère donc comme équivalent tout nombre qui égale le plus rapide, et garde le plus petit. Vous obtenez le même hashrate avec plus de mémoire libre.
 
-Une réduction temporaire n'efface pas nécessairement un nombre supérieur appris précédemment. Le cache et le nombre actif ont des fonctions différentes. Sous Linux, les arènes HugeTLB explicites libérées retournent à la réserve de grandes pages ; seine ne redimensionne pas cette réserve système. Le [guide des grandes pages](/fr/blog/huge-pages-blocknet-mining/) explique comment la modifier et la distinguer de la RAM libre ordinaire.
+C’est pourquoi le meilleur nombre est souvent inférieur à votre total de cœurs ou de threads, et pourquoi il diffère entre des machines qui semblent identiques. Le nombre de threads, les canaux mémoire et le type de pages utilisé jouent tous un rôle : le résultat d’un autre ordinateur est une référence, pas un réglage à copier. Le [guide de la RAM](/fr/blog/how-much-ram-to-mine-blocknet/) explique la mémoire nécessaire par thread.
 
-## seine règle-t-il aussi le kernel CPU ?
+Si vous préférez économiser énergie et mémoire plutôt que de gagner les derniers hachages, `--cpu-profile efficiency` garde un nombre plus faible, proche du plus rapide.
 
-Les CPU compatibles peuvent comparer les implémentations du hachage en plus du nombre de threads. Kernel désigne ici l'implémentation logicielle du calcul. Le mineur vérifie les instructions du processeur et compare les chemins admissibles avec des mesures répétées. Essais de kernels et de threads alternent, avec la gestion mémoire toujours active. Le [guide technique](https://github.com/zpalmtree/seine/blob/v0.2.36/docs/guides/autotuning.md) décrit les chemins de cette version.
+## seine règle-t-il aussi le kernel CPU ?
 
-Les changements CPU automatiques conservent la connexion au pool et ne redémarrent pas les backends GPU. Le changement de kernel se fait entre hashes complets, en gardant les arènes. Appuyer manuellement sur `+` ou `-` est différent : cela redémarre les backends, reconnecte le minage au pool et désactive l'ajustement CPU automatique pour cette session. Le journal permet d'identifier le type de changement.
+Oui. Ici, un kernel est l’implémentation logicielle du hachage pour un jeu d’instructions processeur donné. seine vérifie les instructions prises en charge par votre CPU, n’essaie jamais un kernel qu’il ne peut pas exécuter et ignore les kernels qui ne l’emportent pas sur votre CPU. Il compare les autres pendant le minage, avant de fixer le nombre de threads. Les changements de kernel ont lieu entre deux hachages complets : le minage continue et la connexion au pool reste ouverte.
 
-## Comment les résultats enregistrés sont-ils réutilisés ?
+## Quand seine refait-il un réglage ?
 
-Le cache des threads est par défaut `seine.cpu-autotune.json` sous `--data-dir` ; celui des kernels est `seine.cpu-autotune.json.kernels.json`. Ils conservent les choix appris séparément des paramètres de connexion au pool. Gardez un répertoire de données constant entre les lancements. Le [guide de mise à jour](/fr/blog/update-seine-miner/) explique comment le préserver lors du remplacement de l'application.
+Une fois que la ligne affiche `done`, seine n’effectue plus de tests programmés. Il ne recherche de nouveau que lorsque quelque chose change :
 
-La réutilisation dépend notamment du matériel, de la compilation, du placement et des pages mémoire. Les ressources actuelles limitent toujours le nombre actif au départ. Un changement important peut empêcher la réutilisation du cache : laissez alors le mineur recueillir de nouvelles mesures. Évitez de copier le cache d'une autre machine ou de modifier les mesures. Lisez les messages de démarrage et de réglage avant de considérer une nouvelle recherche comme un problème.
+- **Une nouvelle version modifie quelque chose pour votre CPU.** La nouvelle version démarre sur votre résultat enregistré et teste seulement ce qui a changé, comme un kernel nouveau ou amélioré. Une version qui ne change rien au hachage ne lance aucun test.
+- **Le hashrate varie durablement,** par exemple quand un autre programme commence ou cesse d’utiliser fortement le CPU.
+- **Davantage de RAM se libère** alors que la RAM limitait le nombre de threads.
+- **Le matériel, le système d’exploitation ou les limites CPU changent,** comme la limite CPU d’un conteneur.
 
-## Quand fixer le nombre de threads ?
+Chacun de ces cas écrit dans le journal une ligne qui indique pourquoi le réglage a commencé. Les mises à jour automatiques conservent votre réglage : mettre seine à jour ne le renvoie pas au point de départ. Le [guide de mise à jour](/fr/blog/update-seine-miner/) explique le fonctionnement des mises à jour.
 
-Fixez-le lorsque vous voulez délibérément une configuration reproductible. Par exemple, `--threads 4` demande quatre threads CPU et désactive normalement le réglage des threads et kernels. `--cpu-autotune-threads` active explicitement le réglage même avec un nombre fourni ; `--disable-cpu-autotune-threads` le désactive. La [référence des options](https://github.com/zpalmtree/seine/blob/v0.2.36/docs/MINER_FLAGS.md) documente les bornes et leurs interactions.
+## Que se passe-t-il quand d’autres programmes ont besoin de RAM ?
 
-Au quotidien, partez des valeurs par défaut et laissez les comparaisons productives se terminer. Regardez ensemble la ligne CPU, les messages de réglage et les shares acceptées. Comparez des charges et conditions mémoire similaires. Le hashrate du pool est estimé à partir des shares reçues : utilisez les mesures CPU locales pour comprendre un essai et les [statistiques du pool](https://bntpool.com/blog/fr/track-your-miner-on-bntpool/) pour suivre le travail crédité.
+seine vérifie la RAM libre une fois par seconde. Quand d’autres programmes ont besoin de mémoire, les threads CPU terminent leur hachage en cours, se mettent en pause et libèrent leurs zones de mémoire, et la ligne affiche `low on RAM`. Quand la mémoire se libère, les threads reviennent. Le meilleur nombre appris reste enregistré, si bien qu’un manque de mémoire passager ne l’efface pas.
 
-<CTA target="seine" title="Minez avec le réglage CPU automatique" text="Téléchargez seine, gardez les réglages par défaut et suivez ses décisions dans le tableau de bord." />
+Sous Linux, les zones HugeTLB explicites libérées retournent dans la réserve de huge pages ; seine ne redimensionne pas cette réserve. Le [guide des huge pages](/fr/blog/huge-pages-blocknet-mining/) explique comment les réserver.
+
+## Comment les résultats enregistrés sont-ils réutilisés ?
+
+Les résultats sont enregistrés dans `seine.cpu-autotune.json`, dans le répertoire de données, `seine-data` par défaut. Au démarrage suivant, seine revient directement au résultat enregistré et la ligne affiche `done`. Si le hashrate est nettement différent de la dernière fois, il refait un réglage et le journal en donne la raison. Gardez le même répertoire de données entre les lancements pour que seine retrouve le fichier, et laissez chaque rig créer le sien : copier le fichier d’une autre machine n’aide pas, car le résultat dépend du matériel et des réglages exacts.
+
+## Pouvez-vous modifier vous-même le nombre de threads ?
+
+Oui. Appuyez sur `-` ou `+` dans le tableau de bord pour retirer ou ajouter un thread CPU. Une fois le réglage sur `done`, la modification s’applique tout de suite aux threads en cours, et les GPU ainsi que la connexion au pool continuent de fonctionner. Tant que le réglage choisit encore un nombre, les touches attendent et le tableau de bord indique le temps restant. Un appui ne vaut que pour ce lancement ; le démarrage suivant reprend le résultat enregistré.
+
+Pour fixer un nombre dès le démarrage, utilisez `--threads`, par exemple `--threads 4`. seine garde alors ce nombre et choisit toujours le meilleur kernel pour lui. `--disable-cpu-autotune-threads` désactive entièrement le réglage des threads et des kernels. La [référence des options](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/MINER_FLAGS.md) documente ces options, et [miner en utilisant votre PC](/fr/blog/mine-while-using-pc/) montre comment partager un ordinateur de bureau avec le minage.
+
+Pour le minage au quotidien, commencez avec les valeurs par défaut et laissez le réglage atteindre `done`. Utilisez la ligne du périphérique CPU pour suivre un essai de réglage et les [statistiques du pool](https://bntpool.com/blog/fr/track-your-miner-on-bntpool/) pour suivre l’activité de minage créditée.
+
+<CTA target="seine" title="Minez avec le réglage automatique du CPU" text="Téléchargez seine, gardez les réglages par défaut, et il trouve en quelques minutes le nombre de threads et le kernel les plus rapides pour votre CPU." />

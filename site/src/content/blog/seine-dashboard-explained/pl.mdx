@@ -1,55 +1,57 @@
 ---
 title: Panel seine – co oznacza każdy element
-description: Przegląd panelu kopania seine element po elemencie (hashrate, udziały, stan, wątki, saldo w puli, log) i to, jak obserwować, jak seine sam się stroi podczas kopania.
+description: Przegląd panelu kopania seine element po elemencie (hashrate, udziały, stan, wątki, strojenie, saldo w puli, log) oraz klawisze, którymi sterujesz nim podczas kopania.
 tags: [seine, Poradnik kopania, Panel, Autostrojenie]
 faq:
-  - q: 'Dlaczego średni hashrate w seine jest niższy niż bieżący?'
-    a: 'Average dzieli wszystkie hashe policzone w tej sesji przez czas kopania, więc obejmuje pierwsze minuty, gdy każdy wątek kończy swój pierwszy hash, a mechanizm strojenia startuje poniżej pełnej wydajności i stopniowo ją zwiększa. Current patrzy tylko na ostatnie pięć sekund. Im dłużej działa seine, tym bardziej obie wartości się do siebie zbliżają.'
+  - q: 'Dlaczego średni hashrate seine jest niższy niż bieżący?'
+    a: 'Average dzieli wszystkie hashe wykonane w tej sesji przez czas kopania, więc obejmuje pierwsze minuty, gdy każdy wątek kończy swój pierwszy hash, a strojenie wciąż wybiera liczbę wątków. Current obejmuje tylko ostatnie pięć sekund. Im dłużej działa seine, tym bliżej siebie są te dwie wartości.'
   - q: 'Jak zmienić liczbę wątków, gdy seine działa?'
-    a: 'Naciśnij klawisz plus lub klawisz równości, aby dodać jeden wątek na każdy backend CPU, a klawisz minus, aby jeden odjąć. seine restartuje swoje backendy kopiące z nową liczbą i zachowuje statystyki sesji, czas działania i średnią. Ręczna zmiana wyłącza autostrojenie liczby wątków na czas tego uruchomienia i nie zostaje zapisana jako nowe ustawienie domyślne.'
+    a: 'Naciśnij klawisz plus lub klawisz równa się, aby dodać jeden wątek CPU, i klawisz minus, aby jeden usunąć. Gdy wiersz Tuning pokazuje done, zmiana od razu dotyczy działających wątków, a GPU i połączenie z pulą działają dalej. Zmiana obowiązuje tylko w bieżącym uruchomieniu.'
   - q: 'Co oznaczają złote romby w nagłówku?'
-    a: 'Każdy romb oznacza zaakceptowany udział, gdy kopiesz w puli, albo zaakceptowany blok, gdy kopiesz solo. Pojawia się przy prawej krawędzi fali i co sekundę przesuwa się o jedną kolumnę w lewo, więc widoczne romby to praca zaakceptowana w ciągu ostatnich mniej więcej dwóch minut.'
+    a: 'Każdy romb oznacza udział zaakceptowany przez pulę albo blok znaleziony przez Twoją koparkę. Pojawia się przy prawej krawędzi fali i co sekundę przesuwa się o jedną kolumnę w lewo, więc widoczne romby to praca zaakceptowana w ostatnich kilku minutach.'
   - q: 'Czy mogę uruchomić seine bez panelu?'
-    a: 'Tak. Uruchom go z --ui plain, a zamiast pełnoekranowego panelu dostaniesz zwykły, przewijany log. To dobre rozwiązanie dla serwerów, plików logów i menedżerów procesów. Ustawienie domyślne, --ui auto, pokazuje panel tylko wtedy, gdy seine działa w interaktywnym terminalu, więc przekierowane wyjście od razu dostaje zwykłe logi.'
-sourceHash: '024e87683a82'
+    a: 'Tak. Uruchom go z --ui plain, aby zamiast pełnoekranowego panelu otrzymać zwykły, przewijany log. To wygodne dla serwerów, plików logów i menedżerów procesów. Domyślny tryb --ui auto pokazuje panel tylko wtedy, gdy seine działa w interaktywnym terminalu, więc przekierowane wyjście i tak dostaje zwykły log.'
+sourceHash: '7f9d55be8e18'
 translation: draft
 ---
 
-Uruchom seine, a wypełni terminal panelem na żywo: jak szybko liczysz hashe, ile udziałów zaakceptowała pula, ile Ci się należy, oraz log wszystkiego, co robi. Ten przegląd omawia element po elemencie seine v0.2.22, wyjaśnia, co oznacza każda etykieta i skąd pochodzi jej wartość, oraz pokazuje, jak wyglądają autostrojenie i sterowanie z klawiatury podczas kopania.
+Uruchom seine, a od razu otworzy panel na żywo: jak szybko liczysz hashe, ile udziałów zaakceptowała pula, ile Ci się należy, jak idzie strojenie oraz log tego, co robi. Ten przewodnik omawia panel seine v0.3.1 element po elemencie, wyjaśnia, co oznacza każda etykieta i skąd bierze się każda liczba, oraz opisuje klawisze, których możesz używać podczas kopania.
 
-![Terminalowy panel seine na Apple M4 Max kopiącym na bntpool.com: bieżący hashrate 30,63 H/s, 14 wątków, 5 wysłanych udziałów, 0 odrzuconych i 5 zaakceptowanych, a poniżej saldo w puli i log zadań oraz zaakceptowanych udziałów](/assets/blog/seine-dashboard.webp "Panel seine na Apple M4 Max")
+![Panel terminalowy seine v0.3.1 podczas kopania na bntpool.com: bieżący hashrate 16,63 H/s na 21 wątkach CPU, strojenie zakończone, 222 zaakceptowane udziały i 1 odrzucony, saldo w puli z minimalną wypłatą 1 BNT oraz log zaakceptowanych udziałów](/assets/blog/seine-dashboard-v031.webp "Panel seine w v0.3.1")
 
-Zrzut ekranu przedstawia Apple M4 Max kopiący na bntpool.com około dziesięciu minut po uruchomieniu, wykonany do pliku README seine w październiku 2026. To punkt odniesienia dla reszty tego artykułu.
+Obraz to kod panelu samego seine v0.3.1 wyrenderowany w rozmiarze 120 × 26 znaków z wartościami demonstracyjnymi: Ryzen 9 9950X ze zmierzonymi 16,63 H/s na 21 wątkach, po dwóch godzinach sesji na bntpool.com. Adres jest skrócony i fikcyjny. W dalszej części artykułu odnosimy się do tego obrazu.
 
 ## Co pokazuje panel seine?
 
 <Answer>
-Panel seine pokazuje bieżący i średni hashrate, policzone hashe, wysokość łańcucha i hashrate sieci, stan minera, wysłane, odrzucone i zaakceptowane udziały, hashrate każdego urządzenia, adres puli i liczbę wątków, saldo na bntpool.com oraz log ze znacznikami czasu. Podczas kopania odświeża się mniej więcej raz na sekundę.
+Panel seine pokazuje bieżący i średni hashrate, liczbę wykonanych hashy, wysokość łańcucha i hashrate sieci, stan minera, trudność udziałów wraz z odrzuconymi i zaakceptowanymi udziałami, hashrate każdego urządzenia, pulę, liczbę wątków i stan strojenia, saldo na bntpool.com oraz log, który można przewijać wstecz. Odświeża się mniej więcej raz na sekundę.
 </Answer>
 
-Od góry do dołu elementy to: nagłówek, rząd trzech elementów ze statystykami (`HASHRATE`, `NETWORK`, `MINING`), `DEVICES`, `CONFIG`, `POOL BALANCE` i `LOG`. W terminalu o szerokości co najmniej 148 kolumn `CONFIG` i element salda stoją obok siebie.
+Od góry do dołu znajdują się: nagłówek, rząd trzech paneli statystyk (`HASHRATE`, `NETWORK`, `MINING`), `DEVICES`, `CONFIG`, `POOL BALANCE` i `LOG`. W szerokim terminalu `CONFIG` i panel salda leżą obok siebie.
 
-## Nagłówek: wersja, fale i czas działania
+Panel otwiera się, zanim zacznie się kopanie. Przy pierwszym uruchomieniu seine pyta o adres wypłat i pulę bezpośrednio w panelu, a potem pokazuje na ekranie kontrolę sprzętu i postęp startu, abyś mógł śledzić każdy krok.
 
-Tytuł w nagłówku pokazuje wersję seine, na przykład `seine v0.2.22`. Gdy dostępne jest nowsze wydanie, obok pojawia się wyróżniona plakietka `update vX.Y.Z available`, a w logu jeden wiersz z linkiem do pobrania. seine sprawdza GitHub przy starcie i co 12 godzin, a sprawdzanie nigdy nie przerywa kopania.
+## Nagłówek: wersja, fale i aktualizacje
 
-Pod tytułem przesuwają się dwa rzędy fal, o jeden krok na sekundę. Za każdym razem, gdy pula zaakceptuje jeden z Twoich udziałów (albo, w trybie solo, węzeł zaakceptuje Twój blok), na górnym rzędzie przy prawej krawędzi pojawia się złoty romb i przesuwa się w lewo o jedną kolumnę na sekundę. W terminalu o szerokości około 130 kolumn oznacza to, że widoczne romby to mniej więcej ostatnie dwie minuty zaakceptowanej pracy. `uptime` znajduje się na końcu dolnego rzędu.
+Nagłówek pokazuje wersję seine, tutaj `seine v0.3.1`. Gdy pojawi się nowsze wydanie, pokazuje `update vX.Y.Z available`, a potem odlicza do automatycznej instalacji: `updating to vX.Y.Z in 42s`, obok `u now  s skip`. Naciśnij `u`, aby zainstalować od razu, albo `s`, aby pominąć tę wersję. Podczas odliczania kopanie trwa, a [poradnik aktualizacji](/pl/blog/update-seine-miner/) wyjaśnia, co dzieje się dalej.
+
+Pod tytułem dwa rzędy fal przesuwają się o jeden krok na sekundę. Za każdym razem, gdy pula zaakceptuje jeden z Twoich udziałów albo Twoja koparka znajdzie blok, złoty romb pojawia się w górnym rzędzie przy prawej krawędzi i przesuwa się w lewo o jedną kolumnę na sekundę. W terminalu o szerokości około 120 kolumn widoczne romby to mniej więcej ostatnie dwie minuty zaakceptowanej pracy. `uptime` znajduje się na końcu dolnego rzędu.
 
 ## Jak seine mierzy hashrate?
 
-Element `HASHRATE` ma trzy wiersze:
+Panel `HASHRATE` ma trzy wiersze:
 
-- **Current** to Twój hashrate w przesuwnym oknie pięciu sekund. Hash oznacza tu jedno kompletne obliczenie Argon2id na 2 GiB, więc H/s liczy ukończone hashe na sekundę. GPU NVIDIA kończą pracę porcjami, więc ich bieżąca wartość używa okna 30 sekund, aby była stabilna.
-- **Average** to wszystkie hashe w tej sesji podzielone przez czas kopania. Czas oczekiwania (na synchronizację węzła, na hasło portfela albo po nieprawidłowym adresie) nie jest wliczany, a średnia jest zachowywana, gdy zmieniasz liczbę wątków.
-- **Total** to liczba hashy policzonych od uruchomienia seine.
+- **Current** (bieżący) to hashrate w ruchomym oknie pięciu sekund. Hash oznacza tu jedno pełne obliczenie Argon2id na 2 GiB, więc H/s liczy ukończone hashe na sekundę. GPU NVIDIA kończą pracę porcjami, dlatego ich bieżący wynik używa okna 30 sekund, aby był stabilny.
+- **Average** (średni) to wszystkie hashe tej sesji podzielone przez czas kopania. Czas oczekiwania, na przykład na synchronizację węzła lub po nieprawidłowym adresie, nie jest wliczany.
+- **Total** (łącznie) to liczba hashy wykonanych od uruchomienia seine.
 
-Na zrzucie ekranu Current pokazuje 30,63 H/s, a Average 29,33 H/s. Average zaczyna niżej, bo obejmuje pierwsze minuty, gdy każdy wątek kończy swój pierwszy hash, a mechanizm strojenia startuje poniżej pełnej wydajności i stopniowo ją zwiększa. Im dłużej działa seine, tym bardziej obie wartości się zbliżają.
+Na obrazie Current pokazuje 16,63 H/s, a Average 16,41 H/s. Average zaczyna niżej, bo obejmuje pierwsze minuty, gdy każdy wątek kończy swój pierwszy hash, a strojenie wciąż wybiera liczbę wątków. Im dłużej działa seine, tym bliżej siebie są te dwie wartości.
 
-## Sieć i stan
+## Sieć, stan i udziały
 
-Element `NETWORK` pokazuje wysokość łańcucha (`Height`), na której kopiesz, i hashrate całej sieci (`Global`). W trybie puli seine odczytuje hashrate sieci z publicznych statystyk bntpool.com i odświeża go najwyżej co 30 sekund.
+Panel `NETWORK` pokazuje wysokość łańcucha `Height`, na której kopiesz, i hashrate sieci `Global`, który seine w trybie puli odczytuje z publicznych statystyk bntpool.com.
 
-`State` mówi, co robi miner. Zielone `working` to stan, który chcesz widzieć. W trybie puli podczas startu i ponownych połączeń zobaczysz też te stany:
+`State` mówi, co robi miner. Zielone `working` to stan, który chcesz widzieć. W trybie puli podczas startu i ponownych połączeń zobaczysz też:
 
 | Stan | Znaczenie |
 |---|---|
@@ -57,69 +59,62 @@ Element `NETWORK` pokazuje wysokość łańcucha (`Height`), na której kopiesz,
 | `pool-connected` | Połączono, trwa logowanie |
 | `pool-authenticated` | Logowanie zaakceptowane, oczekiwanie na pierwsze zadanie |
 | `working` | Liczenie hashy dla bieżącego zadania |
-| `pool-disconnected` | Połączenie zerwane; seine sam łączy się ponownie |
-| `pool-login-rejected` | Pula odrzuciła logowanie; przyczynę podaje wiersz `AUTH` w logu |
+| `pool-disconnected` | Połączenie zerwane; seine łączy się ponownie sam |
+| `pool-login-rejected` | Pula odrzuciła logowanie; przyczynę podaje log |
 
-Kopanie solo z własnym węzłem dodaje stany takie jak `daemon-syncing`, `stale-tip` (pojawił się nowy blok, pobieranie świeżego szablonu) i `solved`. Gdy seine na coś czeka, Current spada do zera, więc nigdy nie pokazuje wartości, której faktycznie nie osiąga.
+Kopanie solo przez własny węzeł dodaje stany takie jak `daemon-syncing` i `stale-tip`. Gdy seine na coś czeka, Current spada do zera, aby nigdy nie pokazywać prędkości, której nie osiąga.
 
-## Co oznaczają Submitted, Rejected i Accepted?
+Panel `MINING` liczy udziały z tej sesji:
 
-Element `MINING` liczy udziały w tej sesji:
+- **Difficulty** (trudność): trudność udziałów ustawiona przez pulę dla tej koparki.
+- **Rejected** (odrzucone): udziały, których pula nie zaakceptowała.
+- **Accepted** (zaakceptowane): udziały, które pula zaliczyła na Twoją korzyść.
 
-- **Submitted:** udziały, które seine wysłał do puli.
-- **Rejected:** udziały, których pula nie zaakceptowała. W trybie solo ten wiersz nazywa się `Stale` i liczy rozwiązania, które dotarły do węzła, gdy łańcuch już poszedł dalej.
-- **Accepted:** udziały, które pula Ci zaliczyła.
-
-bntpool.com dostosowuje trudność udziałów dla każdego połączenia tak, aby wypadało około 10 udziałów na pięć minut, więc udział mniej więcej co 30 sekund to norma, bez względu na Twój hashrate. Wynik ze zrzutu ekranu, 5 wysłanych i 5 zaakceptowanych po dziesięciu minutach, to zdrowy start. Twoja wypłata zależy od zaakceptowanych udziałów, a zero w Rejected oznacza, że każdy wysłany udział został zaliczony.
+bntpool.com dostosowuje trudność udziałów każdej koparki tak, aby wysyłała równy strumień udziałów niezależnie od hashrate, więc szybsza koparka dostaje wyższą trudność. Wypłata zależy od zaakceptowanych udziałów. W trybie daemon panel pokazuje zamiast tego `Submitted`, `Stale` i `Accepted`, licząc rozwiązania wysłane do Twojego własnego węzła.
 
 ## Urządzenia, konfiguracja i saldo w puli
 
-`DEVICES` wymienia każdy backend kopiący z jego bieżącym i średnim hashrate: `cpu#1` dla CPU, a potem `nvidia#1`, `nvidia#2` i tak dalej dla każdego GPU NVIDIA. GPU, które jeszcze startuje, pokazuje zamiast tego postęp, od `starting CUDA runtime` do `preparing NVIDIA backend`. Przy pierwszym uruchomieniu seine kompiluje i stroi jądra obliczeniowe GPU, więc trwa ono dłużej niż kolejne.
+`DEVICES` wymienia każdy backend kopania z bieżącym i średnim hashrate: `cpu#1` dla CPU, potem `nvidia#1`, `amd#1` i tak dalej dla każdego GPU. GPU uruchamiają się w tle, gdy CPU już kopie, a karta, która wciąż startuje, pokazuje postęp, dopóki nie zacznie działać.
 
-`CONFIG` pokazuje, jak skonfigurowane jest to uruchomienie:
+`CONFIG` pokazuje konfigurację tego uruchomienia:
 
-- **Endpoint** to adres puli (domyślnie `stratum+tcp://bntpool.com:3333`) albo, w trybie solo, adres API Twojego węzła. Obok widnieje nazwa, pod którą ta koparka loguje się do puli.
-- **Threads** to liczba wątków kopiących CPU, a po niej podpowiedź `[+] [-]` dotycząca sterowania z klawiatury.
-- **Backends** opisuje każdy backend. `cpu#1 (14 lanes, ~28.0 GiB RAM)` oznacza 14 wątków, z których każdy trzyma arenę 2 GiB, czyli 14 × 2 GiB = 28 GiB.
+- **Pool** (pula) to adres puli, domyślnie `bntpool.com:3333`, albo `Daemon` z adresem API Twojego węzła w trybie daemon.
+- **Threads** (wątki) to liczba wątków kopania CPU. Gdy klawisze są dostępne, obok pojawia się `[+] [-]`. **Worker** to nazwa koparki, pod którą ten komputer loguje się do puli.
+- **Tuning** (strojenie) pokazuje automatyczne strojenie CPU: co porównuje i ile czasu zostało, a potem `done`. [Poradnik strojenia CPU](/pl/blog/seine-automatic-cpu-tuning/) wyjaśnia każdy stan.
 
-Aby nadać koparce rozpoznawalną nazwę w puli, podaj ją przy starcie:
+Aby nadać koparce rozpoznawalną nazwę w puli, podaj ją przy uruchomieniu:
 
 ```sh
 ./seine --pool-worker rig-01
 ```
 
-`POOL BALANCE` co kilka sekund odczytuje Twoje saldo z bntpool.com. `Pending` to kwota zarobiona, ale jeszcze niewypłacona, `Paid` to kwota, którą pula wysłała na Twój adres, a `Miner` po prawej to Twój adres skrócony do pierwszych i ostatnich sześciu znaków. bntpool.com wypłaca, gdy saldo osiągnie 0,1 BNT. W trybie solo ten element zmienia się w `WALLET` z saldami `Pending` i `Unlocked` portfela Twojego węzła.
+`POOL BALANCE` co kilka sekund odczytuje Twoje saldo z bntpool.com. `Pending` to kwota zarobiona, ale jeszcze niewypłacona, łącznie z szacowanymi nagrodami z bloków, które jeszcze dojrzewają, `Paid` to kwota, którą pula wysłała na Twój adres, a `Miner` po prawej to Twój adres skrócony do pierwszych i ostatnich sześciu znaków. Gdy kopiesz solo w puli, z `solo:` przed adresem, ta etykieta brzmi `Solo`. `Min payout` pokazuje minimalną wypłatę puli, 1 BNT na bntpool.com. W trybie daemon ten element zmienia się w `WALLET` z saldami `Pending` i `Unlocked` portfela Twojego węzła.
 
 ## Jak czytać log
 
-`LOG` przechowuje 200 ostatnich wpisów, najnowsze na dole, każdy z plakietką poziomu, tagiem i informacją, jak dawno się wydarzył. Plakietki to `INFO`, `OK` (coś się udało), `WARN`, `ERR` oraz `**` dla rozwiązanego bloku. Tagi, które w puli zobaczysz najczęściej, to:
+`LOG` pokazuje, co robi seine, najnowsze wpisy na dole, każdy wiersz z tagiem i czasem, jaki minął od zdarzenia. Powtarzające się wiersze zwijają się w jeden z licznikiem, na przykład `share accepted ×104`, więc log pozostaje czytelny w długiej sesji. Najczęściej w puli zobaczysz tagi:
 
-- `AUTH`: logowanie do puli, na przykład `login accepted (protocol v2, required=submit_claimed_hash)`
-- `JOB`: nowe zadanie od puli, z jego wysokością i trudnością
-- `SHARE`: `submitted (backend=cpu#1)`, a potem `accepted (backend=cpu#1)`
-- `VARDIFF`: pula zmieniła trudność Twoich udziałów
-- `MINER`: decyzje autostrojenia
+- `CONN`: połączenie z pulą, na przykład `connected to pool`
+- `SHARE`: `share accepted` albo odrzucenie z przyczyną
+- `CPU`: wyniki strojenia, na przykład `tuned to 21 threads`
+- `BACKEND`: start urządzeń, na przykład `cpu: starting 21 threads (~42.0 GiB RAM)`
 
-## Jak wygląda autostrojenie podczas działania seine?
+Domyślnie log pokazuje to, czego potrzebujesz. Dodaj `--verbose`, aby zobaczyć ustawienia wewnętrzne i rutynowe zdarzenia, takie jak każde nowe zadanie.
 
-seine zaczyna kopać od razu i stroi się na prawdziwej pracy kopiącej, a w logu możesz to obserwować. Pierwszy wiersz `MINER` brzmi `cpu-autotune | starting with N threads`, a po nim pojawia się `initial estimate` na nowej maszynie albo `cached starting point`, gdy seine już ją zna.
-
-Od tego momentu porównuje ustawienia po kolei: bieżącą liczbę wątków, kandydata, a potem ponownie bieżącą liczbę. Każde okno trwa co najmniej 30 sekund i zbiera co najmniej 20 hashy. Zobaczysz wiersze takie jak `measuring useful mining work` i `checking baseline again`, a wartość Threads w `CONFIG` będzie się odpowiednio zmieniać. Gdy seine się ustabilizuje, log pokaże `done` i liczbę wątków, którą zostawił.
-
-Jądra obliczeniowe CPU są porównywane tak samo, na przykład `comparing avx2 and avx512 while mining`, a seine przełącza się dopiero wtedy, gdy dwa porównania potwierdzą zysk: `confirmed faster ... path in two comparisons`. Wybory są zapisywane w pamięci podręcznej, więc następny start zaczyna tam, gdzie skończył poprzedni. Strojenie nigdy nie łączy się ponownie z pulą ani nie restartuje GPU. Szczegóły opisuje [poradnik o autostrojeniu](https://github.com/zpalmtree/seine/blob/master/docs/guides/autotuning.md), a [artykuł o Argon2id](/pl/blog/argon2id-proof-of-work-explained/) wyjaśnia, dlaczego to przepustowość pamięci decyduje, gdzie wypada najlepsza liczba wątków.
-
-## Czy można zmienić liczbę wątków z poziomu panelu?
+## Które klawisze działają w panelu?
 
 <Answer>
-Tak. Naciśnij + (lub =, bez Shift), aby dodać jeden wątek na każdy backend CPU, i -, aby jeden odjąć. seine restartuje swoje backendy kopiące z nową liczbą, zachowując statystyki sesji, czas działania i średni hashrate. Naciśnij q lub Ctrl+C, aby zakończyć. Ręczna zmiana wyłącza autostrojenie liczby wątków na czas tego uruchomienia.
+Naciśnij + lub =, aby dodać wątek CPU, i -, aby jeden usunąć, gdy wiersz Tuning pokazuje done. Strzałki, PgUp, PgDn i Home przewijają log wstecz, a End ponownie włącza śledzenie nowych wierszy. Podczas odliczania aktualizacji u instaluje ją od razu, a s pomija tę wersję. Naciśnij q lub Ctrl+C, aby wyjść.
 </Answer>
 
-Podczas wprowadzania zmiany `CONFIG` pokazuje `Restarting: 14 -> 15 threads...`, a kolejne naciśnięcia są ignorowane, dopóki się nie zakończy. Zwiększanie zatrzymuje się na automatycznym limicie wynikającym z CPU i RAM, a wybrana liczba nie zostaje zapisana jako nowe ustawienie domyślne. Aby od początku ustawić stałą liczbę, użyj `--threads`.
+Zmiany liczby wątków od razu dotyczą działających wątków CPU, a GPU i połączenie z pulą działają dalej. Gdy strojenie wciąż wybiera liczbę, klawisze czekają, a panel pokazuje, ile czasu zostało do końca strojenia. Naciśnięcie działa tylko w bieżącym uruchomieniu; kolejny start znów korzysta z zapisanego strojenia. Aby ustalić stałą liczbę od początku, użyj `--threads`.
+
+Gdy przewijasz wstecz, tytuł logu brzmi `LOG  paused, End to follow`, a widok stoi w miejscu, dopóki nie naciśniesz `End`.
 
 ## Małe terminale i zwykłe wyjście
 
-W terminalu węższym niż 80 kolumn trzy elementy ze statystykami układają się jeden pod drugim. W niskim oknie seine przełącza się na widok kompaktowy, który nad logiem pokazuje Threads, State, Current, Average, liczniki udziałów i Height. Domyślne `--ui auto` pokazuje panel tylko w interaktywnym terminalu; `--ui plain` daje zwykły przewijany log dla serwerów, plików logów i menedżerów procesów.
+W terminalu węższym niż 80 kolumn trzy panele statystyk układają się pionowo. W niskim oknie seine przełącza się na widok kompaktowy, który zostawia nad logiem Threads, State, Current i Average. Domyślny `--ui auto` pokazuje panel tylko w interaktywnym terminalu; `--ui plain` daje zwykły przewijany log dla serwerów, plików logów i menedżerów procesów.
 
-Jeśli jeszcze nie skonfigurowano seine, [poradnik kopania Blocknetu](/pl/blog/how-to-mine-blocknet/) prowadzi od pobrania do pierwszego zaakceptowanego udziału.
+Jeśli jeszcze nie skonfigurowałeś seine, [poradnik kopania Blocknet](/pl/blog/how-to-mine-blocknet/) prowadzi od pobrania do pierwszego zaakceptowanego udziału.
 
-<CTA target="seine" title="Pobierz seine i obserwuj, jak się stroi" text="Zacznij kopać jednym poleceniem, a panel pokaże Twój hashrate, udziały i saldo na bntpool.com, podczas gdy seine stroi wątki i jądra obliczeniowe pod Twoją maszynę." />
+<CTA target="seine" title="Pobierz seine i zobacz, jak się stroi" text="Zacznij kopać jednym poleceniem, a panel pokaże Twój hashrate, udziały i saldo na bntpool.com, gdy seine dobiera wątki i kernele do Twojego komputera." />

@@ -1,0 +1,107 @@
+---
+title: 'Cách đào Blocknet trên HiveOS và mmpOS'
+description: 'Đào Blocknet trên HiveOS hoặc mmpOS bằng gói seine trong mỗi bản phát hành. Thiết lập flight sheet hoặc miner profile, chọn GPU hoặc CPU và nâng cấp trong một bước.'
+tags: ['Hướng dẫn đào coin', 'HiveOS', 'mmpOS', 'GPU']
+sourceHash: 'e49fce300603'
+translation: draft
+faq:
+  - q: 'Có thể đào Blocknet trên HiveOS không?'
+    a: 'Có. Mỗi bản phát hành seine đều có gói HiveOS. Thêm ví BNT, tạo flight sheet với Pool đặt là Configure in miner và Miner đặt là Custom, dán liên kết gói làm Installation URL, rồi áp dụng cho các dàn máy. Bảng điều khiển HiveOS sau đó hiển thị hashrate từng GPU và share được chấp nhận.'
+  - q: 'Có thể đào Blocknet trên mmpOS không?'
+    a: 'Có. Mỗi bản phát hành seine đều có gói mmpOS. Nhập miner profile dựng sẵn từ hướng dẫn mmpOS của seine, profile này đưa vào ví BNT, pool bntpool.com và trình đào seine trong một bước, rồi đặt nó làm Active miner profile trên các dàn máy.'
+  - q: 'Gói HiveOS có đào bằng CPU không?'
+    a: 'Trên dàn máy GPU, gói chỉ đào bằng GPU, vì mỗi luồng CPU cần 2 GB RAM hệ thống và nhiều dàn máy GPU có ít RAM. Dàn máy không có GPU sẽ đào bằng CPU. Để thêm đào CPU vào dàn máy GPU, đặt --backend nvidia,cpu --threads 2 vào Extra config arguments.'
+  - q: 'Nâng cấp seine trên HiveOS hoặc mmpOS thế nào?'
+    a: 'Đổi số phiên bản trong URL cài đặt hoặc tải về thành bản mới nhất và áp dụng lại flight sheet hoặc profile. Hệ điều hành đào tải gói mới, và seine giữ kết quả tinh chỉnh đã lưu, nên dàn máy băm trở lại chỉ sau vài giây.'
+---
+
+Hướng dẫn này cho bạn biết cách đào Blocknet trên HiveOS và mmpOS bằng seine. Mỗi bản phát hành seine có gói cho cả hai hệ điều hành đào, nên bạn thêm seine làm trình đào tùy chỉnh bằng một liên kết và dàn máy của bạn báo hashrate cùng share trên bảng điều khiển bạn đang dùng. Nội dung theo seine v0.3.1.
+
+## Bạn cần gói nào?
+
+Mỗi bản phát hành trên [trang phát hành seine](https://github.com/zpalmtree/seine/releases/latest) có hai gói cho hệ điều hành đào:
+
+| Hệ điều hành đào | Gói |
+|---|---|
+| HiveOS | `seine-hiveos-X.Y.Z.tar.gz` |
+| mmpOS | `seine-mmpos-X.Y.Z.tar.gz` |
+
+`X.Y.Z` là phiên bản phát hành, ví dụ `0.3.1`. Mỗi gói chứa bản dựng seine cho thư viện hệ thống của hệ điều hành đào, thư viện trình biên dịch kernel NVIDIA mà seine dùng, và các script kết nối seine với bảng điều khiển. Bạn không cần cài gì thêm trên dàn máy.
+
+## Đào Blocknet trên HiveOS thế nào?
+
+<Answer>
+Thêm địa chỉ Blocknet của bạn làm ví BNT, rồi tạo flight sheet với Pool đặt là Configure in miner và Miner đặt là Custom. Trong Setup Miner Config, dán liên kết gói seine-hiveos làm Installation URL, dùng %WAL%.%WORKER_NAME% làm mẫu ví và worker, và đặt Pool URL. Áp dụng flight sheet cho các dàn máy.
+</Answer>
+
+1. **Thêm ví.** Mở **Wallets** và thêm địa chỉ nhận thanh toán Blocknet. Nếu BNT không có trong danh sách coin, gõ `BNT` làm tên coin. Tên Blocknet ID như `@name` cũng dùng được; hãy dùng dạng `@`, vì HiveOS xử lý `$` theo cách riêng.
+2. **Tạo flight sheet.** Chọn coin và ví BNT, đặt **Pool** là *Configure in miner* và **Miner** là *Custom*.
+3. **Nhấn Setup Miner Config** và điền:
+
+   | Field | Giá trị |
+   |---|---|
+   | Miner name | `seine-hiveos` (HiveOS tự điền từ URL) |
+   | Installation URL | `https://github.com/zpalmtree/seine/releases/download/vX.Y.Z/seine-hiveos-X.Y.Z.tar.gz` |
+   | Hash algorithm | để trống |
+   | Wallet and worker template | `%WAL%.%WORKER_NAME%` |
+   | Pool URL | `stratum+tcp://bntpool.com:3333` |
+   | Pass | để trống |
+
+4. **Áp dụng flight sheet** cho các dàn máy.
+
+Thay `X.Y.Z` bằng phiên bản mới nhất, hoặc sao chép liên kết gói từ trang phát hành. Pool dự phòng đặt trên các dòng riêng trong **Pool URL**; seine thử lần lượt và quay lại pool đầu tiên khi pool đó hoạt động lại. Khi **Pool URL** để trống, seine đào trên bntpool.com.
+
+Bảng điều khiển HiveOS sau đó hiển thị hashrate của seine theo từng GPU, share được chấp nhận và bị từ chối, cùng nhiệt độ và quạt GPU.
+
+## Đào Blocknet trên mmpOS thế nào?
+
+<Answer>
+Danh sách coin của mmpOS chưa có BNT, nên bạn nhập một profile dựng sẵn. Sao chép JSON miner profile từ hướng dẫn mmpOS của seine, điền địa chỉ Blocknet và phiên bản phát hành, rồi nhập trong Miner profiles. Thêm ví, pool và profile mà nó tạo, rồi đặt seine BNT làm Active miner profile trên các dàn máy.
+</Answer>
+
+1. **Sửa profile.** Sao chép JSON profile từ [hướng dẫn mmpOS của seine](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/mmpos.md). Thay `YOUR_BLOCKNET_ADDRESS` bằng địa chỉ nhận thanh toán hoặc `@name`, và cả hai `X.Y.Z` trong `custom_url` bằng phiên bản mới nhất.
+2. **Nhập profile.** Mở **Miner profiles**, nhấn **Import from JSON**, dán profile và nhấn **Import**.
+3. **Thêm từng phần** từ kết quả nhập, theo thứ tự: **Add wallet**, rồi **Add pool** (ví BNT tự điền), rồi **Add miner profile** với pool `bntpool` được chọn. Các trường coin và miner trông trống vì BNT không có trong danh sách của mmpOS; giá trị đã nhập vẫn được lưu.
+4. **Gán profile.** Trên mỗi dàn máy, đặt **Active miner profile** là `seine BNT`.
+
+Profile điền ví, tên dàn máy và pool khi mmpOS khởi động trình đào, và bảng điều khiển mmpOS hiển thị hashrate của seine theo từng GPU cùng share. Gói mmpOS cần image dựng trên Ubuntu 20.04 trở lên.
+
+## Gói đào trên thiết bị nào?
+
+Gói chọn thiết bị dựa trên phần cứng mà hệ điều hành đào phát hiện:
+
+- **Dàn máy GPU đào bằng GPU.** Mỗi hash Blocknet cần 2 GB bộ nhớ, là bộ nhớ video trên GPU và RAM hệ thống trên CPU. Nhiều dàn máy GPU có 4 đến 8 GB RAM, nên gói chừa CPU cho hệ thống.
+- **Dàn máy không có GPU đào bằng CPU,** với số luồng tính theo RAM còn trống.
+- **Card NVIDIA** cần driver hỗ trợ CUDA 12; card dòng RTX 50 cần driver 570 trở lên.
+- **Card AMD Radeon RX 6000, RX 7000 và RX 9000** cần ROCm HIP runtime trên dàn máy. [Hướng dẫn GPU AMD](/vi/blog/mine-blocknet-amd-gpu/) giải thích những gì các card này cần.
+
+Ở lần khởi động đầu, seine tự tinh chỉnh cho từng GPU trong vài phút trước khi hashrate xuất hiện, rồi lưu kết quả để những lần sau băm chỉ sau vài giây. Nếu bạn dùng tính năng khởi động lại khi hashrate thấp của watchdog HiveOS, hãy đặt hơn 10 phút để nó không cắt ngang lần tinh chỉnh đầu tiên.
+
+## Thêm đào CPU hoặc cài đặt khác thế nào?
+
+Mọi thứ bạn đặt vào **Extra config arguments** của HiveOS, hoặc ở cuối phần đối số của profile mmpOS, được chuyển nguyên vẹn đến seine và được ưu tiên hơn mặc định của gói. Để đào thêm bằng CPU trên dàn máy GPU, liệt kê cả hai backend và số luồng phù hợp với RAM dư, mỗi luồng 2 GB, chừa ít nhất 2 GB cho hệ thống:
+
+```text
+--backend nvidia,cpu --threads 2
+```
+
+Dùng `amd,cpu` trên dàn máy AMD hoặc `nvidia,amd,cpu` trên dàn máy hỗn hợp. Bỏ `--threads` thì seine tự định số luồng CPU và tinh chỉnh theo RAM còn trống. Các đối số hữu ích khác:
+
+| Đối số | Tác dụng |
+|---|---|
+| `--backend nvidia --nvidia-devices 0,1,3` | Chỉ đào trên một số GPU NVIDIA |
+| `--nvidia-max-lanes 4` | Dùng ít bộ nhớ video hơn trên mỗi GPU NVIDIA |
+
+Gói đặt sẵn kết nối bảng điều khiển, nhật ký dạng văn bản thường và thư mục dữ liệu cho bạn. Hãy giữ `--api-bind`, `--api-cookie` và `--api-token` như gói đã đặt, vì bảng điều khiển đọc thống kê của seine qua chúng. [Hướng dẫn cài đặt](/vi/blog/configure-seine-miner/) giải thích các tùy chọn khác của seine.
+
+## Nâng cấp seine trên hệ điều hành đào thế nào?
+
+Trên HiveOS và mmpOS, phiên bản mới đến qua gói. Khi có bản phát hành mới hơn, seine ghi một thông báo vào nhật ký. Đổi phiên bản trong Installation URL, hoặc trong URL tải về của profile mmpOS, thành bản mới và áp dụng lại flight sheet hoặc profile. Hệ điều hành đào tải gói mới, và seine giữ kết quả tinh chỉnh cùng cài đặt trong thư mục dữ liệu, nên dàn máy trở lại hashrate đầy đủ chỉ sau vài giây.
+
+Nếu dàn máy của bạn đang chạy gói v0.3.0, hãy chuyển flight sheet hoặc profile sang gói v0.3.1; script khởi chạy của nó cũng đã được cập nhật.
+
+## Xem share và thanh toán ở đâu?
+
+Bảng điều khiển của hệ điều hành đào hiển thị hashrate và share của từng dàn máy. Với công việc được ghi nhận, số dư và thanh toán, hãy tra địa chỉ của bạn trên [bntpool.com](https://bntpool.com/stats). Mỗi dàn máy hiện theo tên worker trên HiveOS hoặc tên rig trên mmpOS, và [hướng dẫn theo dõi trình đào](https://bntpool.com/blog/vi/track-your-miner-on-bntpool/) giải thích trang thống kê. Nhật ký đầy đủ nằm trong miner log của hệ điều hành đào; trên HiveOS là `/var/log/miner/custom/seine-hiveos.log`.
+
+<CTA target="seine" title="Tải gói seine cho hệ điều hành đào" text="Mỗi bản phát hành có gói HiveOS và mmpOS: dán một liên kết vào flight sheet hoặc profile và dàn máy của bạn đào Blocknet." />

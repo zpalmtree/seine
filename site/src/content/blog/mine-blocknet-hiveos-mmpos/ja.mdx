@@ -1,0 +1,107 @@
+---
+title: 'HiveOSとmmpOSでBlocknetをマイニングする方法'
+description: '各リリースのseineパッケージでHiveOSやmmpOSからBlocknetをマイニング。flight sheetやマイナープロファイルの設定、GPU・CPUの選択、ワンステップの更新を解説します。'
+tags: ['マイニングガイド', 'HiveOS', 'mmpOS', 'GPU']
+sourceHash: e49fce300603
+translation: draft
+faq:
+  - q: 'HiveOSでBlocknetをマイニングできますか？'
+    a: 'はい。seineの各リリースにはHiveOS用パッケージが含まれています。BNTのウォレットを追加し、PoolをConfigure in miner、MinerをCustomにしたflight sheetを作成し、パッケージのリンクをインストールURLとして貼り付けてリグに適用します。HiveOSのダッシュボードにGPUごとのハッシュレートと受理済みシェアが表示されます。'
+  - q: 'mmpOSでBlocknetをマイニングできますか？'
+    a: 'はい。seineの各リリースにはmmpOS用パッケージが含まれています。seineのmmpOSガイドにある既製のマイナープロファイルをインポートすると、BNTウォレット、bntpool.comのプール、seineマイナーが一度に追加されます。その後、リグのアクティブなマイナープロファイルに設定します。'
+  - q: 'HiveOSパッケージはCPUでもマイニングしますか？'
+    a: 'GPUリグでは、パッケージはGPUだけでマイニングします。CPUスレッド1つに2 GBのシステムRAMが必要で、RAMが少ないGPUリグが多いためです。GPUのないリグはCPUでマイニングします。GPUリグにCPUマイニングを加えるには、Extra config argumentsに--backend nvidia,cpu --threads 2と入力します。'
+  - q: 'HiveOSやmmpOSでseineを更新するには？'
+    a: 'インストールURLまたはダウンロードURLのバージョン番号を最新リリースに変え、flight sheetまたはプロファイルを再適用します。マイニングOSが新しいパッケージをダウンロードし、seineは保存済みのチューニング結果を引き継ぐため、リグは数秒でハッシュ計算を再開します。'
+---
+
+このガイドでは、seineを使ってHiveOSとmmpOSでBlocknetをマイニングする方法を説明します。seineの各リリースには両方のマイニングOS用パッケージが含まれているので、リンク1つでseineをカスタムマイナーとして追加でき、リグはふだん使っているダッシュボードにハッシュレートとシェアを報告します。内容はseine v0.3.1に基づいています。
+
+## 必要なパッケージは？
+
+[seineのリリースページ](https://github.com/zpalmtree/seine/releases/latest)の各リリースには、2つのマイニングOS用パッケージがあります。
+
+| マイニングOS | パッケージ |
+|---|---|
+| HiveOS | `seine-hiveos-X.Y.Z.tar.gz` |
+| mmpOS | `seine-mmpos-X.Y.Z.tar.gz` |
+
+`X.Y.Z`はリリースのバージョンで、たとえば`0.3.1`です。各パッケージには、そのマイニングOSのシステムライブラリ向けにビルドしたseine、seineが使うNVIDIAのカーネルコンパイラーライブラリ、seineをダッシュボードに接続するスクリプトが入っています。リグにほかのものをインストールする必要はありません。
+
+## HiveOSでBlocknetをマイニングするには？
+
+<Answer>
+BlocknetアドレスをBNTのウォレットとして追加し、PoolをConfigure in miner、MinerをCustomにしたflight sheetを作成します。Setup Miner Configでseine-hiveosパッケージのリンクをインストールURLとして貼り付け、ウォレットとワーカーのテンプレートに%WAL%.%WORKER_NAME%を使い、プールURLを設定します。flight sheetをリグに適用します。
+</Answer>
+
+1. **ウォレットを追加する。** **Wallets**を開き、Blocknetの支払いアドレスを追加します。コイン一覧にBNTがない場合は、コイン名に`BNT`と入力します。`@name`のようなBlocknet ID名も使えます。HiveOSは`$`を特別に扱うため、`@`の形式を使ってください。
+2. **flight sheetを作成する。** BNTのコインとウォレットを選び、**Pool**を*Configure in miner*、**Miner**を*Custom*にします。
+3. **Setup Miner Configをクリック**して、次のように入力します。
+
+   | Field | Value |
+   |---|---|
+   | Miner name | `seine-hiveos`（HiveOSがURLから自動入力） |
+   | Installation URL | `https://github.com/zpalmtree/seine/releases/download/vX.Y.Z/seine-hiveos-X.Y.Z.tar.gz` |
+   | Hash algorithm | 空欄のまま |
+   | Wallet and worker template | `%WAL%.%WORKER_NAME%` |
+   | Pool URL | `stratum+tcp://bntpool.com:3333` |
+   | Pass | 空欄のまま |
+
+4. **flight sheetをリグに適用する。**
+
+`X.Y.Z`は最新のバージョンに置き換えるか、リリースページからパッケージのリンクをコピーしてください。バックアッププールは**Pool URL**に1行ずつ入力します。seineは順番に試し、最初のプールが復旧するとそこへ戻ります。**Pool URL**が空欄の場合、seineはbntpool.comでマイニングします。
+
+HiveOSのダッシュボードには、seineのGPUごとのハッシュレート、受理・拒否されたシェア、GPUの温度とファンが表示されます。
+
+## mmpOSでBlocknetをマイニングするには？
+
+<Answer>
+mmpOSのコイン一覧にはまだBNTがないため、代わりに既製のプロファイルをインポートします。seineのmmpOSガイドからマイナープロファイルのJSONをコピーし、Blocknetアドレスとリリースのバージョンを入れて、Miner profilesでインポートします。作成されたウォレット、プール、プロファイルを追加し、リグのアクティブなマイナープロファイルをseine BNTにします。
+</Answer>
+
+1. **プロファイルを編集する。** [seineのmmpOSガイド](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/mmpos.md)からJSONプロファイルをコピーします。`YOUR_BLOCKNET_ADDRESS`を支払いアドレスか`@name`に置き換え、`custom_url`にある2か所の`X.Y.Z`を最新のバージョンに置き換えます。
+2. **インポートする。** **Miner profiles**を開き、**Import from JSON**をクリックしてプロファイルを貼り付け、**Import**をクリックします。
+3. **インポート結果から各項目を順に追加する。** **Add wallet**、次に**Add pool**（BNTウォレットは自動で入ります）、最後に`bntpool`プールを選んだ状態で**Add miner profile**です。BNTがmmpOSの一覧にないため、コインとマイナーの欄は空に見えますが、インポートした値は保存されています。
+4. **プロファイルを割り当てる。** 各リグで**Active miner profile**を`seine BNT`にします。
+
+mmpOSがマイナーを起動すると、プロファイルがウォレット、リグ名、プールを入力し、mmpOSのダッシュボードにseineのGPUごとのハッシュレートとシェアが表示されます。mmpOS用パッケージには、Ubuntu 20.04以降をベースにしたイメージが必要です。
+
+## パッケージは何でマイニングしますか？
+
+パッケージは、マイニングOSが検出したハードウェアからデバイスを選びます。
+
+- **GPUリグはGPUでマイニングします。** Blocknetのハッシュ1つには2 GBのメモリが必要で、GPUではビデオメモリ、CPUではシステムRAMを使います。GPUリグの多くはRAMが4〜8 GBなので、パッケージはCPUをシステム用に空けておきます。
+- **GPUのないリグはCPUでマイニングし、**スレッド数は空きRAMに合わせて決まります。
+- **NVIDIA**カードにはCUDA 12対応のドライバーが必要です。RTX 50シリーズにはドライバー570以降が必要です。
+- **AMD Radeon RX 6000、RX 7000、RX 9000**カードには、リグにROCm HIPランタイムが必要です。カードに必要なものは[AMD GPUガイド](/ja/blog/mine-blocknet-amd-gpu/)で説明しています。
+
+初回起動時、seineはハッシュレートが表示されるまでの数分間、各GPUに合わせて自動チューニングし、その結果を保存するので、次回以降は数秒でハッシュ計算を始めます。HiveOSのウォッチドッグで低ハッシュレート時の再起動を使っている場合は、最初のチューニングを途中で止めないよう、10分より長く設定してください。
+
+## CPUマイニングやほかの設定を追加するには？
+
+HiveOSの**Extra config arguments**、またはmmpOSプロファイルの引数の末尾に入れたものは、そのままseineに渡され、パッケージの既定値より優先されます。GPUリグのCPUでもマイニングするには、両方のバックエンドと、空きRAMに収まるスレッド数を指定します。2 GBごとに1スレッドで、システム用に少なくとも2 GBを残してください。
+
+```text
+--backend nvidia,cpu --threads 2
+```
+
+AMDのリグでは`amd,cpu`、混在リグでは`nvidia,amd,cpu`を使います。`--threads`を省くと、seineは空きRAMに合わせてCPUスレッド数を自動で決めてチューニングします。そのほかの便利な引数は次のとおりです。
+
+| 引数 | 効果 |
+|---|---|
+| `--backend nvidia --nvidia-devices 0,1,3` | 一部のNVIDIA GPUだけでマイニングする |
+| `--nvidia-max-lanes 4` | 各NVIDIA GPUで使うビデオメモリを減らす |
+
+ダッシュボードとの接続、プレーンなログ出力、データディレクトリはパッケージが設定します。ダッシュボードはこれらを通じてseineの統計を読むため、`--api-bind`、`--api-cookie`、`--api-token`はパッケージの設定のままにしてください。seineのそのほかのオプションは[設定ガイド](/ja/blog/configure-seine-miner/)で説明しています。
+
+## マイニングOSでseineを更新するには？
+
+HiveOSとmmpOSでは、新しいバージョンはパッケージで届きます。新しいリリースが出ると、seineはログに通知を出します。インストールURL、またはmmpOSプロファイルのダウンロードURLのバージョンを新しいリリースに変え、flight sheetまたはプロファイルを再適用します。マイニングOSが新しいパッケージをダウンロードし、seineはデータディレクトリにチューニング結果と設定を保持しているので、リグは数秒でフルのハッシュレートに戻ります。
+
+リグでv0.3.0のパッケージを使っている場合は、flight sheetまたはプロファイルをv0.3.1のパッケージに切り替えてください。起動スクリプトも更新されています。
+
+## シェアと支払いはどこで確認できますか？
+
+マイニングOSのダッシュボードには、各リグのハッシュレートとシェアが表示されます。計上された作業、残高、支払いは、[bntpool.com](https://bntpool.com/stats?lang=ja)で自分のアドレスを検索して確認します。各リグはHiveOSのワーカー名またはmmpOSのリグ名で表示され、統計ページの見方は[マイナー追跡ガイド](https://bntpool.com/blog/ja/track-your-miner-on-bntpool/)で説明しています。完全なログはマイニングOSのマイナーログにあり、HiveOSでは`/var/log/miner/custom/seine-hiveos.log`です。
+
+<CTA target="seine" title="seineのマイニングOS用パッケージを入手" text="各リリースにHiveOSとmmpOS用のパッケージがあります。flight sheetかプロファイルにリンクを1つ貼れば、リグがBlocknetをマイニングします。" />

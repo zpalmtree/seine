@@ -11,7 +11,7 @@ faq:
     a: 'Tak. Wersje seine dla x86 zawierają przenośne jądro obliczeniowe, które działa na każdym 64-bitowym procesorze x86, obok jąder AVX2 i AVX-512 dla układów, które je obsługują. seine sprawdza, jakie zestawy instrukcji obsługuje Twój procesor, i wybiera pasujące jądro, a na układach z AVX2 i AVX-512 porównuje jądra podczas kopania.'
   - q: 'Ile prądu zużywa kopanie na starym komputerze?'
     a: 'To zależy od maszyny. Zmierz to watomierzem podłączonym do gniazdka, gdy działa seine, a potem pomnóż liczbę watów przez 24 i podziel przez 1000, aby otrzymać kilowatogodziny na dobę. Pomnóż wynik przez stawkę za prąd, aby poznać dzienny koszt, i porównaj go z oczekiwaną liczbą monet na dobę.'
-sourceHash: 024eb1ee2b56
+sourceHash: 'e94745a9d6b9'
 translation: draft
 ---
 
@@ -105,7 +105,7 @@ Profil domyślny ustala się na najmniejszej liczbie wątków, która osiąga 99
 
 ## Dlaczego warto kopać małą maszyną w puli?
 
-Pula płaci Ci za Twój udział w pracy nad każdym znalezionym przez nią blokiem, więc mała maszyna dostaje wypłatę z każdego bloku puli, zamiast czekać, aż sama znajdzie cały blok. Poradnik o tym, [jak działa kopanie kryptowalut](/pl/blog/how-crypto-mining-works/), dokładniej wyjaśnia pule i udziały. Na bntpool.com nagrody są dzielone między udziały wysłane w ciągu sześciu godzin przed każdym blokiem, a saldo jest wypłacane, gdy osiągnie 0,1 BNT. Swój hashrate i saldo możesz śledzić, wyszukując swój adres lub `@name` na [bntpool.com](https://bntpool.com).
+Pula płaci Ci za Twój udział w pracy nad każdym znalezionym przez nią blokiem, więc mała maszyna dostaje wypłatę z każdego bloku puli, zamiast czekać, aż sama znajdzie cały blok. Poradnik o tym, [jak działa kopanie kryptowalut](/pl/blog/how-crypto-mining-works/), dokładniej wyjaśnia pule i udziały. Na bntpool.com nagrody są dzielone między udziały wysłane w ciągu sześciu godzin przed każdym blokiem, a saldo jest wypłacane, gdy osiągnie 1 BNT. Swój hashrate i saldo możesz śledzić, wyszukując swój adres lub `@name` na [bntpool.com](https://bntpool.com).
 
 Aby oszacować swój wynik, użyj hashrate sieci pokazanego w panelu bntpool.com. Przy blokach co pięć minut Blocknet znajduje 288 bloków dziennie, więc Twoja oczekiwana część nowych monet sieci to 288 × (Twoje H/s ÷ H/s sieci) × nagroda za blok na dobę, a nagroda ta co miesiąc się obniża.
 

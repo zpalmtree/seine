@@ -1,125 +1,120 @@
 ---
 title: Het dashboard van seine uitgelegd
-description: Paneel voor paneel door het miningdashboard van seine (hashrate, shares, status, threads, poolsaldo, het log) en hoe je het zichzelf ziet afstemmen tijdens het minen.
+description: Een rondleiding paneel voor paneel door het miningdashboard van seine (hashrate, shares, status, threads, afstemming, poolsaldo, logboek) en de toetsen om het te bedienen.
 tags: [seine, Mininghandleiding, Dashboard, Autotuning]
 faq:
-  - q: 'Waarom is de gemiddelde hashrate van seine lager dan de huidige hashrate?'
-    a: 'Average deelt elke hash die deze sessie is voltooid door de tijd die aan minen is besteed, dus de eerste minuten tellen mee, wanneer elke thread zijn eerste hash afmaakt en de tuner onder de volle capaciteit begint voordat hij opschaalt. Current kijkt alleen naar de laatste vijf seconden. Hoe langer seine draait, hoe dichter de twee bij elkaar komen.'
+  - q: 'Waarom is de gemiddelde hashrate van seine lager dan de huidige?'
+    a: 'Average deelt alle hashes van deze sessie door de tijd die aan minen is besteed, dus de eerste minuten tellen mee, wanneer elke thread zijn eerste hash afmaakt en de afstemming nog een aantal threads kiest. Current kijkt alleen naar de laatste vijf seconden. Hoe langer seine draait, hoe dichter de twee bij elkaar komen.'
   - q: 'Hoe verander ik het aantal threads terwijl seine draait?'
-    a: 'Druk op de plustoets, of de isgelijktoets, om per CPU-backend één thread toe te voegen, en op de mintoets om er een weg te halen. seine herstart zijn mining-backends met het nieuwe aantal en behoudt je sessiestatistieken, uptime en gemiddelde. Een handmatige wijziging zet de autotuning van threads voor die run uit en wordt niet opgeslagen als je nieuwe standaard.'
-  - q: 'Wat betekenen de gouden ruitjes in de header?'
-    a: 'Elk ruitje staat voor een geaccepteerde share als je op een pool minet, of een geaccepteerd blok als je solo minet. Het verschijnt aan de rechterrand van de golf en schuift elke seconde één kolom naar links, dus de ruitjes die je ziet zijn het werk dat in de laatste paar minuten is geaccepteerd.'
-  - q: 'Kan ik seine zonder het dashboard draaien?'
-    a: 'Ja. Start het met --ui plain voor een gewoon, scrollend log in plaats van het dashboard op volledig scherm. Dat past bij servers, logbestanden en procesmanagers. De standaard, --ui auto, toont het dashboard alleen als seine in een interactieve terminal draait, dus omgeleide uitvoer krijgt al gewone logs.'
-sourceHash: '024e87683a82'
+    a: 'Druk op de plustoets of de is-gelijktoets om één CPU-thread toe te voegen, en op de mintoets om er een weg te halen. Zodra de Tuning-rij done toont, geldt de wijziging meteen voor de draaiende threads, en GPU''s en de poolverbinding blijven draaien. De wijziging geldt alleen voor die run.'
+  - q: 'Wat betekenen de gouden ruiten in de kop?'
+    a: 'Elke ruit markeert een share die de pool accepteerde, of een blok dat je rig vond. Hij verschijnt aan de rechterrand van de golf en schuift elke seconde één kolom naar links, dus de ruiten die je ziet zijn het werk dat in de laatste paar minuten is geaccepteerd.'
+  - q: 'Kan ik seine zonder dashboard draaien?'
+    a: 'Ja. Start het met --ui plain voor een eenvoudig, scrollend logboek in plaats van het schermvullende dashboard. Dat past bij servers, logbestanden en procesbeheerders. De standaard, --ui auto, toont het dashboard alleen als seine in een interactieve terminal draait, dus omgeleide uitvoer krijgt al een eenvoudig logboek.'
+sourceHash: '7f9d55be8e18'
 translation: draft
 ---
 
-Start seine en het vult de terminal met een live-dashboard: hoe snel je hasht, hoeveel shares de pool heeft geaccepteerd, wat je tegoed hebt en een log van alles wat het doet. Deze rondleiding gaat paneel voor paneel door seine v0.2.22, legt uit wat elk label betekent en waar het getal vandaan komt, en laat zien hoe autotuning en de toetsenbordbediening eruitzien terwijl je minet.
+Start seine en het opent meteen een live dashboard: hoe snel je hasht, hoeveel shares de pool accepteerde, wat je tegoed hebt, hoe de afstemming verloopt, en een logboek van wat het doet. Deze rondleiding loopt paneel voor paneel door seine v0.3.1, legt uit wat elk label betekent en waar elk getal vandaan komt, en behandelt de toetsen die je tijdens het minen kunt gebruiken.
 
-![Het terminaldashboard van seine op een Apple M4 Max die op bntpool.com minet: huidige hashrate 30,63 H/s, 14 threads, 5 shares ingediend, 0 geweigerd en 5 geaccepteerd, met daaronder het poolsaldo en een log van jobs en geaccepteerde shares](/assets/blog/seine-dashboard.webp "Het dashboard van seine op een Apple M4 Max")
+![Het terminaldashboard van seine v0.3.1 tijdens het minen op bntpool.com: huidige hashrate 16,63 H/s op 21 CPU-threads, afstemming klaar, 222 geaccepteerde shares en 1 afgewezen, het poolsaldo met een minimale uitbetaling van 1 BNT en een logboek van geaccepteerde shares](/assets/blog/seine-dashboard-v031.webp "Het dashboard van seine in v0.3.1")
 
-De screenshot toont een Apple M4 Max die ongeveer tien minuten na de start op bntpool.com minet, gemaakt voor de README van seine in oktober 2026. Hij dient als referentie voor de rest van dit artikel.
+De afbeelding is de eigen dashboardcode van seine v0.3.1, weergegeven op 120 × 26 tekens met demowaarden: een Ryzen 9 9950X op zijn gemeten 16,63 H/s op 21 threads, twee uur na de start van een sessie op bntpool.com. Het adres is ingekort en fictief. Het is de referentie voor de rest van dit artikel.
 
 ## Wat toont het dashboard van seine?
 
 <Answer>
-Het dashboard van seine toont je live- en gemiddelde hashrate, voltooide hashes, de hoogte van de chain en de netwerkhashrate, de status van de miner, ingediende, geweigerde en geaccepteerde shares, de hashrate van elk apparaat, je pool-endpoint en aantal threads, je saldo op bntpool.com en een log met tijdstempels. Het ververst ongeveer één keer per seconde terwijl je minet.
+Het dashboard van seine toont je huidige en gemiddelde hashrate, voltooide hashes, kettinghoogte en netwerkhashrate, de status van de miner, je sharemoeilijkheid met afgewezen en geaccepteerde shares, de hashrate van elk apparaat, je pool, aantal threads en afstemmingsstatus, je saldo op bntpool.com en een logboek waarin je terug kunt scrollen. Het ververst ongeveer één keer per seconde.
 </Answer>
 
-Van boven naar beneden zijn de panelen de header, een rij van drie statistiekpanelen (`HASHRATE`, `NETWORK`, `MINING`), `DEVICES`, `CONFIG`, `POOL BALANCE` en `LOG`. In een terminal van minstens 148 kolommen breed staan `CONFIG` en het saldopaneel naast elkaar.
+Van boven naar beneden zijn de panelen: de kop, een rij van drie statistiekpanelen (`HASHRATE`, `NETWORK`, `MINING`), `DEVICES`, `CONFIG`, `POOL BALANCE` en `LOG`. In een brede terminal staan `CONFIG` en het saldopaneel naast elkaar.
 
-## De header: versie, golven en uptime
+Het dashboard opent voordat het minen begint. Bij de eerste start vraagt seine in het dashboard om je uitbetalingsadres en pool, en toont daarna de hardwarecontroles en de voortgang van het opstarten op het scherm, zodat je elke stap kunt volgen.
 
-De titel van de header toont de versie van seine, bijvoorbeeld `seine v0.2.22`. Is er een nieuwere release, dan verschijnt er een gemarkeerde badge `update vX.Y.Z available` naast en krijgt het log één regel met de downloadlink. seine controleert GitHub bij het starten en elke 12 uur, en die controle onderbreekt het minen nooit.
+## De kop: versie, golven en updates
 
-Onder de titel schuiven twee rijen golven voorbij, één stap per seconde. Elke keer dat de pool een van je shares accepteert (of, in solomodus, de node je blok accepteert), landt er een gouden ruitje op de bovenste rij aan de rechterrand, dat elke seconde één kolom naar links schuift. In een terminal van ongeveer 130 kolommen breed betekent dat dat de ruitjes die je ziet ongeveer de laatste twee minuten aan geaccepteerd werk zijn. `uptime` staat aan het eind van de onderste rij.
+De titel in de kop toont de versie van seine, hier `seine v0.3.1`. Als er een nieuwere release is, toont hij `update vX.Y.Z available` en telt hij daarna af naar de automatische installatie: `updating to vX.Y.Z in 42s`, met `u now  s skip` ernaast. Druk op `u` om meteen te installeren of op `s` om die versie over te slaan. Tijdens het aftellen gaat het minen door, en de [updatehandleiding](/nl/blog/update-seine-miner/) legt uit wat er daarna gebeurt.
+
+Onder de titel schuiven twee rijen golven één stap per seconde voorbij. Elke keer dat de pool een van je shares accepteert, of je rig een blok vindt, verschijnt er een gouden ruit aan de rechterrand van de bovenste rij die één kolom per seconde naar links schuift. In een terminal van ongeveer 120 kolommen breed zijn de ruiten die je ziet ongeveer de laatste twee minuten aan geaccepteerd werk. `uptime` staat aan het einde van de onderste rij.
 
 ## Hoe meet seine de hashrate?
 
 Het paneel `HASHRATE` heeft drie regels:
 
-- **Current** is je hashrate over een voortschuivend venster van vijf seconden. Een hash is hier één volledige Argon2id-berekening van 2 GiB, dus H/s telt voltooide hashes per seconde. NVIDIA-GPU's maken werk in pieken af, dus hun huidige snelheid gebruikt een venster van 30 seconden om stabiel te blijven.
-- **Average** is elke hash van deze sessie gedeeld door de tijd die aan minen is besteed. Wachttijd (op het synchroniseren van een node, op een walletwachtwoord of na een ongeldig adres) telt niet mee, en het gemiddelde blijft behouden als je het aantal threads verandert.
-- **Total** is het aantal hashes dat is voltooid sinds je seine hebt gestart.
+- **Current** (huidig) is je hashrate over een voortschrijdend venster van vijf seconden. Een hash is hier één volledige Argon2id-berekening van 2 GiB, dus H/s telt voltooide hashes per seconde. NVIDIA-GPU's maken werk in pieken af, dus hun huidige waarde gebruikt een venster van 30 seconden om stabiel te blijven.
+- **Average** (gemiddeld) is elke hash van deze sessie gedeeld door de tijd die aan minen is besteed. Wachttijd, bijvoorbeeld op een node die synchroniseert of na een ongeldig adres, telt niet mee.
+- **Total** (totaal) is het aantal hashes dat is voltooid sinds je seine startte.
 
-In de screenshot staat Current op 30,63 H/s en Average op 29,33 H/s. Average begint lager, omdat de eerste minuten meetellen, wanneer elke thread zijn eerste hash afmaakt en de tuner onder de volle capaciteit begint voordat hij opschaalt. Hoe langer seine draait, hoe dichter de twee bij elkaar komen.
+In de afbeelding staat Current op 16,63 H/s en Average op 16,41 H/s. Average begint lager omdat de eerste minuten meetellen, wanneer elke thread zijn eerste hash afmaakt en de afstemming nog het aantal threads kiest. Hoe langer seine draait, hoe dichter de twee bij elkaar komen.
 
-## Netwerk en status
+## Netwerk, status en shares
 
-Het paneel `NETWORK` toont de `Height` van de chain waarop je minet en de `Global` netwerkhashrate. In poolmodus leest seine de netwerkhashrate uit de openbare statistieken van bntpool.com en ververst het die hooguit elke 30 seconden.
+Het paneel `NETWORK` toont de kettinghoogte `Height` waarop je minet en de netwerkhashrate `Global`, die seine in poolmodus uit de openbare statistieken van bntpool.com haalt.
 
-`State` vertelt je wat de miner doet. Groen `working` is wat je wilt zien. In poolmodus zie je tijdens het opstarten en opnieuw verbinden ook deze:
+`State` vertelt wat de miner doet. Groen `working` is wat je wilt zien. In poolmodus zie je tijdens het opstarten en opnieuw verbinden ook:
 
 | Status | Betekenis |
 |---|---|
 | `pool-connecting` | De Stratum-verbinding wordt geopend |
 | `pool-connected` | Verbonden, bezig met inloggen |
 | `pool-authenticated` | Login geaccepteerd, wacht op de eerste job |
-| `working` | Bezig met hashen op de huidige job |
-| `pool-disconnected` | Verbinding verbroken; seine verbindt zelf opnieuw |
-| `pool-login-rejected` | De pool weigerde de login; de regel `AUTH` in het log geeft de reden |
+| `working` | Hasht op de huidige job |
+| `pool-disconnected` | Verbinding verbroken; seine maakt zelf opnieuw verbinding |
+| `pool-login-rejected` | De pool weigerde de login; het logboek geeft de reden |
 
-Solo minen op je eigen node voegt statussen toe zoals `daemon-syncing`, `stale-tip` (er kwam een nieuw blok binnen, er wordt een nieuwe template opgehaald) en `solved`. Terwijl seine ergens op wacht, zakt Current naar nul, zodat het nooit een snelheid toont die het niet levert.
+Solo minen op je eigen node voegt statussen toe zoals `daemon-syncing` en `stale-tip`. Terwijl seine ergens op wacht, zakt Current naar nul, zodat het nooit een snelheid toont die het niet levert.
 
-## Wat betekenen Submitted, Rejected en Accepted?
+Het paneel `MINING` telt de shares van deze sessie:
 
-Het paneel `MINING` telt de shares voor deze sessie:
+- **Difficulty** (moeilijkheid): de sharemoeilijkheid die de pool voor deze rig instelde.
+- **Rejected** (afgewezen): shares die de pool niet accepteerde.
+- **Accepted** (geaccepteerd): shares die de pool aan jou toekende.
 
-- **Submitted:** shares die seine naar de pool heeft gestuurd.
-- **Rejected:** shares die de pool niet heeft geaccepteerd. In solomodus heet deze regel `Stale` en telt hij oplossingen die de node bereikten nadat de chain al verder was gegaan.
-- **Accepted:** shares die de pool je heeft toegekend.
-
-bntpool.com past de share-difficulty van elke verbinding aan met als doel ongeveer 10 shares per vijf minuten, dus ongeveer elke 30 seconden een share is normaal, wat je hashrate ook is. De 5 ingediende en 5 geaccepteerde shares na tien minuten in de screenshot zijn een gezonde start. Je uitbetaling volgt de geaccepteerde shares, en een Rejected-teller op nul betekent dat elke share die je hebt gestuurd is toegekend.
+bntpool.com past de sharemoeilijkheid van elke rig zo aan dat die een gelijkmatige stroom shares stuurt, wat de hashrate ook is, dus een snellere rig krijgt een hogere moeilijkheid. Je uitbetaling volgt de geaccepteerde shares. In daemonmodus toont het paneel in plaats daarvan `Submitted`, `Stale` en `Accepted`, met oplossingen die naar je eigen node zijn gestuurd.
 
 ## Apparaten, configuratie en poolsaldo
 
-`DEVICES` toont elke mining-backend met zijn huidige en gemiddelde hashrate: `cpu#1` voor de CPU, daarna `nvidia#1`, `nvidia#2` enzovoort voor elke NVIDIA-GPU. Een GPU die nog aan het starten is, toont in plaats daarvan zijn voortgang, van `starting CUDA runtime` tot `preparing NVIDIA backend`. Bij de eerste start worden de GPU-kernels gecompileerd en afgestemd, dus die duurt langer dan latere starts.
+`DEVICES` toont elke miningbackend met zijn huidige en gemiddelde hashrate: `cpu#1` voor de CPU, daarna `nvidia#1`, `amd#1` enzovoort voor elke GPU. GPU's starten op de achtergrond terwijl de CPU al minet, en een kaart die nog opstart, toont zijn voortgang tot hij online komt.
 
 `CONFIG` toont hoe deze run is ingesteld:
 
-- **Endpoint** is het pooladres (standaard `stratum+tcp://bntpool.com:3333`), of in solomodus het API-adres van je node. Daarnaast staat de naam waarmee deze rig inlogt op de pool.
-- **Threads** is het aantal CPU-mining-threads, gevolgd door de hint `[+] [-]` voor de toetsenbordbediening.
-- **Backends** beschrijft elke backend. `cpu#1 (14 lanes, ~28.0 GiB RAM)` betekent 14 threads die elk een arena van 2 GiB vasthouden, dus 14 × 2 GiB = 28 GiB.
+- **Pool** is het pooladres, standaard `bntpool.com:3333`, of `Daemon` met het API-adres van je node in daemonmodus.
+- **Threads** is het aantal CPU-miningthreads. Als de toetsen beschikbaar zijn, verschijnt `[+] [-]` ernaast. **Worker** is de rignaam waarmee deze machine bij de pool inlogt.
+- **Tuning** (afstemming) toont de automatische CPU-afstemming: wat er wordt vergeleken en hoe lang het nog duurt, daarna `done`. De [gids voor CPU-afstemming](/nl/blog/seine-automatic-cpu-tuning/) legt elke status uit.
 
-Om een rig een herkenbare naam op de pool te geven, geef je die bij het starten mee:
+Geef een rig een herkenbare naam op de pool door die bij het starten mee te geven:
 
 ```sh
 ./seine --pool-worker rig-01
 ```
 
-`POOL BALANCE` leest je saldo om de paar seconden uit bij bntpool.com. `Pending` is wat je hebt verdiend en nog niet uitbetaald hebt gekregen, `Paid` is wat de pool naar je adres heeft gestuurd, en `Miner` rechts is je adres, ingekort tot de eerste en laatste zes tekens. bntpool.com betaalt uit zodra je saldo 0,1 BNT bereikt. In solomodus wordt dit paneel `WALLET`, met de saldi `Pending` en `Unlocked` van de wallet van je node.
+`POOL BALANCE` leest je saldo om de paar seconden uit bij bntpool.com. `Pending` is wat je hebt verdiend en nog niet uitbetaald hebt gekregen, inclusief geschatte beloningen van blokken die nog rijpen, `Paid` is wat de pool naar je adres heeft gestuurd, en `Miner` rechts is je adres, ingekort tot de eerste en laatste zes tekens. Als je solo op de pool minet, met `solo:` voor je adres, toont dat label `Solo`. `Min payout` toont de minimale uitbetaling van de pool, 1 BNT op bntpool.com. In daemonmodus wordt dit paneel `WALLET`, met de saldi `Pending` en `Unlocked` van de wallet van je node.
 
-## Het log lezen
+## Het logboek lezen
 
-`LOG` bewaart de laatste 200 regels, de nieuwste onderaan, elk met een niveaubadge, een tag en hoe lang geleden het gebeurde. De badges zijn `INFO`, `OK` (iets is gelukt), `WARN`, `ERR` en `**` voor een gevonden blok. De tags die je op een pool het vaakst ziet, zijn:
+`LOG` toont wat seine doet, nieuwste onderaan, elke regel met een tag en hoe lang geleden het gebeurde. Herhaalde regels worden samengevoegd tot één met een teller, zoals `share accepted ×104`, zodat het logboek in een lange sessie leesbaar blijft. De tags die je op een pool het vaakst ziet, zijn:
 
-- `AUTH`: de login bij de pool, zoals `login accepted (protocol v2, required=submit_claimed_hash)`
-- `JOB`: een nieuwe job van de pool, met de hoogte en difficulty
-- `SHARE`: `submitted (backend=cpu#1)` en daarna `accepted (backend=cpu#1)`
-- `VARDIFF`: de pool heeft je share-difficulty veranderd
-- `MINER`: beslissingen van de autotuning
+- `CONN`: de poolverbinding, zoals `connected to pool`
+- `SHARE`: `share accepted`, of een afwijzing met de reden
+- `CPU`: afstemmingsresultaten, zoals `tuned to 21 threads`
+- `BACKEND`: apparaten die starten, zoals `cpu: starting 21 threads (~42.0 GiB RAM)`
 
-## Hoe ziet autotuning eruit terwijl seine draait?
+Het logboek toont standaard wat je nodig hebt. Voeg `--verbose` toe om interne instellingen en routineactiviteit zoals elke nieuwe job te zien.
 
-seine begint meteen met minen en stemt af op echt miningwerk, en je kunt dat in het log zien gebeuren. De eerste regel `MINER` luidt `cpu-autotune | starting with N threads`, gevolgd door `initial estimate` op een nieuwe machine of `cached starting point` als seine de machine al kent.
-
-Daarna vergelijkt het instellingen om de beurt: het huidige aantal threads, een kandidaat en dan weer het huidige aantal. Elk venster duurt minstens 30 seconden en verzamelt minstens 20 hashes. Je ziet regels zoals `measuring useful mining work` en `checking baseline again`, en het getal bij Threads in `CONFIG` beweegt mee. Als het een keuze heeft gemaakt, meldt het log `done` en noemt het het aantal threads dat het heeft gehouden.
-
-CPU-kernels worden op dezelfde manier vergeleken, bijvoorbeeld `comparing avx2 and avx512 while mining`, en seine schakelt pas over nadat twee vergelijkingen de winst bevestigen: `confirmed faster ... path in two comparisons`. Keuzes worden gecachet, dus de volgende start gaat verder waar deze ophield. Het afstemmen verbindt nooit opnieuw met de pool en herstart nooit een GPU. De [autotuning-handleiding](https://github.com/zpalmtree/seine/blob/master/docs/guides/autotuning.md) behandelt de details, en de [uitleg over Argon2id](/nl/blog/argon2id-proof-of-work-explained/) legt uit waarom de geheugenbandbreedte bepaalt waar het beste aantal threads uitkomt.
-
-## Kun je threads veranderen vanuit het dashboard?
+## Welke toetsen werken in het dashboard?
 
 <Answer>
-Ja. Druk op + (of =, zonder Shift) om per CPU-backend één thread toe te voegen en op - om er een weg te halen. seine herstart zijn mining-backends met het nieuwe aantal en behoudt de sessiestatistieken, uptime en gemiddelde hashrate. Druk op q of Ctrl+C om te stoppen. Een handmatige wijziging zet de autotuning van threads voor die run uit.
+Druk op + of = om een CPU-thread toe te voegen en op - om er een weg te halen, zodra de Tuning-rij done toont. Gebruik de pijltjestoetsen, PgUp, PgDn en Home om terug te scrollen in het logboek, en End om nieuwe regels weer te volgen. Tijdens het aftellen voor een update installeert u meteen en slaat s die versie over. Druk op q of Ctrl+C om te stoppen.
 </Answer>
 
-Terwijl de wijziging wordt doorgevoerd, toont `CONFIG` `Restarting: 14 -> 15 threads...` en worden verdere toetsaanslagen genegeerd tot het klaar is. Verhogingen stoppen bij de automatische limiet voor CPU en RAM, en het aantal dat je kiest, wordt niet opgeslagen als nieuwe standaard. Voor een vast aantal vanaf de start gebruik je `--threads`.
+Wijzigingen in het aantal threads gelden meteen voor de draaiende CPU-threads, terwijl GPU's en de poolverbinding blijven draaien. Zolang de afstemming nog een aantal kiest, wachten de toetsen en toont het dashboard hoe lang de afstemming nog duurt. Een toetsdruk geldt alleen voor die run; de volgende start gebruikt weer je opgeslagen afstemming. Gebruik `--threads` voor een vast aantal vanaf de start.
 
-## Kleine terminals en gewone uitvoer
+Terwijl je terugscrollt, toont de titel van het logboek `LOG  paused, End to follow` en blijft de weergave staan tot je op `End` drukt.
 
-In een terminal die smaller is dan 80 kolommen, worden de drie statistiekpanelen onder elkaar gezet. In een laag venster schakelt seine over op een compacte weergave die Threads, State, Current, Average, de share-tellers en Height boven het log in beeld houdt. De standaard `--ui auto` toont het dashboard alleen in een interactieve terminal; `--ui plain` geeft een gewoon scrollend log voor servers, logbestanden en procesmanagers.
+## Kleine terminals en eenvoudige uitvoer
 
-Heb je seine nog niet ingesteld, dan gaat de [gids voor Blocknet minen](/nl/blog/how-to-mine-blocknet/) van de download tot je eerste geaccepteerde share.
+In een terminal smaller dan 80 kolommen worden de drie statistiekpanelen onder elkaar gezet. In een laag venster schakelt seine over naar een compacte weergave die Threads, State, Current en Average boven het logboek op het scherm houdt. De standaard `--ui auto` toont het dashboard alleen in een interactieve terminal; `--ui plain` geeft een eenvoudig scrollend logboek voor servers, logbestanden en procesbeheerders.
 
-<CTA target="seine" title="Download seine en zie het afstemmen" text="Begin met minen met één commando, en het dashboard toont je hashrate, shares en saldo op bntpool.com terwijl seine threads en kernels voor je machine afstemt." />
+Heb je seine nog niet ingesteld, dan brengt de [gids voor Blocknet minen](/nl/blog/how-to-mine-blocknet/) je van download tot je eerste geaccepteerde share.
+
+<CTA target="seine" title="Download seine en zie het zichzelf afstemmen" text="Begin met minen in één opdracht, en het dashboard toont je hashrate, shares en saldo op bntpool.com terwijl seine threads en kernels voor je machine afstemt." />

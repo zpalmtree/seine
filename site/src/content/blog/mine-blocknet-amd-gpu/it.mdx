@@ -1,0 +1,96 @@
+---
+title: 'Come minare Blocknet con una GPU AMD'
+description: 'Mina Blocknet con schede AMD Radeon RX 6000, RX 7000, RX 9000 e Radeon PRO usando seine. Configura Windows o Linux, scegli le schede e verifica ogni GPU.'
+tags: ['Guida al mining', 'AMD', 'Radeon', 'GPU']
+sourceHash: '60f795ed50a7'
+translation: draft
+faq:
+  - q: 'Quali schede grafiche AMD possono minare Blocknet?'
+    a: 'seine mina con schede AMD Radeon RX 6000, RX 7000 e RX 9000 e con le Radeon PRO basate sugli stessi chip, su Windows x86_64 e Linux x86_64. Trova da solo ogni scheda AMD dedicata e mina con essa insieme alla CPU. La grafica Radeon integrata resta spenta, a meno che tu non aggiunga --backend amd.'
+  - q: 'Cosa devo installare per minare con una GPU AMD su Windows?'
+    a: 'Solo il driver grafico AMD, Adrenalin o Radeon PRO. Il driver include il runtime HIP usato da seine, e il binario della release contiene già i kernel GPU per le schede RX 6000, RX 7000 e RX 9000. Non servono l’HIP SDK né altri download.'
+  - q: 'Cosa devo installare per minare con una GPU AMD su Linux?'
+    a: 'Il driver del kernel amdgpu, incluso nelle distribuzioni attuali, e il runtime ROCm HIP di AMD, cioè il pacchetto hip-runtime-amd o un’installazione completa di ROCm. Il tuo utente deve anche accedere ai file di dispositivo della GPU, il che nella maggior parte delle distribuzioni significa entrare nei gruppi render e video.'
+  - q: 'seine può minare con schede AMD e NVIDIA nello stesso computer?'
+    a: 'Sì. Senza opzione di backend, seine mina con la CPU e con ogni scheda NVIDIA e AMD dedicata che trova. Per lasciare libera la CPU, avvialo con --backend nvidia,amd. Ogni scheda ha la sua riga nel pannello Devices, così puoi controllare ogni GPU separatamente.'
+---
+
+seine mina Blocknet con le schede grafiche AMD Radeon insieme alla tua CPU. Questa guida spiega cosa installare su Windows e Linux, come scegliere le schede, come verificare che ogni GPU calcoli hash e cosa controllare se manca una scheda. Descrive seine v0.3.1.
+
+## Quali schede AMD supporta seine?
+
+<Answer>
+seine mina con schede AMD Radeon RX 6000, RX 7000 e RX 9000, e con le Radeon PRO basate sugli stessi chip RDNA2, RDNA3 e RDNA4. Funziona su Windows x86_64 e Linux x86_64. Ogni scheda AMD dedicata viene selezionata da sola e mina insieme alla CPU, senza impostazioni da cambiare.
+</Answer>
+
+Ogni scheda mina con più lane, un hash in corso per lane. Una lane richiede circa 2 GB di memoria video, un po’ meno su RDNA2, RDNA3 e RDNA4, quindi le schede con più memoria eseguono più lane alla volta. Una scheda da 16 GB esegue circa 9 lane. seine le dimensiona in base alla memoria libera all’avvio, quindi non devi calcolarle tu.
+
+La grafica Radeon integrata nei processori Ryzen resta spenta per impostazione predefinita. Puoi aggiungerla con `--backend amd`, se vuoi.
+
+## Come configuri il mining con GPU AMD su Windows?
+
+Installa il driver grafico AMD aggiornato per la tua scheda, Adrenalin per le Radeon RX o il driver Radeon PRO per le schede PRO, dalla [pagina dei driver AMD](https://www.amd.com/en/support/download/drivers.html). Il driver include il runtime HIP usato da seine, e il binario della release contiene kernel GPU già compilati per le schede RX 6000, RX 7000 e RX 9000. Non serve altro.
+
+Scarica `seine-windows-x86_64.zip` dalla [sezione download](/it/#download), estrai l’intero archivio in una cartella scrivibile e avvialo:
+
+```powershell
+.\seine.exe
+```
+
+Al primo avvio incolla il tuo indirizzo di pagamento e premi Invio per accettare bntpool.com. La [guida all’installazione su Windows](/it/blog/mine-blocknet-on-windows/) spiega passo passo download ed estrazione.
+
+## Come configuri il mining con GPU AMD su Linux?
+
+<Answer>
+Installa il driver del kernel amdgpu, incluso nelle distribuzioni attuali, e il runtime ROCm HIP di AMD, cioè il pacchetto hip-runtime-amd o un’installazione completa di ROCm. Aggiungi il tuo utente ai gruppi render e video perché seine possa aprire la GPU, rientra nella sessione e avvia l’archivio seine per Linux x86_64. seine trova da solo le tue schede AMD.
+</Answer>
+
+1. **Installa il runtime.** Aggiungi il repository ROCm di AMD per la tua distribuzione e installa `hip-runtime-amd`, oppure l’installazione completa di ROCm se la usi già. La [guida all’installazione di ROCm](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/) di AMD elenca le distribuzioni supportate.
+2. **Dai al tuo utente l’accesso alla GPU.** seine apre `/dev/kfd` e `/dev/dri/renderD*`:
+
+   ```bash
+   sudo usermod -aG render,video $USER
+   ```
+
+   Esci e rientra perché i nuovi gruppi abbiano effetto.
+3. **Avvia seine.** Scarica `seine-linux-x86_64.tar.gz` dalla [sezione download](/it/#download), estrailo ed esegui:
+
+   ```bash
+   ./seine
+   ```
+
+Quando hipRTC è installato, seine compila all’avvio il proprio kernel per la tua scheda esatta. Le schede RX 6000, RX 7000 e RX 9000 funzionano anche senza, con i kernel inclusi nella release. La [guida al mining su Linux](/it/blog/mine-blocknet-on-linux/) copre l’archivio e i requisiti di sistema.
+
+Sulle schede RX 7000 e Radeon PRO W7000, seine imposta il livello di potenza della scheda su `high` mentre mina quando gira come root, e ripristina il livello precedente all’uscita. Senza root, stampa il comando di una riga che fa lo stesso, così puoi applicarlo tu.
+
+## Come scegli quali schede minano?
+
+Lascia l’opzione di backend non impostata per minare con la CPU e con ogni scheda AMD dedicata. Per far minare le GPU e lasciare libera la CPU, seleziona `amd`:
+
+```bash
+./seine --backend amd
+```
+
+Per minare con una sola scheda e mantenere il mining su CPU, seleziona entrambi i backend e l’indice della scheda:
+
+```bash
+./seine --backend cpu,amd --amd-devices 0
+```
+
+`--amd-devices 0,1` seleziona due schede. In un computer con schede NVIDIA e AMD, `--backend nvidia,amd` mina con tutte senza la CPU. Per lasciare memoria video libera a un gioco o ad altre app sulla stessa scheda, limita le lane con `--amd-max-lanes 2`. La [guida alle impostazioni](/it/blog/configure-seine-miner/) mostra come mantenere queste opzioni a ogni avvio.
+
+## Come verifichi che la GPU AMD stia minando?
+
+Le schede AMD si avviano in background mentre la CPU sta già minando. Ogni scheda ha la sua riga nel pannello Devices, `amd#1`, `amd#2` e così via, e il log segnala quando va online con il numero di lane, per esempio `amd#1: online (initialized in background, 9 lanes)`. La riga mostra poi l’hashrate attuale e medio della scheda.
+
+Le share accettate nel pannello Mining confermano che la pool accredita il tuo lavoro. La [guida alla dashboard](/it/blog/seine-dashboard-explained/) spiega ogni pannello, e puoi seguire i tuoi rig su bntpool.com con la [guida al monitoraggio del miner](https://bntpool.com/blog/it/track-your-miner-on-bntpool/).
+
+## Cosa controllare se manca una scheda AMD?
+
+- **Controlla driver e runtime.** Su Windows installa o aggiorna il driver AMD. Su Linux installa `hip-runtime-amd` e verifica che il tuo utente sia nei gruppi `render` e `video`. Senza runtime, seine mina con la CPU, e con `--backend amd` indica all’avvio il runtime mancante.
+- **Controlla il comando.** `--backend cpu` mina solo con il processore. Usa il comando predefinito o includi `amd` nell’elenco dei backend. Se imposti `--amd-devices`, verifica che l’indice esista.
+- **Indica tu amd dopo un aggiornamento del driver.** Se il runtime AMD chiude seine due volte di fila, seine smette di selezionare da solo le schede AMD e continua a minare con il resto, poi le riprova dopo il suo prossimo aggiornamento. Avvialo una volta con `--backend cpu,amd` per riprovare subito le schede.
+
+La [guida AMD di seine](https://github.com/zpalmtree/seine/blob/master/docs/guides/amd.md) riporta tutti i requisiti, e chi usa un sistema operativo per il mining può installare il pacchetto [HiveOS](https://github.com/zpalmtree/seine/blob/master/docs/guides/hiveos.md) o [mmpOS](https://github.com/zpalmtree/seine/blob/master/docs/guides/mmpos.md) di ogni release.
+
+<CTA target="seine" title="Scarica seine per il mining con GPU AMD" text="Scegli l’archivio Windows o Linux x86_64 e seine mina con la tua CPU e con ogni scheda Radeon che trova." />

@@ -9,11 +9,11 @@ faq:
     a: 'Conserva la configurazione e annotane la posizione prima di modificarla. Un errore di parsing indica un file o valore preciso. Esegui una copia, correggi il problema segnalato e mantieni indirizzo e impostazioni di avvio. Eliminare tutto rende più difficile il confronto con l''ultima esecuzione funzionante.'
   - q: 'Quali informazioni servono per arresti ripetuti?'
     a: 'Annota versione di seine, sistema, CPU e GPU, memoria disponibile, argomenti completi, directory di lavoro e orario. Includi gli ultimi messaggi e gli eventi di sistema pertinenti. Rimuovi credenziali e dati personali prima di condividere; non includere mai frasi di recupero o chiavi private.'
-sourceHash: '2e054f0c0100'
+sourceHash: '333d8de81191'
 translation: draft
 ---
 
-Rendi costante il funzionamento del miner Blocknet individuando il punto in cui si ferma. Questa guida segue seine v0.2.37 e parte da prove raccolte sul tuo computer. Conserva l'ultimo comando e la configurazione funzionanti, poi modifica una sola impostazione pertinente alla volta per interpretare il risultato successivo.
+Rendi costante il funzionamento del miner Blocknet individuando il punto in cui si ferma. Questa guida segue seine v0.3.1 e parte da prove raccolte sul tuo computer. Conserva l'ultimo comando e la configurazione funzionanti, poi modifica una sola impostazione pertinente alla volta per interpretare il risultato successivo.
 
 ## Cosa controllare quando il miner si ferma?
 
@@ -27,7 +27,13 @@ Verifica se il processo è terminato, il computer è sospeso o la connessione al
 
 Apri un terminale nella directory abituale ed esegui il comando esistente. Aggiungi `--ui plain` per log testuali anziché dashboard, lasciando invariati gli altri argomenti. Questo avvia il mining con la configurazione esistente. Copia i messaggi finali, incluso il primo errore precedente ai messaggi ripetuti di riconnessione o arresto.
 
-Annota insieme versione dell'eseguibile, directory di lavoro e directory dati selezionata. In questa versione, un errore fatale gestito viene stampato con `fatal:` prima dell'uscita. Una terminazione del sistema può lasciare prove diverse. Se il processo è vivo, segui i [controlli della connessione](https://bntpool.com/blog/it/track-your-miner-on-bntpool/): uno share assente o una disconnessione temporanea non dimostra un crash.
+Annota insieme versione dell'eseguibile, directory di lavoro e directory dati selezionata. Un errore fatale gestito viene stampato con `fatal:` prima dell'uscita. Su Windows, quando avvii `seine.exe` con un doppio clic, dopo un errore fatale la console resta aperta finché non premi Invio, così puoi leggere il messaggio. Una terminazione del sistema può lasciare prove diverse. Se il processo è vivo, segui i [controlli della connessione](https://bntpool.com/blog/it/track-your-miner-on-bntpool/): uno share assente o una disconnessione temporanea non dimostra un crash.
+
+## seine si è fermato per un aggiornamento?
+
+Una breve fermata può essere un aggiornamento. Con gli aggiornamenti automatici attivi, seine fa un conto alla rovescia nell'intestazione della dashboard, installa la nuova release, ferma il mining in modo pulito e riparte con gli stessi argomenti; la nuova dashboard registra `updated to seine vX.Y.Z`. Se una pool invia lavoro che richiede una release più recente, per esempio durante un aggiornamento della rete, seine mette in pausa il mining e registra `installing seine vX.Y.Z now: mining is paused until Seine is updated`, poi prosegue quando l'aggiornamento è installato.
+
+Se arrivi dalla v0.2.45 su Linux, la vecchia versione installa l'aggiornamento e poi si chiude, quindi avvia seine ancora una volta; un servizio systemd o un altro launcher che riavvia il programma non ha bisogno di nulla. La [guida all'aggiornamento](/it/blog/update-seine-miner/) elenca anche i passaggi una tantum per Windows, HiveOS e mmpOS.
 
 ## Si ferma prima di iniziare il mining?
 
@@ -43,9 +49,9 @@ Una modalità di pagine obbligatoria richiede la prenotazione corrispondente del
 
 ## Controlla separatamente la fase GPU
 
-Se l'avvio cita libreria CUDA, dispositivo o allocazione GPU, annota messaggio esatto e versione del driver. La [guida NVIDIA](/it/blog/mine-blocknet-nvidia-gpu/) tratta requisiti, librerie runtime e scelta dei dispositivi. Confrontali con l'ambiente installato prima di cambiare kernel o tuning. Un archivio scaricato correttamente non dimostra che il runtime sia pronto.
+Se l'avvio cita libreria CUDA o HIP, dispositivo o allocazione GPU, annota messaggio esatto e versione del driver. La [guida NVIDIA](/it/blog/mine-blocknet-nvidia-gpu/) e la [guida AMD](/it/blog/mine-blocknet-amd-gpu/) trattano requisiti, librerie runtime e scelta dei dispositivi. Confrontali con l'ambiente installato prima di cambiare kernel o tuning. Un archivio scaricato correttamente non dimostra che il runtime sia pronto.
 
-seine può isolare un guasto del backend mentre gli altri backends attivi continuano. Controlla messaggi e attività restante prima di concludere che tutta l'applicazione si sia fermata. Salva le prove prima del riavvio, perché la nuova sessione può nascondere la sequenza precedente. Se provi una selezione più semplice, conserva il comando originale e confronta avvio, lavoro continuo e invii accettati.
+seine può isolare un guasto del backend mentre gli altri backends attivi continuano. Se il runtime AMD chiude seine due volte di fila mentre usa la GPU, seine smette di selezionare da solo le schede AMD e continua a minare con il resto; dopo un aggiornamento del driver avvialo una volta con `--backend cpu,amd` per riprovare le schede. Controlla messaggi e attività restante prima di concludere che tutta l'applicazione si sia fermata. Salva le prove prima del riavvio, perché la nuova sessione può nascondere la sequenza precedente. Se provi una selezione più semplice, conserva il comando originale e confronta avvio, lavoro continuo e invii accettati.
 
 ## Il computer era sospeso o si è riavviato?
 

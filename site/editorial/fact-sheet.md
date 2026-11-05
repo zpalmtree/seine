@@ -260,11 +260,11 @@ Initial research checked 2026-10-25; release, platform and pool facts rechecked 
 ## 3. bntpool.com
 - Live pool parameters:
   - **pool fee 0%**
-  - minimum payout **0.1 BNT**
+  - minimum payout **1 BNT** (0.1 BNT until the 2026-11-02 payout memo rollout; exchange addresses with a memo: **10 BNT**, `memo_min_payout_amount`)
   - **60 blocks** before payout
   - **PPLNS** with a **6h** window
   - Stratum port **3333**
-  - Source: https://bntpool.com/api/info (live 2026-10-25 ~00:26 EDT)
+  - Source: https://bntpool.com/api/info (live 2026-10-25 ~00:26 EDT; minimum payouts rechecked 2026-11-04 20:55 EST)
   - Production and the example config use `pool_fee_pct: 0` (verified live 2026-10-25, 11:59 PM EDT). Always check the live value.
   - Source: `blocknet-pool@master:config.example.json:40` (checked 2026-10-25)
 - The pool fee is taken as `reward × pool_fee_pct / 100` per block.
@@ -370,6 +370,8 @@ Initial research checked 2026-10-25; release, platform and pool facts rechecked 
   - `--service` idles until `POST /v1/miner/start`
   - Source: `seine@master:docs/API.md:18-42`, `:65-76`; `docs/guides/configuration.md:97-106` (checked 2026-10-25)
 - **Solo mining:** `./seine --mode daemon` against your own synced Blocknet node, using its API cookie. Pool mining is the default.
+- **Solo mining on a pool (seine v0.3.1+):** put `solo:` in front of the address or shortname (`-u solo:ADDRESS`, `solo:@name`, any letter case). bntpool.com pays only for blocks that connection finds: the whole block reward less `pool_fee_pct`, through normal payouts after 60 confirmations; nothing from other miners' blocks. Each connection picks its mode, so one address can run solo and PPLNS rigs. Seine's balance panel labels the account `Solo`; daemon mode ignores the prefix. Stats: Type column (Pool/Solo) on Workers, estimated rewards, Blocks and Luck.
+  - Source: `seine@v0.3.1:docs/guides/configuration.md:146-156`, `src/miner/tui.rs:1328`; `blocknet-pool@a46bbd1:README.md` "Solo Mining", `frontend/src/lib/solo.ts` (checked 2026-11-04)
   - Source: `seine@master:docs/guides/solo-mining.md:1-36` (checked 2026-10-25)
 - Seine checks GitHub for updates at startup and every 12 h. This can be turned off with `--disable-update-check`.
   - Source: `seine@master:docs/guides/configuration.md:69-72` (checked 2026-10-25)
@@ -612,7 +614,7 @@ actual command output, capture provenance and failure-case checks.
   preserve JSON reports, environment, cache policy and all repeated pairs.
 - The pool's confirmation depth is current chain height minus found-block height,
   starting at zero, with a separate node hash identity check. The public setting
-  checked October 26 is 60 blocks and the minimum payment is 0.1 BNT. The wallet
+  checked October 26 is 60 blocks and the minimum payment was 0.1 BNT (1 BNT since 2026-11-02). The wallet
   coinbase maturity rule also uses a depth of 60; a later payout transaction has
   its own receipt and spendability state. Five hours is target arithmetic only.
 - Full source pins and verification: `research/benchmarks-and-confirmations-2026-10-26.md`.
@@ -776,3 +778,15 @@ Checked against the published v0.3.0 Linux and Windows archives and `seine@v0.3.
 - **Backends:** `--backend` takes `cpu`, `nvidia`, `amd` and `metal`, comma-separated. `--nvidia-devices` needs `nvidia` in `--backend`, or seine stops with an error naming the flag. A `--threads` count larger than memory allows stops with `configured CPU lanes need ~N GiB RAM`. `--backend amd` with no runtime stops with `all GPU backends failed to start`. Source: runs of the v0.3.0 Linux binary against an unreachable pool, November 2, 2026.
 - **Thread keys (v0.3.1):** `-` and `+` remove or add one thread per CPU backend for the current run only; the count is not saved. The change applies to the running CPU threads while GPUs and the pool connection keep running. While tuning is still choosing a count, the keys leave it alone and the dashboard shows how long tuning has left. With a fixed `--threads`, the change restarts mining and keeps session statistics. In v0.3.0 and earlier every change restarted the mining backends and reconnected the pool. `--threads` turns thread tuning off. Source: `seine@v0.3.1:docs/guides/configuration.md` (Dashboard controls); v0.3.0 log line `cpu-autotune | disabled; using configured thread count`.
 - **Saved settings:** `seine.config.json` holds the mode, address, pool, worker name and dev fee worker name. Backend and thread flags are not saved. Automatic updates restart with the same arguments. Source: first-run file from the v0.3.0 binary; `docs/guides/configuration.md`.
+
+## 12. v0.3.1 features used in the November 4, 2026 posts
+
+Checked against `seine@v0.3.1` (33d94e2) and live bntpool.com `/api/info` on November 4, 2026.
+
+- **Automatic updates:** check at startup and every 12 h; header `update vX.Y.Z available`, then a 60 s countdown `updating to vX.Y.Z in 42s` while mining continues; `u` installs now, `s` skips that version (remembered in the data directory). Signed archive verified, the new executable must start before it replaces the old one, then seine restarts with the same arguments and logs `updated to seine vX.Y.Z`. Work that needs a newer release pauses mining (`installing seine vX.Y.Z now: mining is paused until Seine is updated`) and installs at once, even a skipped version. `--no-auto-update` keeps only the notice; self-built binaries only notify. Upgrade notes for v0.2.45 (Linux exits once after installing; Windows double-run with restarting scripts) and the HiveOS/mmpOS package switch: `CHANGELOG.md` v0.3.1. Source: `docs/guides/configuration.md:110-127`, `src/miner/tui.rs` `update_spans`, `src/update_check.rs:215`.
+- **CPU tuning:** dashboard `Tuning:` rows and their meanings, keep the lowest thread count that matches the fastest, no scheduled tests once `done`, re-tune triggers (new version change, sustained hashrate move, freed RAM, hardware/OS/limit change), `seine.cpu-autotune.json`, `--cpu-profile efficiency`, `--disable-cpu-autotune-threads`. Source: `docs/guides/autotuning.md`.
+- **Dashboard layout (v0.3.1 renderer):** MINING panel shows `Difficulty`, `Rejected`, `Accepted` in pool mode (`Submitted`, `Stale`, `Accepted` in daemon mode); CONFIG shows `Pool`, `Threads` (`[+] [-]` hint), `Worker`, `Tuning`; POOL BALANCE shows `Pending`, `Paid`, `Miner`/`Solo`, `Min payout`; log scroll keys arrows/PgUp/PgDn/Home/End, title `LOG  paused, End to follow`; gold diamonds mark accepted shares and found blocks; current hashrate windows 5 s (NVIDIA 30 s). Source: `src/miner/tui.rs`, `src/miner/hashrate_tracker.rs:6`, `src/miner/mining_tui.rs:20`. Blog capture: `export_blog_dashboard_capture` in `src/miner/thread_showcase.rs`, demo values (Ryzen 9 9950X 16.63 H/s, 21 threads, from the desktop chart).
+- **AMD GPUs:** see §11; plus per-card lanes (~9 on a 16 GB RDNA2-4 card), `amd#N` device rows with `online (initialized in background, N lanes)`, RDNA3 `high` performance level when root, crash guard after two runtime crashes (retry after next update or with `amd` listed). Source: `docs/guides/amd.md`, `src/control_api/mod.rs:3142`.
+- **HiveOS/mmpOS packages:** `seine-hiveos-X.Y.Z.tar.gz`, `seine-mmpos-X.Y.Z.tar.gz`; flight sheet fields, imported mmpOS profile, GPU rigs mine GPUs only, CPU-only rigs mine CPU, CUDA 12 driver (RTX 50: 570+), mmpOS image Ubuntu 20.04+, upgrade by changing the URL version, HiveOS log path. Source: `docs/guides/hiveos.md`, `docs/guides/mmpos.md`.
+- **Farm proxy:** `--proxy-listen`, rigs pay their own valid full address (up to 16, 10 min slot release), invalid/missing pays `--address`, per-rig pool stats on bntpool.com, one-minute summary log, up to 64 pool connections per payout address, `solo:` rigs supported, memos not carried. Source: `docs/guides/farm-proxy.md`, `src/proxy.rs:627-641`, `src/config.rs:2859-2864`.
+- **Exchange payouts:** `--payout-memo`, `--no-payout-memo`, prompt for known shared addresses, unattended runs must pass the flag; bntpool memo minimum 10 BNT (`memo_min_payout_amount`), personal 1 BNT. Source: `docs/EXCHANGE_PAYOUTS.md`; bntpool.com `/api/info` 2026-11-04 20:55 EST.

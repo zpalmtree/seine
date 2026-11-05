@@ -6,10 +6,10 @@ faq:
   - q: 'Blocknet madenciliği için ne kadar RAM gerekir?'
     a: 'Her madencilik iş parçacığı yaklaşık 2 GB RAM ister, çünkü her Argon2id hash''i 2 GiB''lık bir bellek bloğunu baştan sona işler. Bu yüzden 16 GB RAM''li bir bilgisayar, sisteme yer bıraktıktan sonra kabaca altı ila yedi iş parçacığı çalıştırabilir. seine belleğinizi ölçer ve güvenli iş parçacığı sayısını otomatik olarak seçer.'
   - q: 'bntpool.com''da Blocknet madenciliği ödemeleri ne zaman gelir?'
-    a: 'bntpool.com havuzu altı saatlik bir pencereyle PPLNS yöntemiyle ödeme yapar. Bir bloğun ödülü ancak blok 60 blok derinliğe ulaştıktan sonra, yani beş dakikalık bloklarla yaklaşık beş saat sonra ödenebilir ve bakiyeler 0,1 BNT''ye ulaştığında gönderilir. İlk ödemeyi, ilk kabul edilen share''lerinizden birkaç saat sonra bekleyin.'
+    a: 'bntpool.com havuzu altı saatlik bir pencereyle PPLNS yöntemiyle ödeme yapar. Bir bloğun ödülü ancak blok 60 blok derinliğe ulaştıktan sonra, yani beş dakikalık bloklarla yaklaşık beş saat sonra ödenebilir ve bakiyeler 1 BNT''ye ulaştığında gönderilir. İlk ödemeyi, ilk kabul edilen share''lerinizden birkaç saat sonra bekleyin.'
   - q: 'Blocknet madenciliğini CPU ve GPU ile aynı anda yapabilir miyim?'
     a: 'Evet. Windows ve Linux''ta seine, bilgisayardaki her CPU çekirdeğinde ve her NVIDIA ekran kartında aynı anda madencilik yapar ve iki hashrate toplanır. Çalışırken işlemciyi ve her kartı ayrı ayrı ayarlar, böylece hiçbir ayarı değiştirmeden tüm donanımınızdan en yüksek verimi alırsınız.'
-sourceHash: bff032ea0960
+sourceHash: '42d41a1c403b'
 translation: draft
 ---
 
@@ -49,7 +49,7 @@ Bundan sonra seine madencilik yaparken ayar yapmaya devam eder. Gerçek madencil
 
 ## Ödeme almak ne kadar sürer?
 
-bntpool.com havuzu PPLNS kullanır: her bloğun ödülü, blok bulunmadan önceki altı saat içinde gönderilen share'ler arasında paylaştırılır. Bir ödül, bloğu 60 blok derinliğe ulaşana kadar harcanamaz; bu, Blocknet'in beş dakikalık blok süresiyle yaklaşık beş saattir. Onaylanmış bakiyeniz 0,1 BNT'ye ulaştığında havuz bunu adresinize gönderir.
+bntpool.com havuzu PPLNS kullanır: her bloğun ödülü, blok bulunmadan önceki altı saat içinde gönderilen share'ler arasında paylaştırılır. Bir ödül, bloğu 60 blok derinliğe ulaşana kadar harcanamaz; bu, Blocknet'in beş dakikalık blok süresiyle yaklaşık beş saattir. Onaylanmış bakiyeniz 1 BNT'ye ulaştığında havuz bunu adresinize gönderir.
 
 Hashrate'inizi, share'lerinizi ve bakiyenizi [bntpool.com](https://bntpool.com) üzerinde adresinizi arayarak takip edebilirsiniz. Havuz, henüz onaylanmamış bloklardan gelen ödülleri ayrı gösterir, çünkü bunlar hâlâ değişebilir.
 
@@ -78,10 +78,10 @@ Test edilen her CPU'nun sonuçları [performans sayfasında](https://github.com/
 
 ## Blocknet madenciliğini solo yapabilir misiniz?
 
-Evet. Kendi senkronize Blocknet düğümünüzü çalıştırıyorsanız, seine'i `./seine --mode daemon` ile başlatın; bir havuz yerine doğrudan düğüme karşı madencilik yapar. Bulduğunuz her blok sizin olur, ancak ödemeler yalnızca bütün bir blok bulduğunuzda gelir; bu yüzden çoğu kişi bir havuzla başlar. [Solo madencilik rehberi](https://github.com/zpalmtree/seine/blob/master/docs/guides/solo-mining.md) kurulumu açıklar.
+Evet, iki yolla. En basiti bntpool.com'da solo madenciliktir: adresinizin önüne `solo:` koyun, örneğin `./seine --address solo:YOUR_ADDRESS`; havuz cihazınızın bulduğu her bloğun ödülünün tamamını, düğüm çalıştırmanıza gerek kalmadan size öder. [bntpool.com'da solo madencilik](https://bntpool.com/blog/tr/solo-mine-blocknet-on-bntpool/) kurulumu anlatır. Kendi senkronize Blocknet düğümünüzü çalıştırıyorsanız, [solo madencilik rehberinin](https://github.com/zpalmtree/seine/blob/master/docs/guides/solo-mining.md) açıkladığı gibi `./seine --mode daemon` bunun yerine doğrudan düğüme karşı kazar. Solo ödüller bütün bloklar halinde gelir; bu yüzden ağda büyük payı olan madencilere uygundur.
 
 <Note>
-[blocknetcrypto.com](https://blocknetcrypto.com/#faraday)'a göre Blocknet, 2027-02-16 civarında Faraday adlı bir ağ yükseltmesi planlıyor. Bu yükseltmenin iş kanıtını değiştirmesi planlandığından seine'i güncel tutun: seine başlarken ve her 12 saatte bir yeni sürümleri kontrol eder.
+[blocknetcrypto.com](https://blocknetcrypto.com/#faraday)'a göre Blocknet, 16 Şubat 2027 civarında Faraday adlı bir ağ yükseltmesi planlıyor. Bu yükseltmenin iş kanıtını değiştirmesi planlanıyor. seine v0.3.1 buna hazırdır: havuz madenciliği yeni iş kanıtına kendiliğinden geçer ve otomatik güncellemeler açıkken seine yeni sürümleri sizin için kurar.
 </Note>
 
 <CTA target="seine" title="seine'i indirin" text="Windows, macOS ve Linux için ücretsiz. Çalıştırın, adresinizi yapıştırın ve bntpool.com'da madenciliğe başlayın." />

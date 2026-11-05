@@ -1,0 +1,107 @@
+---
+title: 'Blocknet auf HiveOS und mmpOS minen'
+description: 'Mine Blocknet auf HiveOS oder mmpOS mit dem seine-Paket aus jedem Release. Richte ein Flight Sheet oder Miner-Profil ein, wähle GPUs oder CPU und aktualisiere in einem Schritt.'
+tags: ['Mining-Anleitung', 'HiveOS', 'mmpOS', 'GPU']
+sourceHash: 'e49fce300603'
+translation: draft
+faq:
+  - q: 'Kann ich Blocknet auf HiveOS minen?'
+    a: 'Ja. Jedes seine-Release enthält ein HiveOS-Paket. Füge eine BNT-Wallet hinzu, erstelle ein Flight Sheet mit Pool auf Configure in miner und Miner auf Custom, füge den Paketlink als Installation URL ein und wende es auf deine Rigs an. Das HiveOS-Dashboard zeigt dann die Hashrate pro GPU und die akzeptierten Shares.'
+  - q: 'Kann ich Blocknet auf mmpOS minen?'
+    a: 'Ja. Jedes seine-Release enthält ein mmpOS-Paket. Importiere das fertige Miner-Profil aus der mmpOS-Anleitung von seine, das die BNT-Wallet, den Pool bntpool.com und den Miner seine in einem Schritt anlegt, und setze es dann auf deinen Rigs als Active miner profile.'
+  - q: 'Mint das HiveOS-Paket auch auf der CPU?'
+    a: 'Auf GPU-Rigs mint das Paket nur auf den GPUs, weil jeder CPU-Thread 2 GB System-RAM braucht und viele GPU-Rigs wenig davon haben. Rigs ohne GPU minen auf der CPU. Um auf einem GPU-Rig zusätzlich CPU-Mining zu nutzen, trage --backend nvidia,cpu --threads 2 in Extra config arguments ein.'
+  - q: 'Wie aktualisiere ich seine auf HiveOS oder mmpOS?'
+    a: 'Ändere die Versionsnummer in der Installations- oder Download-URL auf das neueste Release und wende das Flight Sheet oder Profil erneut an. Das Mining-Betriebssystem lädt das neue Paket, und seine behält seine gespeicherten Tuning-Ergebnisse, sodass die Rigs nach Sekunden wieder hashen.'
+---
+
+Diese Anleitung zeigt dir, wie du Blocknet mit seine auf HiveOS und mmpOS minest. Jedes seine-Release enthält ein Paket für beide Mining-Betriebssysteme. Du fügst seine mit einem Link als Custom-Miner hinzu, und deine Rigs melden Hashrate und Shares im Dashboard, das du schon nutzt. Sie folgt seine v0.3.1.
+
+## Welches Paket brauchst du?
+
+Jedes Release auf der [seine-Release-Seite](https://github.com/zpalmtree/seine/releases/latest) enthält zwei Pakete für Mining-Betriebssysteme:
+
+| Mining-Betriebssystem | Paket |
+|---|---|
+| HiveOS | `seine-hiveos-X.Y.Z.tar.gz` |
+| mmpOS | `seine-mmpos-X.Y.Z.tar.gz` |
+
+`X.Y.Z` ist die Release-Version, zum Beispiel `0.3.1`. Jedes Paket enthält einen seine-Build für die Systembibliotheken des Mining-Betriebssystems, die NVIDIA-Kernel-Compiler-Bibliothek, die seine nutzt, und die Skripte, die seine mit dem Dashboard verbinden. Sonst installierst du nichts auf dem Rig.
+
+## Wie minest du Blocknet auf HiveOS?
+
+<Answer>
+Füge deine Blocknet-Adresse als BNT-Wallet hinzu und erstelle dann ein Flight Sheet mit Pool auf Configure in miner und Miner auf Custom. Füge in Setup Miner Config den Link zum Paket seine-hiveos als Installation URL ein, nutze %WAL%.%WORKER_NAME% als Wallet- und Worker-Vorlage und setze die Pool URL. Wende das Flight Sheet auf deine Rigs an.
+</Answer>
+
+1. **Füge eine Wallet hinzu.** Öffne **Wallets** und füge deine Blocknet-Auszahlungsadresse hinzu. Steht BNT nicht in der Coin-Liste, tippe `BNT` als Coin-Namen ein. Ein Blocknet-ID-Name wie `@name` funktioniert auch; nutze die Form mit `@`, weil HiveOS `$` gesondert behandelt.
+2. **Erstelle ein Flight Sheet.** Wähle deinen BNT-Coin und deine Wallet, setze **Pool** auf *Configure in miner* und **Miner** auf *Custom*.
+3. **Klicke auf Setup Miner Config** und fülle aus:
+
+   | Feld | Wert |
+   |---|---|
+   | Miner name | `seine-hiveos` (HiveOS füllt es aus der URL aus) |
+   | Installation URL | `https://github.com/zpalmtree/seine/releases/download/vX.Y.Z/seine-hiveos-X.Y.Z.tar.gz` |
+   | Hash algorithm | leer lassen |
+   | Wallet and worker template | `%WAL%.%WORKER_NAME%` |
+   | Pool URL | `stratum+tcp://bntpool.com:3333` |
+   | Pass | leer lassen |
+
+4. **Wende das Flight Sheet** auf deine Rigs an.
+
+Ersetze `X.Y.Z` durch die neueste Version oder kopiere den Paketlink von der Release-Seite. Backup-Pools kommen in eigene Zeilen in **Pool URL**; seine versucht sie der Reihe nach und kehrt zum ersten zurück, sobald er wieder erreichbar ist. Mit leerer **Pool URL** mint seine auf bntpool.com.
+
+Das HiveOS-Dashboard zeigt dann die Hashrate von seine pro GPU, akzeptierte und abgelehnte Shares sowie GPU-Temperaturen und Lüfter.
+
+## Wie minest du Blocknet auf mmpOS?
+
+<Answer>
+Die Coin-Listen von mmpOS enthalten BNT noch nicht, daher importierst du stattdessen ein fertiges Profil. Kopiere das Miner-Profil-JSON aus der mmpOS-Anleitung von seine, trage deine Blocknet-Adresse und die Release-Version ein und importiere es unter Miner profiles. Füge die Wallet, den Pool und das Profil hinzu, die es anlegt, und setze dann seine BNT auf deinen Rigs als Active miner profile.
+</Answer>
+
+1. **Bearbeite das Profil.** Kopiere das JSON-Profil aus der [mmpOS-Anleitung von seine](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/mmpos.md). Ersetze `YOUR_BLOCKNET_ADDRESS` durch deine Auszahlungsadresse oder deinen `@name` und beide `X.Y.Z` in `custom_url` durch die neueste Version.
+2. **Importiere es.** Öffne **Miner profiles**, klicke auf **Import from JSON**, füge das Profil ein und klicke auf **Import**.
+3. **Füge jeden Teil hinzu**, aus dem Importergebnis und in dieser Reihenfolge: **Add wallet**, dann **Add pool** (die BNT-Wallet wird von selbst eingetragen), dann **Add miner profile** mit ausgewähltem Pool `bntpool`. Die Felder für Coin und Miner wirken leer, weil BNT nicht in den Listen von mmpOS steht; die importierten Werte werden trotzdem gespeichert.
+4. **Weise das Profil zu.** Setze auf jedem Rig **Active miner profile** auf `seine BNT`.
+
+Das Profil trägt beim Start des Miners durch mmpOS deine Wallet, den Rig-Namen und den Pool ein, und das mmpOS-Dashboard zeigt die Hashrate von seine pro GPU und seine Shares. Das mmpOS-Paket braucht ein Image auf Basis von Ubuntu 20.04 oder neuer.
+
+## Worauf mint das Paket?
+
+Das Paket wählt die Geräte nach der Hardware, die das Mining-Betriebssystem erkennt:
+
+- **GPU-Rigs minen auf den GPUs.** Jeder Blocknet-Hash braucht 2 GB Speicher, auf einer GPU Videospeicher und auf der CPU System-RAM. Viele GPU-Rigs haben 4 bis 8 GB RAM, daher lässt das Paket die CPU für das System frei.
+- **Rigs ohne GPU minen auf der CPU,** mit einer Thread-Zahl passend zum freien RAM.
+- **NVIDIA-Karten** brauchen einen Treiber mit CUDA-12-Unterstützung; Karten der RTX-50-Serie brauchen Treiber 570 oder neuer.
+- **AMD Radeon RX 6000, RX 7000 und RX 9000** brauchen die ROCm-HIP-Laufzeit auf dem Rig. Die [AMD-GPU-Anleitung](/de/blog/mine-blocknet-amd-gpu/) erklärt, was die Karten brauchen.
+
+Beim ersten Start stimmt sich seine einige Minuten lang auf jede GPU ab, bevor eine Hashrate erscheint, und speichert dann das Ergebnis, sodass spätere Starts nach Sekunden hashen. Wenn du den Neustart bei niedriger Hashrate des HiveOS-Watchdogs nutzt, gib ihm mehr als 10 Minuten, damit er diesen ersten Tuning-Lauf nicht abbricht.
+
+## Wie fügst du CPU-Mining oder andere Einstellungen hinzu?
+
+Alles, was du in **Extra config arguments** von HiveOS oder ans Ende der Argumente des mmpOS-Profils schreibst, geht unverändert an seine und hat Vorrang vor den Standardwerten des Pakets. Um auf einem GPU-Rig auch auf der CPU zu minen, gib beide Backends und eine Thread-Zahl an, die zu deinem übrigen RAM passt, ein Thread pro 2 GB, und lass mindestens 2 GB für das System:
+
+```text
+--backend nvidia,cpu --threads 2
+```
+
+Nutze `amd,cpu` auf AMD-Rigs oder `nvidia,amd,cpu` auf gemischten Rigs. Lässt du `--threads` weg, bemisst und stimmt seine die CPU-Threads selbst nach dem freien RAM ab. Weitere nützliche Argumente:
+
+| Argument | Wirkung |
+|---|---|
+| `--backend nvidia --nvidia-devices 0,1,3` | Nur auf einigen NVIDIA-GPUs minen |
+| `--nvidia-max-lanes 4` | Weniger Videospeicher auf jeder NVIDIA-GPU nutzen |
+
+Das Paket setzt die Dashboard-Verbindung, die schlichte Log-Ausgabe und das Datenverzeichnis für dich. Lass `--api-bind`, `--api-cookie` und `--api-token` so, wie das Paket sie setzt, denn das Dashboard liest die Statistiken von seine darüber. Die [Einstellungsanleitung](/de/blog/configure-seine-miner/) erklärt die übrigen Optionen von seine.
+
+## Wie aktualisierst du seine auf einem Mining-Betriebssystem?
+
+Auf HiveOS und mmpOS kommen neue Versionen über das Paket. Ist ein neueres Release verfügbar, schreibt seine einen Hinweis ins Log. Ändere die Version in der Installation URL oder in der Download-URL des mmpOS-Profils auf das neue Release und wende das Flight Sheet oder Profil erneut an. Das Mining-Betriebssystem lädt das neue Paket, und seine behält seine Tuning-Ergebnisse und Einstellungen in seinem Datenverzeichnis, sodass die Rigs nach Sekunden wieder mit voller Hashrate laufen.
+
+Laufen deine Rigs mit dem Paket v0.3.0, stelle das Flight Sheet oder Profil auf das Paket v0.3.1 um; auch dessen Startskripte sind aktualisiert.
+
+## Wo siehst du Shares und Auszahlungen?
+
+Das Dashboard des Mining-Betriebssystems zeigt Hashrate und Shares jedes Rigs. Gutgeschriebene Arbeit, Guthaben und Auszahlungen findest du, indem du deine Adresse auf [bntpool.com](https://bntpool.com/stats) suchst. Jedes Rig erscheint unter seinem HiveOS-Worker- oder mmpOS-Rig-Namen, und die [Anleitung zum Überwachen deines Miners](https://bntpool.com/blog/de/track-your-miner-on-bntpool/) erklärt die Statistikseite. Die vollständigen Logs stehen im Miner-Log des Mining-Betriebssystems; auf HiveOS unter `/var/log/miner/custom/seine-hiveos.log`.
+
+<CTA target="seine" title="seine-Pakete für Mining-Betriebssysteme holen" text="Jedes Release enthält Pakete für HiveOS und mmpOS: Füge einen Link in dein Flight Sheet oder Profil ein, und deine Rigs minen Blocknet." />

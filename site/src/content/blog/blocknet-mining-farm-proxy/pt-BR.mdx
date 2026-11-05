@@ -1,0 +1,82 @@
+---
+title: 'Gerencie uma fazenda de mineração Blocknet com um único proxy'
+description: 'Gerencie toda a sua fazenda de mineração Blocknet com um proxy de fazenda do seine: defina o pool e o endereço de pagamento em um lugar, aponte cada rig para ele e mantenha estatísticas por rig.'
+tags: ['Guia de mineração', 'Proxy de fazenda', 'seine', 'Servidores']
+sourceHash: '043973652634'
+translation: draft
+faq:
+  - q: 'O que é o proxy de fazenda do seine?'
+    a: 'É um modo do seine que roda em uma máquina da sua rede local e se conecta ao pool por todos os seus rigs. Cada rig se conecta ao proxy em vez do pool e minera sua própria parte do trabalho. O pool vê uma só conexão, e você define o pool e os pools de reserva em um único lugar.'
+  - q: 'O proxy de fazenda precisa de uma máquina potente?'
+    a: 'Não. O proxy não minera, então precisa de pouca CPU e pouca memória. Ele pode rodar em qualquer máquina que seus rigs alcancem na rede local, como um servidor pequeno ou um dos próprios rigs, junto com o minerador dele.'
+  - q: 'Os rigs atrás do proxy continuam aparecendo separados no bntpool.com?'
+    a: 'Sim. O bntpool.com credita os shares por rig, então cada rig atrás do proxy aparece na página de estatísticas com seu próprio nome de worker, sua hashrate e seus shares, exatamente como numa conexão direta. O proxy também registra a cada minuto seus rigs conectados e os shares.'
+  - q: 'Rigs atrás de um proxy podem pagar carteiras diferentes?'
+    a: 'Sim. Cada rig recebe no endereço com que faz login, então rigs que mineram para até 16 endereços diferentes podem dividir um proxy. Um rig que faz login sem um endereço válido recebe no endereço que você deu ao proxy com --address.'
+---
+
+Este guia mostra como gerenciar uma fazenda de mineração Blocknet com um único proxy de fazenda do seine. Você inicia o proxy em uma máquina da sua rede, aponta cada rig para ele, e o proxy se conecta ao bntpool.com pela fazenda inteira. Você define o pool, o endereço de pagamento e os pools de reserva em um único lugar e mantém as estatísticas por rig no pool. Ele segue o seine v0.3.1.
+
+## O que o proxy de fazenda faz?
+
+<Answer>
+O proxy de fazenda é o seine funcionando como um pool local para seus rigs. Ele se conecta ao bntpool.com uma vez pela fazenda inteira e entrega a cada rig sua própria parte do trabalho. O pool vê uma só conexão, cada rig continua minerando e sendo creditado separadamente, e você muda o pool ou os pools de reserva de todos os rigs em um único lugar.
+</Answer>
+
+Um proxy de fazenda é indicado para quem tem mais do que alguns rigs:
+
+- **Um só lugar para as configurações.** Defina o pool, os pools de reserva e o endereço de pagamento padrão no proxy, e todos os rigs passam a usá-los.
+- **Uma só conexão de saída.** Os rigs falam com o proxy pela sua rede local, e o proxy abre só as conexões com o pool de que a fazenda precisa, normalmente uma ou poucas.
+- **Estatísticas por rig no pool.** O bntpool.com credita os shares por rig, então cada rig continua aparecendo com seu próprio nome de worker na [página de estatísticas](https://bntpool.com/stats).
+
+O proxy em si não minera. Ele precisa de pouca CPU e pouca memória, então pode rodar em qualquer máquina que os rigs alcancem, inclusive em um dos rigs.
+
+## Como iniciar o proxy?
+
+<Answer>
+Inicie o seine com --proxy-listen e o endereço e a porta em que os rigs vão se conectar, mais as opções habituais de pool, endereço de pagamento e nome de rig. Por exemplo: ./seine --proxy-listen 0.0.0.0:3333 --pool-url stratum+tcp://bntpool.com:3333 --address YOUR_ADDRESS --pool-worker farm-1. O proxy então aguarda os rigs na porta 3333.
+</Answer>
+
+Na máquina que vai rodar o proxy:
+
+```bash
+./seine --proxy-listen 0.0.0.0:3333 \
+        --pool-url stratum+tcp://bntpool.com:3333 \
+        --address YOUR_ADDRESS --pool-worker farm-1
+```
+
+`--proxy-listen` define onde o proxy aceita rigs; `0.0.0.0:3333` escuta em todas as interfaces de rede na porta 3333. `--address` é o endereço de pagamento padrão, usado para qualquer rig que faça login sem um endereço válido. Todas as opções de pool funcionam no proxy, inclusive pools de reserva: liste-os em ordem, separados por vírgulas, e o proxy volta ao primeiro quando ele se recupera. O [guia de configuração do seine](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/configuration.md) cobre as opções de pool.
+
+Vincule o proxy à sua rede local. Qualquer pessoa que alcance a porta dele pode minerar por ele, então use um endereço da LAN em `--proxy-listen`, ou proteja a porta com firewall, em vez de expô-la à internet.
+
+## Como apontar os rigs para o proxy?
+
+Em cada rig, use o endereço local do proxy como pool e dê ao rig seu próprio nome:
+
+```bash
+./seine --pool-url 192.168.1.10:3333 --address YOUR_ADDRESS --pool-worker rig-07
+```
+
+Substitua `192.168.1.10` pelo endereço da máquina do proxy na sua rede. Rigs com sistema operacional de mineração funcionam do mesmo jeito: coloque o endereço do proxy no campo de URL do pool do flight sheet do HiveOS ou do perfil do mmpOS, como mostra o [guia de HiveOS e mmpOS](/pt-br/blog/mine-blocknet-hiveos-mmpos/). O seine salva o pool junto com as configurações do rig, então as próximas inicializações se conectam ao proxy sozinhas.
+
+## Como os rigs atrás do proxy recebem?
+
+Cada rig recebe no endereço Blocknet completo com que faz login. Rigs que mineram para carteiras diferentes podem dividir um proxy, com até 16 endereços ao mesmo tempo. Um rig que faz login sem endereço, ou com um inválido, recebe no `--address` do proxy.
+
+Quando 16 endereços estão em uso, um rig com um 17º endereço espera até que um dos outros fique 10 minutos sem rigs. Se o pool recusar o endereço de um rig, o proxy repassa o motivo do pool, para você corrigir naquele rig.
+
+Rigs atrás do proxy também podem minerar solo no bntpool.com: coloque `solo:` antes do endereço do rig, e o pool paga a esse rig a recompensa inteira de cada bloco que ele encontrar. [Mineração solo no bntpool.com](https://bntpool.com/blog/pt-br/solo-mine-blocknet-on-bntpool/) explica as recompensas solo. Pagamentos para uma corretora precisam de um memo de depósito, que o proxy não repassa, então conecte os rigs da corretora direto ao pool.
+
+## Como acompanhar a fazenda?
+
+No bntpool.com, consulte cada endereço de pagamento na [página de estatísticas](https://bntpool.com/stats). Cada rig atrás do proxy aparece na tabela Workers com seu próprio nome de rig, sua hashrate, seus shares e o horário do último share, exatamente como em conexões diretas. O [guia de acompanhamento do minerador](https://bntpool.com/blog/pt-br/track-your-miner-on-bntpool/) explica a página.
+
+O proxy também registra seu próprio resumo a cada minuto: rigs conectados, shares aceitos e rejeitados, uma hashrate estimada e suas conexões com o pool. Ele registra cada rig ao se conectar e desconectar, então você vê de relance quando um rig cai. O painel do seine em cada rig continua mostrando a hashrate e os shares locais, como explica o [guia do painel](/pt-br/blog/seine-dashboard-explained/).
+
+## O que mais você deve saber?
+
+- **As conexões com o pool crescem com a fazenda.** O proxy abre quantas conexões com o pool a fazenda precisar para que cada rig receba trabalho a cada novo bloco. Para a maioria das fazendas são uma ou poucas, e fazendas muito grandes chegam a 64 por endereço de pagamento.
+- **Cada rig mantém suas próprias configurações.** Número de threads, seleção de GPUs e ajuste ficam no rig. O [guia de configurações](/pt-br/blog/configure-seine-miner/) cobre esses itens, e o [guia de mineração em servidores](/pt-br/blog/mine-blocknet-on-servers/) cobre servidores de CPU grandes.
+- **Atualizações da rede.** Na atualização de rede Faraday, o proxy pede que os rigs com uma versão do seine sem suporte a ela atualizem, da mesma forma que o pool faz.
+
+<CTA target="seine" title="Baixe o seine para sua fazenda" text="Rode um seine como proxy de fazenda e aponte cada rig para ele: um só lugar para as configurações do pool e estatísticas por rig no bntpool.com." />

@@ -6,10 +6,10 @@ faq:
   - q: 'Hoeveel RAM heb ik nodig om Blocknet te minen?'
     a: 'Elke miningthread heeft ongeveer 2 GB RAM nodig, omdat elke Argon2id-hash een geheugenblok van 2 GiB doorloopt. Een computer met 16 GB kan daardoor ongeveer zes tot zeven threads draaien en houdt dan nog ruimte over voor het systeem. seine meet je geheugen en kiest automatisch een veilig aantal threads.'
   - q: 'Wanneer komen de uitbetalingen voor Blocknet-minen op bntpool.com binnen?'
-    a: 'De pool bntpool.com betaalt uit met PPLNS over een venster van zes uur. De beloning van een blok kan pas worden uitbetaald als er 60 blokken op volgen, bij blokken van vijf minuten ongeveer vijf uur, en saldi worden verstuurd zodra ze 0,1 BNT bereiken. Reken op de eerste betaling enkele uren na je eerste geaccepteerde shares.'
+    a: 'De pool bntpool.com betaalt uit met PPLNS over een venster van zes uur. De beloning van een blok kan pas worden uitbetaald als er 60 blokken op volgen, bij blokken van vijf minuten ongeveer vijf uur, en saldi worden verstuurd zodra ze 1 BNT bereiken. Reken op de eerste betaling enkele uren na je eerste geaccepteerde shares.'
   - q: 'Kan ik Blocknet tegelijk met mijn CPU en GPU minen?'
     a: 'Ja. Op Windows en Linux minet seine tegelijk op elke CPU-core en elke NVIDIA-videokaart in de computer, en de twee hashrates tellen op. De processor en elke kaart worden apart afgestemd terwijl het draait, zodat je het meeste uit al je hardware haalt zonder ook maar één instelling te wijzigen.'
-sourceHash: bff032ea0960
+sourceHash: '42d41a1c403b'
 translation: draft
 ---
 
@@ -49,7 +49,7 @@ Vanaf dan blijft seine afstemmen terwijl het minet. Het vergelijkt aantallen thr
 
 ## Hoe lang duurt het tot je wordt uitbetaald?
 
-De pool bntpool.com gebruikt PPLNS: de beloning van elk blok wordt verdeeld over de shares die in de zes uur voor de vondst zijn ingediend. Een beloning kan pas worden uitgegeven als er 60 blokken op het blok volgen, wat bij de bloktijd van vijf minuten van Blocknet ongeveer vijf uur is. Zodra je bevestigde saldo 0,1 BNT bereikt, stuurt de pool het naar je adres.
+De pool bntpool.com gebruikt PPLNS: de beloning van elk blok wordt verdeeld over de shares die in de zes uur voor de vondst zijn ingediend. Een beloning kan pas worden uitgegeven als er 60 blokken op het blok volgen, wat bij de bloktijd van vijf minuten van Blocknet ongeveer vijf uur is. Zodra je bevestigde saldo 1 BNT bereikt, stuurt de pool het naar je adres.
 
 Je kunt je hashrate, shares en saldo volgen op [bntpool.com](https://bntpool.com) door je adres op te zoeken. De pool toont beloningen uit blokken die nog niet zijn bevestigd apart, omdat die nog kunnen veranderen.
 
@@ -78,10 +78,10 @@ Resultaten voor elke geteste CPU staan op de [prestatiepagina](https://github.co
 
 ## Kun je Blocknet solo minen?
 
-Ja. Als je je eigen gesynchroniseerde Blocknet-node draait, start je seine met `./seine --mode daemon` en minet het rechtstreeks tegen de node in plaats van via een pool. Elk blok dat je vindt, houd je helemaal zelf, maar uitbetalingen komen alleen binnen als je een heel blok vindt, dus de meeste mensen beginnen op een pool. De [gids voor solo minen](https://github.com/zpalmtree/seine/blob/master/docs/guides/solo-mining.md) legt de installatie uit.
+Ja, op twee manieren. Het eenvoudigst is solo minen op bntpool.com: zet `solo:` voor je adres, zoals in `./seine --address solo:YOUR_ADDRESS`, en de pool betaalt je de volledige beloning van elk blok dat je rig vindt, zonder node om te draaien. [Solo minen op bntpool.com](https://bntpool.com/blog/nl/solo-mine-blocknet-on-bntpool/) behandelt de installatie. Draai je je eigen gesynchroniseerde Blocknet-node, dan minet `./seine --mode daemon` in plaats daarvan rechtstreeks tegen die node, zoals de [gids voor solo minen](https://github.com/zpalmtree/seine/blob/master/docs/guides/solo-mining.md) uitlegt. Solobeloningen komen als hele blokken, dus ze passen bij miners met een groot aandeel in het netwerk.
 
 <Note>
-Volgens [blocknetcrypto.com](https://blocknetcrypto.com/#faraday) plant Blocknet rond 16 februari 2027 een netwerkupgrade met de naam Faraday. Daarbij is een wijziging van de proof of work gepland, dus houd seine up-to-date: het controleert bij het opstarten en elke 12 uur op nieuwe releases.
+Volgens [blocknetcrypto.com](https://blocknetcrypto.com/#faraday) plant Blocknet rond 16 februari 2027 een netwerkupgrade met de naam Faraday. Daarbij is een wijziging van de proof of work gepland. Seine v0.3.1 is er klaar voor: poolminen schakelt vanzelf over op de nieuwe proof of work, en met automatische updates aan installeert seine nieuwere releases voor je.
 </Note>
 
 <CTA target="seine" title="Download seine" text="Gratis voor Windows, macOS en Linux. Start het, plak je adres en je bent aan het minen op bntpool.com." />

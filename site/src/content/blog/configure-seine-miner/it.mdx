@@ -11,7 +11,7 @@ faq:
     a: 'Seine sceglie il numero di thread per te, quindi devi impostarlo solo quando vuoi lasciare spazio ad altro lavoro. Ogni thread usa circa 2 GB di RAM. Premi il tasto meno nella dashboard finché il computer non ti sembra a posto, poi usa quel numero.'
   - q: 'Dove salva seine le sue impostazioni?'
     a: 'Seine salva il tuo indirizzo, il pool e il nome del worker in seine-data/seine.config.json, dentro la cartella da cui lo avvii. Le opzioni dei thread e del backend non vengono salvate lì, quindi mettile in un piccolo file di avvio se le vuoi a ogni avvio.'
-sourceHash: b5ca5a9a16d8
+sourceHash: cbfaa904cdbf
 translation: draft
 ---
 
@@ -129,6 +129,8 @@ Per usare un valore diverso per una sola esecuzione, aggiungilo al comando. Il f
 ```
 
 Le altre due impostazioni sono `--address` e `--pool-url`. La [guida al cambio di indirizzo](https://bntpool.com/blog/it/change-mining-wallet-address/) spiega come il pool accredita il tuo lavoro dopo che cambi indirizzo.
+
+Per minare in solo su bntpool.com, metti `solo:` davanti all’indirizzo, per esempio `"address": "solo:@yourname"` nel file o `--address solo:YOUR_ADDRESS` sulla riga di comando. La pool ti paga allora l’intera ricompensa di ogni blocco trovato dal tuo rig. [Il mining in solo su bntpool.com](https://bntpool.com/blog/it/solo-mine-blocknet-on-bntpool/) spiega come vengono pagati i blocchi in solo.
 
 ## E se un’impostazione non funziona?
 

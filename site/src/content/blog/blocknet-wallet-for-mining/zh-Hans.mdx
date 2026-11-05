@@ -8,11 +8,11 @@ faq:
   - q: 'Blocknet 恢复助记词有多少个单词？'
     a: 'Blocknet 恢复助记词共 12 个单词。在命令行钱包中，seed 命令会在显示警告并要求输入钱包密码后显示助记词。请把这些单词写在纸上并离线保存。凭这 12 个单词，即使钱包文件和密码都丢失了，import 命令也能在任何电脑上重建你的钱包。'
   - q: 'bntpool.com 的收益什么时候到账？'
-    a: '矿池找到的区块需要 60 个确认才会支付其奖励，按 Blocknet 五分钟的出块时间约为五小时。当你已确认的矿池余额达到 0.1 BNT 时，矿池会把它发送到你的地址。这笔支付在历史记录中显示为普通交易，经过 10 个确认（约 50 分钟）后即可花费。'
+    a: '矿池找到的区块需要 60 个确认才会支付其奖励，按 Blocknet 五分钟的出块时间约为五小时。当你已确认的矿池余额达到 1 BNT 时，矿池会把它发送到你的地址。这笔支付在历史记录中显示为普通交易，经过 10 个确认（约 50 分钟）后即可花费。'
   - q: '可以在多台矿机上使用同一个地址吗？'
     a: '可以。每台运行 seine 的机器都可以挖到同一个地址或 Blocknet ID 短名称，bntpool.com 会把它们的份额计入同一个余额。矿池的统计页面会在你的地址下列出每台已连接的机器。钱包及其恢复助记词始终留在你自己的电脑上。'
-sourceHash: '9f4ecc0f989f'
-translation: reviewed
+sourceHash: 'd01002f3db3c'
+translation: draft
 ---
 
 挖 Blocknet 需要一个接收奖励的地址，官方钱包几分钟内就能为你生成一个。本指南介绍如何用命令行钱包或桌面钱包创建钱包、备份恢复助记词、找到要粘贴到 seine 中的地址，以及在 bntpool.com 向你支付时查看余额。
@@ -151,7 +151,7 @@ xattr -cr /Applications/blocknet.app
 
 ## 挖矿收益如何显示在钱包中？
 
-bntpool.com 会在区块成熟后支付奖励。矿池找到的区块需要 60 个确认，按 Blocknet 五分钟的出块时间约为五小时。当你已确认的余额达到 0.1 BNT 的最低支付额时，矿池会以一笔普通 Blocknet 交易把它发送到你的地址。
+bntpool.com 会在区块成熟后支付奖励。矿池找到的区块需要 60 个确认，按 Blocknet 五分钟的出块时间约为五小时。当你已确认的余额达到 1 BNT 的最低支付额时，矿池会以一笔普通 Blocknet 交易把它发送到你的地址。
 
 在钱包中，查看 `balance`（或 `bal`）：
 
@@ -170,4 +170,4 @@ bntpool.com 会在区块成熟后支付奖励。矿池找到的区块需要 60 �
 
 刚开始挖矿？[Blocknet 挖矿指南](/zh-hans/blog/how-to-mine-blocknet/)介绍了如何下载 seine、选择线程数以及在 bntpool.com 上可以期待什么。
 
-<CTA target="pool" title="挖矿到你的新地址" text="把你的 Blocknet 地址粘贴到 seine 中，接受 bntpool.com，余额达到 0.1 BNT 后即可看到收益支付到你的钱包。" />
+<CTA target="pool" title="挖矿到你的新地址" text="把你的 Blocknet 地址粘贴到 seine 中，接受 bntpool.com，余额达到 1 BNT 后即可看到收益支付到你的钱包。" />

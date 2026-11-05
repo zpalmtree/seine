@@ -6,10 +6,10 @@ faq:
   - q: 'Ile RAM potrzebuję do kopania Blocknet?'
     a: 'Każdy wątek kopiący potrzebuje około 2 GB RAM, bo każdy hash Argon2id przerabia blok pamięci 2 GiB. Komputer z 16 GB może więc uruchomić około sześciu–siedmiu wątków, zostawiając miejsce dla systemu. seine mierzy Twoją pamięć i automatycznie wybiera bezpieczną liczbę wątków.'
   - q: 'Kiedy przychodzą wypłaty za kopanie Blocknet na bntpool.com?'
-    a: 'Pula bntpool.com wypłaca w systemie PPLNS z sześciogodzinnym oknem. Nagrodę za blok można wypłacić dopiero, gdy nad blokiem jest już 60 kolejnych bloków, czyli po około pięciu godzinach przy pięciominutowych blokach, a salda są wysyłane, gdy osiągną 0,1 BNT. Pierwszej wypłaty spodziewaj się kilka godzin po pierwszych zaakceptowanych udziałach.'
+    a: 'Pula bntpool.com wypłaca w systemie PPLNS z sześciogodzinnym oknem. Nagrodę za blok można wypłacić dopiero, gdy nad blokiem jest już 60 kolejnych bloków, czyli po około pięciu godzinach przy pięciominutowych blokach, a salda są wysyłane, gdy osiągną 1 BNT. Pierwszej wypłaty spodziewaj się kilka godzin po pierwszych zaakceptowanych udziałach.'
   - q: 'Czy mogę kopać Blocknet jednocześnie na CPU i GPU?'
     a: 'Tak. W systemach Windows i Linux seine kopie jednocześnie na każdym rdzeniu CPU i na każdej karcie graficznej NVIDIA w komputerze, a oba hashrate się sumują. Procesor i każdą kartę dostraja osobno podczas pracy, więc wyciskasz maksimum z całego sprzętu bez zmieniania żadnego ustawienia.'
-sourceHash: bff032ea0960
+sourceHash: '42d41a1c403b'
 translation: draft
 ---
 
@@ -49,7 +49,7 @@ Od tej chwili seine dostraja się w trakcie kopania. Porównuje różne liczby w
 
 ## Kiedy dostaniesz wypłatę?
 
-Pula bntpool.com używa systemu PPLNS: nagroda za każdy blok jest dzielona między udziały wysłane w ciągu sześciu godzin przed jego znalezieniem. Nagrody nie można wydać, dopóki nad jej blokiem nie ma 60 kolejnych bloków, co przy pięciominutowym czasie bloku Blocknet daje około pięciu godzin. Gdy Twoje potwierdzone saldo osiągnie 0,1 BNT, pula wysyła je na Twój adres.
+Pula bntpool.com używa systemu PPLNS: nagroda za każdy blok jest dzielona między udziały wysłane w ciągu sześciu godzin przed jego znalezieniem. Nagrody nie można wydać, dopóki nad jej blokiem nie ma 60 kolejnych bloków, co przy pięciominutowym czasie bloku Blocknet daje około pięciu godzin. Gdy Twoje potwierdzone saldo osiągnie 1 BNT, pula wysyła je na Twój adres.
 
 Swój hashrate, udziały i saldo możesz śledzić na [bntpool.com](https://bntpool.com), wyszukując swój adres. Pula pokazuje osobno nagrody z bloków, które nie zostały jeszcze potwierdzone, bo te mogą się jeszcze zmienić.
 
@@ -78,10 +78,10 @@ Wyniki dla każdego testowanego CPU są na [stronie wydajności](https://github.
 
 ## Czy można kopać Blocknet solo?
 
-Tak. Jeśli masz własny zsynchronizowany węzeł Blocknet, uruchom seine poleceniem `./seine --mode daemon`, a będzie kopał bezpośrednio przez węzeł zamiast przez pulę. Zatrzymujesz każdy znaleziony blok, ale wypłaty przychodzą tylko wtedy, gdy znajdziesz cały blok, dlatego większość osób zaczyna w puli. [Poradnik kopania solo](https://github.com/zpalmtree/seine/blob/master/docs/guides/solo-mining.md) opisuje konfigurację.
+Tak, na dwa sposoby. Najprościej jest kopać solo na bntpool.com: dodaj `solo:` przed adresem, jak w `./seine --address solo:YOUR_ADDRESS`, a pula wypłaci Ci całą nagrodę za każdy blok znaleziony przez Twoją koparkę, bez prowadzenia węzła. [Kopanie solo na bntpool.com](https://bntpool.com/blog/pl/solo-mine-blocknet-on-bntpool/) opisuje konfigurację. Jeśli masz własny zsynchronizowany węzeł Blocknet, `./seine --mode daemon` kopie bezpośrednio przez niego, jak wyjaśnia [poradnik kopania solo](https://github.com/zpalmtree/seine/blob/master/docs/guides/solo-mining.md). Nagrody solo przychodzą jako całe bloki, więc pasują górnikom z dużym udziałem w sieci.
 
 <Note>
-Według [blocknetcrypto.com](https://blocknetcrypto.com/#faraday) Blocknet planuje około 2027-02-16 aktualizację sieci o nazwie Faraday. Ma ona zmienić proof of work, więc aktualizuj seine: sprawdza nowe wydania przy starcie i co 12 godzin.
+Według [blocknetcrypto.com](https://blocknetcrypto.com/#faraday) Blocknet planuje około 16 lutego 2027 r. aktualizację sieci o nazwie Faraday. Ma ona zmienić proof of work. Seine v0.3.1 jest na nią gotowy: kopanie w puli samo przejdzie na nowy proof of work, a przy włączonych automatycznych aktualizacjach seine sam instaluje nowsze wydania.
 </Note>
 
 <CTA target="seine" title="Pobierz seine" text="Za darmo dla systemów Windows, macOS i Linux. Uruchom go, wklej swój adres i już kopiesz na bntpool.com." />

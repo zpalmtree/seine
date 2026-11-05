@@ -1,31 +1,47 @@
 ---
 title: 'Blocknet madencisi nasıl güncellenir?'
-description: 'Blocknet için seine yazılımını güncelleyin, ayarlarınızı koruyun, resmi indirmeyi doğrulayın; sürümü, havuz bağlantısını ve kabul edilen payları kontrol edin.'
+description: 'Blocknet için seine madencisini güncel tutun: otomatik güncellemeler yeni sürümleri nasıl kurar, elle nasıl güncellenir ve yeni sürümün kazdığı nasıl doğrulanır.'
 tags: ['Madencilik rehberi', 'seine', 'Güncellemeler']
 faq:
   - q: 'seine güncellemeleri otomatik yükler mi?'
-    a: 'Sürüm denetimi yeni sürümü panelde ve günlükte bildirir. Kurulum zamanını siz seçersiniz. Resmi arşivi indirip doğrulayın, madenciyi durdurun, uygulama dosyalarını değiştirin ve aynı veri dizini ile başlangıç seçenekleriyle yeniden çalıştırın.'
+    a: 'Evet, v0.3.0''dan beri. Yeni bir sürüm çıktığında panel, madencilik sürerken 60 saniye geri sayar; ardından seine imzalı indirmeyi doğrular, düzgünce durur ve aynı ayarlarla yeni sürümde yeniden başlar. Hemen güncellemek için u, o sürümü atlamak için s tuşuna basın ya da elle güncellemek için seine''i --no-auto-update ile başlatın.'
   - q: 'Ayarlarım hangi dosyalarda tutulur?'
     a: 'Varsayılan yapılandırma, başlatma dizinine göre seine-data/seine.config.json yolundadır. data-dir bu konumu değiştirir. Veri diziniyle birlikte başlatma betiğini veya hizmet tanımını saklayın: backend ve thread seçenekleri kayıtlı bağlantı bilgilerinden ayrıdır.'
   - q: 'Güncellemeden sonra neden adres tekrar soruluyor?'
     a: 'Çalışma dizinini ve data-dir değerini kontrol edin. Yeni klasörden başlatmak seine''ın yapılandırmayı başka yerde aramasına yol açabilir. Bu örneği durdurun, özgün veri dizinini bulun ve doğru yolla yeniden başlatın. Devam etmeden adresi ve havuzu kontrol edin.'
-sourceHash: '1d2a2deba793'
+sourceHash: '37fa2d9966c0'
 translation: draft
 ---
 
-Çalışan havuz bağlantınızı ve başlangıç seçeneklerinizi koruyarak seine'ı güncelleyin. Bu rehber, herkese açık v0.2.36 sürümüne göre hazırlık, değiştirme ve doğrulamayı anlatır. İlk kurulum için [Windows](/tr/blog/mine-blocknet-on-windows/), [Linux](/tr/blog/mine-blocknet-on-linux/) veya [Mac](/tr/blog/mine-blocknet-on-mac/) rehberini kullanın.
+Makinenizde çalışan havuz bağlantısını ve başlangıç seçeneklerini koruyarak seine'ı en son sürümde tutun. Bu rehber herkese açık v0.3.1 sürümünü izler: otomatik güncellemelerin nasıl çalıştığı, eski bir sürümden gelirken bir kez ne yapılacağı ve elle nasıl güncelleneceği. İlk kurulum için [Windows](/tr/blog/mine-blocknet-on-windows/), [Linux](/tr/blog/mine-blocknet-on-linux/) veya [Mac](/tr/blog/mine-blocknet-on-mac/) rehberini kullanın.
 
 ## seine nasıl güncellenir?
 
 <Answer>
-Sisteminize uygun resmi arşivi indirip doğrulayın, madenciyi durdurun, veri dizinini koruyup uygulama dosyalarını değiştirin. Aynı çalışma dizini ve argümanlarla başlatın. Başka makineye geçmeden sürümü, ödeme adresini, havuz bağlantısını ve kabul edilen payları kontrol edin.
+seine'ı çalışır halde bırakın. Başlangıçta ve her 12 saatte bir yeni sürüm olup olmadığını kontrol eder, kazmaya devam ederken panel başlığında 60 saniye geri sayar, ardından imzalı sürümü kurar ve aynı argümanlar ve ayarlarla yeniden başlar. Elle güncellemek için seine'ı durdurun, dosyalarını resmi arşivden değiştirin ve aynı şekilde başlatın.
 </Answer>
+
+## Otomatik güncellemeler nasıl çalışır?
+
+Daha yeni bir sürüm çıktığında başlık `update vX.Y.Z available` gösterir, günlük sürüme bağlantı verir ve başlık ardından geri sayar: `updating to vX.Y.Z in 42s`. Geri sayım sırasında madencilik sürer. Hemen güncellemek için `u`, o sürümü atlamak için `s` tuşuna basın; seine atlamayı veri dizininde hatırlar ve sonraki sürümü her zamanki gibi sunar.
+
+Geri sayımdan sonra seine sürümün imzasını kontrol eder, yeni çalıştırılabilir dosyanın başladığından emin olur ve ancak ondan sonra eskisini değiştirir. Madenciliği düzgünce durdurur ve aynı argümanlarla yeniden başlar; yeni panel günlüğe `updated to seine vX.Y.Z` yazar. Yeni sürüm kayıtlı ayarlama sonuçlarınızla başlar ve yalnızca sürümün değiştirdiği şeyleri test eder, böylece hızla tam hıza döner.
+
+Bir havuz, örneğin bir ağ yükseltmesinde, daha yeni bir sürüm gerektiren iş gönderirse seine madenciliği duraklatır ve atladığınız bir sürüm olsa bile güncellemeyi hemen kurar. Yalnızca bildirimi tutmak için `--no-auto-update`, kontrolü kapatmak için `--disable-update-check` kullanın. Kendiniz derlediğiniz sürümler bildirimi gösterir ve güncellemeyi size bırakır.
+
+## Eski bir sürümden gelirken bir kez ne yapılır?
+
+Çoğu cihazın hiçbir şeye ihtiyacı yoktur. Birkaç kurulum, v0.3.1'e ilk otomatik güncellemede bir adım gerektirir:
+
+- **Linux, v0.2.45'ten:** v0.2.45 yeni sürümü kurar ve ardından kapanır. seine'ı bir kez daha başlatın. seine'ı kendiliğinden yeniden başlatan kurulumlar, örneğin bir systemd hizmeti, hiçbir şey gerektirmez.
+- **Windows, v0.2.45 veya v0.3.0'dan:** eski sürüm yenisini başlatır ve kapanır. Bir betik veya hizmet de seine kapandığında onu yeniden başlatıyorsa, yalnızca bir seine çalışsın diye güncellemeden sonra onu bir kez durdurun.
+- **HiveOS ve mmpOS, v0.3.0 paketinden:** flight sheet'inizi veya profilinizi [sürüm sayfasındaki](https://github.com/zpalmtree/seine/releases) v0.3.1 paketine geçirin. v0.3.1'den itibaren paket, madencilik işletim sistemi üzerinden güncellenir: [HiveOS ve mmpOS rehberinin](/tr/blog/mine-blocknet-hiveos-mmpos/) gösterdiği gibi URL'sindeki sürümü değiştirin.
 
 <img src="/assets/blog/miner-update.svg" alt="Uygulama paketi değiştirilir, yapılandırma klasörü korunur ve bağlantı doğrulanır." width="1200" height="675" loading="lazy" />
 
 ## Mevcut sürüm nasıl kontrol edilir?
 
-Sürüm komutunu gerçekten kullandığınız çalıştırılabilir dosyada uygulayın. Eski bir kopya, kısayol veya hizmetin başlattığı sürümden farklı olabilir. İşlemi tekrarlayabilmek için dosya yolu, çalışma dizini ve argümanları birlikte kaydedin. Windows'ta madencinin mevcut klasöründe PowerShell açın:
+Panel başlığı çalıştırdığınız sürümü gösterir. Sürüm komutunu gerçekten kullandığınız çalıştırılabilir dosyada da uygulayabilirsiniz. Eski bir kopya, kısayol veya hizmetin başlattığı sürümden farklı olabilir. İşlemi tekrarlayabilmek için dosya yolu, çalışma dizini ve argümanları birlikte kaydedin. Windows'ta madencinin mevcut klasöründe PowerShell açın:
 
 ```powershell
 .\seine.exe --version
@@ -37,7 +53,7 @@ Linux veya macOS'ta aynı klasörde terminal açın:
 ./seine --version
 ```
 
-Sonucu [resmi sürümlerle](https://github.com/zpalmtree/seine/releases) karşılaştırın. seine başlangıçta ve her 12 saatte kontrol ederek panel ve günlükte bildirim gösterir. Bildirim indirme bağlantısı sağlar; kurulumu siz seçersiniz. Platform, çalışma zamanı ve başlangıç seçenekleriyle ilgili sürüm notlarını okuyun.
+Sonucu [resmi sürümlerle](https://github.com/zpalmtree/seine/releases) karşılaştırın ve platformunuzu, çalışma zamanınızı veya başlangıç seçeneklerinizi etkileyen değişiklikler için sürüm notlarını okuyun.
 
 ## Hangi ayarlar korunmalı?
 
@@ -45,11 +61,11 @@ seine varsayılan olarak `./seine-data/seine.config.json` dosyasını okur. `./`
 
 Yapılandırma madencilik modu, ödeme adresi, havuz URL'si ve cihaz adını saklar. Ayarlama dosyaları dahil tüm veri dizinini koruyun. Komutu, betiği veya hizmet tanımını da saklayın: `--backend` ve `--threads` kayıtlı bağlantı alanlarından ayrıdır. İkisini korumak yeniden başlatmada amaçlanan kurulumu sürdürür.
 
-## Yeni sürümü indirip doğrulayın
+## seine elle nasıl güncellenir?
 
-[İndirme sayfasından](/tr/#download) veya resmi sürümden sistem ve CPU mimarisine uygun arşivi seçin. Aynı sürümün ayrı `SHA256SUMS.txt` dosyasını da indirin. Başka klasöre çıkarmadan önce sağlama toplamını karşılaştırın. [Doğrulama rehberi](/tr/blog/antivirus-flags-crypto-miner/) Windows işlemini ve indirme uyarılarını açıklar.
+`--no-auto-update` ile çalıştırıyorsanız veya zamanı kendiniz seçmek istiyorsanız elle güncelleyin. [İndirme sayfasından](/tr/#download) veya resmi sürümden sistem ve CPU mimarisine uygun arşivi seçin. Aynı sürümün ayrı `SHA256SUMS.txt` dosyasını da indirin. Başka klasöre çıkarmadan önce sağlama toplamını karşılaştırın. [Doğrulama rehberi](/tr/blog/antivirus-flags-crypto-miner/) Windows işlemini ve indirme uyarılarını açıklar.
 
-Arşivdeki dosyaları birlikte tutun. Windows paketi `seine.exe` yanında NVIDIA kitaplıklarını içerir; yalnızca programı kopyalamak sürümleri karıştırabilir. [NVIDIA rehberi](/tr/blog/mine-blocknet-nvidia-gpu/) çalışma ortamını açıklar. [v0.2.36 yapılandırma belgesi](https://github.com/zpalmtree/seine/blob/v0.2.36/docs/guides/configuration.md) burada anlatılan kayıt ve başlangıç davranışını belgeler.
+Arşivdeki dosyaları birlikte tutun. Windows paketi `seine.exe` yanında NVIDIA kitaplıklarını içerir; yalnızca programı kopyalamak sürümleri karıştırabilir. [NVIDIA rehberi](/tr/blog/mine-blocknet-nvidia-gpu/) çalışma ortamını açıklar. [v0.3.1 yapılandırma belgesi](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/configuration.md) burada anlatılan kayıtlı yapılandırmayı, otomatik güncellemeleri ve başlangıç davranışını belgeler.
 
 ## Durdurun, yedekleyin ve değiştirin
 

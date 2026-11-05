@@ -12,7 +12,7 @@ faq:
     a: 'Evet. seine''in x86 sürümleri, destekleyen çipler için AVX2 ve AVX-512 kernel''lerinin yanında herhangi bir 64 bit x86 işlemcide çalışan taşınabilir bir kernel içerir. İşlemcinizin hangi komut setlerini desteklediğini kontrol eder ve buna uygun kernel''i seçer; hem AVX2 hem AVX-512 olan çiplerde ise madencilik yaparken kernel''leri karşılaştırır.'
   - q: 'Eski bir PC''de madencilik ne kadar elektrik kullanır?'
     a: 'Makineye bağlıdır. seine çalışırken prize takılan bir güç ölçerle ölçün, ardından günlük kilovatsaat için watt değerini 24 ile çarpıp 1.000''e bölün. Günlük maliyet için bunu elektrik tarifenizle çarpın ve günlük beklenen coin miktarınızla karşılaştırın.'
-sourceHash: 024eb1ee2b56
+sourceHash: 'e94745a9d6b9'
 translation: draft
 ---
 
@@ -106,7 +106,7 @@ Varsayılan profil, ölçtüğü en iyi hashrate'in %99'una ulaşan en az iş pa
 
 ## Küçük bir makineyle neden havuzda madencilik yapılır?
 
-Havuz, bulduğu her blokta yapılan işten payınıza düşeni size öder; böylece küçük bir makine, tüm bir bloğu kendisi bulmayı beklemek yerine her havuz bloğundan ödeme alır. [Kripto madenciliği nasıl çalışır](/tr/blog/how-crypto-mining-works/) rehberi havuzları ve share'leri daha ayrıntılı açıklar. bntpool.com'da ödüller her bloktan önceki altı saat içinde gönderilen share'ler arasında paylaştırılır ve bakiyeniz 0,1 BNT'ye ulaştığında ödenir. Hashrate'inizi ve bakiyenizi [bntpool.com](https://bntpool.com) üzerinde adresinizi veya `@name` adınızı aratarak takip edebilirsiniz.
+Havuz, bulduğu her blokta yapılan işten payınıza düşeni size öder; böylece küçük bir makine, tüm bir bloğu kendisi bulmayı beklemek yerine her havuz bloğundan ödeme alır. [Kripto madenciliği nasıl çalışır](/tr/blog/how-crypto-mining-works/) rehberi havuzları ve share'leri daha ayrıntılı açıklar. bntpool.com'da ödüller her bloktan önceki altı saat içinde gönderilen share'ler arasında paylaştırılır ve bakiyeniz 1 BNT'ye ulaştığında ödenir. Hashrate'inizi ve bakiyenizi [bntpool.com](https://bntpool.com) üzerinde adresinizi veya `@name` adınızı aratarak takip edebilirsiniz.
 
 Çıktınızı tahmin etmek için bntpool.com panelinde gösterilen ağ hashrate'ini kullanın. Beş dakikalık bloklarla Blocknet günde 288 blok bulur; bu yüzden ağın yeni coinlerinden beklenen payınız günde 288 × (sizin H/s ÷ ağ H/s) × blok ödülüdür ve blok ödülü her ay kademeli olarak düşer.
 

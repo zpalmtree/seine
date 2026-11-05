@@ -1,0 +1,96 @@
+---
+title: 'Blocknet mit einer AMD-GPU minen'
+description: 'Mine Blocknet mit AMD Radeon RX 6000, RX 7000, RX 9000 und Radeon PRO per seine. Richte Windows oder Linux ein, wähle Karten aus und prüfe, ob jede GPU hasht.'
+tags: ['Mining-Anleitung', 'AMD', 'Radeon', 'GPU']
+sourceHash: '60f795ed50a7'
+translation: draft
+faq:
+  - q: 'Welche AMD-Grafikkarten können Blocknet minen?'
+    a: 'seine mint auf AMD Radeon RX 6000, RX 7000 und RX 9000 sowie auf Radeon-PRO-Karten mit denselben Chips, unter Windows x86_64 und Linux x86_64. Es findet jede dedizierte AMD-Karte selbst und mint darauf zusätzlich zur CPU. Integrierte Radeon-Grafik bleibt aus, solange du nicht --backend amd angibst.'
+  - q: 'Was muss ich für AMD-GPU-Mining unter Windows installieren?'
+    a: 'Nur den AMD-Grafiktreiber, Adrenalin oder Radeon PRO. Der Treiber enthält die HIP-Laufzeit, die seine nutzt, und das Release-Binary enthält bereits die GPU-Kernel für RX 6000, RX 7000 und RX 9000. Das HIP SDK oder andere Downloads brauchst du nicht.'
+  - q: 'Was muss ich für AMD-GPU-Mining unter Linux installieren?'
+    a: 'Den Kernel-Treiber amdgpu, den aktuelle Distributionen mitbringen, und die ROCm-HIP-Laufzeit von AMD, entweder das Paket hip-runtime-amd oder eine vollständige ROCm-Installation. Dein Benutzer braucht außerdem Zugriff auf die Gerätedateien der GPU, was bei den meisten Distributionen die Mitgliedschaft in den Gruppen render und video bedeutet.'
+  - q: 'Kann seine im selben Rechner auf AMD- und NVIDIA-Karten minen?'
+    a: 'Ja. Ohne Backend-Option mint seine auf der CPU und auf jeder NVIDIA- und dedizierten AMD-Karte, die es findet. Um die CPU frei zu lassen, starte es mit --backend nvidia,amd. Jede Karte bekommt eine eigene Zeile im Panel Devices, sodass du jede GPU einzeln prüfen kannst.'
+---
+
+seine mint Blocknet auf AMD-Radeon-Grafikkarten zusätzlich zu deiner CPU. Diese Anleitung erklärt, was du unter Windows und Linux installierst, wie du Karten auswählst, wie du prüfst, dass jede GPU hasht, und was du prüfst, wenn eine Karte fehlt. Sie beschreibt seine v0.3.1.
+
+## Welche AMD-Karten unterstützt seine?
+
+<Answer>
+seine mint auf AMD Radeon RX 6000, RX 7000 und RX 9000 sowie auf Radeon-PRO-Karten mit denselben RDNA2-, RDNA3- und RDNA4-Chips. Es läuft unter Windows x86_64 und Linux x86_64. Jede dedizierte AMD-Karte wird von selbst ausgewählt und mint zusätzlich zur CPU, ohne dass du eine Einstellung ändern musst.
+</Answer>
+
+Jede Karte mint mit mehreren Lanes, ein laufender Hash pro Lane. Eine Lane braucht etwa 2 GB Videospeicher, auf RDNA2, RDNA3 und RDNA4 etwas weniger, daher laufen auf Karten mit mehr Speicher mehr Lanes gleichzeitig. Eine 16-GB-Karte betreibt etwa 9 Lanes. seine bemisst das beim Start am freien Speicher, du musst es also nicht ausrechnen.
+
+Integrierte Radeon-Grafik in Ryzen-Prozessoren bleibt standardmäßig aus. Du kannst sie mit `--backend amd` dazunehmen, wenn du möchtest.
+
+## Wie richtest du AMD-GPU-Mining unter Windows ein?
+
+Installiere den aktuellen AMD-Grafiktreiber für deine Karte, Adrenalin für Radeon-RX-Karten oder den Radeon-PRO-Treiber für PRO-Karten, von der [AMD-Treiberseite](https://www.amd.com/en/support/download/drivers.html). Der Treiber enthält die HIP-Laufzeit, die seine nutzt, und das Release-Binary bringt fertig gebaute GPU-Kernel für RX 6000, RX 7000 und RX 9000 mit. Mehr brauchst du nicht.
+
+Lade `seine-windows-x86_64.zip` aus dem [Downloadbereich](/de/#download), entpacke das gesamte Archiv in einen beschreibbaren Ordner und starte es:
+
+```powershell
+.\seine.exe
+```
+
+Füge beim ersten Start deine Auszahlungsadresse ein und drücke Enter, um bntpool.com zu übernehmen. Die [Windows-Anleitung](/de/blog/mine-blocknet-on-windows/) zeigt Download und Entpacken Schritt für Schritt.
+
+## Wie richtest du AMD-GPU-Mining unter Linux ein?
+
+<Answer>
+Installiere den Kernel-Treiber amdgpu, den aktuelle Distributionen mitbringen, und die ROCm-HIP-Laufzeit von AMD, entweder das Paket hip-runtime-amd oder eine vollständige ROCm-Installation. Füge deinen Benutzer den Gruppen render und video hinzu, damit seine die GPU öffnen kann, melde dich neu an und starte dann das seine-Archiv für Linux x86_64. seine findet deine AMD-Karten selbst.
+</Answer>
+
+1. **Installiere die Laufzeit.** Füge das ROCm-Repository von AMD für deine Distribution hinzu und installiere `hip-runtime-amd` oder die vollständige ROCm-Installation, falls du sie schon nutzt. Die [ROCm-Installationsanleitung](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/) von AMD listet die unterstützten Distributionen.
+2. **Gib deinem Benutzer Zugriff auf die GPU.** seine öffnet `/dev/kfd` und `/dev/dri/renderD*`:
+
+   ```bash
+   sudo usermod -aG render,video $USER
+   ```
+
+   Melde dich ab und wieder an, damit die neuen Gruppen gelten.
+3. **Starte seine.** Lade `seine-linux-x86_64.tar.gz` aus dem [Downloadbereich](/de/#download), entpacke es und führe aus:
+
+   ```bash
+   ./seine
+   ```
+
+Ist hipRTC installiert, kompiliert seine beim Start seinen Kernel für genau deine Karte. RX 6000, RX 7000 und RX 9000 laufen auch ohne, mit den im Release enthaltenen Kerneln. Die [Linux-Anleitung](/de/blog/mine-blocknet-on-linux/) behandelt das Archiv und die Systemvoraussetzungen.
+
+Auf RX 7000 und Radeon PRO W7000 setzt seine die Leistungsstufe der Karte beim Mining auf `high`, wenn es als root läuft, und stellt beim Beenden die vorherige Stufe wieder her. Ohne root gibt es den einzeiligen Befehl aus, der dasselbe tut, damit du ihn selbst ausführen kannst.
+
+## Wie wählst du aus, welche Karten minen?
+
+Lass die Backend-Option weg, um auf der CPU und jeder dedizierten AMD-Karte zu minen. Um die GPUs minen zu lassen und die CPU frei zu halten, wähle `amd`:
+
+```bash
+./seine --backend amd
+```
+
+Um auf einer Karte zu minen und das CPU-Mining zu behalten, wähle beide Backends und den Index der Karte:
+
+```bash
+./seine --backend cpu,amd --amd-devices 0
+```
+
+`--amd-devices 0,1` wählt zwei Karten. In einem Rechner mit NVIDIA- und AMD-Karten mint `--backend nvidia,amd` auf allen ohne die CPU. Um Videospeicher für ein Spiel oder andere Apps auf derselben Karte frei zu lassen, begrenze die Lanes mit `--amd-max-lanes 2`. Die [Einstellungsanleitung](/de/blog/configure-seine-miner/) zeigt, wie du diese Optionen für jeden Start behältst.
+
+## Wie prüfst du, ob die AMD-GPU mint?
+
+AMD-Karten starten im Hintergrund, während die CPU bereits mint. Jede Karte bekommt eine eigene Zeile im Panel Devices, `amd#1`, `amd#2` und so weiter, und das Log meldet, wenn sie mit ihrer Lane-Zahl online geht, zum Beispiel `amd#1: online (initialized in background, 9 lanes)`. Die Zeile zeigt dann die aktuelle und die durchschnittliche Hashrate der Karte.
+
+Akzeptierte Shares im Panel Mining bestätigen, dass der Pool deine Arbeit gutschreibt. Die [Dashboard-Anleitung](/de/blog/seine-dashboard-explained/) erklärt jedes Panel, und mit der [Anleitung zum Überwachen deines Miners](https://bntpool.com/blog/de/track-your-miner-on-bntpool/) verfolgst du deine Rigs auf bntpool.com.
+
+## Was prüfst du, wenn eine AMD-Karte fehlt?
+
+- **Prüfe Treiber und Laufzeit.** Unter Windows installierst oder aktualisierst du den AMD-Treiber. Unter Linux installierst du `hip-runtime-amd` und prüfst, ob dein Benutzer in den Gruppen `render` und `video` ist. Ohne Laufzeit mint seine auf der CPU, und mit `--backend amd` nennt es beim Start die fehlende Laufzeit.
+- **Prüfe deinen Befehl.** `--backend cpu` mint nur auf dem Prozessor. Nutze den Standardbefehl oder nimm `amd` in die Backend-Liste auf. Wenn du `--amd-devices` setzt, prüfe, ob der Index existiert.
+- **Gib amd nach einem Treiber-Update selbst an.** Beendet die AMD-Laufzeit seine zweimal hintereinander, wählt seine AMD-Karten nicht mehr von selbst aus und mint mit dem Rest weiter; nach seinem nächsten Update versucht es sie erneut. Starte es einmal mit `--backend cpu,amd`, um die Karten sofort wieder zu versuchen.
+
+Die [AMD-Anleitung von seine](https://github.com/zpalmtree/seine/blob/master/docs/guides/amd.md) enthält alle Voraussetzungen, und Nutzer eines Mining-Betriebssystems können das Paket für [HiveOS](https://github.com/zpalmtree/seine/blob/master/docs/guides/hiveos.md) oder [mmpOS](https://github.com/zpalmtree/seine/blob/master/docs/guides/mmpos.md) aus jedem Release installieren.
+
+<CTA target="seine" title="seine für AMD-GPU-Mining herunterladen" text="Wähle das Archiv für Windows oder Linux x86_64, und seine mint auf deiner CPU und jeder Radeon-Karte, die es findet." />

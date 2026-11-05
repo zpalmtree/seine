@@ -40,8 +40,9 @@ check search results before drafting.
 |---|---|---|
 | Published: `blocknet-faraday-upgrade` | blocknet faraday; blocknet post-quantum | Existing guide refreshed from the official October 27 post; update it when public plans change |
 
-Low-confidence demand, revisit with Search Console data: HiveOS/mmpOS packaging, AVX-512 on
-Zen 5, laptop mining.
+Low-confidence demand, revisit with Search Console data: AVX-512 on Zen 5, laptop mining.
+
+Published November 4, 2026 (v0.3.1 cycle): `mine-blocknet-amd-gpu`, `mine-blocknet-hiveos-mmpos`, `blocknet-mining-farm-proxy`; refreshed `update-seine-miner` (automatic updates), `seine-automatic-cpu-tuning`, `seine-dashboard-explained` (v0.3.1 renderer capture), `miner-keeps-stopping`, and solo/1 BNT minimum passages. Pool side: `solo-mine-blocknet-on-bntpool`, `mine-blocknet-to-exchange`.
 
 ## Off-site work that matters as much as posts
 

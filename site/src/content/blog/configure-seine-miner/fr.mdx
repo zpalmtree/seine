@@ -11,7 +11,7 @@ faq:
     a: 'Seine choisit le nombre de threads pour vous, vous n’avez donc à le fixer que si vous voulez laisser de la place à d’autres tâches. Chaque thread utilise environ 2 Go de RAM. Appuyez sur la touche moins dans le tableau de bord jusqu’à ce que votre ordinateur soit à l’aise, puis utilisez ce nombre.'
   - q: 'Où seine enregistre-t-il ses réglages ?'
     a: 'Seine enregistre votre adresse, votre pool et le nom du worker dans seine-data/seine.config.json, dans le dossier depuis lequel vous le lancez. Les options de threads et de backend n’y sont pas enregistrées : mettez-les dans un petit fichier de démarrage si vous les voulez à chaque lancement.'
-sourceHash: b5ca5a9a16d8
+sourceHash: cbfaa904cdbf
 translation: draft
 ---
 
@@ -129,6 +129,8 @@ Pour utiliser une valeur différente pour une seule exécution, ajoutez-la à la
 ```
 
 Les deux autres réglages sont `--address` et `--pool-url`. Le [guide de changement d’adresse](https://bntpool.com/blog/fr/change-mining-wallet-address/) explique comment le pool crédite votre travail après un changement d’adresse.
+
+Pour miner en solo sur bntpool.com, placez `solo:` devant l’adresse, par exemple `"address": "solo:@yourname"` dans le fichier ou `--address solo:YOUR_ADDRESS` en ligne de commande. Le pool vous verse alors la récompense entière de chaque bloc trouvé par votre rig. [Le minage solo sur bntpool.com](https://bntpool.com/blog/fr/solo-mine-blocknet-on-bntpool/) explique comment les blocs solo sont payés.
 
 ## Que faire si un réglage ne fonctionne pas ?
 

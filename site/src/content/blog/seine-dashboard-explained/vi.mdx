@@ -1,125 +1,120 @@
 ---
 title: Giải thích bảng điều khiển của seine
-description: Đi qua từng khung của bảng điều khiển đào coin seine (hashrate, share, trạng thái, luồng, số dư pool, nhật ký) và cách theo dõi nó tự tinh chỉnh trong lúc đào.
+description: 'Đi qua từng khung của bảng điều khiển đào coin seine (hashrate, share, trạng thái, luồng, tinh chỉnh, số dư pool, nhật ký) và các phím điều khiển trong lúc đào.'
 tags: [seine, Hướng dẫn đào coin, Bảng điều khiển, Tự tinh chỉnh]
 faq:
   - q: 'Vì sao hashrate trung bình của seine thấp hơn hashrate hiện tại?'
-    a: 'Average lấy toàn bộ số lần băm hoàn tất trong phiên chia cho thời gian đào, nên nó bao gồm cả những phút đầu, khi mỗi luồng đang hoàn tất lần băm đầu tiên và bộ tinh chỉnh bắt đầu dưới công suất tối đa rồi tăng dần. Current chỉ xét năm giây gần nhất. Hai con số tiến lại gần nhau khi seine chạy càng lâu.'
+    a: 'Average lấy toàn bộ số lần băm hoàn tất trong phiên chia cho thời gian đào, nên nó bao gồm cả những phút đầu, khi mỗi luồng đang hoàn tất lần băm đầu tiên và việc tinh chỉnh vẫn đang chọn số luồng. Current chỉ xét năm giây gần nhất. Hai con số tiến lại gần nhau khi seine chạy càng lâu.'
   - q: 'Làm sao thay đổi số luồng khi seine đang chạy?'
-    a: 'Nhấn phím cộng, hoặc phím bằng, để thêm một luồng cho mỗi backend CPU, và phím trừ để bớt một luồng. seine khởi động lại các backend đào với số luồng mới và giữ nguyên số liệu thống kê của phiên, thời gian chạy và giá trị trung bình. Thay đổi thủ công sẽ tắt tính năng tự tinh chỉnh số luồng cho lượt chạy đó và không được lưu làm mặc định mới.'
+    a: 'Nhấn phím cộng, hoặc phím bằng, để thêm một luồng CPU, và phím trừ để bớt một luồng. Khi hàng Tuning hiển thị done, thay đổi áp dụng ngay cho các luồng đang chạy trong khi GPU và kết nối pool vẫn hoạt động. Thay đổi chỉ có hiệu lực cho lượt chạy đó.'
   - q: 'Những viên kim cương vàng ở phần đầu có ý nghĩa gì?'
-    a: 'Mỗi viên kim cương đánh dấu một share được chấp nhận khi bạn đào trên pool, hoặc một khối được chấp nhận khi bạn đào solo. Nó xuất hiện ở mép phải của làn sóng và trôi sang trái một cột mỗi giây, nên những viên kim cương bạn thấy là công việc được chấp nhận trong khoảng vài phút gần nhất.'
+    a: 'Mỗi viên kim cương đánh dấu một share được pool chấp nhận, hoặc một khối dàn máy của bạn tìm được. Nó xuất hiện ở mép phải của làn sóng và trôi sang trái một cột mỗi giây, nên những viên kim cương bạn thấy là công việc được chấp nhận trong khoảng vài phút gần nhất.'
   - q: 'Có thể chạy seine mà không có bảng điều khiển không?'
-    a: 'Có. Khởi động nó với --ui plain để có nhật ký cuộn dạng thuần thay vì bảng điều khiển toàn màn hình. Cách này phù hợp với máy chủ, tệp nhật ký và trình quản lý tiến trình. Chế độ mặc định, --ui auto, chỉ hiển thị bảng điều khiển khi seine chạy trong terminal tương tác, nên đầu ra được chuyển hướng vốn đã nhận nhật ký thuần.'
-sourceHash: '024e87683a82'
+    a: 'Có. Khởi động với --ui plain để có nhật ký cuộn dạng văn bản thường thay cho bảng điều khiển toàn màn hình. Cách này phù hợp với máy chủ, file nhật ký và trình quản lý tiến trình. Mặc định --ui auto chỉ hiển thị bảng điều khiển khi seine chạy trong terminal tương tác, nên đầu ra được chuyển hướng đã là nhật ký thường.'
+sourceHash: 7f9d55be8e18
 translation: draft
 ---
 
-Khởi động seine và nó sẽ lấp đầy terminal bằng một bảng điều khiển thời gian thực: bạn đang băm nhanh đến đâu, pool đã chấp nhận bao nhiêu share, bạn được nợ bao nhiêu, và nhật ký của mọi việc nó làm. Bài giới thiệu này đi qua từng khung của seine v0.2.22, giải thích ý nghĩa của từng nhãn và con số lấy từ đâu, đồng thời cho thấy tính năng tự tinh chỉnh và các phím điều khiển trông như thế nào trong lúc bạn đào.
+Khởi động seine và nó mở ngay một bảng điều khiển trực tiếp: bạn đang băm nhanh đến đâu, pool đã chấp nhận bao nhiêu share, bạn được nhận bao nhiêu, việc tinh chỉnh đang ra sao, và nhật ký về những gì nó làm. Bài này đi qua từng khung của seine v0.3.1, giải thích ý nghĩa mỗi nhãn và con số đến từ đâu, và giới thiệu các phím bạn có thể dùng trong lúc đào.
 
-![Bảng điều khiển terminal của seine trên Apple M4 Max đang đào trên bntpool.com: hashrate hiện tại 30,63 H/s, 14 luồng, 5 share đã gửi, 0 bị từ chối và 5 được chấp nhận, bên dưới là số dư pool và nhật ký các job và share được chấp nhận](/assets/blog/seine-dashboard.webp "Bảng điều khiển của seine trên Apple M4 Max")
+![Bảng điều khiển terminal của seine v0.3.1 đang đào trên bntpool.com: hashrate hiện tại 16,63 H/s trên 21 luồng CPU, đã tinh chỉnh xong, 222 share được chấp nhận và 1 bị từ chối, số dư pool với mức thanh toán tối thiểu 1 BNT, và nhật ký các share được chấp nhận](/assets/blog/seine-dashboard-v031.webp "Bảng điều khiển của seine trong v0.3.1")
 
-Ảnh chụp màn hình là một chiếc Apple M4 Max đang đào trên bntpool.com khoảng mười phút sau khi khởi động, được chụp cho README của seine vào tháng 10 năm 2026. Đây là ảnh tham chiếu cho phần còn lại của bài viết.
+Hình ảnh là mã bảng điều khiển của chính seine v0.3.1 được hiển thị ở 120 × 26 ký tự với giá trị minh họa: một Ryzen 9 9950X ở mức đo được 16,63 H/s trên 21 luồng, sau hai giờ của một phiên trên bntpool.com. Địa chỉ được rút gọn và là địa chỉ giả. Đây là hình tham chiếu cho phần còn lại của bài.
 
-## Bảng điều khiển của seine hiển thị những gì?
+## Bảng điều khiển của seine hiển thị gì?
 
 <Answer>
-Bảng điều khiển của seine hiển thị hashrate hiện tại và trung bình, số lần băm đã hoàn tất, chiều cao chuỗi và hashrate mạng, trạng thái của trình đào, số share đã gửi, bị từ chối và được chấp nhận, hashrate của từng thiết bị, endpoint pool và số luồng, số dư bntpool.com của bạn, và một nhật ký có dấu thời gian. Nó làm mới khoảng mỗi giây một lần trong lúc bạn đào.
+Bảng điều khiển của seine hiển thị hashrate trực tiếp và trung bình, số lần băm hoàn tất, chiều cao chuỗi và hashrate mạng, trạng thái trình đào, độ khó share cùng số share bị từ chối và được chấp nhận, hashrate của từng thiết bị, pool, số luồng và trạng thái tinh chỉnh, số dư bntpool.com của bạn, và nhật ký có thể cuộn lại. Nó làm mới khoảng mỗi giây một lần.
 </Answer>
 
-Từ trên xuống dưới, các khung gồm phần đầu, một hàng ba khung thống kê (`HASHRATE`, `NETWORK`, `MINING`), `DEVICES`, `CONFIG`, `POOL BALANCE` và `LOG`. Trên terminal rộng ít nhất 148 cột, `CONFIG` và khung số dư nằm cạnh nhau.
+Từ trên xuống dưới, các khung gồm phần đầu, một hàng ba khung thống kê (`HASHRATE`, `NETWORK`, `MINING`), `DEVICES`, `CONFIG`, `POOL BALANCE` và `LOG`. Trên terminal rộng, `CONFIG` và khung số dư nằm cạnh nhau.
 
-## Phần đầu: phiên bản, làn sóng và thời gian chạy
+Bảng điều khiển mở ra trước khi bắt đầu đào. Ở lần chạy đầu, seine hỏi địa chỉ nhận thanh toán và pool ngay trong bảng điều khiển, rồi hiển thị việc kiểm tra phần cứng và tiến trình khởi động trên màn hình, để bạn theo dõi từng bước.
 
-Tiêu đề ở phần đầu hiển thị phiên bản seine, ví dụ `seine v0.2.22`. Khi có bản phát hành mới hơn, một nhãn nổi bật `update vX.Y.Z available` xuất hiện bên cạnh và nhật ký có thêm một dòng kèm liên kết tải xuống. seine kiểm tra GitHub khi khởi động và cứ mỗi 12 giờ, và việc kiểm tra không bao giờ làm gián đoạn việc đào.
+## Phần đầu: phiên bản, làn sóng và cập nhật
 
-Dưới tiêu đề, hai hàng sóng trôi qua mỗi giây một bước. Mỗi khi pool chấp nhận một share của bạn (hoặc, ở chế độ solo, node chấp nhận khối của bạn), một viên kim cương vàng đáp xuống hàng trên ở mép phải và cuộn sang trái mỗi giây một cột. Trên terminal rộng khoảng 130 cột, điều đó có nghĩa những viên kim cương bạn thấy là công việc được chấp nhận trong khoảng hai phút gần nhất. `uptime` nằm ở cuối hàng dưới.
+Tiêu đề phần đầu hiển thị phiên bản seine, ở đây là `seine v0.3.1`. Khi có bản phát hành mới hơn, nó hiển thị `update vX.Y.Z available`, rồi đếm ngược đến lúc tự động cài: `updating to vX.Y.Z in 42s`, với `u now  s skip` bên cạnh. Nhấn `u` để cài ngay hoặc `s` để bỏ qua phiên bản đó. Việc đào tiếp tục trong lúc đếm ngược, và [hướng dẫn cập nhật](/vi/blog/update-seine-miner/) giải thích điều gì xảy ra tiếp theo.
 
-## seine đo hashrate như thế nào?
+Dưới tiêu đề, hai hàng sóng trôi qua mỗi giây một bước. Mỗi khi pool chấp nhận một share của bạn, hoặc dàn máy của bạn tìm được một khối, một viên kim cương vàng xuất hiện ở hàng trên tại mép phải và cuộn sang trái một cột mỗi giây. Trên terminal rộng khoảng 120 cột, những viên kim cương bạn thấy là công việc được chấp nhận trong khoảng hai phút gần nhất. `uptime` nằm ở cuối hàng dưới.
+
+## seine đo hashrate thế nào?
 
 Khung `HASHRATE` có ba dòng:
 
-- **Current** là hashrate của bạn trong cửa sổ trượt năm giây. Một lần băm ở đây là một phép tính Argon2id 2 GiB hoàn chỉnh, nên H/s đếm số lần băm hoàn tất mỗi giây. GPU NVIDIA hoàn tất công việc theo từng đợt, nên tốc độ hiện tại của chúng dùng cửa sổ 30 giây để giữ ổn định.
-- **Average** là toàn bộ số lần băm trong phiên chia cho thời gian đào. Thời gian chờ (chờ node đồng bộ, chờ mật khẩu ví, hoặc sau một địa chỉ không hợp lệ) không được tính, và giá trị trung bình được giữ nguyên khi bạn thay đổi số luồng.
-- **Total** là số lần băm đã hoàn tất kể từ khi bạn khởi động seine.
+- **Current** là hashrate của bạn trong cửa sổ trượt năm giây. Một hash ở đây là một phép tính Argon2id 2 GiB hoàn chỉnh, nên H/s đếm số hash hoàn tất mỗi giây. GPU NVIDIA hoàn thành công việc theo từng đợt, nên tốc độ hiện tại của chúng dùng cửa sổ 30 giây để ổn định.
+- **Average** là toàn bộ hash trong phiên chia cho thời gian đào. Thời gian chờ, ví dụ chờ node đồng bộ hoặc sau một địa chỉ không hợp lệ, không được tính.
+- **Total** là số hash đã hoàn tất từ khi bạn khởi động seine.
 
-Trong ảnh chụp màn hình, Current là 30,63 H/s và Average là 29,33 H/s. Average bắt đầu thấp hơn vì nó bao gồm cả những phút đầu, khi mọi luồng đang hoàn tất lần băm đầu tiên và bộ tinh chỉnh bắt đầu dưới công suất tối đa rồi tăng dần. seine chạy càng lâu, hai con số càng gần nhau.
+Trong hình, Current là 16,63 H/s và Average là 16,41 H/s. Average bắt đầu thấp hơn vì bao gồm những phút đầu, khi mỗi luồng đang hoàn tất hash đầu tiên và việc tinh chỉnh vẫn đang chọn số luồng. seine chạy càng lâu, hai con số càng gần nhau.
 
-## Mạng và trạng thái
+## Mạng, trạng thái và share
 
-Khung `NETWORK` hiển thị chiều cao chuỗi (`Height`) bạn đang đào và hashrate toàn mạng (`Global`). Ở chế độ pool, seine đọc hashrate mạng từ số liệu công khai của bntpool.com và làm mới nhiều nhất mỗi 30 giây một lần.
+Khung `NETWORK` hiển thị `Height` của chuỗi bạn đang đào và hashrate mạng `Global`, mà seine đọc từ thống kê công khai của bntpool.com ở chế độ pool.
 
-`State` cho biết trình đào đang làm gì. `working` màu xanh lá là trạng thái bạn muốn thấy. Ở chế độ pool, bạn cũng sẽ thấy các trạng thái sau khi khởi động và kết nối lại:
+`State` cho biết trình đào đang làm gì. `working` màu xanh là trạng thái bạn muốn thấy. Ở chế độ pool, bạn cũng sẽ thấy các trạng thái này khi khởi động và kết nối lại:
 
 | Trạng thái | Ý nghĩa |
 |---|---|
 | `pool-connecting` | Đang mở kết nối Stratum |
 | `pool-connected` | Đã kết nối, đang đăng nhập |
-| `pool-authenticated` | Đăng nhập được chấp nhận, đang chờ job đầu tiên |
-| `working` | Đang băm trên job hiện tại |
-| `pool-disconnected` | Mất kết nối; seine tự kết nối lại |
-| `pool-login-rejected` | Pool từ chối đăng nhập; dòng `AUTH` trong nhật ký cho biết lý do |
+| `pool-authenticated` | Đăng nhập được chấp nhận, đang chờ công việc đầu tiên |
+| `working` | Đang băm trên công việc hiện tại |
+| `pool-disconnected` | Kết nối bị ngắt; seine tự kết nối lại |
+| `pool-login-rejected` | Pool từ chối đăng nhập; nhật ký nêu lý do |
 
-Đào solo với node của riêng bạn có thêm các trạng thái như `daemon-syncing`, `stale-tip` (có khối mới, đang lấy template mới) và `solved`. Khi seine đang chờ điều gì đó, Current giảm về 0 để nó không bao giờ hiển thị một tốc độ mà nó không tạo ra.
+Đào solo với node riêng có thêm các trạng thái như `daemon-syncing` và `stale-tip`. Khi seine đang chờ một điều gì đó, Current giảm về 0 để nó không bao giờ hiển thị tốc độ mà nó không tạo ra.
 
-## Submitted, Rejected và Accepted có nghĩa là gì?
+Khung `MINING` đếm share trong phiên này:
 
-Khung `MINING` đếm số share trong phiên này:
+- **Difficulty:** độ khó share mà pool đặt cho dàn máy này.
+- **Rejected:** share pool không chấp nhận.
+- **Accepted:** share pool ghi có cho bạn.
 
-- **Submitted:** số share seine đã gửi lên pool.
-- **Rejected:** số share pool không chấp nhận. Ở chế độ solo, dòng này có nhãn `Stale` và đếm những lời giải đến node sau khi chuỗi đã đi tiếp.
-- **Accepted:** số share pool đã ghi nhận cho bạn.
-
-bntpool.com điều chỉnh độ khó share của mỗi kết nối để nhắm tới khoảng 10 share mỗi năm phút, nên cứ khoảng 30 giây một share là bình thường, bất kể hashrate của bạn. Con số 5 đã gửi và 5 được chấp nhận sau mười phút trong ảnh chụp màn hình là một khởi đầu tốt. Khoản thanh toán của bạn đi theo số share được chấp nhận, và Rejected bằng 0 nghĩa là mọi share bạn gửi đều được ghi nhận.
+bntpool.com điều chỉnh độ khó share của từng dàn máy để nó gửi share đều đặn dù hashrate là bao nhiêu, nên dàn máy nhanh hơn nhận độ khó cao hơn. Thanh toán của bạn theo số share được chấp nhận. Ở chế độ daemon, khung này hiển thị `Submitted`, `Stale` và `Accepted`, đếm các lời giải gửi đến node riêng của bạn.
 
 ## Thiết bị, cấu hình và số dư pool
 
-`DEVICES` liệt kê từng backend đào cùng hashrate hiện tại và trung bình: `cpu#1` cho CPU, rồi `nvidia#1`, `nvidia#2` và tiếp tục cho mỗi GPU NVIDIA. GPU đang khởi động sẽ hiển thị tiến trình thay vào đó, từ `starting CUDA runtime` đến `preparing NVIDIA backend`. Lần khởi động đầu tiên biên dịch và tinh chỉnh các kernel GPU, nên mất nhiều thời gian hơn các lần sau.
+`DEVICES` liệt kê từng backend đào cùng hashrate hiện tại và trung bình: `cpu#1` cho CPU, rồi `nvidia#1`, `amd#1` và tiếp theo cho từng GPU. GPU khởi động ở chế độ nền trong khi CPU đã đào, và card vẫn đang khởi động sẽ hiển thị tiến trình cho đến khi hoạt động.
 
-`CONFIG` cho biết lượt chạy này được thiết lập ra sao:
+`CONFIG` cho biết lượt chạy này được thiết lập thế nào:
 
-- **Endpoint** là địa chỉ pool (mặc định là `stratum+tcp://bntpool.com:3333`), hoặc địa chỉ API của node ở chế độ solo. Bên cạnh là tên mà dàn máy này dùng để đăng nhập vào pool.
-- **Threads** là số luồng đào CPU, theo sau là gợi ý `[+] [-]` cho các phím điều khiển.
-- **Backends** mô tả từng backend. `cpu#1 (14 lanes, ~28.0 GiB RAM)` nghĩa là 14 luồng, mỗi luồng giữ một vùng nhớ 2 GiB, nên 14 × 2 GiB = 28 GiB.
+- **Pool** là địa chỉ pool, mặc định `bntpool.com:3333`, hoặc `Daemon` cùng địa chỉ API của node ở chế độ daemon.
+- **Threads** là số luồng đào CPU. Khi các phím khả dụng, `[+] [-]` xuất hiện bên cạnh. **Worker** là tên dàn máy mà máy này dùng để đăng nhập vào pool.
+- **Tuning** hiển thị tinh chỉnh CPU tự động: đang so sánh gì và còn bao lâu, rồi `done`. [Hướng dẫn tinh chỉnh CPU](/vi/blog/seine-automatic-cpu-tuning/) giải thích từng trạng thái.
 
-Để đặt cho dàn máy một cái tên dễ nhận ra trên pool, hãy truyền nó khi khởi động:
+Để đặt cho dàn máy một tên dễ nhận biết trên pool, truyền nó khi khởi động:
 
 ```sh
 ./seine --pool-worker rig-01
 ```
 
-`POOL BALANCE` đọc số dư của bạn từ bntpool.com mỗi vài giây. `Pending` là số tiền bạn đã kiếm được nhưng chưa được thanh toán, `Paid` là số tiền pool đã gửi về địa chỉ của bạn, và `Miner` bên phải là địa chỉ của bạn được rút gọn còn sáu ký tự đầu và sáu ký tự cuối. bntpool.com thanh toán khi số dư của bạn đạt 0,1 BNT. Ở chế độ solo, khung này trở thành `WALLET`, với số dư `Pending` và `Unlocked` của ví trên node.
+`POOL BALANCE` đọc số dư của bạn từ bntpool.com mỗi vài giây. `Pending` là số tiền bạn đã kiếm được nhưng chưa được thanh toán, gồm cả phần thưởng ước tính từ các khối vẫn đang chờ trưởng thành, `Paid` là số tiền pool đã gửi về địa chỉ của bạn, và `Miner` bên phải là địa chỉ của bạn được rút gọn còn sáu ký tự đầu và sáu ký tự cuối. Khi bạn đào solo trên pool, với `solo:` trước địa chỉ, nhãn đó hiển thị `Solo`. `Min payout` cho biết mức thanh toán tối thiểu của pool, 1 BNT trên bntpool.com. Ở chế độ daemon, khung này trở thành `WALLET`, với số dư `Pending` và `Unlocked` của ví trên node.
 
 ## Đọc nhật ký
 
-`LOG` giữ 200 mục mới nhất, mục mới nhất ở dưới cùng, mỗi mục có một nhãn mức độ, một thẻ và thời điểm nó xảy ra cách đây bao lâu. Các nhãn là `INFO`, `OK` (một việc đã thành công), `WARN`, `ERR`, và `**` cho một khối đã giải được. Các thẻ bạn sẽ thấy nhiều nhất khi đào trên pool là:
+`LOG` liệt kê những gì seine đang làm, mới nhất ở dưới cùng, mỗi dòng có một thẻ và thời gian đã trôi qua. Các dòng lặp lại được gộp thành một kèm số đếm, như `share accepted ×104`, để nhật ký vẫn dễ đọc trong phiên dài. Các thẻ bạn sẽ thấy nhiều nhất khi đào pool là:
 
-- `AUTH`: đăng nhập pool, chẳng hạn `login accepted (protocol v2, required=submit_claimed_hash)`
-- `JOB`: một job mới từ pool, kèm chiều cao và độ khó
-- `SHARE`: `submitted (backend=cpu#1)` rồi đến `accepted (backend=cpu#1)`
-- `VARDIFF`: pool đã thay đổi độ khó share của bạn
-- `MINER`: các quyết định tự tinh chỉnh
+- `CONN`: kết nối pool, như `connected to pool`
+- `SHARE`: `share accepted`, hoặc một lần từ chối kèm lý do
+- `CPU`: kết quả tinh chỉnh, như `tuned to 21 threads`
+- `BACKEND`: thiết bị đang khởi động, như `cpu: starting 21 threads (~42.0 GiB RAM)`
 
-## Tính năng tự tinh chỉnh trông như thế nào khi seine chạy?
+Theo mặc định nhật ký hiển thị những gì bạn cần. Thêm `--verbose` để xem các cài đặt nội bộ và hoạt động thường lệ như mỗi công việc mới.
 
-seine bắt đầu đào ngay lập tức và tinh chỉnh trên công việc đào thực tế, và bạn có thể theo dõi quá trình này trong nhật ký. Dòng `MINER` đầu tiên ghi `cpu-autotune | starting with N threads`, theo sau là `initial estimate` trên máy mới hoặc `cached starting point` khi seine đã biết máy này.
-
-Từ đó nó lần lượt so sánh các thiết lập: số luồng hiện tại, một ứng viên, rồi lại số luồng hiện tại. Mỗi cửa sổ kéo dài ít nhất 30 giây và thu thập ít nhất 20 lần băm. Bạn sẽ thấy các dòng như `measuring useful mining work` và `checking baseline again`, và con số Threads trong `CONFIG` thay đổi theo. Khi đã ổn định, nhật ký ghi `done` và nêu số luồng được giữ lại.
-
-Các kernel CPU được so sánh theo cùng cách, ví dụ `comparing avx2 and avx512 while mining`, và seine chỉ chuyển đổi sau khi hai lần so sánh xác nhận có cải thiện: `confirmed faster ... path in two comparisons`. Các lựa chọn được lưu đệm, nên lần khởi động sau tiếp tục từ chỗ lần này dừng lại. Việc tinh chỉnh không bao giờ kết nối lại pool hay khởi động lại GPU. [Hướng dẫn tự tinh chỉnh](https://github.com/zpalmtree/seine/blob/master/docs/guides/autotuning.md) trình bày chi tiết, và [bài giải thích Argon2id](/vi/blog/argon2id-proof-of-work-explained/) giải thích vì sao băng thông bộ nhớ quyết định số luồng tốt nhất nằm ở đâu.
-
-## Có thể thay đổi số luồng từ bảng điều khiển không?
+## Những phím nào dùng được trên bảng điều khiển?
 
 <Answer>
-Có. Nhấn + (hoặc =, không cần Shift) để thêm một luồng cho mỗi backend CPU và - để bớt một luồng. seine khởi động lại các backend đào với số luồng mới trong khi vẫn giữ số liệu thống kê của phiên, thời gian chạy và hashrate trung bình. Nhấn q hoặc Ctrl+C để thoát. Thay đổi thủ công sẽ tắt tính năng tự tinh chỉnh số luồng cho lượt chạy đó.
+Nhấn + hoặc = để thêm một luồng CPU và - để bớt một luồng, khi hàng Tuning đã hiển thị done. Dùng phím mũi tên, PgUp, PgDn và Home để cuộn lại nhật ký, và End để theo dõi dòng mới trở lại. Trong lúc đếm ngược cập nhật, u cài ngay và s bỏ qua phiên bản đó. Nhấn q hoặc Ctrl+C để thoát.
 </Answer>
 
-Trong lúc thay đổi được áp dụng, `CONFIG` hiển thị `Restarting: 14 -> 15 threads...` và các lần nhấn tiếp theo bị bỏ qua cho đến khi hoàn tất. Việc tăng luồng dừng ở mức trần tự động theo CPU và RAM, và số luồng bạn chọn không được lưu làm mặc định mới. Để có số luồng cố định ngay từ đầu, hãy dùng `--threads`.
+Thay đổi số luồng áp dụng ngay cho các luồng CPU đang chạy, trong khi GPU và kết nối pool vẫn hoạt động. Khi tinh chỉnh vẫn đang chọn số luồng, phím sẽ chờ và bảng điều khiển cho biết tinh chỉnh còn bao lâu. Một lần nhấn phím chỉ có hiệu lực cho lượt chạy đó; lần khởi động sau lại dùng kết quả tinh chỉnh đã lưu. Để cố định số luồng ngay từ đầu, dùng `--threads`.
 
-## Terminal nhỏ và đầu ra dạng thuần
+Khi bạn cuộn lại, tiêu đề nhật ký hiển thị `LOG  paused, End to follow` và khung nhìn đứng yên cho đến khi bạn nhấn `End`.
 
-Trong terminal hẹp hơn 80 cột, ba khung thống kê xếp chồng theo chiều dọc. Trong cửa sổ thấp, seine chuyển sang chế độ xem gọn, giữ Threads, State, Current, Average, các số đếm share và Height trên màn hình phía trên nhật ký. Chế độ mặc định `--ui auto` chỉ hiển thị bảng điều khiển trong terminal tương tác; `--ui plain` cho nhật ký cuộn dạng thuần dành cho máy chủ, tệp nhật ký và trình quản lý tiến trình.
+## Terminal nhỏ và đầu ra thường
 
-Nếu bạn chưa thiết lập seine, [hướng dẫn đào Blocknet](/vi/blog/how-to-mine-blocknet/) đi từ bước tải xuống đến share đầu tiên được chấp nhận.
+Trên terminal hẹp hơn 80 cột, ba khung thống kê xếp chồng theo chiều dọc. Trong cửa sổ thấp, seine chuyển sang chế độ gọn, vẫn giữ Threads, State, Current và Average trên màn hình phía trên nhật ký. Mặc định `--ui auto` chỉ hiển thị bảng điều khiển trong terminal tương tác; `--ui plain` cho nhật ký cuộn dạng văn bản thường dành cho máy chủ, file nhật ký và trình quản lý tiến trình.
 
-<CTA target="seine" title="Tải seine và xem nó tự tinh chỉnh" text="Bắt đầu đào chỉ với một lệnh, và bảng điều khiển hiển thị hashrate, share và số dư bntpool.com trong khi seine tinh chỉnh số luồng và kernel cho máy của bạn." />
+Nếu bạn chưa thiết lập seine, [hướng dẫn đào Blocknet](/vi/blog/how-to-mine-blocknet/) đi từ bước tải về đến share đầu tiên được chấp nhận.
+
+<CTA target="seine" title="Tải seine và xem nó tự tinh chỉnh" text="Bắt đầu đào bằng một lệnh, và bảng điều khiển hiển thị hashrate, share và số dư bntpool.com trong khi seine tinh chỉnh luồng và kernel cho máy của bạn." />

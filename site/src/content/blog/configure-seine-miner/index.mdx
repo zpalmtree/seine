@@ -2,7 +2,7 @@
 title: 'Change seine settings: threads, CPU, GPU and pool'
 description: 'Turn CPU or GPU mining off in seine, set the thread count, choose a graphics card, keep your settings for every start, and change your address or pool.'
 date: 2026-10-26
-updated: 2026-11-02
+updated: 2026-11-04
 tags: ['Mining guide', 'Configuration', 'seine']
 faq:
   - q: 'How do I turn off CPU mining in seine?'
@@ -131,6 +131,8 @@ To use a different value for one run, add it to the command. The saved file stay
 ```
 
 The other two settings are `--address` and `--pool-url`. The [address change guide](https://bntpool.com/blog/change-mining-wallet-address/) explains how the pool credits your work after you change address.
+
+To mine solo on bntpool.com, put `solo:` in front of the address, for example `"address": "solo:@yourname"` in the file or `--address solo:YOUR_ADDRESS` on the command line. The pool then pays you the whole reward of every block your rig finds. [Solo mining on bntpool.com](https://bntpool.com/blog/solo-mine-blocknet-on-bntpool/) explains how solo blocks are paid.
 
 ## What if a setting doesn't work?
 

@@ -9,11 +9,11 @@ faq:
     a: 'Conservez la configuration et notez son emplacement avant toute modification. Un message d’analyse désigne un fichier ou une valeur à examiner. Sauvegardez ce fichier, corrigez le problème signalé et préservez l’adresse et les paramètres du lanceur. Tout supprimer complique la comparaison avec la dernière exécution correcte.'
   - q: 'Quelles informations aident à diagnostiquer un arrêt répété ?'
     a: 'Notez la version de seine, le système, le CPU et le GPU, la mémoire disponible, les arguments complets, le répertoire de travail et l’heure. Joignez les derniers messages et événements système pertinents. Retirez identifiants et données personnelles avant partage, sans jamais inclure de phrase de récupération ni de clé privée.'
-sourceHash: '2e054f0c0100'
+sourceHash: '333d8de81191'
 translation: draft
 ---
 
-Stabilisez votre mineur Blocknet en identifiant l’étape où il s’arrête. Ce guide suit seine v0.2.37 et commence par des éléments que vous pouvez recueillir sur votre ordinateur. Gardez la dernière commande et configuration fonctionnelles, puis modifiez un seul réglage pertinent à la fois pour comprendre le résultat suivant.
+Stabilisez votre mineur Blocknet en identifiant l’étape où il s’arrête. Ce guide suit seine v0.3.1 et commence par des éléments que vous pouvez recueillir sur votre ordinateur. Gardez la dernière commande et configuration fonctionnelles, puis modifiez un seul réglage pertinent à la fois pour comprendre le résultat suivant.
 
 ## Que vérifier lorsqu’un mineur s’arrête ?
 
@@ -27,7 +27,13 @@ Vérifiez si le processus a quitté, si l’ordinateur s’est mis en veille ou 
 
 Ouvrez un terminal dans votre répertoire habituel et lancez la commande existante. Ajoutez `--ui plain` pour afficher un journal texte plutôt que le tableau de bord, en conservant les autres arguments. Cela démarre le minage avec votre configuration. Copiez les messages finaux, y compris la première erreur précédant les messages répétés de reconnexion ou d’arrêt.
 
-Notez ensemble la version de l’exécutable, le répertoire de travail et le répertoire de données choisi. Dans cette version, une erreur fatale gérée est affichée avec `fatal:` avant la sortie. Un arrêt imposé par le système peut laisser d’autres indices. Si le processus reste actif, consultez les [vérifications de connexion](https://bntpool.com/blog/fr/track-your-miner-on-bntpool/) : un share absent ou une déconnexion temporaire ne prouve pas un plantage.
+Notez ensemble la version de l’exécutable, le répertoire de travail et le répertoire de données choisi. Une erreur fatale gérée est affichée avec `fatal:` avant la sortie. Sous Windows, quand vous lancez `seine.exe` par un double-clic, la console reste ouverte après une erreur fatale jusqu’à ce que vous appuyiez sur Entrée, pour que vous puissiez lire le message. Un arrêt imposé par le système peut laisser d’autres indices. Si le processus reste actif, consultez les [vérifications de connexion](https://bntpool.com/blog/fr/track-your-miner-on-bntpool/) : un share absent ou une déconnexion temporaire ne prouve pas un plantage.
+
+## seine s’est-il arrêté pour une mise à jour ?
+
+Un arrêt bref peut être une mise à jour. Avec les mises à jour automatiques activées, seine lance un compte à rebours dans l’en-tête du tableau de bord, installe la nouvelle version, arrête proprement le minage et redémarre avec les mêmes arguments ; le nouveau tableau de bord journalise `updated to seine vX.Y.Z`. Si un pool envoie un travail qui nécessite une version plus récente, par exemple lors d’une mise à niveau du réseau, seine met le minage en pause et journalise `installing seine vX.Y.Z now: mining is paused until Seine is updated`, puis reprend une fois la mise à jour en place.
+
+Si vous venez de la v0.2.45 sous Linux, l’ancienne version installe la mise à jour puis se ferme : relancez donc seine une fois ; un service systemd ou un autre lanceur qui redémarre le programme n’a besoin de rien. Le [guide de mise à jour](/fr/blog/update-seine-miner/) liste aussi les étapes ponctuelles pour Windows, HiveOS et mmpOS.
 
 ## S’arrête-t-il avant de commencer à miner ?
 
@@ -43,9 +49,9 @@ Un mode de pages explicitement exigé nécessite la réservation correspondante 
 
 ## Vérifiez séparément l’étape GPU
 
-Si le démarrage cite une bibliothèque CUDA, un périphérique ou une allocation GPU, notez le message exact et la version du pilote installé. Le [guide NVIDIA](/fr/blog/mine-blocknet-nvidia-gpu/) couvre les exigences de la version, les bibliothèques et le choix du périphérique. Comparez-les à votre environnement avant de modifier kernels ou réglages. Télécharger correctement l’archive ne prouve pas que l’environnement d’exécution est prêt.
+Si le démarrage cite une bibliothèque CUDA ou HIP, un périphérique ou une allocation GPU, notez le message exact et la version du pilote installé. Le [guide NVIDIA](/fr/blog/mine-blocknet-nvidia-gpu/) et le [guide AMD](/fr/blog/mine-blocknet-amd-gpu/) couvrent les exigences de la version, les bibliothèques et le choix du périphérique. Comparez-les à votre environnement avant de modifier kernels ou réglages. Télécharger correctement l’archive ne prouve pas que l’environnement d’exécution est prêt.
 
-seine peut isoler une panne de backend pendant que les autres backends actifs continuent. Vérifiez les messages et l’activité restante avant de conclure que toute l’application s’est arrêtée. Conservez les éléments avant de relancer, car une nouvelle session peut masquer la séquence précédente. Pour tester un choix de backends plus simple, gardez la commande initiale et comparez démarrage, travail continu et soumissions acceptées.
+seine peut isoler une panne de backend pendant que les autres backends actifs continuent. Si le runtime AMD ferme seine deux fois de suite pendant qu’il utilise le GPU, seine cesse de sélectionner les cartes AMD de lui-même et continue de miner avec le reste ; après une mise à jour du pilote, lancez-le une fois avec `--backend cpu,amd` pour réessayer les cartes. Vérifiez les messages et l’activité restante avant de conclure que toute l’application s’est arrêtée. Conservez les éléments avant de relancer, car une nouvelle session peut masquer la séquence précédente. Pour tester un choix de backends plus simple, gardez la commande initiale et comparez démarrage, travail continu et soumissions acceptées.
 
 ## L’ordinateur était-il en veille ou a-t-il redémarré ?
 

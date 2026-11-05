@@ -11,7 +11,7 @@ faq:
     a: 'seine 會自動選擇執行緒數量，所以只有想為其他工作留出餘裕時才需要設定。每個執行緒大約使用 2 GB 記憶體。在儀表板中按減號鍵，直到電腦用起來合適，然後使用這個數字。'
   - q: 'seine 把設定儲存在哪裡？'
     a: 'seine 把你的地址、礦池和礦工名稱儲存在啟動它的資料夾內的 seine-data/seine.config.json 中。執行緒和 backend 選項不會儲存在那裡，所以如果想讓它們每次啟動都生效，請把它們寫進一個小的啟動檔。'
-sourceHash: b5ca5a9a16d8
+sourceHash: cbfaa904cdbf
 translation: draft
 ---
 
@@ -129,6 +129,8 @@ cd "$(dirname "$0")"
 ```
 
 另外兩個設定是 `--address` 和 `--pool-url`。[變更地址指南](https://bntpool.com/blog/zh-hant/change-mining-wallet-address/)說明了變更地址後礦池如何計入你的工作量。
+
+要在 bntpool.com 上單獨挖礦，請在地址前加上 `solo:`，例如在檔案中寫 `"address": "solo:@yourname"`，或在命令列中使用 `--address solo:YOUR_ADDRESS`。礦池隨後會把你的礦機找到的每個區塊的全部獎勵支付給你。[在 bntpool.com 上單獨挖礦](https://bntpool.com/blog/zh-hant/solo-mine-blocknet-on-bntpool/)說明了單獨挖礦區塊如何支付。
 
 ## 設定沒有生效怎麼辦？
 

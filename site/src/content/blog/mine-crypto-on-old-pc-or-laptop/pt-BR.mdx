@@ -11,7 +11,7 @@ faq:
     a: 'Sim. As versões x86 do seine incluem um kernel portátil que roda em qualquer processador x86 de 64 bits, além de kernels AVX2 e AVX-512 para os chips que os têm. Ele verifica quais conjuntos de instruções seu processador suporta e escolhe o kernel correspondente, comparando kernels enquanto minera nos chips que têm AVX2 e AVX-512.'
   - q: 'Quanta energia a mineração gasta em um PC antigo?'
     a: 'Depende da máquina. Meça com um medidor de consumo de tomada enquanto o seine roda, depois multiplique os watts por 24 e divida por 1.000 para ter os quilowatts-hora por dia. Multiplique isso pela sua tarifa de energia para ter o custo diário e compare com a quantidade de moedas que você espera por dia.'
-sourceHash: 024eb1ee2b56
+sourceHash: e94745a9d6b9
 translation: reviewed
 ---
 
@@ -105,7 +105,7 @@ O [guia passo a passo de mineração](/pt-br/blog/how-to-mine-blocknet/) mostra 
 
 ## Por que minerar em um pool com uma máquina pequena?
 
-Um pool paga você pela sua parte do trabalho em cada bloco que ele encontra, então uma máquina pequena recebe a cada bloco do pool em vez de esperar para encontrar um bloco inteiro sozinha. O guia sobre [como funciona a mineração de criptomoedas](/pt-br/blog/how-crypto-mining-works/) explica pools e shares com mais profundidade. No bntpool.com, as recompensas são divididas entre os shares enviados nas seis horas anteriores a cada bloco, e seu saldo é pago quando chega a 0,1 BNT. Você pode acompanhar seu hashrate e seu saldo pesquisando seu endereço ou `@name` no [bntpool.com](https://bntpool.com).
+Um pool paga você pela sua parte do trabalho em cada bloco que ele encontra, então uma máquina pequena recebe a cada bloco do pool em vez de esperar para encontrar um bloco inteiro sozinha. O guia sobre [como funciona a mineração de criptomoedas](/pt-br/blog/how-crypto-mining-works/) explica pools e shares com mais profundidade. No bntpool.com, as recompensas são divididas entre os shares enviados nas seis horas anteriores a cada bloco, e seu saldo é pago quando chega a 1 BNT. Você pode acompanhar seu hashrate e seu saldo pesquisando seu endereço ou `@name` no [bntpool.com](https://bntpool.com).
 
 Para estimar sua produção, use o hashrate da rede mostrado no painel do bntpool.com. Com blocos de cinco minutos, o Blocknet encontra 288 blocos por dia, então, por dia, sua parte esperada das moedas novas da rede é 288 × (seu H/s ÷ H/s da rede) × a recompensa do bloco, que diminui a cada mês.
 

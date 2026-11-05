@@ -11,7 +11,7 @@ faq:
     a: 'Ya. Build x86 seine menyertakan kernel portabel yang berjalan di prosesor x86 64-bit apa pun, di samping kernel AVX2 dan AVX-512 untuk chip yang memilikinya. seine memeriksa set instruksi yang didukung prosesor Anda dan memilih kernel yang sesuai, sambil membandingkan kernel selama menambang di chip yang memiliki AVX2 dan AVX-512 sekaligus.'
   - q: 'Berapa listrik yang dipakai untuk menambang di PC lama?'
     a: 'Tergantung mesinnya. Ukur dengan power meter colokan saat seine berjalan, lalu kalikan watt dengan 24 dan bagi dengan 1.000 untuk mendapatkan kilowatt-jam per hari. Kalikan hasilnya dengan tarif listrik Anda untuk biaya harian, lalu bandingkan dengan perkiraan koin yang Anda dapat per hari.'
-sourceHash: 024eb1ee2b56
+sourceHash: e94745a9d6b9
 translation: reviewed
 ---
 
@@ -105,7 +105,7 @@ Profil bawaan memilih jumlah thread paling sedikit yang mencapai 99% dari hashra
 
 ## Mengapa menambang di pool dengan mesin kecil?
 
-Pool membayar Anda sesuai bagian kerja Anda di setiap blok yang ditemukannya, jadi mesin kecil dibayar dari setiap blok pool alih-alih menunggu menemukan satu blok utuh sendirian. Panduan [cara kerja penambangan kripto](/id/blog/how-crypto-mining-works/) menjelaskan pool dan share lebih mendalam. Di bntpool.com, imbalan dibagi di antara share yang dikirim dalam enam jam sebelum setiap blok, dan saldo Anda dibayarkan begitu mencapai 0,1 BNT. Anda bisa memantau hashrate dan saldo dengan mencari alamat atau `@name` Anda di [bntpool.com](https://bntpool.com).
+Pool membayar Anda sesuai bagian kerja Anda di setiap blok yang ditemukannya, jadi mesin kecil dibayar dari setiap blok pool alih-alih menunggu menemukan satu blok utuh sendirian. Panduan [cara kerja penambangan kripto](/id/blog/how-crypto-mining-works/) menjelaskan pool dan share lebih mendalam. Di bntpool.com, imbalan dibagi di antara share yang dikirim dalam enam jam sebelum setiap blok, dan saldo Anda dibayarkan begitu mencapai 1 BNT. Anda bisa memantau hashrate dan saldo dengan mencari alamat atau `@name` Anda di [bntpool.com](https://bntpool.com).
 
 Untuk memperkirakan hasil Anda, pakai hashrate jaringan yang ditampilkan di dasbor bntpool.com. Dengan blok setiap lima menit, Blocknet menemukan 288 blok sehari, jadi perkiraan bagian harian Anda dari koin baru jaringan adalah 288 × (H/s Anda ÷ H/s jaringan) × imbalan blok, yang turun bertahap setiap bulan.
 

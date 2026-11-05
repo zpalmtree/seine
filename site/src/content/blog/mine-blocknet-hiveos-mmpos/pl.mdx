@@ -1,0 +1,107 @@
+---
+title: 'Jak kopać Blocknet na HiveOS i mmpOS'
+description: 'Kop Blocknet na HiveOS lub mmpOS z pakietem seine z każdego wydania. Skonfiguruj flight sheet lub profil minera, wybierz GPU lub CPU i aktualizuj jednym krokiem.'
+tags: ['Poradnik kopania', 'HiveOS', 'mmpOS', 'GPU']
+sourceHash: 'e49fce300603'
+translation: draft
+faq:
+  - q: 'Czy mogę kopać Blocknet na HiveOS?'
+    a: 'Tak. Każde wydanie seine zawiera pakiet dla HiveOS. Dodaj portfel BNT, utwórz flight sheet z Pool ustawionym na Configure in miner i Miner ustawionym na Custom, wklej link do pakietu jako Installation URL i zastosuj go do koparek. Panel HiveOS pokaże wtedy hashrate każdego GPU i zaakceptowane udziały.'
+  - q: 'Czy mogę kopać Blocknet na mmpOS?'
+    a: 'Tak. Każde wydanie seine zawiera pakiet dla mmpOS. Zaimportuj gotowy profil minera z poradnika seine dla mmpOS, który jednym krokiem dodaje portfel BNT, pulę bntpool.com i miner seine, a następnie ustaw go jako aktywny profil minera na koparkach.'
+  - q: 'Czy pakiet HiveOS kopie też na CPU?'
+    a: 'Na koparkach GPU pakiet kopie tylko na kartach graficznych, bo każdy wątek CPU potrzebuje 2 GB systemowej pamięci RAM, a wiele koparek GPU ma jej mało. Koparki bez GPU kopią na CPU. Aby dodać kopanie na CPU na koparce GPU, wpisz --backend nvidia,cpu --threads 2 w Extra config arguments.'
+  - q: 'Jak zaktualizować seine na HiveOS lub mmpOS?'
+    a: 'Zmień numer wersji w adresie URL instalacji lub pobierania na najnowsze wydanie i ponownie zastosuj flight sheet lub profil. System do kopania pobierze nowy pakiet, a seine zachowa zapisane wyniki strojenia, więc koparki wracają do liczenia hashy w ciągu kilku sekund.'
+---
+
+Ten poradnik pokazuje, jak kopać Blocknet na HiveOS i mmpOS z seine. Każde wydanie seine zawiera pakiet dla obu systemów do kopania, więc dodajesz seine jako własny miner jednym linkiem, a koparki zgłaszają hashrate i udziały w panelu, którego już używasz. Dotyczy seine v0.3.1.
+
+## Którego pakietu potrzebujesz?
+
+Każde wydanie na [stronie wydań seine](https://github.com/zpalmtree/seine/releases/latest) zawiera dwa pakiety dla systemów do kopania:
+
+| System do kopania | Pakiet |
+|---|---|
+| HiveOS | `seine-hiveos-X.Y.Z.tar.gz` |
+| mmpOS | `seine-mmpos-X.Y.Z.tar.gz` |
+
+`X.Y.Z` to wersja wydania, na przykład `0.3.1`. Każdy pakiet zawiera wersję seine zbudowaną pod biblioteki systemowe danego systemu, bibliotekę kompilatora kerneli NVIDIA używaną przez seine oraz skrypty łączące seine z panelem. Na koparce nie instalujesz nic więcej.
+
+## Jak kopać Blocknet na HiveOS?
+
+<Answer>
+Dodaj swój adres Blocknet jako portfel BNT, a potem utwórz flight sheet z Pool ustawionym na Configure in miner i Miner ustawionym na Custom. W Setup Miner Config wklej link do pakietu seine-hiveos jako Installation URL, użyj %WAL%.%WORKER_NAME% jako szablonu portfela i workera i ustaw Pool URL. Zastosuj flight sheet do koparek.
+</Answer>
+
+1. **Dodaj portfel.** Otwórz **Wallets** (portfele) i dodaj swój adres wypłat Blocknet. Jeśli BNT nie ma na liście monet, wpisz `BNT` jako nazwę monety. Nazwa Blocknet ID, taka jak `@name`, też działa; użyj formy z `@`, bo HiveOS traktuje `$` w szczególny sposób.
+2. **Utwórz flight sheet.** Wybierz monetę BNT i portfel, ustaw **Pool** na *Configure in miner* i **Miner** na *Custom*.
+3. **Kliknij Setup Miner Config** i wypełnij:
+
+   | Field | Value |
+   |---|---|
+   | Miner name | `seine-hiveos` (HiveOS wypełnia je na podstawie URL) |
+   | Installation URL | `https://github.com/zpalmtree/seine/releases/download/vX.Y.Z/seine-hiveos-X.Y.Z.tar.gz` |
+   | Hash algorithm | zostaw puste |
+   | Wallet and worker template | `%WAL%.%WORKER_NAME%` |
+   | Pool URL | `stratum+tcp://bntpool.com:3333` |
+   | Pass | zostaw puste |
+
+4. **Zastosuj flight sheet** do koparek.
+
+Zastąp `X.Y.Z` najnowszą wersją albo skopiuj link do pakietu ze strony wydań. Zapasowe pule wpisuje się w osobnych wierszach w **Pool URL**; seine próbuje ich po kolei i wraca do pierwszej, gdy znów działa. Przy pustym **Pool URL** seine kopie na bntpool.com.
+
+Panel HiveOS pokazuje wtedy hashrate seine dla każdego GPU, zaakceptowane i odrzucone udziały oraz temperatury i wentylatory GPU.
+
+## Jak kopać Blocknet na mmpOS?
+
+<Answer>
+Listy monet mmpOS nie zawierają jeszcze BNT, więc zamiast tego importujesz gotowy profil. Skopiuj JSON profilu minera z poradnika seine dla mmpOS, wpisz swój adres Blocknet i wersję wydania, a następnie zaimportuj go w Miner profiles. Dodaj utworzone przez niego portfel, pulę i profil, a potem ustaw seine BNT jako aktywny profil minera na koparkach.
+</Answer>
+
+1. **Edytuj profil.** Skopiuj profil JSON z [poradnika seine dla mmpOS](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/mmpos.md). Zastąp `YOUR_BLOCKNET_ADDRESS` swoim adresem wypłat lub `@name`, a oba `X.Y.Z` w `custom_url` najnowszą wersją.
+2. **Zaimportuj go.** Otwórz **Miner profiles** (profile minera), kliknij **Import from JSON**, wklej profil i kliknij **Import**.
+3. **Dodaj każdą część** z wyniku importu, po kolei: **Add wallet**, potem **Add pool** (portfel BNT uzupełnia się sam), potem **Add miner profile** z wybraną pulą `bntpool`. Pola monety i minera wyglądają na puste, bo BNT nie ma na listach mmpOS; zaimportowane wartości i tak są zapisane.
+4. **Przypisz profil.** Na każdej koparce ustaw **Active miner profile** na `seine BNT`.
+
+Profil uzupełnia portfel, nazwę koparki i pulę, gdy mmpOS uruchamia miner, a panel mmpOS pokazuje hashrate seine dla każdego GPU i jego udziały. Pakiet mmpOS wymaga obrazu opartego na Ubuntu 20.04 lub nowszym.
+
+## Na czym kopie pakiet?
+
+Pakiet wybiera urządzenia na podstawie sprzętu wykrytego przez system do kopania:
+
+- **Koparki GPU kopią na kartach graficznych.** Każdy hash Blocknet potrzebuje 2 GB pamięci: pamięci wideo na GPU i systemowej pamięci RAM na CPU. Wiele koparek GPU ma od 4 do 8 GB RAM, więc pakiet zostawia CPU wolne dla systemu.
+- **Koparki bez GPU kopią na CPU,** z liczbą wątków dobraną do wolnej pamięci RAM.
+- **Karty NVIDIA** potrzebują sterownika z obsługą CUDA 12; karty serii RTX 50 potrzebują sterownika 570 lub nowszego.
+- **Karty AMD Radeon RX 6000, RX 7000 i RX 9000** potrzebują środowiska uruchomieniowego ROCm HIP na koparce. [Poradnik GPU AMD](/pl/blog/mine-blocknet-amd-gpu/) wyjaśnia, czego potrzebują te karty.
+
+Przy pierwszym uruchomieniu seine przez kilka minut stroi się pod każde GPU, zanim pojawi się hashrate, a potem zapisuje wynik, aby kolejne uruchomienia liczyły hashe w ciągu sekund. Jeśli używasz restartu przy niskim hashrate w watchdogu HiveOS, ustaw mu więcej niż 10 minut, aby nie przerwał tego pierwszego strojenia.
+
+## Jak dodać kopanie na CPU lub inne ustawienia?
+
+Wszystko, co wpiszesz w **Extra config arguments** w HiveOS albo na końcu argumentów profilu mmpOS, trafia do seine bez zmian i ma pierwszeństwo przed domyślnymi ustawieniami pakietu. Aby kopać także na CPU koparki GPU, podaj oba backendy i liczbę wątków pasującą do wolnej pamięci RAM, jeden wątek na 2 GB, zostawiając co najmniej 2 GB dla systemu:
+
+```text
+--backend nvidia,cpu --threads 2
+```
+
+Na koparkach AMD użyj `amd,cpu`, a na mieszanych `nvidia,amd,cpu`. Bez `--threads` seine sam dobierze i dostroi wątki CPU do wolnej pamięci RAM. Inne przydatne argumenty:
+
+| Argument | Działanie |
+|---|---|
+| `--backend nvidia --nvidia-devices 0,1,3` | Kopanie tylko na niektórych GPU NVIDIA |
+| `--nvidia-max-lanes 4` | Mniejsze zużycie pamięci wideo na każdym GPU NVIDIA |
+
+Pakiet sam ustawia połączenie z panelem, prosty format logu i katalog danych. Zostaw `--api-bind`, `--api-cookie` i `--api-token` tak, jak ustawia je pakiet, bo panel odczytuje przez nie statystyki seine. [Poradnik ustawień](/pl/blog/configure-seine-miner/) opisuje pozostałe opcje seine.
+
+## Jak zaktualizować seine w systemie do kopania?
+
+Na HiveOS i mmpOS nowe wersje przychodzą przez pakiet. Gdy pojawi się nowsze wydanie, seine zapisuje komunikat w logu. Zmień wersję w Installation URL lub w adresie pobierania profilu mmpOS na nowe wydanie i ponownie zastosuj flight sheet lub profil. System do kopania pobierze nowy pakiet, a seine trzyma wyniki strojenia i ustawienia w swoim katalogu danych, więc koparki wracają do pełnego hashrate w ciągu sekund.
+
+Jeśli Twoje koparki działają na pakiecie v0.3.0, przełącz flight sheet lub profil na pakiet v0.3.1; jego skrypty uruchomieniowe też są zaktualizowane.
+
+## Gdzie zobaczyć udziały i wypłaty?
+
+Panel systemu do kopania pokazuje hashrate i udziały każdej koparki. Zaliczoną pracę, saldo i wypłaty sprawdzisz, wyszukując swój adres na [bntpool.com](https://bntpool.com/stats). Każda koparka pojawia się pod nazwą workera HiveOS lub koparki mmpOS, a [poradnik śledzenia koparki](https://bntpool.com/blog/pl/track-your-miner-on-bntpool/) objaśnia stronę statystyk. Pełne logi są w logu minera systemu do kopania; na HiveOS to `/var/log/miner/custom/seine-hiveos.log`.
+
+<CTA target="seine" title="Pobierz pakiety seine dla systemów do kopania" text="Każde wydanie zawiera pakiety dla HiveOS i mmpOS: wklej jeden link do flight sheet lub profilu, a Twoje koparki będą kopać Blocknet." />

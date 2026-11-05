@@ -1,0 +1,107 @@
+---
+title: '如何在 HiveOS 與 mmpOS 上挖掘 Blocknet'
+description: '用每個版本附帶的 seine 套件在 HiveOS 或 mmpOS 上挖掘 Blocknet。設定 flight sheet 或礦工設定檔，選擇 GPU 或 CPU，一步完成升級。'
+tags: ['挖礦指南', 'HiveOS', 'mmpOS', 'GPU']
+sourceHash: e49fce300603
+translation: draft
+faq:
+  - q: '可以在 HiveOS 上挖 Blocknet 嗎？'
+    a: '可以。seine 的每個版本都包含 HiveOS 套件。新增一個 BNT 錢包，建立一個 flight sheet，把 Pool 設為 Configure in miner、Miner 設為 Custom，把套件連結貼上為安裝 URL，然後套用到你的礦機。HiveOS 儀表板隨後會顯示每張 GPU 的算力與被接受的份額。'
+  - q: '可以在 mmpOS 上挖 Blocknet 嗎？'
+    a: '可以。seine 的每個版本都包含 mmpOS 套件。從 seine 的 mmpOS 指南匯入現成的礦工設定檔，即可一步加入 BNT 錢包、bntpool.com 礦池與 seine 礦工，然後在礦機上把它設為目前使用的礦工設定檔。'
+  - q: 'HiveOS 套件也會用 CPU 挖礦嗎？'
+    a: '在 GPU 礦機上，套件只用 GPU 挖礦，因為每個 CPU 執行緒需要 2 GB 系統記憶體，而很多 GPU 礦機的記憶體不多。沒有 GPU 的礦機用 CPU 挖礦。要在 GPU 礦機上加入 CPU 挖礦，在 Extra config arguments 中填入 --backend nvidia,cpu --threads 2。'
+  - q: '如何在 HiveOS 或 mmpOS 上升級 seine？'
+    a: '把安裝 URL 或下載 URL 中的版本號改為最新版本，然後重新套用 flight sheet 或設定檔。挖礦系統會下載新的套件，seine 會保留已儲存的調校結果，所以礦機幾秒內就會重新開始計算雜湊。'
+---
+
+本指南說明如何用 seine 在 HiveOS 與 mmpOS 上挖掘 Blocknet。seine 的每個版本都包含這兩種挖礦作業系統的套件，所以你只需一個連結就能把 seine 新增為自訂礦工，礦機會在你已經在用的儀表板上回報算力與份額。內容依據 seine v0.3.1。
+
+## 你需要哪個套件？
+
+[seine 發布頁面](https://github.com/zpalmtree/seine/releases/latest)上的每個版本都附有兩個挖礦系統套件：
+
+| 挖礦系統 | 套件 |
+|---|---|
+| HiveOS | `seine-hiveos-X.Y.Z.tar.gz` |
+| mmpOS | `seine-mmpos-X.Y.Z.tar.gz` |
+
+`X.Y.Z` 是版本號，例如 `0.3.1`。每個套件包含針對該挖礦系統的系統函式庫建置的 seine、seine 使用的 NVIDIA 核心程式編譯器函式庫，以及把 seine 連接到儀表板的指令碼。礦機上無需安裝其他任何東西。
+
+## 如何在 HiveOS 上挖 Blocknet？
+
+<Answer>
+把你的 Blocknet 地址新增為 BNT 錢包，然後建立一個 flight sheet，把 Pool 設為 Configure in miner、Miner 設為 Custom。在 Setup Miner Config 中，把 seine-hiveos 套件連結貼上為安裝 URL，錢包與礦工名稱範本使用 %WAL%.%WORKER_NAME%，並設定礦池 URL。把 flight sheet 套用到你的礦機。
+</Answer>
+
+1. **新增錢包。** 開啟 **Wallets**，新增你的 Blocknet 收款地址。如果幣種清單中沒有 BNT，在幣種名稱中輸入 `BNT`。也可以使用 `@name` 這樣的 Blocknet ID 名稱；請使用 `@` 形式，因為 HiveOS 會對 `$` 做特殊處理。
+2. **建立 flight sheet。** 選擇你的 BNT 幣種與錢包，把 **Pool** 設為 *Configure in miner*，**Miner** 設為 *Custom*。
+3. **點選 Setup Miner Config**，填寫以下內容：
+
+   | Field | Value |
+   |---|---|
+   | Miner name | `seine-hiveos`（HiveOS 會依據 URL 自動填寫） |
+   | Installation URL | `https://github.com/zpalmtree/seine/releases/download/vX.Y.Z/seine-hiveos-X.Y.Z.tar.gz` |
+   | Hash algorithm | 留空 |
+   | Wallet and worker template | `%WAL%.%WORKER_NAME%` |
+   | Pool URL | `stratum+tcp://bntpool.com:3333` |
+   | Pass | 留空 |
+
+4. **把 flight sheet 套用到你的礦機。**
+
+把 `X.Y.Z` 換成最新版本號，或者從發布頁面複製套件連結。備用礦池在 **Pool URL** 中分行填寫；seine 會依序嘗試，並在第一個礦池恢復後切回。**Pool URL** 留空時，seine 在 bntpool.com 挖礦。
+
+HiveOS 儀表板隨後會顯示 seine 每張 GPU 的算力、被接受與被拒絕的份額，以及 GPU 溫度與風扇。
+
+## 如何在 mmpOS 上挖 Blocknet？
+
+<Answer>
+mmpOS 的幣種清單中還沒有 BNT，所以改為匯入現成的設定檔。從 seine 的 mmpOS 指南複製礦工設定檔 JSON，填入你的 Blocknet 地址與版本號，然後在 Miner profiles 中匯入。新增它建立的錢包、礦池與設定檔，再在礦機上把目前礦工設定檔設為 seine BNT。
+</Answer>
+
+1. **編輯設定檔。** 從 [seine 的 mmpOS 指南](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/mmpos.md)複製 JSON 設定檔。把 `YOUR_BLOCKNET_ADDRESS` 換成你的收款地址或 `@name`，並把 `custom_url` 中的兩處 `X.Y.Z` 都換成最新版本號。
+2. **匯入。** 開啟 **Miner profiles**，點選 **Import from JSON**，貼上設定檔並點選 **Import**。
+3. **依序新增匯入結果中的每一項：** 先 **Add wallet**，再 **Add pool**（BNT 錢包會自動填入），最後在選取 `bntpool` 礦池的情況下 **Add miner profile**。由於 BNT 不在 mmpOS 的清單中，幣種與礦工欄位看起來是空的，但匯入的值仍然已儲存。
+4. **指派設定檔。** 在每台礦機上把 **Active miner profile** 設為 `seine BNT`。
+
+mmpOS 啟動礦工時，設定檔會填入你的錢包、礦機名稱與礦池，mmpOS 儀表板會顯示 seine 每張 GPU 的算力與份額。mmpOS 套件需要以 Ubuntu 20.04 或更新版本為基礎的系統映像。
+
+## 套件用什麼裝置挖礦？
+
+套件會依據挖礦系統偵測到的硬體選擇裝置：
+
+- **GPU 礦機用 GPU 挖礦。** 每個 Blocknet 雜湊需要 2 GB 記憶體，GPU 使用顯示記憶體，CPU 使用系統記憶體。很多 GPU 礦機只有 4 到 8 GB 記憶體，所以套件把 CPU 留給系統使用。
+- **沒有 GPU 的礦機用 CPU 挖礦，**執行緒數依據可用記憶體決定。
+- **NVIDIA** 顯示卡需要支援 CUDA 12 的驅動程式；RTX 50 系列顯示卡需要 570 或更新版本的驅動程式。
+- **AMD Radeon RX 6000、RX 7000 與 RX 9000** 顯示卡需要礦機上裝有 ROCm HIP 執行環境。[AMD GPU 指南](/zh-hant/blog/mine-blocknet-amd-gpu/)說明了這些顯示卡的需求。
+
+首次啟動時，seine 會先花幾分鐘針對每張 GPU 自動調校，然後才顯示算力，並儲存結果，所以之後的啟動幾秒內就會開始計算雜湊。如果你使用 HiveOS 看門狗的低算力重新啟動功能，請把時間設為超過 10 分鐘，以免中斷第一次調校。
+
+## 如何加入 CPU 挖礦或其他設定？
+
+你在 HiveOS 的 **Extra config arguments** 中，或在 mmpOS 設定檔參數末尾填寫的內容，都會原樣傳給 seine，並優先於套件的預設值。要讓 GPU 礦機的 CPU 也挖礦，列出兩個後端以及適合你空餘記憶體的執行緒數：每 2 GB 一個執行緒，並至少為系統保留 2 GB：
+
+```text
+--backend nvidia,cpu --threads 2
+```
+
+AMD 礦機用 `amd,cpu`，混合礦機用 `nvidia,amd,cpu`。不寫 `--threads` 時，seine 會依據可用記憶體自行決定並調校 CPU 執行緒數。其他常用參數：
+
+| 參數 | 作用 |
+|---|---|
+| `--backend nvidia --nvidia-devices 0,1,3` | 只用部分 NVIDIA GPU 挖礦 |
+| `--nvidia-max-lanes 4` | 減少每張 NVIDIA GPU 使用的顯示記憶體 |
+
+套件會為你設定儀表板連線、純文字日誌輸出與資料目錄。請保留套件設定的 `--api-bind`、`--api-cookie` 與 `--api-token`，因為儀表板透過它們讀取 seine 的統計資料。[設定指南](/zh-hant/blog/configure-seine-miner/)說明了 seine 的其他選項。
+
+## 如何在挖礦系統上升級 seine？
+
+在 HiveOS 與 mmpOS 上，新版本透過套件提供。有新版本發布時，seine 會在日誌中提示。把安裝 URL 或 mmpOS 設定檔下載 URL 中的版本號改為新版本，然後重新套用 flight sheet 或設定檔。挖礦系統會下載新的套件，seine 會把調校結果與設定儲存在資料目錄中，所以礦機幾秒內就能恢復滿算力。
+
+如果你的礦機正在執行 v0.3.0 套件，請把 flight sheet 或設定檔切換到 v0.3.1 套件；它的啟動指令碼也已更新。
+
+## 在哪裡查看份額與支付？
+
+挖礦系統的儀表板會顯示每台礦機的算力與份額。已計入的工作量、餘額與支付，請在 [bntpool.com](https://bntpool.com/stats?lang=zh-hant) 上查詢你的地址。每台礦機會以其 HiveOS 礦工名稱或 mmpOS 礦機名稱顯示，[礦機追蹤指南](https://bntpool.com/blog/zh-hant/track-your-miner-on-bntpool/)說明了統計頁面。完整日誌在挖礦系統的礦工日誌中；在 HiveOS 上是 `/var/log/miner/custom/seine-hiveos.log`。
+
+<CTA target="seine" title="取得 seine 挖礦系統套件" text="每個版本都包含 HiveOS 與 mmpOS 套件：把一個連結貼到 flight sheet 或設定檔中，你的礦機就會挖掘 Blocknet。" />

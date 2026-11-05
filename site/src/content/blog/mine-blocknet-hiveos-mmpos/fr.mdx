@@ -1,0 +1,107 @@
+---
+title: 'Comment miner Blocknet sur HiveOS et mmpOS'
+description: 'Minez Blocknet sur HiveOS ou mmpOS avec le paquet seine de chaque version. Configurez un flight sheet ou un profil de mineur, choisissez GPU ou CPU et mettez à jour en une étape.'
+tags: ['Guide de minage', 'HiveOS', 'mmpOS', 'GPU']
+sourceHash: 'e49fce300603'
+translation: draft
+faq:
+  - q: 'Peut-on miner Blocknet sur HiveOS ?'
+    a: 'Oui. Chaque version de seine inclut un paquet HiveOS. Ajoutez un portefeuille BNT, créez un flight sheet avec Pool sur Configure in miner et Miner sur Custom, collez le lien du paquet comme Installation URL et appliquez-le à vos rigs. Le tableau de bord HiveOS affiche alors le hashrate par GPU et les shares acceptés.'
+  - q: 'Peut-on miner Blocknet sur mmpOS ?'
+    a: 'Oui. Chaque version de seine inclut un paquet mmpOS. Importez le profil de mineur prêt à l’emploi du guide mmpOS de seine, qui ajoute en une étape le portefeuille BNT, le pool bntpool.com et le mineur seine, puis définissez-le comme Active miner profile sur vos rigs.'
+  - q: 'Le paquet HiveOS mine-t-il aussi avec le CPU ?'
+    a: 'Sur les rigs GPU, le paquet mine uniquement avec les GPU, car chaque thread CPU a besoin de 2 GB de RAM système et beaucoup de rigs GPU en ont peu. Les rigs sans GPU minent avec le CPU. Pour ajouter le minage CPU à un rig GPU, placez --backend nvidia,cpu --threads 2 dans Extra config arguments.'
+  - q: 'Comment mettre à jour seine sur HiveOS ou mmpOS ?'
+    a: 'Remplacez le numéro de version dans l’URL d’installation ou de téléchargement par la version la plus récente et appliquez de nouveau le flight sheet ou le profil. Le système de minage télécharge le nouveau paquet, et seine conserve ses résultats de réglage enregistrés : les rigs recalculent des hachages en quelques secondes.'
+---
+
+Ce guide vous montre comment miner Blocknet sur HiveOS et mmpOS avec seine. Chaque version de seine inclut un paquet pour ces deux systèmes d’exploitation de minage : vous ajoutez seine comme mineur personnalisé avec un seul lien, et vos rigs affichent hashrate et shares dans le tableau de bord que vous utilisez déjà. Il suit seine v0.3.1.
+
+## De quel paquet avez-vous besoin ?
+
+Chaque version sur la [page des versions de seine](https://github.com/zpalmtree/seine/releases/latest) fournit deux paquets pour systèmes de minage :
+
+| Système de minage | Paquet |
+|---|---|
+| HiveOS | `seine-hiveos-X.Y.Z.tar.gz` |
+| mmpOS | `seine-mmpos-X.Y.Z.tar.gz` |
+
+`X.Y.Z` est la version, par exemple `0.3.1`. Chaque paquet contient une compilation de seine adaptée aux bibliothèques du système de minage, la bibliothèque du compilateur de kernels NVIDIA utilisée par seine et les scripts qui relient seine au tableau de bord. Vous n’installez rien d’autre sur le rig.
+
+## Comment miner Blocknet sur HiveOS ?
+
+<Answer>
+Ajoutez votre adresse Blocknet comme portefeuille BNT, puis créez un flight sheet avec Pool sur Configure in miner et Miner sur Custom. Dans Setup Miner Config, collez le lien du paquet seine-hiveos comme Installation URL, utilisez %WAL%.%WORKER_NAME% comme modèle de portefeuille et de worker, et renseignez la Pool URL. Appliquez le flight sheet à vos rigs.
+</Answer>
+
+1. **Ajoutez un portefeuille.** Ouvrez **Wallets** et ajoutez votre adresse de paiement Blocknet. Si BNT ne figure pas dans la liste des monnaies, saisissez `BNT` comme nom de monnaie. Un nom Blocknet ID comme `@name` fonctionne aussi ; utilisez la forme avec `@`, car HiveOS traite `$` de façon particulière.
+2. **Créez un flight sheet.** Choisissez votre monnaie BNT et votre portefeuille, réglez **Pool** sur *Configure in miner* et **Miner** sur *Custom*.
+3. **Cliquez sur Setup Miner Config** et remplissez :
+
+   | Champ | Valeur |
+   |---|---|
+   | Miner name | `seine-hiveos` (HiveOS le remplit à partir de l’URL) |
+   | Installation URL | `https://github.com/zpalmtree/seine/releases/download/vX.Y.Z/seine-hiveos-X.Y.Z.tar.gz` |
+   | Hash algorithm | laisser vide |
+   | Wallet and worker template | `%WAL%.%WORKER_NAME%` |
+   | Pool URL | `stratum+tcp://bntpool.com:3333` |
+   | Pass | laisser vide |
+
+4. **Appliquez le flight sheet** à vos rigs.
+
+Remplacez `X.Y.Z` par la version la plus récente, ou copiez le lien du paquet depuis la page des versions. Les pools de secours se placent sur des lignes séparées dans **Pool URL** ; seine les essaie dans l’ordre et revient au premier dès qu’il est de nouveau disponible. Avec une **Pool URL** vide, seine mine sur bntpool.com.
+
+Le tableau de bord HiveOS affiche alors le hashrate de seine par GPU, les shares acceptés et rejetés, ainsi que les températures et ventilateurs des GPU.
+
+## Comment miner Blocknet sur mmpOS ?
+
+<Answer>
+Les listes de monnaies de mmpOS n’incluent pas encore BNT : vous importez donc un profil prêt à l’emploi. Copiez le JSON du profil de mineur depuis le guide mmpOS de seine, indiquez votre adresse Blocknet et la version, puis importez-le dans Miner profiles. Ajoutez le portefeuille, le pool et le profil qu’il crée, puis définissez seine BNT comme Active miner profile sur vos rigs.
+</Answer>
+
+1. **Modifiez le profil.** Copiez le profil JSON depuis le [guide mmpOS de seine](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/mmpos.md). Remplacez `YOUR_BLOCKNET_ADDRESS` par votre adresse de paiement ou votre `@name`, et les deux `X.Y.Z` de `custom_url` par la version la plus récente.
+2. **Importez-le.** Ouvrez **Miner profiles**, cliquez sur **Import from JSON**, collez le profil et cliquez sur **Import**.
+3. **Ajoutez chaque élément** depuis le résultat de l’importation, dans l’ordre : **Add wallet**, puis **Add pool** (le portefeuille BNT se remplit tout seul), puis **Add miner profile** avec le pool `bntpool` sélectionné. Les champs de monnaie et de mineur semblent vides, car BNT ne figure pas dans les listes de mmpOS ; les valeurs importées sont tout de même enregistrées.
+4. **Attribuez le profil.** Sur chaque rig, réglez **Active miner profile** sur `seine BNT`.
+
+Le profil renseigne votre portefeuille, le nom du rig et le pool quand mmpOS démarre le mineur, et le tableau de bord mmpOS affiche le hashrate de seine par GPU et ses shares. Le paquet mmpOS nécessite une image basée sur Ubuntu 20.04 ou plus récent.
+
+## Avec quoi le paquet mine-t-il ?
+
+Le paquet choisit les périphériques selon le matériel détecté par le système de minage :
+
+- **Les rigs GPU minent avec les GPU.** Chaque hachage Blocknet a besoin de 2 GB de mémoire, de la mémoire vidéo sur un GPU et de la RAM système sur le CPU. Beaucoup de rigs GPU ont 4 à 8 GB de RAM : le paquet laisse donc le CPU libre pour le système.
+- **Les rigs sans GPU minent avec le CPU,** avec un nombre de threads adapté à la RAM libre.
+- **Les cartes NVIDIA** ont besoin d’un pilote prenant en charge CUDA 12 ; les cartes de la série RTX 50 ont besoin du pilote 570 ou plus récent.
+- **Les cartes AMD Radeon RX 6000, RX 7000 et RX 9000** ont besoin du runtime ROCm HIP sur le rig. Le [guide GPU AMD](/fr/blog/mine-blocknet-amd-gpu/) explique ce dont les cartes ont besoin.
+
+Au premier démarrage, seine se règle sur chaque GPU pendant quelques minutes avant que le hashrate apparaisse, puis enregistre le résultat pour que les démarrages suivants calculent des hachages en quelques secondes. Si vous utilisez le redémarrage pour hashrate faible du watchdog de HiveOS, accordez-lui plus de 10 minutes pour qu’il n’interrompe pas ce premier réglage.
+
+## Comment ajouter le minage CPU ou d’autres réglages ?
+
+Tout ce que vous placez dans **Extra config arguments** de HiveOS, ou à la fin des arguments du profil mmpOS, est transmis tel quel à seine et prime sur les valeurs par défaut du paquet. Pour miner aussi avec le CPU d’un rig GPU, indiquez les deux backends et un nombre de threads adapté à votre RAM disponible, un thread par tranche de 2 GB, en laissant au moins 2 GB au système :
+
+```text
+--backend nvidia,cpu --threads 2
+```
+
+Utilisez `amd,cpu` sur les rigs AMD ou `nvidia,amd,cpu` sur les rigs mixtes. Sans `--threads`, seine dimensionne et règle lui-même les threads CPU selon la RAM libre. Autres arguments utiles :
+
+| Argument | Effet |
+|---|---|
+| `--backend nvidia --nvidia-devices 0,1,3` | Mine uniquement avec certains GPU NVIDIA |
+| `--nvidia-max-lanes 4` | Utilise moins de mémoire vidéo sur chaque GPU NVIDIA |
+
+Le paquet configure pour vous la connexion au tableau de bord, la sortie de journal en texte brut et le répertoire de données. Laissez `--api-bind`, `--api-cookie` et `--api-token` tels que le paquet les définit, car le tableau de bord lit les statistiques de seine par leur intermédiaire. Le [guide des réglages](/fr/blog/configure-seine-miner/) explique les autres options de seine.
+
+## Comment mettre à jour seine sur un système de minage ?
+
+Sur HiveOS et mmpOS, les nouvelles versions arrivent par le paquet. Quand une version plus récente sort, seine l’indique dans le journal. Remplacez la version dans l’Installation URL, ou dans l’URL de téléchargement du profil mmpOS, par la nouvelle, puis appliquez de nouveau le flight sheet ou le profil. Le système de minage télécharge le nouveau paquet, et seine conserve ses résultats de réglage et ses paramètres dans son répertoire de données : les rigs retrouvent leur hashrate complet en quelques secondes.
+
+Si vos rigs utilisent le paquet v0.3.0, passez le flight sheet ou le profil au paquet v0.3.1 ; ses scripts de lancement sont également mis à jour.
+
+## Où voir les shares et les paiements ?
+
+Le tableau de bord du système de minage affiche le hashrate et les shares de chaque rig. Pour le travail crédité, le solde et les paiements, recherchez votre adresse sur [bntpool.com](https://bntpool.com/stats). Chaque rig apparaît sous son nom de worker HiveOS ou son nom de rig mmpOS, et le [guide de suivi du mineur](https://bntpool.com/blog/fr/track-your-miner-on-bntpool/) présente la page des statistiques. Les journaux complets se trouvent dans le journal du mineur du système ; sur HiveOS, `/var/log/miner/custom/seine-hiveos.log`.
+
+<CTA target="seine" title="Obtenez les paquets seine pour systèmes de minage" text="Chaque version inclut des paquets HiveOS et mmpOS : collez un lien dans votre flight sheet ou votre profil et vos rigs minent Blocknet." />

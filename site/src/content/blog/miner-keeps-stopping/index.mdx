@@ -2,6 +2,7 @@
 title: 'Why does my Blocknet miner keep stopping?'
 description: 'Find why your Blocknet miner stops: capture the last message, check memory, GPU startup and sleep settings, then verify a stable restart with seine.'
 date: 2026-10-26
+updated: 2026-11-04
 tags: ['Troubleshooting', 'Mining guide', 'seine']
 faq:
   - q: 'Is a disconnected miner always a crashed miner?'
@@ -14,7 +15,7 @@ related: [mining-hashrate-dropping, configure-seine-miner, how-much-ram-to-mine-
 image: /assets/blog/miner-keeps-stopping.svg
 ---
 
-Get your Blocknet miner running consistently by identifying the point where it stops. This guide follows seine v0.2.37 and starts with evidence you can collect on your own computer. Keep your last working command and configuration available, then change one relevant setting at a time so the next result tells you something useful.
+Get your Blocknet miner running consistently by identifying the point where it stops. This guide follows seine v0.3.1 and starts with evidence you can collect on your own computer. Keep your last working command and configuration available, then change one relevant setting at a time so the next result tells you something useful.
 
 ## What should you check when a miner stops?
 
@@ -28,7 +29,13 @@ Check whether the miner process exited, the computer slept, or the pool connecti
 
 Open a terminal in your normal launch directory and run your existing command there. Add `--ui plain` if you want plain log output instead of the dashboard, keeping the other arguments unchanged. This starts mining with your existing setup. Copy the final messages, including the first error before any repeated reconnect or shutdown messages.
 
-Record the executable version, working directory and selected data directory together. In this release, a handled fatal error is printed with `fatal:` before exit. An operating-system termination may leave different evidence. If the process remains alive, follow the [pool connection checks](https://bntpool.com/blog/track-your-miner-on-bntpool/) rather than treating a missing share or a temporary connection loss as proof of a crash.
+Record the executable version, working directory and selected data directory together. A handled fatal error is printed with `fatal:` before exit. On Windows, when you start `seine.exe` by double-clicking it, the console stays open after a fatal error until you press Enter, so you can read the message. An operating-system termination may leave different evidence. If the process remains alive, follow the [pool connection checks](https://bntpool.com/blog/track-your-miner-on-bntpool/) rather than treating a missing share or a temporary connection loss as proof of a crash.
+
+## Did seine stop for an update?
+
+A short stop can be an update. With automatic updates on, seine counts down in the dashboard header, installs the new release, stops mining cleanly and restarts with the same arguments; the new dashboard logs `updated to seine vX.Y.Z`. If a pool sends work that needs a newer release, for example at a network upgrade, seine pauses mining and logs `installing seine vX.Y.Z now: mining is paused until Seine is updated`, then carries on once the update is in place.
+
+Coming from v0.2.45 on Linux, the old version installs the update and then exits, so start seine once more; a systemd service or other restarting launcher needs nothing. The [update guide](/blog/update-seine-miner/) lists the one-time steps for Windows, HiveOS and mmpOS as well.
 
 ## Does it stop before mining begins?
 
@@ -44,9 +51,9 @@ An explicitly required page mode needs the corresponding operating-system reserv
 
 ## Check the GPU stage separately
 
-If startup names a CUDA library, device or GPU allocation, record that exact message and the installed driver version. The [NVIDIA setup guide](/blog/mine-blocknet-nvidia-gpu/) covers release requirements, runtime libraries and device selection. Compare those requirements with your installed environment before changing kernel or tuning options. A successful archive download alone does not establish that the runtime is ready.
+If startup names a CUDA or HIP library, device or GPU allocation, record that exact message and the installed driver version. The [NVIDIA setup guide](/blog/mine-blocknet-nvidia-gpu/) and the [AMD setup guide](/blog/mine-blocknet-amd-gpu/) cover release requirements, runtime libraries and device selection. Compare those requirements with your installed environment before changing kernel or tuning options. A successful archive download alone does not establish that the runtime is ready.
 
-seine can isolate a backend fault while other active backends continue. Check the backend messages and remaining activity before concluding the whole application stopped. Save evidence before restarting; a new session can hide the previous sequence. If you deliberately test a simpler backend selection, preserve your original command and compare startup, ongoing work and accepted submissions under the changed selection.
+seine can isolate a backend fault while other active backends continue. If the AMD runtime closes seine twice in a row while it uses the GPU, seine stops selecting AMD cards by itself and keeps mining on the rest; start it once with `--backend cpu,amd` after a driver update to try the cards again. Check the backend messages and remaining activity before concluding the whole application stopped. Save evidence before restarting; a new session can hide the previous sequence. If you deliberately test a simpler backend selection, preserve your original command and compare startup, ongoing work and accepted submissions under the changed selection.
 
 ## Was the computer asleep or restarted?
 

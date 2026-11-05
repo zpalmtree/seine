@@ -1,0 +1,82 @@
+---
+title: Run a Blocknet mining farm through one proxy
+description: 'Run your whole Blocknet mining farm through one seine farm proxy: set the pool and payout address in one place, point every rig at it, and keep per-rig stats.'
+date: 2026-11-04
+tags: [Mining guide, Farm proxy, seine, Servers]
+faq:
+  - q: 'What is the seine farm proxy?'
+    a: 'It is a mode of seine that runs on one machine on your local network and connects to the pool for all your rigs. Each rig connects to the proxy instead of the pool and mines its own share of the work. The pool sees one connection, and you set the pool and backup pools in one place.'
+  - q: 'Does the farm proxy need a powerful machine?'
+    a: 'No. The proxy does not mine, so it needs little CPU or memory. It can run on any machine your rigs can reach on the local network, such as a small server or one of the rigs themselves alongside its own miner.'
+  - q: 'Do rigs behind the proxy still show up separately on bntpool.com?'
+    a: 'Yes. bntpool.com credits shares per rig, so each rig behind the proxy appears on the stats page under its own worker name, with its own hashrate and shares, exactly as it would with a direct connection. The proxy also logs its connected rigs and shares every minute.'
+  - q: 'Can rigs behind one proxy pay different wallets?'
+    a: 'Yes. Each rig is paid to the address it logs in with, so rigs mining to up to 16 different addresses can share one proxy. A rig that logs in without a valid address is paid to the address you gave the proxy with --address.'
+related: [mine-blocknet-on-servers, mine-blocknet-hiveos-mmpos, configure-seine-miner, how-to-mine-blocknet]
+---
+
+This guide shows you how to run a Blocknet mining farm through one seine farm proxy. You start the proxy on one machine on your network, point every rig at it, and the proxy connects to bntpool.com for the whole farm. You set the pool, payout address and backup pools in one place and keep per-rig stats on the pool. It follows seine v0.3.1.
+
+## What does the farm proxy do?
+
+<Answer>
+The farm proxy is seine running as a local pool for your rigs. It connects to bntpool.com once for the whole farm and hands each rig its own share of the work. The pool sees one connection, each rig still mines and is credited on its own, and you change the pool or backup pools for every rig in one place.
+</Answer>
+
+A farm proxy suits anyone running more than a handful of rigs:
+
+- **One place for settings.** Set the pool, backup pools and default payout address on the proxy, and every rig picks them up.
+- **One outbound connection.** Rigs talk to the proxy over your local network, and the proxy opens only the pool connections the farm needs, usually one or a few.
+- **Per-rig stats on the pool.** bntpool.com credits shares per rig, so each rig still shows under its own worker name on the [stats page](https://bntpool.com/stats).
+
+The proxy itself doesn't mine. It needs little CPU or memory, so it can run on any machine the rigs can reach, including one of the rigs.
+
+## How do you start the proxy?
+
+<Answer>
+Start seine with --proxy-listen and the address and port the rigs will connect to, plus the usual pool, payout address and rig name options. For example: ./seine --proxy-listen 0.0.0.0:3333 --pool-url stratum+tcp://bntpool.com:3333 --address YOUR_ADDRESS --pool-worker farm-1. The proxy then waits for rigs on port 3333.
+</Answer>
+
+On the machine that will run the proxy:
+
+```bash
+./seine --proxy-listen 0.0.0.0:3333 \
+        --pool-url stratum+tcp://bntpool.com:3333 \
+        --address YOUR_ADDRESS --pool-worker farm-1
+```
+
+`--proxy-listen` sets where the proxy accepts rigs; `0.0.0.0:3333` listens on every network interface on port 3333. `--address` is the default payout address, used for any rig that logs in without a valid one. Every pool option works on the proxy, including backup pools: list them in order, separated by commas, and the proxy returns to the first when it recovers. The [seine configuration guide](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/configuration.md) covers the pool options.
+
+Bind the proxy to your local network. Anyone who can reach its port can mine through it, so use a LAN address in `--proxy-listen`, or firewall the port, rather than exposing it to the internet.
+
+## How do you point rigs at the proxy?
+
+On each rig, use the proxy's local address as the pool and give the rig its own name:
+
+```bash
+./seine --pool-url 192.168.1.10:3333 --address YOUR_ADDRESS --pool-worker rig-07
+```
+
+Replace `192.168.1.10` with the proxy machine's address on your network. Mining OS rigs work the same way: put the proxy's address in the pool URL field of the HiveOS flight sheet or mmpOS profile, as the [HiveOS and mmpOS guide](/blog/mine-blocknet-hiveos-mmpos/) shows. Seine saves the pool with the rig's settings, so later starts connect to the proxy by themselves.
+
+## How are rigs behind the proxy paid?
+
+Each rig is paid to the full Blocknet address it logs in with. Rigs that mine to different wallets can share one proxy, up to 16 addresses at a time. A rig that logs in with no address, or an invalid one, is paid to the proxy's `--address`.
+
+When 16 addresses are in use, a rig with a 17th address waits until one of the others has had no rigs for 10 minutes. If the pool refuses a rig's address, the proxy passes on the pool's reason, so you can fix it on that rig.
+
+Rigs behind the proxy can mine solo on bntpool.com too: put `solo:` in front of the rig's address, and the pool pays that rig the whole reward of each block it finds. [Solo mining on bntpool.com](https://bntpool.com/blog/solo-mine-blocknet-on-bntpool/) explains solo rewards. Payouts to an exchange need a deposit memo, which the proxy doesn't carry, so connect exchange rigs to the pool directly.
+
+## How do you follow the farm?
+
+On bntpool.com, look up each payout address on the [stats page](https://bntpool.com/stats). Every rig behind the proxy appears in the Workers table under its own rig name, with its hashrate, shares and last-share time, exactly as with direct connections. The [miner tracking guide](https://bntpool.com/blog/track-your-miner-on-bntpool/) explains the page.
+
+The proxy also logs its own summary every minute: connected rigs, accepted and rejected shares, an estimated hashrate and its pool connections. It logs each rig as it connects and disconnects, so you can see at a glance when a rig drops off. Each rig's own seine dashboard still shows its local hashrate and shares, as the [dashboard guide](/blog/seine-dashboard-explained/) explains.
+
+## What else should you know?
+
+- **Pool connections grow with the farm.** The proxy opens as many pool connections as the farm needs for every rig to get work on each new block. For most farms that is one or a few, and very large farms get up to 64 per payout address.
+- **Each rig keeps its own settings.** Thread counts, GPU selection and tuning stay on the rig. The [settings guide](/blog/configure-seine-miner/) covers them, and the [server mining guide](/blog/mine-blocknet-on-servers/) covers large CPU servers.
+- **Network upgrades.** At the Faraday network upgrade, the proxy asks rigs on a seine release without support for it to update, the same way the pool does.
+
+<CTA target="seine" title="Download seine for your farm" text="Run one seine as a farm proxy and point every rig at it: one place for the pool settings, per-rig stats on bntpool.com." />

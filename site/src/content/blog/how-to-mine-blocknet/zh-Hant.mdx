@@ -6,10 +6,10 @@ faq:
   - q: '挖 Blocknet 需要多少記憶體？'
     a: '每個挖礦執行緒約需 2 GB 記憶體，因為每次 Argon2id 雜湊都要處理一塊 2 GiB 的記憶體。因此一台 16 GB 記憶體的電腦在為系統留出空間後，大約能執行六到七個執行緒。seine 會偵測你的記憶體並自動選擇安全的執行緒數。'
   - q: '在 bntpool.com 挖 Blocknet，收益什麼時候入帳？'
-    a: 'bntpool.com 採用六小時區間的 PPLNS 方式支付。區塊獎勵要等該區塊獲得 60 個確認（以五分鐘出塊約五小時）後才能支付，餘額達到 0.1 BNT 後發送。第一筆收益預計在第一批份額被接受幾小時後入帳。'
+    a: 'bntpool.com 採用六小時區間的 PPLNS 方式支付。區塊獎勵要等該區塊獲得 60 個確認（以五分鐘出塊約五小時）後才能支付，餘額達到 1 BNT 後發送。第一筆收益預計在第一批份額被接受幾小時後入帳。'
   - q: '可以同時用 CPU 與顯示卡挖 Blocknet 嗎？'
     a: '可以。在 Windows 與 Linux 上，seine 會同時使用電腦上的每個 CPU 核心與每張 NVIDIA 顯示卡挖礦，兩者的算力會相加。它在執行中分別為處理器與每張顯示卡調校，無需修改任何設定，就能讓你的全部硬體發揮出最大算力。'
-sourceHash: bff032ea0960
+sourceHash: 42d41a1c403b
 translation: draft
 ---
 
@@ -49,7 +49,7 @@ seine 會先詢問你的收款地址或 `@shortname`，然後詢問礦池。按 
 
 ## 多久能收到收益？
 
-bntpool.com 採用 PPLNS：每個區塊的獎勵在其被找到前六小時內提交的份額之間分配。區塊獎勵要等該區塊獲得 60 個確認後才能使用，以 Blocknet 五分鐘的出塊時間計算約為五小時。當你已確認的餘額達到 0.1 BNT 時，礦池會把它發送到你的地址。
+bntpool.com 採用 PPLNS：每個區塊的獎勵在其被找到前六小時內提交的份額之間分配。區塊獎勵要等該區塊獲得 60 個確認後才能使用，以 Blocknet 五分鐘的出塊時間計算約為五小時。當你已確認的餘額達到 1 BNT 時，礦池會把它發送到你的地址。
 
 你可以在 [bntpool.com](https://bntpool.com) 上查詢自己的地址，查看算力、份額與餘額。尚未確認的區塊帶來的獎勵會分開顯示，因為這些獎勵仍可能變動。
 
@@ -78,10 +78,10 @@ bntpool.com 採用 PPLNS：每個區塊的獎勵在其被找到前六小時內�
 
 ## Blocknet 可以單獨挖礦（solo）嗎？
 
-可以。如果你執行著自己已同步的 Blocknet 節點，用 `./seine --mode daemon` 啟動 seine，它就會直接對接節點挖礦，而不經過礦池。你找到的每個區塊都歸你所有，但只有找到完整區塊時才有收益，所以大多數人會先從礦池開始。設定方式請見[單獨挖礦指南](https://github.com/zpalmtree/seine/blob/master/docs/guides/solo-mining.md)。
+可以，有兩種方式。最簡單的是在 bntpool.com 上單獨挖礦：在地址前加上 `solo:`，例如 `./seine --address solo:YOUR_ADDRESS`，礦池就會把你的礦機找到的每個區塊的全部獎勵支付給你，無需執行節點。[在 bntpool.com 上單獨挖礦](https://bntpool.com/blog/zh-hant/solo-mine-blocknet-on-bntpool/)說明了設定方式。如果你執行著自己已同步的 Blocknet 節點，也可以用 `./seine --mode daemon` 直接對接節點挖礦，[單獨挖礦指南](https://github.com/zpalmtree/seine/blob/master/docs/guides/solo-mining.md)說明了具體做法。單獨挖礦的收益以整個區塊入帳，因此適合占全網算力比例較大的礦工。
 
 <Note>
-根據 [blocknetcrypto.com](https://blocknetcrypto.com/#faraday)，Blocknet 計畫在 2027-02-16 前後進行名為 Faraday 的網路升級，屆時工作量證明演算法預計會改變。請保持 seine 為最新版本：它會在啟動時以及每 12 小時檢查一次新版本。
+根據 [blocknetcrypto.com](https://blocknetcrypto.com/#faraday)，Blocknet 計畫在 2027年2月16日前後進行名為 Faraday 的網路升級，屆時工作量證明演算法預計會改變。seine v0.3.1 已為此做好準備：礦池挖礦會自動切換到新的工作量證明，開啟自動更新後，seine 會為你安裝更新的版本。
 </Note>
 
 <CTA target="seine" title="下載 seine" text="免費提供 Windows、macOS 與 Linux 版本。執行它，貼上你的地址，即可在 bntpool.com 上開始挖礦。" />

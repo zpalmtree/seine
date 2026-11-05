@@ -6,10 +6,10 @@ faq:
   - q: 'De combien de RAM ai-je besoin pour miner Blocknet ?'
     a: 'Chaque thread de minage a besoin d''environ 2 GB de RAM, car chaque hash Argon2id parcourt un bloc de mémoire de 2 GiB. Une machine de 16 GB peut donc faire tourner environ six à sept threads tout en laissant de la place au système. seine mesure votre mémoire et choisit automatiquement un nombre de threads sûr.'
   - q: 'Quand arrivent les paiements du minage Blocknet sur bntpool.com ?'
-    a: 'Le pool bntpool.com paie en PPLNS sur une fenêtre de six heures. La récompense d''un bloc ne peut être versée qu''une fois ce bloc enfoui sous 60 blocs, soit environ cinq heures avec des blocs de cinq minutes, et les soldes sont envoyés dès qu''ils atteignent 0,1 BNT. Comptez sur un premier paiement quelques heures après vos premiers shares acceptés.'
+    a: 'Le pool bntpool.com paie en PPLNS sur une fenêtre de six heures. La récompense d''un bloc ne peut être versée qu''une fois ce bloc enfoui sous 60 blocs, soit environ cinq heures avec des blocs de cinq minutes, et les soldes sont envoyés dès qu''ils atteignent 1 BNT. Comptez sur un premier paiement quelques heures après vos premiers shares acceptés.'
   - q: 'Puis-je miner Blocknet avec mon CPU et mon GPU en même temps ?'
     a: 'Oui. Sous Windows et Linux, seine mine à la fois sur tous les cœurs du CPU et sur toutes les cartes graphiques NVIDIA de la machine, et les deux hashrates s''additionnent. Il optimise séparément le processeur et chaque carte pendant qu''il tourne : vous tirez le maximum de tout votre matériel sans changer le moindre réglage.'
-sourceHash: bff032ea0960
+sourceHash: 42d41a1c403b
 translation: draft
 ---
 
@@ -49,7 +49,7 @@ seine vous demande votre adresse de paiement ou votre `@shortname`, puis un pool
 
 ## Combien de temps avant d'être payé ?
 
-Le pool bntpool.com utilise le PPLNS : la récompense de chaque bloc est partagée entre les shares soumis pendant les six heures précédant sa découverte. Une récompense ne peut pas être dépensée avant que son bloc ait 60 blocs de profondeur, soit environ cinq heures avec le temps de bloc de cinq minutes de Blocknet. Dès que votre solde confirmé atteint 0,1 BNT, le pool l'envoie à votre adresse.
+Le pool bntpool.com utilise le PPLNS : la récompense de chaque bloc est partagée entre les shares soumis pendant les six heures précédant sa découverte. Une récompense ne peut pas être dépensée avant que son bloc ait 60 blocs de profondeur, soit environ cinq heures avec le temps de bloc de cinq minutes de Blocknet. Dès que votre solde confirmé atteint 1 BNT, le pool l'envoie à votre adresse.
 
 Vous pouvez suivre votre hashrate, vos shares et votre solde sur [bntpool.com](https://bntpool.com) en recherchant votre adresse. Le pool affiche à part les récompenses des blocs qui ne sont pas encore confirmés, car elles peuvent encore changer.
 
@@ -78,10 +78,10 @@ Les résultats de chaque CPU testé se trouvent sur la [page des performances](h
 
 ## Peut-on miner Blocknet en solo ?
 
-Oui. Si vous faites tourner votre propre nœud Blocknet synchronisé, lancez seine avec `./seine --mode daemon` et il mine directement sur le nœud plutôt que sur un pool. Vous gardez chaque bloc que vous trouvez, mais les paiements n'arrivent que lorsque vous trouvez un bloc entier : la plupart des gens commencent donc sur un pool. Le [guide du minage en solo](https://github.com/zpalmtree/seine/blob/master/docs/guides/solo-mining.md) explique la configuration.
+Oui, de deux façons. La plus simple est le minage solo sur bntpool.com : placez `solo:` devant votre adresse, comme dans `./seine --address solo:YOUR_ADDRESS`, et le pool vous verse la récompense entière de chaque bloc trouvé par votre rig, sans nœud à faire tourner. [Le minage solo sur bntpool.com](https://bntpool.com/blog/fr/solo-mine-blocknet-on-bntpool/) explique la configuration. Si vous faites tourner votre propre nœud Blocknet synchronisé, `./seine --mode daemon` mine directement sur ce nœud, comme l’explique le [guide du minage en solo](https://github.com/zpalmtree/seine/blob/master/docs/guides/solo-mining.md). Les récompenses solo arrivent sous forme de blocs entiers : elles conviennent donc aux mineurs qui détiennent une grande part du réseau.
 
 <Note>
-Selon [blocknetcrypto.com](https://blocknetcrypto.com/#faraday), Blocknet prévoit vers le 2027-02-16 une mise à niveau du réseau appelée Faraday. Elle doit modifier la preuve de travail : gardez donc seine à jour. Il vérifie la présence de nouvelles versions au démarrage et toutes les 12 heures.
+Selon [blocknetcrypto.com](https://blocknetcrypto.com/#faraday), Blocknet prévoit vers le 16 février 2027 une mise à niveau du réseau appelée Faraday. Elle doit modifier la preuve de travail. seine v0.3.1 est prêt : le minage en pool passe tout seul à la nouvelle preuve de travail et, avec les mises à jour automatiques activées, seine installe les nouvelles versions pour vous.
 </Note>
 
 <CTA target="seine" title="Téléchargez seine" text="Gratuit pour Windows, macOS et Linux. Lancez-le, collez votre adresse et vous minez sur bntpool.com." />

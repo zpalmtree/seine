@@ -1,0 +1,107 @@
+---
+title: 'Como minerar Blocknet no HiveOS e no mmpOS'
+description: 'Minere Blocknet no HiveOS ou no mmpOS com o pacote do seine de cada versão. Configure um flight sheet ou perfil de minerador, escolha GPUs ou CPU e atualize em um passo.'
+tags: ['Guia de mineração', 'HiveOS', 'mmpOS', 'GPU']
+sourceHash: 'e49fce300603'
+translation: draft
+faq:
+  - q: 'Posso minerar Blocknet no HiveOS?'
+    a: 'Sim. Toda versão do seine inclui um pacote para HiveOS. Adicione uma carteira BNT, crie um flight sheet com Pool em Configure in miner e Miner em Custom, cole o link do pacote como Installation URL e aplique aos seus rigs. O painel do HiveOS então mostra a hashrate por GPU e os shares aceitos.'
+  - q: 'Posso minerar Blocknet no mmpOS?'
+    a: 'Sim. Toda versão do seine inclui um pacote para mmpOS. Importe o perfil de minerador pronto do guia mmpOS do seine, que traz a carteira BNT, o pool bntpool.com e o minerador seine em um passo, e depois defina-o como Active miner profile nos seus rigs.'
+  - q: 'O pacote do HiveOS também minera com a CPU?'
+    a: 'Em rigs com GPU, o pacote minera só nas GPUs, porque cada thread de CPU precisa de 2 GB de RAM do sistema e muitos rigs com GPU têm pouca. Rigs sem GPU mineram com a CPU. Para adicionar mineração com CPU a um rig com GPU, coloque --backend nvidia,cpu --threads 2 em Extra config arguments.'
+  - q: 'Como atualizo o seine no HiveOS ou no mmpOS?'
+    a: 'Troque o número da versão na URL de instalação ou de download pela versão mais recente e aplique o flight sheet ou o perfil de novo. O sistema de mineração baixa o novo pacote, e o seine mantém os resultados de ajuste salvos, então os rigs voltam a gerar hashes em segundos.'
+---
+
+Este guia mostra como minerar Blocknet no HiveOS e no mmpOS com o seine. Cada versão do seine inclui um pacote para os dois sistemas operacionais de mineração, então você adiciona o seine como minerador personalizado com um link e seus rigs mostram hashrate e shares no painel que você já usa. Ele segue o seine v0.3.1.
+
+## De qual pacote você precisa?
+
+Cada versão na [página de versões do seine](https://github.com/zpalmtree/seine/releases/latest) traz dois pacotes para sistemas de mineração:
+
+| Sistema de mineração | Pacote |
+|---|---|
+| HiveOS | `seine-hiveos-X.Y.Z.tar.gz` |
+| mmpOS | `seine-mmpos-X.Y.Z.tar.gz` |
+
+`X.Y.Z` é a versão, por exemplo `0.3.1`. Cada pacote contém uma build do seine para as bibliotecas do sistema de mineração, a biblioteca do compilador de kernels NVIDIA que o seine usa e os scripts que conectam o seine ao painel. Você não instala mais nada no rig.
+
+## Como minerar Blocknet no HiveOS?
+
+<Answer>
+Adicione seu endereço Blocknet como carteira BNT e crie um flight sheet com Pool em Configure in miner e Miner em Custom. Em Setup Miner Config, cole o link do pacote seine-hiveos como Installation URL, use %WAL%.%WORKER_NAME% como modelo de carteira e worker e defina a Pool URL. Aplique o flight sheet aos seus rigs.
+</Answer>
+
+1. **Adicione uma carteira.** Abra **Wallets** e adicione seu endereço de pagamento Blocknet. Se BNT não estiver na lista de moedas, digite `BNT` como nome da moeda. Um nome Blocknet ID como `@name` também funciona; use a forma com `@`, porque o HiveOS trata `$` de forma especial.
+2. **Crie um flight sheet.** Escolha sua moeda BNT e sua carteira, defina **Pool** como *Configure in miner* e **Miner** como *Custom*.
+3. **Clique em Setup Miner Config** e preencha:
+
+   | Campo | Valor |
+   |---|---|
+   | Miner name | `seine-hiveos` (o HiveOS preenche a partir da URL) |
+   | Installation URL | `https://github.com/zpalmtree/seine/releases/download/vX.Y.Z/seine-hiveos-X.Y.Z.tar.gz` |
+   | Hash algorithm | deixe vazio |
+   | Wallet and worker template | `%WAL%.%WORKER_NAME%` |
+   | Pool URL | `stratum+tcp://bntpool.com:3333` |
+   | Pass | deixe vazio |
+
+4. **Aplique o flight sheet** aos seus rigs.
+
+Substitua `X.Y.Z` pela versão mais recente ou copie o link do pacote na página de versões. Pools de reserva vão em linhas separadas em **Pool URL**; o seine tenta cada um em ordem e volta ao primeiro quando ele se recupera. Com **Pool URL** vazia, o seine minera no bntpool.com.
+
+O painel do HiveOS então mostra a hashrate do seine por GPU, os shares aceitos e rejeitados, e as temperaturas e ventoinhas das GPUs.
+
+## Como minerar Blocknet no mmpOS?
+
+<Answer>
+As listas de moedas do mmpOS ainda não incluem BNT, então você importa um perfil pronto. Copie o JSON do perfil de minerador do guia mmpOS do seine, coloque seu endereço Blocknet e a versão e importe em Miner profiles. Adicione a carteira, o pool e o perfil que ele cria e defina seine BNT como Active miner profile nos seus rigs.
+</Answer>
+
+1. **Edite o perfil.** Copie o perfil JSON do [guia mmpOS do seine](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/mmpos.md). Substitua `YOUR_BLOCKNET_ADDRESS` pelo seu endereço de pagamento ou `@name`, e os dois `X.Y.Z` em `custom_url` pela versão mais recente.
+2. **Importe.** Abra **Miner profiles**, clique em **Import from JSON**, cole o perfil e clique em **Import**.
+3. **Adicione cada parte** a partir do resultado da importação, nesta ordem: **Add wallet**, depois **Add pool** (a carteira BNT é preenchida sozinha) e depois **Add miner profile** com o pool `bntpool` selecionado. Os campos de moeda e minerador parecem vazios porque BNT não está nas listas do mmpOS; os valores importados são salvos mesmo assim.
+4. **Atribua o perfil.** Em cada rig, defina **Active miner profile** como `seine BNT`.
+
+O perfil preenche sua carteira, o nome do rig e o pool quando o mmpOS inicia o minerador, e o painel do mmpOS mostra a hashrate do seine por GPU e seus shares. O pacote do mmpOS precisa de uma imagem baseada no Ubuntu 20.04 ou mais recente.
+
+## Com o que o pacote minera?
+
+O pacote escolhe os dispositivos conforme o hardware que o sistema de mineração detecta:
+
+- **Rigs com GPU mineram nas GPUs.** Cada hash de Blocknet precisa de 2 GB de memória, memória de vídeo na GPU e RAM do sistema na CPU. Muitos rigs com GPU têm de 4 a 8 GB de RAM, então o pacote deixa a CPU livre para o sistema.
+- **Rigs sem GPU mineram com a CPU,** com o número de threads ajustado à RAM livre.
+- **Placas NVIDIA** precisam de um driver com suporte a CUDA 12; placas da série RTX 50 precisam do driver 570 ou mais recente.
+- **Placas AMD Radeon RX 6000, RX 7000 e RX 9000** precisam do runtime ROCm HIP no rig. O [guia de GPU AMD](/pt-br/blog/mine-blocknet-amd-gpu/) explica o que as placas precisam.
+
+Na primeira inicialização, o seine se ajusta a cada GPU por alguns minutos antes de a hashrate aparecer e depois salva o resultado, para que as inicializações seguintes gerem hashes em segundos. Se você usa a reinicialização por hashrate baixa do watchdog do HiveOS, dê a ele mais de 10 minutos para não interromper esse primeiro ajuste.
+
+## Como adicionar mineração com CPU ou outras configurações?
+
+Tudo o que você colocar em **Extra config arguments** no HiveOS, ou no fim dos argumentos do perfil do mmpOS, vai para o seine como está e tem prioridade sobre os padrões do pacote. Para minerar também com a CPU de um rig com GPU, liste os dois backends e um número de threads que caiba na RAM que sobra, uma thread a cada 2 GB, deixando pelo menos 2 GB para o sistema:
+
+```text
+--backend nvidia,cpu --threads 2
+```
+
+Use `amd,cpu` em rigs AMD ou `nvidia,amd,cpu` em rigs mistos. Se omitir `--threads`, o seine dimensiona e ajusta sozinho as threads de CPU conforme a RAM livre. Outros argumentos úteis:
+
+| Argumento | Efeito |
+|---|---|
+| `--backend nvidia --nvidia-devices 0,1,3` | Minera só em algumas GPUs NVIDIA |
+| `--nvidia-max-lanes 4` | Usa menos memória de vídeo em cada GPU NVIDIA |
+
+O pacote configura para você a conexão com o painel, a saída de log em texto simples e o diretório de dados. Deixe `--api-bind`, `--api-cookie` e `--api-token` como o pacote define, porque o painel lê as estatísticas do seine por meio deles. O [guia de configurações](/pt-br/blog/configure-seine-miner/) explica as demais opções do seine.
+
+## Como atualizar o seine em um sistema de mineração?
+
+No HiveOS e no mmpOS, as novas versões chegam pelo pacote. Quando sai uma versão mais recente, o seine registra um aviso. Troque a versão na Installation URL, ou na URL de download do perfil do mmpOS, pela nova e aplique o flight sheet ou o perfil de novo. O sistema de mineração baixa o novo pacote, e o seine mantém os resultados de ajuste e as configurações no diretório de dados, então os rigs voltam à hashrate total em segundos.
+
+Se seus rigs usam o pacote v0.3.0, troque o flight sheet ou o perfil para o pacote v0.3.1; os scripts de inicialização dele também foram atualizados.
+
+## Onde ver shares e pagamentos?
+
+O painel do sistema de mineração mostra a hashrate e os shares de cada rig. Para trabalho creditado, saldo e pagamentos, consulte seu endereço no [bntpool.com](https://bntpool.com/stats). Cada rig aparece com o nome de worker do HiveOS ou o nome de rig do mmpOS, e o [guia de acompanhamento do minerador](https://bntpool.com/blog/pt-br/track-your-miner-on-bntpool/) explica a página de estatísticas. Os logs completos ficam no log do minerador do sistema; no HiveOS, `/var/log/miner/custom/seine-hiveos.log`.
+
+<CTA target="seine" title="Baixe os pacotes do seine para sistemas de mineração" text="Cada versão inclui pacotes para HiveOS e mmpOS: cole um link no seu flight sheet ou perfil e seus rigs mineram Blocknet." />

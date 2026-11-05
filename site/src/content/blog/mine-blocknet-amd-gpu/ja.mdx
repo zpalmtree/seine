@@ -1,0 +1,96 @@
+---
+title: 'AMD GPUでBlocknetをマイニングする方法'
+description: 'seineでAMD Radeon RX 6000・RX 7000・RX 9000とRadeon PROでBlocknetをマイニング。Windows・Linuxの設定、カードの選択、各GPUの動作確認を解説します。'
+tags: ['マイニングガイド', 'AMD', 'Radeon', 'GPU']
+sourceHash: 60f795ed50a7
+translation: draft
+faq:
+  - q: 'BlocknetをマイニングできるAMDのグラフィックスカードは？'
+    a: 'seineはAMD Radeon RX 6000、RX 7000、RX 9000と、同じチップを使うRadeon PROカードで、Windows x86_64とLinux x86_64上でマイニングします。単体のAMDカードをすべて自動で見つけ、CPUと並行してマイニングします。内蔵Radeonグラフィックスは、--backend amdを追加しない限りオフのままです。'
+  - q: 'WindowsでAMD GPUマイニングに必要なものは？'
+    a: 'AMDのグラフィックスドライバー（AdrenalinまたはRadeon PRO）だけです。ドライバーにはseineが使うHIPランタイムが含まれ、リリース版にはRX 6000、RX 7000、RX 9000用のGPUカーネルが入っています。HIP SDKやほかのダウンロードは不要です。'
+  - q: 'LinuxでAMD GPUマイニングに必要なものは？'
+    a: '現在のディストリビューションに含まれるamdgpuカーネルドライバーと、AMDのROCm HIPランタイム（hip-runtime-amdパッケージまたはROCm一式）です。ユーザーにはGPUのデバイスファイルへのアクセス権も必要で、多くのディストリビューションではrenderグループとvideoグループに参加します。'
+  - q: '同じPCでAMDとNVIDIAのカードを両方使ってマイニングできますか？'
+    a: 'はい。backendオプションを指定しなければ、seineはCPUと見つかったすべてのNVIDIAカードと単体AMDカードでマイニングします。CPUを空けておくには--backend nvidia,amdで起動します。各カードはDevicesパネルにそれぞれの行が表示されるので、GPUごとに確認できます。'
+---
+
+seineはCPUと並行して、AMD RadeonグラフィックスカードでもBlocknetをマイニングします。このガイドでは、WindowsとLinuxでインストールするもの、カードの選び方、各GPUがハッシュを計算しているかの確認方法、カードが表示されないときの確認点を説明します。内容はseine v0.3.1に基づいています。
+
+## seineが対応しているAMDカードは？
+
+<Answer>
+seineはAMD Radeon RX 6000、RX 7000、RX 9000と、同じRDNA2・RDNA3・RDNA4チップを使うRadeon PROカードでマイニングします。動作環境はWindows x86_64とLinux x86_64です。単体のAMDカードはすべて自動で選ばれ、設定を変えなくてもCPUと並行してマイニングします。
+</Answer>
+
+各カードは複数のレーンでマイニングし、レーンごとに1つのハッシュを計算します。1レーンにはビデオメモリが約2 GB必要で、RDNA2・RDNA3・RDNA4では少し少なくて済むため、メモリの多いカードほど多くのレーンを同時に動かせます。16 GBのカードでは約9レーンです。seineは起動時の空きメモリから自動で決めるので、自分で計算する必要はありません。
+
+Ryzenプロセッサーの内蔵Radeonグラフィックスは、既定ではオフです。使いたい場合は`--backend amd`で追加できます。
+
+## WindowsでAMD GPUマイニングを設定するには？
+
+[AMDのドライバーページ](https://www.amd.com/en/support/download/drivers.html)から、カードに合った最新のAMDグラフィックスドライバーをインストールします。Radeon RXカードはAdrenalin、PROカードはRadeon PROドライバーです。ドライバーにはseineが使うHIPランタイムが含まれ、リリース版にはRX 6000、RX 7000、RX 9000用のビルド済みGPUカーネルが入っています。ほかには何も必要ありません。
+
+[ダウンロード](/ja/#download)から`seine-windows-x86_64.zip`を入手し、アーカイブ全体を書き込み可能なフォルダーに展開して起動します。
+
+```powershell
+.\seine.exe
+```
+
+初回起動時に支払いアドレスを貼り付け、Enterを押してbntpool.comを選びます。ダウンロードと展開の手順は[Windows設定ガイド](/ja/blog/mine-blocknet-on-windows/)で順に説明しています。
+
+## LinuxでAMD GPUマイニングを設定するには？
+
+<Answer>
+現在のディストリビューションに含まれるamdgpuカーネルドライバーと、AMDのROCm HIPランタイム（hip-runtime-amdパッケージまたはROCm一式）をインストールします。seineがGPUを開けるようにユーザーをrenderグループとvideoグループに追加し、ログインし直してから、Linux x86_64版のseineを起動します。seineはAMDカードを自動で見つけます。
+</Answer>
+
+1. **ランタイムをインストールする。** ディストリビューション用のAMD ROCmリポジトリを追加して`hip-runtime-amd`をインストールします。すでにROCm一式を使っている場合はそれでもかまいません。対応ディストリビューションはAMDの[ROCmインストールガイド](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/)に載っています。
+2. **ユーザーにGPUへのアクセス権を与える。** seineは`/dev/kfd`と`/dev/dri/renderD*`を開きます。
+
+   ```bash
+   sudo usermod -aG render,video $USER
+   ```
+
+   新しいグループを反映させるため、いったんログアウトしてログインし直します。
+3. **seineを起動する。** [ダウンロード](/ja/#download)から`seine-linux-x86_64.tar.gz`を入手し、展開して実行します。
+
+   ```bash
+   ./seine
+   ```
+
+hipRTCがインストールされていれば、seineは起動時にそのカード専用のカーネルをコンパイルします。RX 6000、RX 7000、RX 9000はhipRTCがなくても、リリースに組み込まれたカーネルで動作します。アーカイブとシステム要件は[Linuxマイニングガイド](/ja/blog/mine-blocknet-on-linux/)で説明しています。
+
+RX 7000とRadeon PRO W7000では、rootで実行するとseineはマイニング中にカードの電力レベルを`high`に設定し、終了時に元のレベルへ戻します。rootでない場合は、同じことをする1行のコマンドを表示するので、自分で適用できます。
+
+## マイニングに使うカードを選ぶには？
+
+backendオプションを指定しなければ、CPUとすべての単体AMDカードでマイニングします。GPUでのマイニングを続けたままCPUを空けるには、`amd`を選びます。
+
+```bash
+./seine --backend amd
+```
+
+1枚のカードだけを使い、CPUマイニングも続けるには、両方のバックエンドとカードのインデックスを指定します。
+
+```bash
+./seine --backend cpu,amd --amd-devices 0
+```
+
+`--amd-devices 0,1`は2枚のカードを選びます。NVIDIAとAMDの両方のカードがあるPCでは、`--backend nvidia,amd`でCPUを使わずにすべてのカードでマイニングします。同じカードでゲームやほかのアプリのためにビデオメモリを空けておくには、`--amd-max-lanes 2`でレーン数を制限します。これらのオプションを毎回の起動で使い続ける方法は[設定ガイド](/ja/blog/configure-seine-miner/)で紹介しています。
+
+## AMD GPUがマイニングしているか確認するには？
+
+AMDカードは、CPUがすでにマイニングしている間にバックグラウンドで起動します。各カードはDevicesパネルに`amd#1`、`amd#2`のように自分の行を持ち、オンラインになるとログにレーン数とともに表示されます。たとえば`amd#1: online (initialized in background, 9 lanes)`です。その後、行にはカードの現在と平均のハッシュレートが表示されます。
+
+Miningパネルの受理済みシェアは、プールがあなたの作業を計上していることを示します。各パネルは[ダッシュボードガイド](/ja/blog/seine-dashboard-explained/)で説明しており、bntpool.comでのリグの確認方法は[マイナー追跡ガイド](https://bntpool.com/blog/ja/track-your-miner-on-bntpool/)にあります。
+
+## AMDカードが表示されないときは何を確認する？
+
+- **ドライバーとランタイムを確認する。** WindowsではAMDドライバーをインストールまたは更新します。Linuxでは`hip-runtime-amd`をインストールし、ユーザーが`render`グループと`video`グループに入っているか確認します。ランタイムがない場合、seineはCPUでマイニングし、`--backend amd`を付けると起動時に不足しているランタイムを表示します。
+- **コマンドを確認する。** `--backend cpu`はプロセッサーだけでマイニングします。既定のコマンドを使うか、バックエンドの一覧に`amd`を含めてください。`--amd-devices`を指定した場合は、そのインデックスが存在するか確認します。
+- **ドライバー更新後はamdを自分で指定する。** AMDランタイムが2回続けてseineを終了させると、seineはAMDカードの自動選択をやめて残りのデバイスでマイニングを続け、次の更新後に再びカードを試します。すぐに試し直すには、一度`--backend cpu,amd`で起動します。
+
+すべての要件は[seine AMDガイド](https://github.com/zpalmtree/seine/blob/master/docs/guides/amd.md)にあり、マイニングOSを使う場合は各リリースの[HiveOS](https://github.com/zpalmtree/seine/blob/master/docs/guides/hiveos.md)または[mmpOS](https://github.com/zpalmtree/seine/blob/master/docs/guides/mmpos.md)パッケージをインストールできます。
+
+<CTA target="seine" title="AMD GPUマイニング用にseineをダウンロード" text="WindowsまたはLinux x86_64のアーカイブを選べば、seineはCPUと見つかったすべてのRadeonカードでマイニングします。" />

@@ -1,0 +1,96 @@
+---
+title: How to mine Blocknet with an AMD GPU
+description: 'Mine Blocknet on AMD Radeon RX 6000, RX 7000, RX 9000 and Radeon PRO cards with seine. Set up Windows or Linux, pick cards, and check each GPU is hashing.'
+date: 2026-11-04
+tags: [Mining guide, AMD, Radeon, GPU]
+faq:
+  - q: 'Which AMD graphics cards can mine Blocknet?'
+    a: 'Seine mines on AMD Radeon RX 6000, RX 7000 and RX 9000 cards and the Radeon PRO cards built on the same chips, on Windows x86_64 and Linux x86_64. It finds every discrete AMD card by itself and mines on it alongside the CPU. Integrated Radeon graphics stay off unless you add --backend amd.'
+  - q: 'What do I need to install for AMD GPU mining on Windows?'
+    a: 'Only the AMD graphics driver, Adrenalin or Radeon PRO. The driver includes the HIP runtime that seine uses, and the release binary already contains the GPU kernels for RX 6000, RX 7000 and RX 9000 cards. You do not need the HIP SDK or any other download.'
+  - q: 'What do I need to install for AMD GPU mining on Linux?'
+    a: 'The amdgpu kernel driver, which current distributions include, and the ROCm HIP runtime from AMD, either the hip-runtime-amd package or a full ROCm install. Your user also needs access to the GPU device files, which on most distributions means joining the render and video groups.'
+  - q: 'Can seine mine on AMD and NVIDIA cards in the same computer?'
+    a: 'Yes. With no backend option, seine mines on the CPU and every NVIDIA and discrete AMD card it finds. To leave the CPU free, start it with --backend nvidia,amd. Each card gets its own row on the Devices panel, so you can check every GPU separately.'
+related: [mine-blocknet-nvidia-gpu, mine-blocknet-on-linux, configure-seine-miner, seine-dashboard-explained]
+---
+
+Seine mines Blocknet on AMD Radeon graphics cards alongside your CPU. This guide covers what to install on Windows and Linux, how to choose cards, how to confirm each GPU is hashing, and what to check if a card is missing. It describes seine v0.3.1.
+
+## Which AMD cards does seine support?
+
+<Answer>
+Seine mines on AMD Radeon RX 6000, RX 7000 and RX 9000 cards, and on the Radeon PRO cards built on the same RDNA2, RDNA3 and RDNA4 chips. It runs on Windows x86_64 and Linux x86_64. Every discrete AMD card is selected by itself and mines alongside the CPU, with no settings to change.
+</Answer>
+
+Each card mines with several lanes, one hash in progress per lane. A lane needs about 2 GB of video memory, a little less on RDNA2, RDNA3 and RDNA4, so cards with more memory run more lanes at once. A 16 GB card runs about 9 lanes. Seine sizes this from the memory that is free when it starts, so you don't need to work it out.
+
+Integrated Radeon graphics in Ryzen processors stay off by default. You can add them with `--backend amd` if you want to.
+
+## How do you set up AMD GPU mining on Windows?
+
+Install the current AMD graphics driver for your card, Adrenalin for Radeon RX cards or the Radeon PRO driver for PRO cards, from [AMD's driver page](https://www.amd.com/en/support/download/drivers.html). The driver includes the HIP runtime seine uses, and the release binary carries ready-built GPU kernels for RX 6000, RX 7000 and RX 9000 cards. Nothing else is needed.
+
+Download `seine-windows-x86_64.zip` from the [download section](/#download), extract the whole archive into a writable folder, and start it:
+
+```powershell
+.\seine.exe
+```
+
+On the first run, paste your payout address and press Enter to accept bntpool.com. The [Windows setup guide](/blog/mine-blocknet-on-windows/) walks through the download and extraction step by step.
+
+## How do you set up AMD GPU mining on Linux?
+
+<Answer>
+Install the amdgpu kernel driver, which current distributions include, and AMD's ROCm HIP runtime, either the hip-runtime-amd package or a full ROCm install. Add your user to the render and video groups so seine can open the GPU, log in again, then start the Linux x86_64 seine archive. Seine finds your AMD cards by itself.
+</Answer>
+
+1. **Install the runtime.** Add AMD's ROCm repository for your distribution and install `hip-runtime-amd`, or the full ROCm install if you already use it. AMD's [ROCm installation guide](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/) lists the supported distributions.
+2. **Give your user access to the GPU.** Seine opens `/dev/kfd` and `/dev/dri/renderD*`:
+
+   ```bash
+   sudo usermod -aG render,video $USER
+   ```
+
+   Log out and back in so the new groups apply.
+3. **Start seine.** Download `seine-linux-x86_64.tar.gz` from the [download section](/#download), extract it and run:
+
+   ```bash
+   ./seine
+   ```
+
+When hipRTC is installed, seine compiles its kernel for your exact card at startup. RX 6000, RX 7000 and RX 9000 cards also run without it, using the kernels built into the release. The [Linux mining guide](/blog/mine-blocknet-on-linux/) covers the archive and system requirements.
+
+On RX 7000 and Radeon PRO W7000 cards, seine sets the card's power level to `high` while it mines when it runs as root, and puts the previous level back when it exits. Without root, it prints the one-line command that does the same, so you can apply it yourself.
+
+## How do you choose which cards mine?
+
+Leave the backend option unset to mine on the CPU and every discrete AMD card. To keep the GPUs mining and leave the CPU free, select `amd`:
+
+```bash
+./seine --backend amd
+```
+
+To mine on one card and keep CPU mining, select both backends and the card's index:
+
+```bash
+./seine --backend cpu,amd --amd-devices 0
+```
+
+`--amd-devices 0,1` selects two cards. In a computer with both NVIDIA and AMD cards, `--backend nvidia,amd` mines on all of them without the CPU. To leave video memory free for a game or other apps on the same card, cap the lanes with `--amd-max-lanes 2`. The [settings guide](/blog/configure-seine-miner/) shows how to keep these options for every start.
+
+## How do you confirm the AMD GPU is mining?
+
+AMD cards start in the background while the CPU is already mining. Each card gets its own row on the Devices panel, `amd#1`, `amd#2` and so on, and the log reports when it comes online with its lane count, for example `amd#1: online (initialized in background, 9 lanes)`. The row then shows the card's current and average hashrate.
+
+Accepted shares in the Mining panel confirm that the pool credits your work. The [dashboard guide](/blog/seine-dashboard-explained/) explains every panel, and you can follow your rigs on bntpool.com with the [miner tracking guide](https://bntpool.com/blog/track-your-miner-on-bntpool/).
+
+## What should you check if an AMD card is missing?
+
+- **Check the driver and runtime.** On Windows, install or update the AMD driver. On Linux, install `hip-runtime-amd` and check that your user is in the `render` and `video` groups. Without a runtime, seine mines on the CPU, and with `--backend amd` it names the missing runtime at startup.
+- **Check your command.** `--backend cpu` mines on the processor only. Use the default command or include `amd` in the backend list. If you set `--amd-devices`, check that the index exists.
+- **List amd yourself after a driver update.** If the AMD runtime closes seine twice in a row, seine stops selecting AMD cards by itself and keeps mining on the rest, then tries them again after its next update. Start it once with `--backend cpu,amd` to try the cards again right away.
+
+The [seine AMD guide](https://github.com/zpalmtree/seine/blob/master/docs/guides/amd.md) has the full requirements, and mining OS users can install the [HiveOS](https://github.com/zpalmtree/seine/blob/master/docs/guides/hiveos.md) or [mmpOS](https://github.com/zpalmtree/seine/blob/master/docs/guides/mmpos.md) package from each release.
+
+<CTA target="seine" title="Download seine for AMD GPU mining" text="Choose the Windows or Linux x86_64 archive and seine mines on your CPU and every Radeon card it finds." />

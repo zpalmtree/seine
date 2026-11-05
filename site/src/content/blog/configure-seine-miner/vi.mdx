@@ -11,7 +11,7 @@ faq:
     a: 'Seine tự chọn số luồng cho bạn, nên bạn chỉ cần đặt khi muốn chừa chỗ cho việc khác. Mỗi luồng dùng khoảng 2 GB RAM. Nhấn phím trừ trong bảng điều khiển cho đến khi máy tính của bạn chạy thoải mái, rồi dùng con số đó.'
   - q: 'Seine lưu thiết lập ở đâu?'
     a: 'Seine lưu địa chỉ, pool và tên worker của bạn trong seine-data/seine.config.json, bên trong thư mục bạn khởi động nó. Các tùy chọn luồng và backend không được lưu ở đó, nên hãy đặt chúng vào một tệp khởi động nhỏ nếu bạn muốn dùng ở mỗi lần khởi động.'
-sourceHash: b5ca5a9a16d8
+sourceHash: cbfaa904cdbf
 translation: draft
 ---
 
@@ -129,6 +129,8 @@ Giữ nguyên các dòng còn lại. Giữ dấu ngoặc kép và dấu phẩy, 
 ```
 
 Hai thiết lập còn lại là `--address` và `--pool-url`. [Hướng dẫn đổi địa chỉ](https://bntpool.com/blog/vi/change-mining-wallet-address/) giải thích cách pool ghi nhận công việc của bạn sau khi bạn đổi địa chỉ.
+
+Để đào solo trên bntpool.com, thêm `solo:` vào trước địa chỉ, ví dụ `"address": "solo:@yourname"` trong file hoặc `--address solo:YOUR_ADDRESS` trên dòng lệnh. Pool khi đó trả cho bạn toàn bộ phần thưởng của mỗi khối dàn máy của bạn tìm được. [Đào solo trên bntpool.com](https://bntpool.com/blog/vi/solo-mine-blocknet-on-bntpool/) giải thích cách khối solo được thanh toán.
 
 ## Nếu một thiết lập không hoạt động thì sao?
 

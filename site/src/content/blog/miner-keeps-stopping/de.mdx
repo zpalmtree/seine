@@ -9,11 +9,11 @@ faq:
     a: 'Behalte die Konfiguration und notiere ihren Speicherort. Eine Parse-Meldung nennt die zu prüfende Datei oder den Wert. Sichere die Datei, korrigiere den gemeldeten Fehler und bewahre Adresse und Startparameter. Alles zu löschen erschwert den Vergleich mit dem letzten funktionierenden Lauf.'
   - q: 'Welche Angaben helfen bei wiederholten Stopps?'
     a: 'Notiere seine-Version, Betriebssystem, CPU, GPU, verfügbaren Speicher, vollständige Startargumente, Arbeitsverzeichnis und Zeitpunkt. Füge letzte Logmeldungen und relevante Systemereignisse hinzu. Entferne Zugangsdaten und persönliche Informationen vor dem Teilen. Wiederherstellungsphrasen und private Schlüssel gehören niemals in einen solchen Bericht.'
-sourceHash: '2e054f0c0100'
+sourceHash: '333d8de81191'
 translation: draft
 ---
 
-Finde heraus, an welcher Stelle dein Blocknet-Miner stoppt, damit er zuverlässig läuft. Diese Anleitung bezieht sich auf seine v0.2.37 und beginnt mit Belegen von deinem eigenen Rechner. Halte den letzten funktionierenden Befehl und die Konfiguration bereit. Ändere jeweils nur eine relevante Einstellung, damit das nächste Ergebnis aussagekräftig bleibt.
+Finde heraus, an welcher Stelle dein Blocknet-Miner stoppt, damit er zuverlässig läuft. Diese Anleitung bezieht sich auf seine v0.3.1 und beginnt mit Belegen von deinem eigenen Rechner. Halte den letzten funktionierenden Befehl und die Konfiguration bereit. Ändere jeweils nur eine relevante Einstellung, damit das nächste Ergebnis aussagekräftig bleibt.
 
 ## Was prüfst du, wenn der Miner stoppt?
 
@@ -27,7 +27,13 @@ Prüfe, ob der Prozess beendet wurde, der Rechner schläft oder die Pool-Verbind
 
 Öffne ein Terminal im üblichen Startverzeichnis und führe dort deinen vorhandenen Befehl aus. Ergänze `--ui plain` für Textlogs statt Dashboard; die übrigen Argumente bleiben erhalten. Das startet Mining mit deiner Konfiguration. Kopiere die letzten Meldungen einschließlich des ersten Fehlers vor wiederholten Verbindungs- oder Abschaltmeldungen.
 
-Notiere Programmversion, Arbeitsverzeichnis und gewähltes Datenverzeichnis zusammen. Diese Version gibt einen behandelten fatalen Fehler vor dem Beenden mit `fatal:` aus. Eine Beendigung durch das Betriebssystem kann andere Spuren hinterlassen. Läuft der Prozess noch, nutze die [Pool-Verbindungsprüfung](https://bntpool.com/blog/de/track-your-miner-on-bntpool/): Ein fehlender Share oder eine vorübergehende Trennung beweist keinen Absturz.
+Notiere Programmversion, Arbeitsverzeichnis und gewähltes Datenverzeichnis zusammen. Einen behandelten fatalen Fehler gibt seine vor dem Beenden mit `fatal:` aus. Startest du `seine.exe` unter Windows per Doppelklick, bleibt die Konsole nach einem fatalen Fehler offen, bis du Enter drückst, damit du die Meldung lesen kannst. Eine Beendigung durch das Betriebssystem kann andere Spuren hinterlassen. Läuft der Prozess noch, nutze die [Pool-Verbindungsprüfung](https://bntpool.com/blog/de/track-your-miner-on-bntpool/): Ein fehlender Share oder eine vorübergehende Trennung beweist keinen Absturz.
+
+## Hat seine für ein Update gestoppt?
+
+Ein kurzer Stopp kann ein Update sein. Mit aktivierten automatischen Updates zählt seine in der Kopfzeile des Dashboards herunter, installiert das neue Release, beendet das Mining sauber und startet mit denselben Argumenten neu; das neue Dashboard protokolliert `updated to seine vX.Y.Z`. Schickt ein Pool Arbeit, die ein neueres Release braucht, etwa bei einem Netzwerk-Upgrade, pausiert seine das Mining, protokolliert `installing seine vX.Y.Z now: mining is paused until Seine is updated` und macht weiter, sobald das Update installiert ist.
+
+Kommst du unter Linux von v0.2.45, installiert die alte Version das Update und beendet sich dann. Starte seine also noch einmal; ein systemd-Dienst oder ein anderer Starter, der das Programm neu startet, braucht nichts. Die [Update-Anleitung](/de/blog/update-seine-miner/) nennt auch die einmaligen Schritte für Windows, HiveOS und mmpOS.
 
 ## Stoppt er vor dem Mining-Start?
 
@@ -43,9 +49,9 @@ Ein ausdrücklich vorgeschriebener Seitenmodus benötigt die entsprechende Betri
 
 ## Prüfe die GPU-Phase getrennt
 
-Nennt der Start eine CUDA-Bibliothek, ein Gerät oder GPU-Speicher, notiere exakte Meldung und installierte Treiberversion. Die [NVIDIA-Anleitung](/de/blog/mine-blocknet-nvidia-gpu/) behandelt Versionsanforderungen, Laufzeitbibliotheken und Gerätewahl. Vergleiche sie mit deinem System, bevor du Kernel- oder Tuning-Optionen änderst. Ein erfolgreich heruntergeladenes Archiv bestätigt noch keine einsatzbereite Laufzeitumgebung.
+Nennt der Start eine CUDA- oder HIP-Bibliothek, ein Gerät oder GPU-Speicher, notiere exakte Meldung und installierte Treiberversion. Die [NVIDIA-Anleitung](/de/blog/mine-blocknet-nvidia-gpu/) und die [AMD-Anleitung](/de/blog/mine-blocknet-amd-gpu/) behandeln Versionsanforderungen, Laufzeitbibliotheken und Gerätewahl. Vergleiche sie mit deinem System, bevor du Kernel- oder Tuning-Optionen änderst. Ein erfolgreich heruntergeladenes Archiv bestätigt noch keine einsatzbereite Laufzeitumgebung.
 
-seine kann einen Backend-Fehler isolieren, während andere aktive Backends weiterarbeiten. Prüfe Meldungen und verbleibende Aktivität, bevor du einen vollständigen Anwendungsstopp annimmst. Sichere Belege vor dem Neustart, da eine neue Sitzung die vorige Abfolge verdecken kann. Testest du bewusst eine einfachere Backend-Auswahl, behalte den ursprünglichen Befehl und vergleiche Start, laufende Arbeit und akzeptierte Einreichungen.
+seine kann einen Backend-Fehler isolieren, während andere aktive Backends weiterarbeiten. Beendet die AMD-Laufzeit seine zweimal hintereinander, während es die GPU nutzt, wählt seine AMD-Karten nicht mehr von selbst aus und mint mit dem Rest weiter; starte es nach einem Treiber-Update einmal mit `--backend cpu,amd`, um die Karten erneut zu versuchen. Prüfe Meldungen und verbleibende Aktivität, bevor du einen vollständigen Anwendungsstopp annimmst. Sichere Belege vor dem Neustart, da eine neue Sitzung die vorige Abfolge verdecken kann. Testest du bewusst eine einfachere Backend-Auswahl, behalte den ursprünglichen Befehl und vergleiche Start, laufende Arbeit und akzeptierte Einreichungen.
 
 ## War der Rechner im Ruhezustand oder wurde er neu gestartet?
 

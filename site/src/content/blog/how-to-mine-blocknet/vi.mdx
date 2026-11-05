@@ -6,10 +6,10 @@ faq:
   - q: 'Cần bao nhiêu RAM để đào Blocknet?'
     a: 'Mỗi luồng đào cần khoảng 2 GB RAM, vì mỗi lần băm Argon2id phải xử lý một khối bộ nhớ 2 GiB. Vì vậy, một máy có 16 GB có thể chạy khoảng sáu đến bảy luồng sau khi chừa chỗ cho hệ thống. seine đo bộ nhớ của bạn và tự động chọn số luồng an toàn.'
   - q: 'Khi nào nhận được thanh toán khi đào Blocknet trên bntpool.com?'
-    a: 'Pool bntpool.com trả theo PPLNS với cửa sổ sáu giờ. Phần thưởng của một khối chỉ được trả khi khối đó đã sâu 60 khối, khoảng năm giờ với thời gian khối năm phút, và số dư được gửi khi đạt 0,1 BNT. Khoản thanh toán đầu tiên thường đến vài giờ sau khi những share đầu tiên của bạn được chấp nhận.'
+    a: 'Pool bntpool.com trả theo PPLNS với cửa sổ sáu giờ. Phần thưởng của một khối chỉ được trả khi khối đó đã sâu 60 khối, khoảng năm giờ với thời gian khối năm phút, và số dư được gửi khi đạt 1 BNT. Khoản thanh toán đầu tiên thường đến vài giờ sau khi những share đầu tiên của bạn được chấp nhận.'
   - q: 'Có thể đào Blocknet bằng CPU và GPU cùng lúc không?'
     a: 'Có. Trên Windows và Linux, seine đào trên mọi nhân CPU và mọi card đồ họa NVIDIA trong máy cùng một lúc, và hashrate của hai bên được cộng dồn. Nó tinh chỉnh bộ xử lý và từng card riêng biệt trong khi chạy, nên bạn khai thác tối đa toàn bộ phần cứng mà không phải thay đổi thiết lập nào.'
-sourceHash: bff032ea0960
+sourceHash: 42d41a1c403b
 translation: draft
 ---
 
@@ -49,7 +49,7 @@ Từ đây seine tiếp tục tinh chỉnh trong khi đào. Nó so sánh các s�
 
 ## Bao lâu thì bạn nhận được thanh toán?
 
-Pool bntpool.com dùng PPLNS: phần thưởng của mỗi khối được chia cho các share đã gửi trong sáu giờ trước khi khối được tìm thấy. Phần thưởng chỉ có thể chi tiêu khi khối của nó đã sâu 60 khối, tức khoảng năm giờ với thời gian khối năm phút của Blocknet. Khi số dư đã xác nhận của bạn đạt 0,1 BNT, pool sẽ gửi nó về địa chỉ của bạn.
+Pool bntpool.com dùng PPLNS: phần thưởng của mỗi khối được chia cho các share đã gửi trong sáu giờ trước khi khối được tìm thấy. Phần thưởng chỉ có thể chi tiêu khi khối của nó đã sâu 60 khối, tức khoảng năm giờ với thời gian khối năm phút của Blocknet. Khi số dư đã xác nhận của bạn đạt 1 BNT, pool sẽ gửi nó về địa chỉ của bạn.
 
 Bạn có thể theo dõi hashrate, share và số dư trên [bntpool.com](https://bntpool.com) bằng cách tra cứu địa chỉ của mình. Pool hiển thị riêng phần thưởng từ các khối chưa được xác nhận, vì những phần thưởng đó vẫn có thể thay đổi.
 
@@ -78,10 +78,10 @@ Kết quả của mọi CPU đã thử nghiệm có trên [trang hiệu năng](h
 
 ## Có thể đào Blocknet solo không?
 
-Có. Nếu bạn chạy node Blocknet của riêng mình đã đồng bộ, hãy khởi động seine bằng `./seine --mode daemon` và nó sẽ đào trực tiếp với node thay vì pool. Bạn giữ trọn mọi khối tìm được, nhưng chỉ nhận thanh toán khi tìm được nguyên một khối, nên phần lớn mọi người bắt đầu với pool. [Hướng dẫn đào solo](https://github.com/zpalmtree/seine/blob/master/docs/guides/solo-mining.md) giải thích cách thiết lập.
+Có, theo hai cách. Đơn giản nhất là đào solo trên bntpool.com: thêm `solo:` vào trước địa chỉ, như `./seine --address solo:YOUR_ADDRESS`, và pool trả cho bạn toàn bộ phần thưởng của mỗi khối dàn máy của bạn tìm được, không cần chạy node. [Đào solo trên bntpool.com](https://bntpool.com/blog/vi/solo-mine-blocknet-on-bntpool/) hướng dẫn cách thiết lập. Nếu bạn chạy node Blocknet đã đồng bộ của riêng mình, `./seine --mode daemon` sẽ đào trực tiếp với node đó, như [hướng dẫn đào solo](https://github.com/zpalmtree/seine/blob/master/docs/guides/solo-mining.md) giải thích. Phần thưởng solo đến dưới dạng nguyên khối, nên phù hợp với thợ đào nắm tỷ lệ lớn trong mạng.
 
 <Note>
-Theo [blocknetcrypto.com](https://blocknetcrypto.com/#faraday), Blocknet dự kiến nâng cấp mạng lưới mang tên Faraday vào khoảng 2027-02-16. Bản nâng cấp này dự kiến thay đổi Proof of Work, vì vậy hãy luôn cập nhật seine: nó kiểm tra bản phát hành mới khi khởi động và mỗi 12 giờ.
+Theo [blocknetcrypto.com](https://blocknetcrypto.com/#faraday), Blocknet dự kiến nâng cấp mạng lưới mang tên Faraday vào khoảng ngày 16 tháng 2 năm 2027. Bản nâng cấp này dự kiến thay đổi Proof of Work. seine v0.3.1 đã sẵn sàng: đào pool tự chuyển sang Proof of Work mới, và khi bật cập nhật tự động, seine tự cài các bản phát hành mới hơn cho bạn.
 </Note>
 
 <CTA target="seine" title="Tải seine" text="Miễn phí cho Windows, macOS và Linux. Chạy chương trình, dán địa chỉ của bạn là bắt đầu đào trên bntpool.com." />

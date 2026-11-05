@@ -1,0 +1,96 @@
+---
+title: 'Cách đào Blocknet bằng GPU AMD'
+description: 'Đào Blocknet trên card AMD Radeon RX 6000, RX 7000, RX 9000 và Radeon PRO bằng seine. Thiết lập Windows hoặc Linux, chọn card và kiểm tra từng GPU đang băm.'
+tags: ['Hướng dẫn đào coin', 'AMD', 'Radeon', 'GPU']
+sourceHash: '60f795ed50a7'
+translation: draft
+faq:
+  - q: 'Những card đồ họa AMD nào đào được Blocknet?'
+    a: 'seine đào trên card AMD Radeon RX 6000, RX 7000 và RX 9000 cùng các card Radeon PRO dùng cùng chip, trên Windows x86_64 và Linux x86_64. Nó tự tìm mọi card AMD rời và đào trên đó cùng với CPU. Đồ họa Radeon tích hợp vẫn tắt trừ khi bạn thêm --backend amd.'
+  - q: 'Cần cài gì để đào bằng GPU AMD trên Windows?'
+    a: 'Chỉ cần driver đồ họa AMD, Adrenalin hoặc Radeon PRO. Driver đã có HIP runtime mà seine sử dụng, và bản phát hành đã chứa sẵn kernel GPU cho card RX 6000, RX 7000 và RX 9000. Bạn không cần HIP SDK hay bản tải nào khác.'
+  - q: 'Cần cài gì để đào bằng GPU AMD trên Linux?'
+    a: 'Driver kernel amdgpu, vốn có sẵn trong các bản phân phối hiện nay, và ROCm HIP runtime của AMD, là gói hip-runtime-amd hoặc bản cài ROCm đầy đủ. Người dùng của bạn cũng cần quyền truy cập các file thiết bị GPU, nghĩa là trên đa số bản phân phối phải tham gia nhóm render và video.'
+  - q: 'seine có đào được trên card AMD và NVIDIA trong cùng một máy không?'
+    a: 'Có. Khi không đặt tùy chọn backend, seine đào trên CPU cùng mọi card NVIDIA và card AMD rời nó tìm thấy. Để chừa CPU trống, khởi động với --backend nvidia,amd. Mỗi card có một hàng riêng trên khung Devices, nên bạn kiểm tra được từng GPU.'
+---
+
+seine đào Blocknet trên card đồ họa AMD Radeon cùng với CPU của bạn. Hướng dẫn này trình bày những gì cần cài trên Windows và Linux, cách chọn card, cách xác nhận từng GPU đang băm và những gì cần kiểm tra nếu thiếu một card. Nội dung áp dụng cho seine v0.3.1.
+
+## seine hỗ trợ những card AMD nào?
+
+<Answer>
+seine đào trên card AMD Radeon RX 6000, RX 7000 và RX 9000, và trên các card Radeon PRO dùng cùng chip RDNA2, RDNA3 và RDNA4. Nó chạy trên Windows x86_64 và Linux x86_64. Mọi card AMD rời đều được tự chọn và đào cùng CPU, không cần đổi cài đặt nào.
+</Answer>
+
+Mỗi card đào bằng nhiều lane, mỗi lane xử lý một hash. Một lane cần khoảng 2 GB bộ nhớ video, ít hơn một chút trên RDNA2, RDNA3 và RDNA4, nên card có nhiều bộ nhớ hơn chạy được nhiều lane cùng lúc hơn. Một card 16 GB chạy khoảng 9 lane. seine tính số lane từ bộ nhớ còn trống lúc khởi động, nên bạn không cần tự tính.
+
+Đồ họa Radeon tích hợp trong bộ xử lý Ryzen mặc định tắt. Bạn có thể thêm chúng bằng `--backend amd` nếu muốn.
+
+## Thiết lập đào GPU AMD trên Windows thế nào?
+
+Cài driver đồ họa AMD mới nhất cho card của bạn, Adrenalin cho card Radeon RX hoặc driver Radeon PRO cho card PRO, từ [trang driver của AMD](https://www.amd.com/en/support/download/drivers.html). Driver có sẵn HIP runtime mà seine dùng, và bản phát hành mang sẵn kernel GPU dựng sẵn cho card RX 6000, RX 7000 và RX 9000. Không cần gì thêm.
+
+Tải `seine-windows-x86_64.zip` từ [mục tải về](/vi/#download), giải nén toàn bộ vào một thư mục có quyền ghi và khởi động:
+
+```powershell
+.\seine.exe
+```
+
+Ở lần chạy đầu, dán địa chỉ nhận thanh toán và nhấn Enter để chấp nhận bntpool.com. [Hướng dẫn cài đặt trên Windows](/vi/blog/mine-blocknet-on-windows/) trình bày từng bước tải và giải nén.
+
+## Thiết lập đào GPU AMD trên Linux thế nào?
+
+<Answer>
+Cài driver kernel amdgpu, vốn có sẵn trong các bản phân phối hiện nay, và ROCm HIP runtime của AMD, là gói hip-runtime-amd hoặc bản cài ROCm đầy đủ. Thêm người dùng vào nhóm render và video để seine mở được GPU, đăng nhập lại, rồi chạy bản seine Linux x86_64. seine tự tìm các card AMD của bạn.
+</Answer>
+
+1. **Cài runtime.** Thêm kho ROCm của AMD cho bản phân phối của bạn và cài `hip-runtime-amd`, hoặc bản cài ROCm đầy đủ nếu bạn đã dùng. [Hướng dẫn cài ROCm](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/) của AMD liệt kê các bản phân phối được hỗ trợ.
+2. **Cấp cho người dùng quyền truy cập GPU.** seine mở `/dev/kfd` và `/dev/dri/renderD*`:
+
+   ```bash
+   sudo usermod -aG render,video $USER
+   ```
+
+   Đăng xuất rồi đăng nhập lại để các nhóm mới có hiệu lực.
+3. **Khởi động seine.** Tải `seine-linux-x86_64.tar.gz` từ [mục tải về](/vi/#download), giải nén và chạy:
+
+   ```bash
+   ./seine
+   ```
+
+Khi có hipRTC, seine biên dịch kernel cho đúng card của bạn lúc khởi động. Card RX 6000, RX 7000 và RX 9000 cũng chạy được khi không có nó, bằng các kernel tích hợp trong bản phát hành. [Hướng dẫn đào trên Linux](/vi/blog/mine-blocknet-on-linux/) trình bày gói tải và yêu cầu hệ thống.
+
+Trên card RX 7000 và Radeon PRO W7000, khi chạy với quyền root, seine đặt mức nguồn của card thành `high` trong lúc đào và trả lại mức cũ khi thoát. Khi không có root, nó in ra lệnh một dòng làm điều tương tự để bạn tự áp dụng.
+
+## Chọn card nào đào thế nào?
+
+Không đặt tùy chọn backend để đào trên CPU và mọi card AMD rời. Để GPU tiếp tục đào và chừa CPU trống, chọn `amd`:
+
+```bash
+./seine --backend amd
+```
+
+Để đào trên một card và vẫn đào CPU, chọn cả hai backend cùng chỉ số card:
+
+```bash
+./seine --backend cpu,amd --amd-devices 0
+```
+
+`--amd-devices 0,1` chọn hai card. Trong máy có cả card NVIDIA và AMD, `--backend nvidia,amd` đào trên tất cả mà không dùng CPU. Để chừa bộ nhớ video cho game hoặc ứng dụng khác trên cùng card, giới hạn lane bằng `--amd-max-lanes 2`. [Hướng dẫn cài đặt](/vi/blog/configure-seine-miner/) cho biết cách giữ các tùy chọn này cho mọi lần khởi động.
+
+## Xác nhận GPU AMD đang đào thế nào?
+
+Card AMD khởi động ở chế độ nền trong khi CPU đã đào. Mỗi card có một hàng riêng trên khung Devices, `amd#1`, `amd#2` và tiếp theo, và nhật ký báo khi card hoạt động cùng số lane, ví dụ `amd#1: online (initialized in background, 9 lanes)`. Hàng đó sau đó hiển thị hashrate hiện tại và trung bình của card.
+
+Share được chấp nhận trong khung Mining xác nhận pool ghi nhận công việc của bạn. [Hướng dẫn bảng điều khiển](/vi/blog/seine-dashboard-explained/) giải thích từng khung, và bạn có thể theo dõi dàn máy trên bntpool.com bằng [hướng dẫn theo dõi trình đào](https://bntpool.com/blog/vi/track-your-miner-on-bntpool/).
+
+## Cần kiểm tra gì nếu thiếu card AMD?
+
+- **Kiểm tra driver và runtime.** Trên Windows, cài hoặc cập nhật driver AMD. Trên Linux, cài `hip-runtime-amd` và kiểm tra người dùng của bạn thuộc nhóm `render` và `video`. Khi không có runtime, seine đào trên CPU, còn với `--backend amd` nó nêu tên runtime còn thiếu lúc khởi động.
+- **Kiểm tra lệnh của bạn.** `--backend cpu` chỉ đào trên bộ xử lý. Dùng lệnh mặc định hoặc thêm `amd` vào danh sách backend. Nếu bạn đặt `--amd-devices`, kiểm tra chỉ số đó có tồn tại.
+- **Tự thêm amd sau khi cập nhật driver.** Nếu AMD runtime làm seine đóng hai lần liên tiếp, seine thôi tự chọn card AMD và tiếp tục đào trên phần còn lại, rồi thử lại sau lần cập nhật kế tiếp. Khởi động một lần với `--backend cpu,amd` để thử lại các card ngay.
+
+[Hướng dẫn AMD của seine](https://github.com/zpalmtree/seine/blob/master/docs/guides/amd.md) có đầy đủ yêu cầu, và người dùng hệ điều hành đào có thể cài gói [HiveOS](https://github.com/zpalmtree/seine/blob/master/docs/guides/hiveos.md) hoặc [mmpOS](https://github.com/zpalmtree/seine/blob/master/docs/guides/mmpos.md) từ mỗi bản phát hành.
+
+<CTA target="seine" title="Tải seine để đào bằng GPU AMD" text="Chọn bản Windows hoặc Linux x86_64 và seine đào trên CPU cùng mọi card Radeon nó tìm thấy." />

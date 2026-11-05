@@ -1,125 +1,120 @@
 ---
 title: seine 仪表盘详解
-description: 逐个面板介绍 seine 的挖矿仪表盘（算力、份额、状态、线程、矿池余额、日志），并说明如何在挖矿时观察它自动调优。
+description: '逐个面板介绍 seine 的挖矿仪表盘（算力、份额、状态、线程、调优、矿池余额、日志），以及挖矿时可以使用的按键。'
 tags: [seine, 挖矿指南, 仪表盘, 自动调优]
+sourceHash: '7f9d55be8e18'
+translation: draft
 faq:
-  - q: '为什么 seine 的平均算力比当前算力低？'
-    a: 'Average 用本次会话完成的全部哈希除以挖矿时间，所以它包含最初几分钟：那时每个线程还在完成第一个哈希，调优器也从低于满负荷的线程数开始，再逐步往上调。Current 只看最近五秒。seine 运行得越久，两者越接近。'
+  - q: '为什么 seine 的平均算力低于当前算力？'
+    a: 'Average 是用本次会话完成的全部哈希除以挖矿时间，所以包含最初几分钟：这段时间里每个线程还在完成第一个哈希，调优也还在选择线程数。Current 只看最近五秒。seine 运行得越久，两者越接近。'
   - q: '如何在 seine 运行时更改线程数？'
-    a: '按加号键或等号键为每个 CPU 后端增加一个线程，按减号键减少一个。seine 会用新的线程数重启挖矿后端，同时保留会话统计、运行时间和平均算力。手动更改会在本次运行中关闭线程自动调优，也不会保存为新的默认值。'
-  - q: '标题栏里的金色菱形是什么意思？'
-    a: '在矿池挖矿时，每个菱形代表一个被接受的份额；单独挖矿时，代表一个被接受的区块。它出现在波浪的最右端，每秒向左移动一列，所以你能看到的菱形就是最近两分钟左右被接受的工作。'
+    a: '按加号键或等号键增加一个 CPU 线程，按减号键减少一个。Tuning 行显示 done 后，更改会立即作用于正在运行的线程，GPU 和矿池连接继续运行。更改只对本次运行有效。'
+  - q: '标题栏中的金色菱形代表什么？'
+    a: '每个菱形代表矿池接受的一个份额，或你的矿机找到的一个区块。它出现在波浪的最右侧，每秒向左移动一列，所以你能看到的菱形就是最近两分钟左右被接受的工作。'
   - q: '可以不用仪表盘运行 seine 吗？'
-    a: '可以。用 --ui plain 启动，就会得到普通的滚动日志，而不是全屏仪表盘，适合服务器、日志文件和进程管理器。默认的 --ui auto 只在交互式终端中显示仪表盘，所以输出被重定向时本来就是普通日志。'
-sourceHash: '024e87683a82'
-translation: reviewed
+    a: '可以。用 --ui plain 启动，就会以普通的滚动日志代替全屏仪表盘，适合服务器、日志文件和进程管理器。默认的 --ui auto 只在 seine 运行于交互式终端时显示仪表盘，所以重定向输出时本来就是普通日志。'
 ---
 
-启动 seine 后，它会在终端里显示一个实时仪表盘：你的哈希速度、矿池接受了多少份额、你应得多少，以及它所做每件事的日志。本文以 seine v0.2.22 为例，逐个面板讲解每个标签的含义和数字的来源，并展示挖矿时自动调优和键盘控制是什么样子。
+启动 seine 后，它会立即打开一个实时仪表盘：你的哈希速度、矿池接受了多少份额、应得多少收益、调优进展如何，以及它所做操作的日志。本文逐个面板介绍 seine v0.3.1，说明每个标签的含义及其数字的来源，并介绍挖矿时可以使用的按键。
 
-![seine 终端仪表盘，Apple M4 Max 在 bntpool.com 挖矿：当前算力 30.63 H/s，14 个线程，已提交 5 个份额、0 个被拒、5 个被接受，下方是矿池余额以及任务和已接受份额的日志](/assets/blog/seine-dashboard.webp "Apple M4 Max 上的 seine 仪表盘")
+![seine v0.3.1 在 bntpool.com 挖矿的终端仪表盘：21 个 CPU 线程，当前算力 16.63 H/s，调优完成，222 个份额被接受、1 个被拒，矿池余额显示最低支付额 1 BNT，下方是已接受份额的日志](/assets/blog/seine-dashboard-v031.webp "seine v0.3.1 的仪表盘")
 
-截图是一台 Apple M4 Max 在 bntpool.com 挖矿约十分钟时的画面，于 2026 年 10 月为 seine 的 README 截取。本文其余部分都以它为参照。
+这张图是用 seine v0.3.1 自身的仪表盘代码，以 120 × 26 字符和演示数值渲染而成：一台 Ryzen 9 9950X 以实测的 16.63 H/s、21 个线程在 bntpool.com 上运行了两小时。地址经过缩写，是虚构的。本文其余部分都以这张图为参照。
 
 ## seine 的仪表盘显示什么？
 
 <Answer>
-seine 的仪表盘显示实时算力和平均算力、已完成的哈希数、区块高度和全网算力、矿工状态、已提交、被拒和被接受的份额、每个设备的算力、矿池地址和线程数、你在 bntpool.com 的余额，以及带时间的日志。挖矿时大约每秒刷新一次。
+seine 的仪表盘显示你的实时算力和平均算力、已完成的哈希数、区块链高度和全网算力、矿工状态、份额难度以及被拒和被接受的份额、每个设备的算力、矿池、线程数和调优状态、你的 bntpool.com 余额，以及可以向回滚动查看的日志。它大约每秒刷新一次。
 </Answer>
 
-从上到下依次是标题栏、一排三个统计面板（`HASHRATE`、`NETWORK`、`MINING`）、`DEVICES`、`CONFIG`、`POOL BALANCE` 和 `LOG`。终端宽度达到 148 列时，`CONFIG` 和余额面板会左右并排。
+从上到下依次是标题栏、一排三个统计面板（`HASHRATE`、`NETWORK`、`MINING`）、`DEVICES`、`CONFIG`、`POOL BALANCE` 和 `LOG`。在较宽的终端中，`CONFIG` 和余额面板会左右并排。
 
-## 标题栏：版本、波浪和运行时间
+仪表盘在开始挖矿之前就会打开。首次运行时，seine 会在仪表盘中询问你的收款地址和矿池，然后在屏幕上显示硬件检查和启动进度，让你可以跟进每一步。
 
-标题栏显示 seine 的版本，例如 `seine v0.2.22`。有新版本发布时，旁边会出现醒目的 `update vX.Y.Z available` 标记，日志中也会多一行下载链接。seine 在启动时以及每 12 小时检查一次 GitHub，检查从不打断挖矿。
+## 标题栏：版本、波浪和更新
 
-标题下方是两行波浪，每秒移动一格。矿池每接受你的一个份额（单独挖矿时则是节点接受你的区块），就会有一个金色菱形出现在上面一行的最右端，并每秒向左移动一列。终端宽约 130 列时，你能看到的菱形就是最近两分钟左右被接受的工作。`uptime`（运行时间）位于下面一行的末尾。
+标题栏的标题显示 seine 版本，这里是 `seine v0.3.1`。有新版本发布时，它会显示 `update vX.Y.Z available`，然后开始自动安装倒计时：`updating to vX.Y.Z in 42s`，旁边显示 `u now  s skip`。按 `u` 立即安装，按 `s` 跳过该版本。倒计时期间挖矿不会中断，之后的过程见[更新指南](/zh-hans/blog/update-seine-miner/)。
+
+标题下方有两行波浪，每秒移动一步。每当矿池接受你的一个份额，或你的矿机找到一个区块，就会有一个金色菱形出现在上面一行的最右侧，并每秒向左移动一列。在宽约 120 列的终端中，你能看到的菱形就是最近两分钟左右被接受的工作。`uptime` 位于下面一行的末尾。
 
 ## seine 如何测量算力？
 
 `HASHRATE` 面板有三行：
 
 - **Current** 是最近五秒滚动窗口内的算力。这里的一个哈希是一次完整的 2 GiB Argon2id 计算，所以 H/s 统计的是每秒完成的哈希数。NVIDIA 显卡是成批完成工作的，所以它们的当前算力使用 30 秒窗口，读数更稳定。
-- **Average** 是本次会话的全部哈希除以挖矿时间。等待的时间（等待节点同步、等待钱包密码，或地址无效时）不计入，更改线程数后平均值也会延续。
+- **Average** 是本次会话的全部哈希除以挖矿时间。等待的时间（例如等待节点同步，或地址无效之后）不计入。
 - **Total** 是自启动 seine 以来完成的哈希总数。
 
-截图中 Current 为 30.63 H/s，Average 为 29.33 H/s。Average 起初较低，因为它包含最初几分钟：那时每个线程还在完成第一个哈希，调优器也从低于满负荷的线程数开始，再逐步往上调。seine 运行得越久，两者越接近。
+图中 Current 为 16.63 H/s，Average 为 16.41 H/s。Average 起步较低，是因为它包含最初几分钟：这段时间里每个线程还在完成第一个哈希，调优也还在选择线程数。seine 运行得越久，两者越接近。
 
-## 网络和状态
+## 网络、状态和份额
 
-`NETWORK` 面板显示你正在挖的区块高度 `Height` 和全网算力 `Global`。在矿池模式下，seine 从 bntpool.com 的公开统计数据读取全网算力，最多每 30 秒刷新一次。
+`NETWORK` 面板显示你正在挖的区块链 `Height`（高度）和 `Global` 全网算力；在矿池模式下，seine 从 bntpool.com 的公开统计中读取全网算力。
 
-`State` 告诉你矿工正在做什么。绿色的 `working` 就是你想看到的状态。在矿池模式下，启动和重连期间还会看到这些状态：
+`State` 告诉你矿工程序正在做什么。绿色的 `working` 是你希望看到的状态。在矿池模式下，启动和重新连接时还会看到以下状态：
 
-| 状态 | 含义 |
+| State | 含义 |
 |---|---|
 | `pool-connecting` | 正在建立 Stratum 连接 |
 | `pool-connected` | 已连接，正在登录 |
-| `pool-authenticated` | 登录已被接受，等待第一个任务 |
-| `working` | 正在为当前任务计算哈希 |
-| `pool-disconnected` | 连接断开；seine 会自动重连 |
-| `pool-login-rejected` | 矿池拒绝了登录；日志中的 `AUTH` 行会给出原因 |
+| `pool-authenticated` | 登录已接受，等待第一个任务 |
+| `working` | 正在计算当前任务的哈希 |
+| `pool-disconnected` | 连接已断开；seine 会自动重新连接 |
+| `pool-login-rejected` | 矿池拒绝了登录；日志会给出原因 |
 
-用自己的节点单独挖矿时还有 `daemon-syncing`、`stale-tip`（新区块已到达，正在获取新的模板）和 `solved` 等状态。seine 在等待时，Current 会降为零，因此它从不显示并未产生的算力。
-
-## Submitted、Rejected 和 Accepted 是什么意思？
+对接自己节点单独挖矿时，还会出现 `daemon-syncing` 和 `stale-tip` 等状态。seine 在等待某件事时，Current 会降为零，因此它绝不会显示并未产生的算力。
 
 `MINING` 面板统计本次会话的份额：
 
-- **Submitted：** seine 已发送给矿池的份额。
-- **Rejected：** 矿池没有接受的份额。单独挖矿时这一行显示为 `Stale`，统计在链已经前进之后才到达节点的解。
+- **Difficulty：** 矿池为这台矿机设置的份额难度。
+- **Rejected：** 矿池没有接受的份额。
 - **Accepted：** 矿池记入你名下的份额。
 
-bntpool.com 会为每个连接调整份额难度，目标是每五分钟约 10 个份额，所以无论你的算力多高，大约每 30 秒一个份额都是正常的。截图中十分钟后已提交 5 个、被接受 5 个，是一个良好的开始。你的收益取决于被接受的份额，Rejected 为零表示你发送的每个份额都已记入。
+bntpool.com 会调整每台矿机的份额难度，使它无论算力高低都能稳定地发送份额，因此越快的矿机难度越高。你的支付取决于被接受的份额。在 daemon 模式下，这个面板改为显示 `Submitted`、`Stale` 和 `Accepted`，统计发送到你自己节点的解。
 
 ## 设备、配置和矿池余额
 
-`DEVICES` 列出每个挖矿后端的当前算力和平均算力：CPU 为 `cpu#1`，每块 NVIDIA 显卡依次为 `nvidia#1`、`nvidia#2` 等。仍在启动的显卡会显示进度，从 `starting CUDA runtime` 到 `preparing NVIDIA backend`。首次启动时会编译并调优显卡计算内核，所以比之后的启动耗时更长。
+`DEVICES` 列出每个挖矿后端及其当前算力和平均算力：CPU 为 `cpu#1`，每块 GPU 依次为 `nvidia#1`、`amd#1` 等。GPU 会在 CPU 已经开始挖矿时在后台启动，仍在启动的显卡会显示进度，直到上线。
 
 `CONFIG` 显示本次运行的设置：
 
-- **Endpoint** 是矿池地址（默认为 `stratum+tcp://bntpool.com:3333`），单独挖矿时则是节点的 API 地址。旁边是这台机器登录矿池时使用的名称。
-- **Threads** 是 CPU 挖矿线程数，后面跟着键盘控制的提示 `[+] [-]`。
-- **Backends** 描述每个后端。`cpu#1 (14 lanes, ~28.0 GiB RAM)` 表示 14 个线程，每个线程占用一个 2 GiB 的内存区，所以 14 × 2 GiB = 28 GiB。
+- **Pool** 是矿池地址，默认为 `bntpool.com:3333`；在 daemon 模式下显示 `Daemon` 和节点的 API 地址。
+- **Threads** 是 CPU 挖矿线程数。按键可用时，旁边会显示 `[+] [-]`。**Worker** 是这台机器登录矿池时使用的矿机名称。
+- **Tuning** 显示 CPU 自动调优：正在比较什么、还剩多少时间，完成后显示 `done`。[CPU 调优指南](/zh-hans/blog/seine-automatic-cpu-tuning/)解释了每种状态。
 
-要让矿机在矿池上有一个好认的名称，可在启动时传入：
+要让矿机在矿池上显示一个易于识别的名称，在启动时传入：
 
 ```sh
 ./seine --pool-worker rig-01
 ```
 
-`POOL BALANCE` 每隔几秒从 bntpool.com 读取你的余额。`Pending` 是你已经赚到但尚未支付的金额，`Paid` 是矿池已发送到你地址的金额，右侧的 `Miner` 是你的地址，缩写为前六个和后六个字符。余额达到 0.1 BNT 时 bntpool.com 就会付款。单独挖矿时这个面板变为 `WALLET`，显示节点钱包的 `Pending` 和 `Unlocked` 余额。
+`POOL BALANCE` 每隔几秒从 bntpool.com 读取你的余额。`Pending` 是你已经赚到但尚未支付的金额，包括仍在成熟中的区块的预估收益；`Paid` 是矿池已发送到你地址的金额；右侧的 `Miner` 是你的地址，缩写为前六个和后六个字符。在地址前加上 `solo:` 在矿池单独挖矿时，这个标签显示为 `Solo`。`Min payout` 显示矿池的最低支付额，在 bntpool.com 上为 1 BNT。在 daemon 模式下这个面板变为 `WALLET`，显示节点钱包的 `Pending` 和 `Unlocked` 余额。
 
 ## 阅读日志
 
-`LOG` 保留最近 200 条记录，最新的在最下面，每条都带有级别标记、标签和发生在多久以前。级别标记有 `INFO`、`OK`（某项操作成功）、`WARN`、`ERR`，以及表示解出区块的 `**`。在矿池挖矿时最常见的标签有：
+`LOG` 列出 seine 正在做的事，最新的在最下面，每一行都有标签和发生在多久之前。重复的行会合并为一行并附上次数，例如 `share accepted ×104`，所以即使长时间运行，日志也易于阅读。在矿池上最常见的标签有：
 
-- `AUTH`：矿池登录，例如 `login accepted (protocol v2, required=submit_claimed_hash)`
-- `JOB`：矿池下发的新任务，带有高度和难度
-- `SHARE`：先是 `submitted (backend=cpu#1)`，然后是 `accepted (backend=cpu#1)`
-- `VARDIFF`：矿池调整了你的份额难度
-- `MINER`：自动调优的决定
+- `CONN`：矿池连接，例如 `connected to pool`
+- `SHARE`：`share accepted`，或附带原因的拒绝
+- `CPU`：调优结果，例如 `tuned to 21 threads`
+- `BACKEND`：设备启动，例如 `cpu: starting 21 threads (~42.0 GiB RAM)`
 
-## seine 运行时自动调优是什么样子？
+日志默认显示你需要的内容。加上 `--verbose` 可以查看内部设置以及每个新任务等常规活动。
 
-seine 一启动就开始挖矿，并用真实的挖矿工作进行调优，你可以在日志中看着它进行。第一条 `MINER` 日志是 `cpu-autotune | starting with N threads`，在新机器上后面跟着 `initial estimate`，如果 seine 已经认识这台机器，则是 `cached starting point`。
-
-之后它会轮流比较设置：当前线程数、一个候选值，再回到当前线程数。每个窗口至少持续 30 秒，至少收集 20 个哈希。你会看到 `measuring useful mining work` 和 `checking baseline again` 这样的日志，`CONFIG` 中的 Threads 数字也会随之变化。确定之后，日志会显示 `done` 以及保留的线程数。
-
-CPU 计算内核也用同样的方式比较，例如 `comparing avx2 and avx512 while mining`，只有两次比较都确认有提升，seine 才会切换：`confirmed faster ... path in two comparisons`。这些选择会被缓存，下次启动时从这次停下的地方继续。调优从不重连矿池，也不重启显卡。[自动调优指南](https://github.com/zpalmtree/seine/blob/master/docs/guides/autotuning.md)介绍了更多细节，[Argon2id 详解](/zh-hans/blog/argon2id-proof-of-work-explained/)则解释了为什么内存带宽决定了最佳线程数落在哪里。
-
-## 可以在仪表盘里更改线程数吗？
+## 仪表盘中可以用哪些按键？
 
 <Answer>
-可以。按 +（或 =，无需按 Shift）为每个 CPU 后端增加一个线程，按 - 减少一个。seine 会用新的线程数重启挖矿后端，同时保留会话统计、运行时间和平均算力。按 q 或 Ctrl+C 退出。手动更改会在本次运行中关闭线程自动调优。
+Tuning 行显示 done 后，按 + 或 = 增加一个 CPU 线程，按 - 减少一个。用方向键、PgUp、PgDn 和 Home 向回滚动日志，按 End 重新跟随新行。更新倒计时期间，按 u 立即安装，按 s 跳过该版本。按 q 或 Ctrl+C 退出。
 </Answer>
 
-更改生效期间，`CONFIG` 会显示 `Restarting: 14 -> 15 threads...`，在更改完成之前再按键不会生效。增加线程的上限是自动计算的 CPU 和内存上限，你选择的线程数不会保存为新的默认值。如果想从一开始就固定线程数，请使用 `--threads`。
+线程数的更改会立即作用于正在运行的 CPU 线程，GPU 和矿池连接继续运行。调优仍在选择线程数时，按键会等待，仪表盘会显示调优还剩多少时间。按键调整只对本次运行有效；下次启动会再次使用你保存的调优结果。要从一开始就固定线程数，使用 `--threads`。
+
+向回滚动时，日志标题会显示 `LOG  paused, End to follow`，画面保持不动，直到你按 `End`。
 
 ## 小终端和普通输出
 
-终端宽度不足 80 列时，三个统计面板会上下排列。窗口较矮时，seine 会切换到紧凑视图，在日志上方保留 Threads、State、Current、Average、份额计数和 Height。默认的 `--ui auto` 只在交互式终端中显示仪表盘；`--ui plain` 输出普通的滚动日志，适合服务器、日志文件和进程管理器。
+在宽度不足 80 列的终端中，三个统计面板会纵向堆叠。在较矮的窗口中，seine 会切换到紧凑视图，在日志上方保留 Threads、State、Current 和 Average。默认的 `--ui auto` 只在交互式终端中显示仪表盘；`--ui plain` 为服务器、日志文件和进程管理器提供普通的滚动日志。
 
-如果你还没有设置 seine，[Blocknet 挖矿指南](/zh-hans/blog/how-to-mine-blocknet/)会带你从下载一直到第一个被接受的份额。
+如果你还没有设置 seine，[Blocknet 挖矿指南](/zh-hans/blog/how-to-mine-blocknet/)介绍了从下载到第一个被接受份额的全过程。
 
-<CTA target="seine" title="下载 seine，看它自动调优" text="一条命令开始挖矿，seine 为你的机器调优线程和计算内核时，仪表盘会显示你的算力、份额和 bntpool.com 余额。" />
+<CTA target="seine" title="下载 seine，看着它自动调优" text="一条命令即可开始挖矿，在 seine 为你的机器调优线程和计算内核时，仪表盘会显示你的算力、份额和 bntpool.com 余额。" />

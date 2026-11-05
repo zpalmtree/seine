@@ -1,125 +1,120 @@
 ---
 title: La dashboard di seine spiegata
-description: Un giro pannello per pannello della dashboard di mining di seine (hashrate, share, stato, thread, saldo della pool, log) e come vedere seine ottimizzarsi da solo mentre mina.
+description: 'Un giro pannello per pannello della dashboard di mining di seine (hashrate, share, stato, thread, tuning, saldo della pool, log) e dei tasti che la controllano mentre mini.'
 tags: [seine, Guida al mining, Dashboard, Ottimizzazione automatica]
 faq:
-  - q: 'Perché l''hashrate medio di seine è più basso di quello attuale?'
-    a: 'Il valore medio divide tutti gli hash completati in questa sessione per il tempo passato a minare, quindi include i primi minuti, quando ogni thread sta finendo il suo primo hash e l''ottimizzatore parte sotto la piena capacità prima di salire. Il valore attuale guarda solo gli ultimi cinque secondi. Più a lungo seine resta in esecuzione, più i due valori si avvicinano.'
+  - q: 'Perché l’hashrate medio di seine è più basso di quello attuale?'
+    a: 'Average divide tutti gli hash completati in questa sessione per il tempo passato a minare, quindi include i primi minuti, quando ogni thread sta finendo il suo primo hash e il tuning sta ancora scegliendo il numero di thread. Current guarda solo gli ultimi cinque secondi. I due valori si avvicinano quanto più a lungo gira seine.'
   - q: 'Come cambio il numero di thread mentre seine è in esecuzione?'
-    a: 'Premi il tasto più, o il tasto uguale, per aggiungere un thread per ogni backend CPU, e il tasto meno per toglierne uno. seine riavvia i suoi backend di mining con il nuovo numero e mantiene le statistiche della sessione, l''uptime e la media. Una modifica manuale disattiva l''ottimizzazione automatica dei thread per quella sessione e non viene salvata come nuovo valore predefinito.'
-  - q: 'Cosa significano i rombi dorati nell''intestazione?'
-    a: 'Ogni rombo indica una share accettata quando mini in una pool, o un blocco accettato quando mini in solo. Compare sul bordo destro dell''onda e scorre di una colonna verso sinistra ogni secondo, quindi i rombi che vedi sono il lavoro accettato negli ultimi due minuti circa.'
-  - q: 'Posso eseguire seine senza la dashboard?'
-    a: 'Sì. Avvialo con --ui plain per avere un semplice log a scorrimento invece della dashboard a schermo intero. È adatto a server, file di log e gestori di processi. Il valore predefinito, --ui auto, mostra la dashboard solo quando seine gira in un terminale interattivo, quindi l''output reindirizzato riceve già log semplici.'
-sourceHash: '024e87683a82'
-translation: reviewed
+    a: 'Premi il tasto più, o il tasto uguale, per aggiungere un thread CPU, e il tasto meno per toglierne uno. Quando la riga Tuning indica done, la modifica si applica subito ai thread in esecuzione, mentre GPU e connessione alla pool continuano a funzionare. La modifica vale solo per quella esecuzione.'
+  - q: 'Cosa significano i rombi dorati nell’intestazione?'
+    a: 'Ogni rombo segna una share accettata dalla pool o un blocco trovato dal tuo rig. Compare sul bordo destro dell’onda e si sposta di una colonna verso sinistra ogni secondo, quindi i rombi che vedi sono il lavoro accettato negli ultimi due minuti circa.'
+  - q: 'Posso usare seine senza la dashboard?'
+    a: 'Sì. Avvialo con --ui plain per avere un log semplice che scorre invece della dashboard a schermo intero. È adatto a server, file di log e gestori di processi. Il valore predefinito, --ui auto, mostra la dashboard solo quando seine gira in un terminale interattivo, quindi l’output reindirizzato riceve già log semplici.'
+sourceHash: '7f9d55be8e18'
+translation: draft
 ---
 
-Avvia seine e riempirà il terminale con una dashboard in tempo reale: quanto velocemente stai calcolando hash, quante share ha accettato la pool, quanto ti spetta e un log di tutto ciò che fa. Questa guida passa in rassegna, pannello per pannello, seine v0.2.22, spiega cosa significa ogni etichetta e da dove viene il suo numero, e mostra come appaiono l'ottimizzazione automatica e i controlli da tastiera mentre mini.
+Avvia seine e apre subito una dashboard in tempo reale: a che velocità calcoli hash, quante share ha accettato la pool, quanto ti spetta, come procede il tuning e un log di quello che fa. Questo giro passa pannello per pannello seine v0.3.1, spiega cosa significa ogni etichetta e da dove viene ogni numero, e illustra i tasti che puoi usare mentre mini.
 
-![La dashboard da terminale di seine su un Apple M4 Max che mina su bntpool.com: hashrate attuale di 30,63 H/s, 14 thread, 5 share inviate, 0 rifiutate e 5 accettate, con sotto il saldo della pool e un log di job e share accettate](/assets/blog/seine-dashboard.webp "La dashboard di seine su un Apple M4 Max")
+![La dashboard da terminale di seine v0.3.1 che mina su bntpool.com: hashrate attuale di 16,63 H/s con 21 thread CPU, tuning completato, 222 share accettate e 1 rifiutata, il saldo della pool con un pagamento minimo di 1 BNT e un log di share accettate](/assets/blog/seine-dashboard-v031.webp "La dashboard di seine nella v0.3.1")
 
-Lo screenshot mostra un Apple M4 Max che mina su bntpool.com circa dieci minuti dopo l'avvio, catturato per il README di seine a ottobre 2026. È il riferimento per il resto dell'articolo.
+L’immagine è il codice stesso della dashboard di seine v0.3.1 disegnato a 120 × 26 caratteri con valori dimostrativi: un Ryzen 9 9950X ai suoi 16,63 H/s misurati con 21 thread, due ore dopo l’inizio di una sessione su bntpool.com. L’indirizzo è abbreviato e fittizio. È il riferimento per il resto di questo articolo.
 
 ## Cosa mostra la dashboard di seine?
 
 <Answer>
-La dashboard di seine mostra l'hashrate in tempo reale e medio, gli hash completati, l'altezza della blockchain e l'hashrate della rete, lo stato del miner, le share inviate, rifiutate e accettate, l'hashrate di ogni dispositivo, l'endpoint della pool e il numero di thread, il tuo saldo su bntpool.com e un log con data e ora. Si aggiorna circa una volta al secondo mentre mini.
+La dashboard di seine mostra l’hashrate in tempo reale e medio, gli hash completati, l’altezza della catena e l’hashrate di rete, lo stato del miner, la difficoltà delle share con le share rifiutate e accettate, l’hashrate di ogni dispositivo, la pool, il numero di thread e lo stato del tuning, il saldo su bntpool.com e un log che puoi scorrere all’indietro. Si aggiorna circa una volta al secondo.
 </Answer>
 
-Dall'alto verso il basso, i pannelli sono l'intestazione, una riga di tre pannelli di statistiche (`HASHRATE`, `NETWORK`, `MINING`), `DEVICES`, `CONFIG`, `POOL BALANCE` e `LOG`. In un terminale largo almeno 148 colonne, `CONFIG` e il pannello del saldo stanno affiancati.
+Dall’alto verso il basso, i pannelli sono l’intestazione, una riga di tre pannelli di statistiche (`HASHRATE`, `NETWORK`, `MINING`), `DEVICES`, `CONFIG`, `POOL BALANCE` e `LOG`. In un terminale largo, `CONFIG` e il pannello del saldo stanno affiancati.
 
-## L'intestazione: versione, onde e uptime
+La dashboard si apre prima che inizi il mining. Al primo avvio, seine chiede l’indirizzo di pagamento e la pool dentro la dashboard stessa, poi mostra sullo schermo i controlli dell’hardware e l’avanzamento dell’avvio, così puoi seguire ogni passaggio.
 
-Il titolo dell'intestazione mostra la versione di seine, per esempio `seine v0.2.22`. Quando è disponibile una release più recente, accanto compare un badge evidenziato `update vX.Y.Z available` e il log riceve una riga con il link per il download. seine controlla GitHub all'avvio e ogni 12 ore, e il controllo non interrompe mai il mining.
+## L’intestazione: versione, onde e aggiornamenti
 
-Sotto il titolo, due righe di onde scorrono di un passo al secondo. Ogni volta che la pool accetta una delle tue share (o, in modalità solo, il nodo accetta il tuo blocco), un rombo dorato compare sul bordo destro della riga superiore e scorre verso sinistra di una colonna al secondo. In un terminale largo circa 130 colonne, questo significa che i rombi che vedi sono il lavoro accettato negli ultimi due minuti circa. `uptime` si trova alla fine della riga inferiore.
+Il titolo dell’intestazione mostra la versione di seine, qui `seine v0.3.1`. Quando esce una release più recente, mostra `update vX.Y.Z available`, poi un conto alla rovescia fino all’installazione automatica: `updating to vX.Y.Z in 42s`, con `u now  s skip` accanto. Premi `u` per installare subito o `s` per saltare quella versione. Il mining continua durante il conto alla rovescia, e la [guida all’aggiornamento](/it/blog/update-seine-miner/) spiega cosa succede dopo.
 
-## Come misura l'hashrate seine?
+Sotto il titolo, due righe di onde avanzano di un passo al secondo. Ogni volta che la pool accetta una delle tue share, o il tuo rig trova un blocco, un rombo dorato compare sulla riga superiore dal bordo destro e scorre a sinistra di una colonna al secondo. In un terminale largo circa 120 colonne, i rombi che vedi sono più o meno gli ultimi due minuti di lavoro accettato. `uptime` si trova alla fine della riga inferiore.
+
+## Come misura seine l’hashrate?
 
 Il pannello `HASHRATE` ha tre righe:
 
-- **Current** è il tuo hashrate su una finestra mobile di cinque secondi. Un hash qui è un calcolo Argon2id completo da 2 GiB, quindi H/s conta gli hash terminati al secondo. Le GPU NVIDIA completano il lavoro a raffiche, quindi il loro valore attuale usa una finestra di 30 secondi per restare stabile.
-- **Average** è il totale degli hash di questa sessione diviso per il tempo passato a minare. Il tempo di attesa (per la sincronizzazione di un nodo, per la password di un wallet o dopo un indirizzo non valido) è escluso, e la media viene mantenuta quando cambi il numero di thread.
+- **Current** (attuale) è l’hashrate su una finestra mobile di cinque secondi. Qui un hash è un calcolo Argon2id completo da 2 GiB, quindi H/s conta gli hash completati al secondo. Le GPU NVIDIA completano il lavoro a raffiche, quindi il loro tasso attuale usa una finestra di 30 secondi per restare stabile.
+- **Average** (media) è il totale degli hash di questa sessione diviso per il tempo passato a minare. Il tempo di attesa, per esempio per la sincronizzazione di un nodo o dopo un indirizzo non valido, è escluso.
 - **Total** è il numero di hash completati da quando hai avviato seine.
 
-Nello screenshot, Current indica 30,63 H/s e Average 29,33 H/s. Average parte più basso perché include i primi minuti, quando ogni thread sta finendo il suo primo hash e l'ottimizzatore parte sotto la piena capacità prima di salire. Più a lungo seine resta in esecuzione, più i due valori si avvicinano.
+Nell’immagine Current indica 16,63 H/s e Average 16,41 H/s. Average parte più basso perché include i primi minuti, quando ogni thread sta finendo il suo primo hash e il tuning sta ancora scegliendo il numero di thread. Più a lungo gira seine, più i due valori si avvicinano.
 
-## Rete e stato
+## Rete, stato e share
 
-Il pannello `NETWORK` mostra l'altezza della blockchain (`Height`) su cui stai minando e l'hashrate della rete (`Global`). In modalità pool, seine legge l'hashrate della rete dalle statistiche pubbliche di bntpool.com e lo aggiorna al massimo ogni 30 secondi.
+Il pannello `NETWORK` mostra l’altezza della catena (`Height`) su cui stai minando e l’hashrate di rete (`Global`), che seine legge dalle statistiche pubbliche di bntpool.com in modalità pool.
 
-`State` ti dice cosa sta facendo il miner. `working` in verde è quello che vuoi vedere. In modalità pool vedrai anche questi stati durante l'avvio e le riconnessioni:
+`State` indica cosa sta facendo il miner. `working` in verde è quello che vuoi vedere. In modalità pool vedrai anche questi stati durante l’avvio e le riconnessioni:
 
 | Stato | Significato |
 |---|---|
 | `pool-connecting` | Apertura della connessione Stratum |
 | `pool-connected` | Connesso, login in corso |
-| `pool-authenticated` | Login accettato, in attesa del primo job |
-| `working` | Calcolo degli hash sul job corrente |
+| `pool-authenticated` | Login accettato, in attesa del primo lavoro |
+| `working` | Calcolo di hash sul lavoro corrente |
 | `pool-disconnected` | Connessione caduta; seine si riconnette da solo |
-| `pool-login-rejected` | La pool ha rifiutato il login; la riga `AUTH` nel log indica il motivo |
+| `pool-login-rejected` | La pool ha rifiutato il login; il log indica il motivo |
 
-Il mining in solo sul tuo nodo aggiunge stati come `daemon-syncing`, `stale-tip` (è arrivato un nuovo blocco, recupero di un template aggiornato) e `solved`. Mentre seine è in attesa di qualcosa, Current scende a zero, così non mostra mai un valore che non sta producendo.
-
-## Cosa significano Submitted, Rejected e Accepted?
+Il mining in solo sul tuo nodo aggiunge stati come `daemon-syncing` e `stale-tip`. Mentre seine attende qualcosa, Current scende a zero, così non mostra mai un tasso che non sta producendo.
 
 Il pannello `MINING` conta le share di questa sessione:
 
-- **Submitted:** le share che seine ha inviato alla pool.
-- **Rejected:** le share che la pool non ha accettato. In modalità solo questa riga si chiama `Stale` e conta le soluzioni arrivate al nodo quando la blockchain era già andata avanti.
-- **Accepted:** le share che la pool ti ha accreditato.
+- **Difficulty** (difficoltà): la difficoltà delle share che la pool ha impostato per questo rig.
+- **Rejected** (rifiutate): share che la pool non ha accettato.
+- **Accepted** (accettate): share che la pool ti ha accreditato.
 
-bntpool.com regola la difficoltà delle share di ogni connessione puntando a circa 10 share ogni cinque minuti, quindi una share ogni 30 secondi circa è normale, qualunque sia il tuo hashrate. Le 5 inviate e 5 accettate dello screenshot dopo dieci minuti sono un buon inizio. Il tuo pagamento segue le share accettate, e un valore Rejected pari a zero significa che ogni share che hai inviato è stata accreditata.
+bntpool.com regola la difficoltà delle share di ogni rig perché invii un flusso costante di share qualunque sia il suo hashrate, quindi un rig più veloce riceve una difficoltà più alta. Il tuo pagamento segue le share accettate. In modalità daemon il pannello mostra invece `Submitted`, `Stale` e `Accepted`, che contano le soluzioni inviate al tuo nodo.
 
 ## Dispositivi, configurazione e saldo della pool
 
-`DEVICES` elenca ogni backend di mining con il suo hashrate attuale e medio: `cpu#1` per la CPU, poi `nvidia#1`, `nvidia#2` e così via per ogni GPU NVIDIA. Una GPU ancora in fase di avvio mostra invece il suo avanzamento, da `starting CUDA runtime` a `preparing NVIDIA backend`. Il primo avvio compila e ottimizza i kernel della GPU, quindi richiede più tempo degli avvii successivi.
+`DEVICES` elenca ogni backend di mining con il suo hashrate attuale e medio: `cpu#1` per la CPU, poi `nvidia#1`, `amd#1` e così via per ogni GPU. Le GPU si avviano in background mentre la CPU sta già minando, e una scheda ancora in avvio mostra il suo avanzamento finché non va online.
 
-`CONFIG` mostra come è configurata questa sessione:
+`CONFIG` mostra come è configurata questa esecuzione:
 
-- **Endpoint** è l'indirizzo della pool (`stratum+tcp://bntpool.com:3333` per impostazione predefinita), o l'indirizzo dell'API del tuo nodo in modalità solo. Accanto c'è il nome con cui questo rig fa il login sulla pool.
-- **Threads** è il numero di thread di mining della CPU, seguito dal suggerimento `[+] [-]` per i controlli da tastiera.
-- **Backends** descrive ogni backend. `cpu#1 (14 lanes, ~28.0 GiB RAM)` significa 14 thread, ciascuno con un'area da 2 GiB, quindi 14 × 2 GiB = 28 GiB.
+- **Pool** è l’indirizzo della pool, `bntpool.com:3333` per impostazione predefinita, oppure `Daemon` con l’indirizzo dell’API del tuo nodo in modalità daemon.
+- **Threads** è il numero di thread di mining CPU. Quando i tasti sono disponibili, accanto compare `[+] [-]`. **Worker** è il nome del rig con cui questa macchina fa login alla pool.
+- **Tuning** mostra la regolazione automatica della CPU: cosa sta confrontando e quanto manca, poi `done`. La [guida alla regolazione CPU](/it/blog/seine-automatic-cpu-tuning/) spiega ogni stato.
 
-Per dare a un rig un nome riconoscibile sulla pool, passalo all'avvio:
+Per dare a un rig un nome riconoscibile sulla pool, passalo all’avvio:
 
 ```sh
 ./seine --pool-worker rig-01
 ```
 
-`POOL BALANCE` legge il tuo saldo da bntpool.com ogni qualche secondo. `Pending` è ciò che hai guadagnato e non ti è ancora stato pagato, `Paid` è ciò che la pool ha inviato al tuo indirizzo, e `Miner` a destra è il tuo indirizzo abbreviato ai primi e agli ultimi sei caratteri. bntpool.com paga quando il saldo raggiunge 0,1 BNT. In modalità solo questo pannello diventa `WALLET`, con i saldi `Pending` e `Unlocked` del wallet del tuo nodo.
+`POOL BALANCE` legge il tuo saldo da bntpool.com ogni qualche secondo. `Pending` è ciò che hai guadagnato e non ti è ancora stato pagato, comprese le ricompense stimate dei blocchi ancora in maturazione, `Paid` è ciò che la pool ha inviato al tuo indirizzo, e `Miner` a destra è il tuo indirizzo abbreviato ai primi e agli ultimi sei caratteri. Quando mini in solo sulla pool, con `solo:` davanti all’indirizzo, quell’etichetta indica `Solo`. `Min payout` mostra il pagamento minimo della pool, 1 BNT su bntpool.com. In modalità daemon questo pannello diventa `WALLET`, con i saldi `Pending` e `Unlocked` del wallet del tuo nodo.
 
 ## Leggere il log
 
-`LOG` conserva le ultime 200 voci, le più recenti in basso, ciascuna con un badge di livello, un tag e quanto tempo fa è avvenuta. I badge sono `INFO`, `OK` (qualcosa è riuscito), `WARN`, `ERR` e `**` per un blocco risolto. I tag che vedrai più spesso in una pool sono:
+`LOG` elenca cosa sta facendo seine, con le voci più recenti in basso, ogni riga con un’etichetta e quanto tempo fa è avvenuta. Le righe ripetute si raggruppano in una sola con un contatore, come `share accepted ×104`, così il log resta leggibile anche in una sessione lunga. Le etichette che vedrai più spesso su una pool sono:
 
-- `AUTH`: il login sulla pool, per esempio `login accepted (protocol v2, required=submit_claimed_hash)`
-- `JOB`: un nuovo job dalla pool, con la sua altezza e la sua difficoltà
-- `SHARE`: `submitted (backend=cpu#1)` e poi `accepted (backend=cpu#1)`
-- `VARDIFF`: la pool ha cambiato la difficoltà delle tue share
-- `MINER`: le decisioni dell'ottimizzazione automatica
+- `CONN`: la connessione alla pool, come `connected to pool`
+- `SHARE`: `share accepted`, oppure un rifiuto con il suo motivo
+- `CPU`: i risultati del tuning, come `tuned to 21 threads`
+- `BACKEND`: l’avvio dei dispositivi, come `cpu: starting 21 threads (~42.0 GiB RAM)`
 
-## Come appare l'ottimizzazione automatica mentre seine è in esecuzione?
+Per impostazione predefinita il log mostra ciò che ti serve. Aggiungi `--verbose` per vedere impostazioni interne e attività di routine, come ogni nuovo lavoro.
 
-seine inizia subito a minare e si ottimizza su lavoro di mining reale, e puoi seguirlo nel log. La prima riga `MINER` dice `cpu-autotune | starting with N threads`, seguita da `initial estimate` su una macchina nuova o da `cached starting point` quando seine la conosce già.
-
-Da lì confronta le impostazioni a turno: il numero di thread attuale, un candidato, poi di nuovo il numero attuale. Ogni finestra dura almeno 30 secondi e raccoglie almeno 20 hash. Vedrai righe come `measuring useful mining work` e `checking baseline again`, e il numero Threads in `CONFIG` si aggiorna di conseguenza. Quando si assesta, il log dice `done` e indica il numero di thread che ha mantenuto.
-
-I kernel CPU vengono confrontati allo stesso modo, per esempio `comparing avx2 and avx512 while mining`, e seine cambia solo dopo che due confronti hanno confermato il guadagno: `confirmed faster ... path in two comparisons`. Le scelte vengono salvate in cache, quindi l'avvio successivo riprende da dove si era fermato questo. L'ottimizzazione non si riconnette mai alla pool e non riavvia mai una GPU. La [guida all'ottimizzazione automatica](https://github.com/zpalmtree/seine/blob/master/docs/guides/autotuning.md) spiega i dettagli, e la [guida ad Argon2id](/it/blog/argon2id-proof-of-work-explained/) spiega perché è la banda di memoria a decidere dove si colloca il numero di thread migliore.
-
-## Si possono cambiare i thread dalla dashboard?
+## Quali tasti funzionano nella dashboard?
 
 <Answer>
-Sì. Premi + (o =, senza bisogno di Maiusc) per aggiungere un thread per ogni backend CPU e - per toglierne uno. seine riavvia i suoi backend di mining con il nuovo numero mantenendo le statistiche della sessione, l'uptime e l'hashrate medio. Premi q o Ctrl+C per uscire. Una modifica manuale disattiva l'ottimizzazione automatica dei thread per quella sessione.
+Premi + o = per aggiungere un thread CPU e - per toglierne uno, quando la riga Tuning indica done. Usa le frecce, PgUp, PgDn e Home per scorrere il log all’indietro, ed End per tornare a seguire le nuove righe. Durante il conto alla rovescia di un aggiornamento, u installa subito e s salta quella versione. Premi q o Ctrl+C per uscire.
 </Answer>
 
-Mentre la modifica viene applicata, `CONFIG` mostra `Restarting: 14 -> 15 threads...` e ulteriori pressioni vengono ignorate finché non termina. Gli aumenti si fermano al limite automatico di CPU e RAM, e il numero che scegli non viene salvato come nuovo valore predefinito. Per un numero fisso fin dall'avvio, usa `--threads`.
+Le modifiche ai thread si applicano subito ai thread CPU in esecuzione, mentre GPU e connessione alla pool continuano a funzionare. Mentre il tuning sta ancora scegliendo un numero, i tasti attendono e la dashboard indica quanto manca. Una pressione vale solo per quella esecuzione; l’avvio successivo usa di nuovo il tuning salvato. Per un numero fisso dall’avvio, usa `--threads`.
+
+Mentre scorri all’indietro, il titolo del log indica `LOG  paused, End to follow` e la vista resta ferma finché non premi `End` (Fine).
 
 ## Terminali piccoli e output semplice
 
-In un terminale più stretto di 80 colonne, i tre pannelli di statistiche si impilano verticalmente. In una finestra bassa, seine passa a una vista compatta che mantiene sullo schermo, sopra il log, Threads, State, Current, Average, i conteggi delle share e Height. Il valore predefinito `--ui auto` mostra la dashboard solo in un terminale interattivo; `--ui plain` dà un semplice log a scorrimento per server, file di log e gestori di processi.
+In un terminale più stretto di 80 colonne, i tre pannelli di statistiche si impilano in verticale. In una finestra bassa, seine passa a una vista compatta che tiene Threads, State, Current e Average sullo schermo sopra il log. Il valore predefinito `--ui auto` mostra la dashboard solo in un terminale interattivo; `--ui plain` produce un log semplice che scorre, per server, file di log e gestori di processi.
 
-Se non hai ancora configurato seine, la [guida al mining di Blocknet](/it/blog/how-to-mine-blocknet/) ti porta dal download alla tua prima share accettata.
+Se non hai ancora configurato seine, la [guida al mining di Blocknet](/it/blog/how-to-mine-blocknet/) va dal download alla tua prima share accettata.
 
-<CTA target="seine" title="Scarica seine e guardalo ottimizzarsi" text="Inizia a minare con un solo comando, e la dashboard mostra hashrate, share e saldo su bntpool.com mentre seine ottimizza thread e kernel per la tua macchina." />
+<CTA target="seine" title="Scarica seine e guardalo regolarsi" text="Inizia a minare con un solo comando, e la dashboard mostra hashrate, share e saldo su bntpool.com mentre seine regola thread e kernel per la tua macchina." />

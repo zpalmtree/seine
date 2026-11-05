@@ -11,7 +11,7 @@ faq:
     a: 'Seine wählt die Thread-Zahl für dich, du musst sie also nur festlegen, wenn du Platz für andere Arbeit lassen willst. Jeder Thread braucht etwa 2 GB RAM. Drücke im Dashboard die Minustaste, bis sich dein Computer gut anfühlt, und nutze dann diese Zahl.'
   - q: 'Wo speichert seine seine Einstellungen?'
     a: 'Seine speichert deine Adresse, den Pool und den Worker-Namen in seine-data/seine.config.json, im Ordner, aus dem du es startest. Thread- und Backend-Optionen werden dort nicht gespeichert, lege sie also in eine kleine Startdatei, wenn du sie bei jedem Start willst.'
-sourceHash: b5ca5a9a16d8
+sourceHash: cbfaa904cdbf
 translation: draft
 ---
 
@@ -129,6 +129,8 @@ Um für einen Lauf einen anderen Wert zu nutzen, füge ihn dem Befehl hinzu. Die
 ```
 
 Die beiden anderen Einstellungen sind `--address` und `--pool-url`. Die [Anleitung zur Adressänderung](https://bntpool.com/blog/de/change-mining-wallet-address/) erklärt, wie der Pool deine Arbeit nach einer Adressänderung gutschreibt.
+
+Um auf bntpool.com solo zu minen, setze `solo:` vor die Adresse, zum Beispiel `"address": "solo:@yourname"` in der Datei oder `--address solo:YOUR_ADDRESS` auf der Kommandozeile. Der Pool zahlt dir dann die volle Belohnung jedes Blocks, den dein Rig findet. [Solo-Mining auf bntpool.com](https://bntpool.com/blog/de/solo-mine-blocknet-on-bntpool/) erklärt, wie Solo-Blöcke ausgezahlt werden.
 
 ## Was tun, wenn eine Einstellung nicht funktioniert?
 

@@ -9,11 +9,11 @@ faq:
     a: 'Giữ cấu hình và ghi vị trí trước khi thay đổi. Thông báo lỗi phân tích chỉ ra tệp hoặc giá trị cụ thể. Sao lưu tệp, sửa lỗi được báo và giữ địa chỉ cùng thiết lập khởi chạy. Xóa tất cả khiến việc so sánh với lần chạy thành công gần nhất khó hơn.'
   - q: 'Cần thông tin gì để kiểm tra việc dừng lặp lại?'
     a: 'Ghi phiên bản seine, hệ điều hành, CPU, GPU, bộ nhớ khả dụng, toàn bộ tham số, thư mục làm việc và thời điểm dừng. Kèm thông báo cuối và sự kiện hệ thống liên quan. Xóa thông tin xác thực và dữ liệu cá nhân trước khi chia sẻ; không gửi cụm từ khôi phục hay khóa riêng.'
-sourceHash: '2e054f0c0100'
+sourceHash: '333d8de81191'
 translation: draft
 ---
 
-Xác định giai đoạn dừng để phần mềm đào Blocknet hoạt động ổn định. Hướng dẫn này theo seine v0.2.37 và bắt đầu từ bằng chứng trên máy của bạn. Giữ lệnh và cấu hình hoạt động gần nhất, rồi chỉ thay đổi một thiết lập liên quan mỗi lần để hiểu kết quả tiếp theo.
+Xác định giai đoạn dừng để phần mềm đào Blocknet hoạt động ổn định. Hướng dẫn này theo seine v0.3.1 và bắt đầu từ bằng chứng trên máy của bạn. Giữ lệnh và cấu hình hoạt động gần nhất, rồi chỉ thay đổi một thiết lập liên quan mỗi lần để hiểu kết quả tiếp theo.
 
 ## Cần kiểm tra gì khi phần mềm đào dừng?
 
@@ -27,7 +27,13 @@ Kiểm tra tiến trình đã thoát, máy đã ngủ hay kết nối pool đang
 
 Mở terminal trong thư mục thường dùng và chạy lệnh hiện tại. Thêm `--ui plain` để hiện nhật ký văn bản thay cho bảng điều khiển, giữ nguyên tham số khác. Thao tác này bắt đầu đào với cấu hình hiện có. Sao chép thông báo cuối, gồm lỗi đầu tiên trước các thông báo kết nối lại hoặc tắt lặp đi lặp lại.
 
-Ghi cùng nhau phiên bản chương trình, thư mục làm việc và thư mục dữ liệu đã chọn. Bản này in lỗi nghiêm trọng đã xử lý với `fatal:` trước khi thoát. Hệ điều hành chấm dứt tiến trình có thể để lại bằng chứng khác. Nếu tiến trình còn sống, dùng [kiểm tra kết nối pool](https://bntpool.com/blog/vi/track-your-miner-on-bntpool/); thiếu một share hoặc mất kết nối tạm thời chưa chứng minh crash.
+Ghi cùng nhau phiên bản chương trình, thư mục làm việc và thư mục dữ liệu đã chọn. Lỗi nghiêm trọng đã xử lý được in với `fatal:` trước khi thoát. Trên Windows, khi bạn khởi động `seine.exe` bằng cách nhấp đúp, cửa sổ console vẫn mở sau lỗi nghiêm trọng cho đến khi bạn nhấn Enter, để bạn đọc được thông báo. Hệ điều hành chấm dứt tiến trình có thể để lại bằng chứng khác. Nếu tiến trình còn sống, dùng [kiểm tra kết nối pool](https://bntpool.com/blog/vi/track-your-miner-on-bntpool/); thiếu một share hoặc mất kết nối tạm thời chưa chứng minh crash.
+
+## seine có dừng để cập nhật không?
+
+Một lần dừng ngắn có thể là do cập nhật. Khi bật cập nhật tự động, seine đếm ngược ở phần đầu bảng điều khiển, cài bản phát hành mới, dừng đào gọn gàng và khởi động lại với cùng tham số; bảng điều khiển mới ghi `updated to seine vX.Y.Z`. Nếu pool gửi công việc cần bản phát hành mới hơn, ví dụ khi nâng cấp mạng, seine tạm dừng đào và ghi `installing seine vX.Y.Z now: mining is paused until Seine is updated`, rồi tiếp tục khi bản cập nhật đã được cài.
+
+Nếu chuyển từ v0.2.45 trên Linux, phiên bản cũ cài bản cập nhật rồi thoát, nên hãy khởi động seine thêm một lần; dịch vụ systemd hoặc trình khởi chạy tự khởi động lại khác không cần làm gì. [Hướng dẫn cập nhật](/vi/blog/update-seine-miner/) cũng liệt kê các bước một lần cho Windows, HiveOS và mmpOS.
 
 ## Có dừng trước khi bắt đầu đào không?
 
@@ -43,9 +49,9 @@ Chế độ trang bắt buộc cần phần đặt trước tương ứng của 
 
 ## Kiểm tra riêng giai đoạn GPU
 
-Nếu khởi động nhắc thư viện CUDA, thiết bị hoặc cấp phát GPU, ghi nguyên văn thông báo và phiên bản driver. [Hướng dẫn NVIDIA](/vi/blog/mine-blocknet-nvidia-gpu/) nêu yêu cầu bản phát hành, thư viện runtime và chọn thiết bị. So sánh với môi trường đã cài trước khi đổi kernel hay tinh chỉnh. Tải gói thành công chưa chứng minh runtime sẵn sàng.
+Nếu khởi động nhắc thư viện CUDA hoặc HIP, thiết bị hoặc cấp phát GPU, ghi nguyên văn thông báo và phiên bản driver. [Hướng dẫn NVIDIA](/vi/blog/mine-blocknet-nvidia-gpu/) và [hướng dẫn AMD](/vi/blog/mine-blocknet-amd-gpu/) nêu yêu cầu bản phát hành, thư viện runtime và chọn thiết bị. So sánh với môi trường đã cài trước khi đổi kernel hay tinh chỉnh. Tải gói thành công chưa chứng minh runtime sẵn sàng.
 
-seine có thể cô lập lỗi một backend trong khi backend khác vẫn chạy. Kiểm tra thông báo và hoạt động còn lại trước khi kết luận cả ứng dụng dừng. Lưu bằng chứng trước khi chạy lại vì phiên mới có thể che chuỗi sự kiện cũ. Nếu thử lựa chọn backend đơn giản hơn, giữ lệnh gốc và so sánh khởi động, công việc liên tục và lượt gửi được chấp nhận.
+seine có thể cô lập lỗi một backend trong khi backend khác vẫn chạy. Nếu AMD runtime làm seine đóng hai lần liên tiếp khi đang dùng GPU, seine thôi tự chọn card AMD và tiếp tục đào trên phần còn lại; sau khi cập nhật driver, khởi động một lần với `--backend cpu,amd` để thử lại các card. Kiểm tra thông báo và hoạt động còn lại trước khi kết luận cả ứng dụng dừng. Lưu bằng chứng trước khi chạy lại vì phiên mới có thể che chuỗi sự kiện cũ. Nếu thử lựa chọn backend đơn giản hơn, giữ lệnh gốc và so sánh khởi động, công việc liên tục và lượt gửi được chấp nhận.
 
 ## Máy tính ngủ hay khởi động lại?
 

@@ -1,62 +1,85 @@
 ---
-title: 'seine CPU madenciliğini nasıl otomatik ayarlar?'
-description: 'seine''ın Blocknet madenciliği sırasında CPU iş parçacıklarını nasıl ayarladığını, sonuçları sakladığını ve kullanılabilir RAM''e nasıl uyum sağladığını öğrenin.'
+title: 'seine CPU madenciliğini otomatik olarak nasıl ayarlar'
+description: 'seine''in Blocknet kazarken CPU iş parçacıklarını ve kernellerini nasıl ayarladığını, en hızlı en düşük sayıyı koruduğunu ve testi ne zaman bıraktığını öğrenin.'
 tags: ['Madencilik rehberi', 'CPU ayarı', 'seine']
-faq:
-  - q: 'seine CPU ayarı sırasında madencilik yapar mı?'
-    a: 'Evet. v0.2.36''da normal CPU madenciliği uyumlu kayıtlı bir ayarla veya donanıma dayalı tahminle başlar. Ayarlayıcı, iş parçacığı sayılarını gerçek madencilik işiyle karşılaştırır. Çevrimdışı kıyaslamalar ayrı bir süreç kullandığından onların başlangıcı normal madencilik oturumunu anlatmaz.'
-  - q: 'CPU iş parçacığı sayısı neden değişir?'
-    a: 'Otomatik ayar yakın sayıları dener ve kullanılabilir belleğe tepki verir. Değişiklik bir performans denemesi veya RAM baskısına yanıt olabilir. Sayıyla birlikte günlüğü okuyun; kısa bir hash gücü ölçümüne göre karar vermeden karşılaştırmanın tamamlanmasını bekleyin.'
-  - q: 'seine CPU ayar sonuçlarını nereye kaydeder?'
-    a: 'İş parçacığı sonuçları varsayılan olarak veri dizinindeki seine.cpu-autotune.json dosyasındadır. Çekirdek seçimleri .kernels.json ile biten eşlikçi dosyayı kullanır. Uyumlu sonuçlar sonraki başlangıçlara yardımcı olur. Aynı veri dizinini koruyun ve yazılımın ayarların mevcut ortama uygunluğunu kontrol etmesine izin verin.'
-sourceHash: '41f9cc188856'
+sourceHash: 'd974c5518636'
 translation: draft
+faq:
+  - q: 'seine CPU iş parçacıklarını ayarlarken kazmaya devam eder mi?'
+    a: 'Evet. seine bildiği en iyi başlangıç noktasından hemen kazmaya başlar, ardından gerçek madencilik işiyle iş parçacığı sayılarını ve CPU kernellerini karşılaştırır. Her karşılaştırma pay kazandırır. Çoğu makine birkaç dakikada bitirir; ardından Tuning satırı done gösterir ve iş parçacığı sayısı sabit kalır.'
+  - q: 'CPU iş parçacığı sayısı neden değişiyor?'
+    a: 'Ayarlama sırasında seine ölçerken iş parçacığı sayısı iki değer arasında gidip gelir ve Tuning satırı bu çifti ve kalan süreyi gösterir. Ayarlamadan sonra yalnızca günlüğün belirttiği bir nedenle değişir: CPU''nuz için bir şeyi değiştiren yeni bir sürüm, hash gücünde kalıcı bir değişiklik veya diğer programların ihtiyaç duyduğu RAM.'
+  - q: 'seine CPU ayarlama sonuçlarını nereye kaydeder?'
+    a: 'Veri dizinindeki seine.cpu-autotune.json dosyasına; varsayılan dizin seine-data''dır. Bir sonraki başlangıçta seine doğrudan kayıtlı sonuca döner ve Tuning satırı done gösterir. seine''in dosyayı bulabilmesi için çalıştırmalar ve güncellemeler arasında aynı veri dizinini kullanın.'
 ---
 
-Madencilik sırasında CPU iş parçacığı sayısı değiştiğinde seine'ın ne yaptığını anlayın. Rehber, yayımlanmış v0.2.36 sürümünü temel alır; üretken ayarı, kayıtlı seçimleri ve bellek uyarlamalarını açıklar. Kurulum için [madencilik rehberini](/tr/blog/how-to-mine-blocknet/), paneller için [gösterge paneli turunu](/tr/blog/seine-dashboard-explained/) kullanın.
+Madencilik sırasında CPU iş parçacığı sayısı değiştiğinde seine'in ne yaptığını anlayın. Bu rehber herkese açık v0.3.1 sürümünü izler ve seine'in CPU'nuz için en hızlı ayarları nasıl bulduğunu, oraya ulaşan en düşük iş parçacığı sayısını neden koruduğunu ve ne zaman yeniden baktığını açıklar. Kurulum için [madencilik rehberiyle](/tr/blog/how-to-mine-blocknet/) başlayın; her panelin anlamı için [panel turunu](/tr/blog/seine-dashboard-explained/) kullanın.
 
 ## Otomatik CPU ayarı nasıl çalışır?
 
 <Answer>
-CPU ayarı açıkken seine uyumlu kayıtlı sayıyla veya donanım tahminiyle madenciliğe başlar, ardından gerçek işle ayarları karşılaştırır. Temel ayarı ölçer, adayı dener ve temel ayarı yeniden ölçer. Kullanılabilir RAM ve yapılandırılmış sınırlar, makineye uygun ayar arayışını sınırlar.
+seine hemen kazmaya başlar ve gerçek madencilik işi üzerinde ayarlama yapar. Önce işlemcinizin çalıştırabildiği CPU kernellerini, ardından iş parçacığı sayılarını karşılaştırır; mevcut ayarı, adayı ve yeniden mevcut ayarı ölçer. En iyisi kadar hızlı hash hesaplayan en düşük iş parçacığı sayısını korur ve bir şey değişene kadar testi bırakır.
 </Answer>
 
-<img src="/assets/blog/cpu-autotuning.svg" alt="Tekrarlanan temel–aday–temel karşılaştırması kayıtlı bir ayara ulaşır; kullanılabilir bellek süreç boyunca kontrol edilir." width="1200" height="675" loading="lazy" />
+<img src="/assets/blog/cpu-autotuning.svg" alt="Tekrarlanan temel–aday–temel karşılaştırması kaydedilmiş bir ayara götürür; kullanılabilir bellek baştan sona kontrol edilir." width="1200" height="675" loading="lazy" />
 
-## Arama bitmeden madencilik başlar
+Otomatik ayarı kullanmak için `--threads` ayarlamayın. Yapılandırılacak bir şey yoktur. seine bildiği en iyi noktadan başlar: bu makinenin kayıtlı sonucu, ardından CPU modeliniz için bir başlangıç noktası, ardından çekirdeklerinize ve boş RAM'inize göre bir tahmin. Oradan, daha fazla iş parçacığı fayda sağlamayı bırakana kadar büyüyen adımlarla arar, ardından aralığı daraltır.
 
-Otomatik ayar için `--threads` belirtmeyin. Normal madencilikte seine kaynak bütçesinde başlangıç sayısı seçer ve çevrimdışı iş parçacığı taraması yapmadan çalışmaya başlar. Uyumlu önbellek başlangıcı sağlayabilir. Yeni makine, sonraki karşılaştırmalarla geliştirilen bir tahminle başlar.
+Mevcut ayarın her adayın iki yanında çalıştırılması, bir tarayıcı sekmesi veya arka plan güncellemesi gibi yük değişikliklerinin adayın lehine ya da aleyhine sayılmamasını sağlar. Açıkça daha yavaş olan bir aday erken kesilir, bu yüzden çoğu makine birkaç dakikada bitirir.
 
-Her deneme geçen süre içindeki tamamlanmış hashleri ölçer. Yeni bellek alanları ölçüm penceresinden önce ilk hashi tamamlar. Temel–aday–temel sırası, ayar etkisini değişen koşullardan ayırır. Temel ölçümde büyük kayma, bellek sınırı değişimi veya uzun süre iş kaybı karşılaştırmayı geçersiz kılabilir. Paneldeki kısa sıçrama uzun bir kararın yalnızca tek gözlemidir.
+## Paneldeki Tuning satırı ne anlama gelir?
 
-## Daha fazla iş parçacığı neden her zaman yardımcı olmaz?
+Paneldeki `Tuning:` satırı ayarlamanın durumunu gösterir:
 
-Her etkin CPU iş parçacığı büyük bellek alanı kullanır ve bellek bant genişliğini paylaşır. Sayıyı artırmak daha çok eşzamanlı iş sağlar, fakat sonuç tüm sisteme bağlıdır. Ayarlayıcı en yüksek sayının en hızlı olduğunu varsaymak yerine toplam CPU H/s değerini karşılaştırır. [RAM rehberi](/tr/blog/how-much-ram-to-mine-blocknet/) bellek bütçesini açıklar.
+| Satır | Anlamı |
+|---|---|
+| `trying kernels, about 4 min left` | Kazarken CPU kernelleri karşılaştırılıyor |
+| `12 vs 16 threads, about 3 min left` | İki iş parçacığı sayısı karşılaştırılıyor; seine ölçerken sayı ikisi arasında gidip gelir |
+| `update: 12 vs 14 threads, ~2 min` | Yeni bir sürüm CPU'nuz için bir şeyi değiştirdi ve yalnızca onu test ediyor |
+| `done` | Ayarlandı. Bir şey değişmedikçe iş parçacığı sayısı sabit kalır |
+| `low on RAM, best is 12 threads` | RAM yeniden boşalana kadar daha az iş parçacığı çalışıyor |
 
-Varsayılan profil `balanced`dır. Profiller ayar politikasını ve çalışma varsayılanlarını yönetir; `efficiency` daha az iş parçacığını tercih edebilen açık bir seçimdir. Değerlendirirken aynı profili koruyun. Sayı, CPU yerleşimi ve bellek sayfaları etkileşir; başka makine veya yapılandırmanın sonucu otomatik kopyalanacak ayar değil, başlangıç referansıdır.
+Günlükte ayarlama başladığında nedenini belirten bir satır, bittiğinde de bir satır bulunur, örneğin `tuned to 12 threads`. [Panel rehberi](/tr/blog/seine-dashboard-explained/) diğer panelleri anlatır.
 
-## Diğer programlar RAM istediğinde ne olur?
+## seine neden kullanabileceğinden daha az iş parçacığı kullanıyor?
 
-Otomatik bellek bütçesi mevcut kaynaklarla değişir. Bellek baskısında iş parçacıkları mevcut hashi bitirip park edebilir ve alanlarını serbest bırakabilir. Yeterli boşluk sürekli geri geldiğinde madenci uygun yuvaları etkinleştirip aramaya devam edebilir. Başka uygulamalar çalışan bilgisayarda etkin sayı aynı oturumda koşullara uyabilir.
+Her CPU iş parçacığı büyük bir bellek alanı (arena) tutar ve tüm iş parçacıkları makinenin bellek bant genişliğini paylaşır. Belirli bir sayıdan sonra daha fazla iş parçacığı hash gücü eklemez ve diğer programlarınızın kullanabileceği RAM'i alır. Bu yüzden seine en hızlısıyla eşleşen her sayıyı eşit derecede iyi kabul eder ve bunların en düşüğünü korur. Aynı hash gücünü daha fazla boş bellekle elde edersiniz.
 
-Geçici azalma daha önce öğrenilen yüksek sayıyı silmek zorunda değildir. Önbellek ile etkin sayının amaçları farklıdır. Linux'ta serbest bırakılan açık HugeTLB alanları ayrılmış büyük sayfa havuzuna döner; seine işletim sistemindeki bu havuzu yeniden boyutlandırmaz. Rezervasyon değişiklikleri için [huge pages rehberini](/tr/blog/huge-pages-blocknet-mining/) kullanın ve bunları sıradan boş RAM'den ayırın.
+Bu nedenle en iyi sayı çoğu zaman toplam çekirdek veya iş parçacığı sayınızın altındadır ve birbirine benzeyen makineler arasında farklıdır. İş parçacığı sayısı, bellek kanalları ve sayfa desteği rol oynar; bu yüzden başka bir bilgisayardan gelen sonuç kopyalanacak bir ayar değil, bir referanstır. [RAM rehberi](/tr/blog/how-much-ram-to-mine-blocknet/) iş parçacığı başına bellek bütçesini açıklar.
 
-## seine CPU çekirdeğini de ayarlar mı?
+Son birkaç hash yerine enerji ve bellek tasarrufunu tercih ederseniz `--cpu-profile efficiency`, en hızlıya yakın daha düşük bir sayı korur.
 
-Uygun CPU'lar sayı yanında desteklenen hash kod yollarını da karşılaştırabilir. Kernel burada hash hesabının yazılım uygulamasıdır. Madenci desteklenen işlemci komutlarını denetler ve uygun yolları tekrarlanan madencilik örnekleriyle karşılaştırır. Çekirdek ve sayı denemeleri sırayla yapılır; bellek yönetimi sürer. [Teknik rehber](https://github.com/zpalmtree/seine/blob/v0.2.36/docs/guides/autotuning.md) sürümün adaylarını açıklar.
+## seine CPU kernelini de ayarlar mı?
 
-Otomatik CPU değişimleri havuz bağlantısını korur ve GPU arka uçlarını yeniden başlatmaz. Çekirdekler tamamlanmış hashler arasında, ayrılmış bellek korunarak değişir. Panelde elle `+` veya `-` kullanmak farklıdır: arka uçları yeniden başlatır, havuza yeniden bağlanır ve o çalıştırmada otomatik CPU ayarını kapatır. Günlükten değişim türünü bulun.
+Evet. Buradaki kernel, belirli bir işlemci komut kümesi için hash'in yazılım uygulamasıdır. seine CPU'nuzun hangi komutları desteklediğini kontrol eder, çalıştıramayacağı bir kerneli asla denemez ve CPU'nuzda kazanamayan kernelleri atlar. Kalanları, iş parçacığı sayısını belirlemeden önce kazarken karşılaştırır. Kernel geçişleri tam hash'ler arasında olur, böylece madencilik sürer ve havuz bağlantısı açık kalır.
 
-## Kayıtlı sonuçlar nasıl yeniden kullanılır?
+## seine ne zaman yeniden ayarlama yapar?
 
-Varsayılan sayı önbelleği `--data-dir` altındaki `seine.cpu-autotune.json`; çekirdek önbelleği `seine.cpu-autotune.json.kernels.json` dosyasıdır. Öğrenilen seçimleri havuz bağlantı ayarlarından ayrı tutarlar. Başlatmalar arasında aynı veri dizinini kullanın. [Güncelleme rehberi](/tr/blog/update-seine-miner/) uygulamayı değiştirirken dizini korumayı açıklar.
+Satır `done` gösterdiğinde seine zamanlanmış test çalıştırmaz. Yalnızca bir şey değiştiğinde yeniden bakar:
 
-Yeniden kullanım donanım ve derleme kimliği, yerleşim ve sayfa ayarlarının uyumuna bağlıdır. Mevcut kaynak sınırları başlangıçta etkin sayıyı yine kısıtlar. Önemli değişiklik sonrası önbellek eşleşmemesi beklenebilir; yeni ölçümlere izin verin. Başka rig'in önbelleğini kopyalamayın veya ölçümleri elle değiştirmeyin. Yeni aramayı sorun saymadan başlangıç ve ayar mesajlarını okuyun.
+- **Yeni bir sürüm CPU'nuz için bir şeyi değiştirir.** Yeni sürüm kayıtlı sonucunuzla başlar ve yalnızca değişeni, örneğin yeni veya iyileştirilmiş bir kerneli test eder. Hash hesaplamada hiçbir şeyi değiştirmeyen bir sürüm hiç test çalıştırmaz.
+- **Hash gücü uzun süre değişir,** örneğin başka bir program CPU'yu yoğun kullanmaya başladığında veya bıraktığında.
+- **Daha fazla RAM boşalır,** iş parçacığı sayısını sınırlayan şey RAM olduktan sonra.
+- **Donanım, işletim sistemi veya CPU sınırları değişir,** örneğin bir konteynerin CPU sınırı.
 
-## Sabit iş parçacığı sayısı ne zaman seçilmeli?
+Bunların her biri günlüğe ayarlamanın neden başladığını söyleyen bir satır yazar. Otomatik güncellemeler ayarınızı korur, bu yüzden seine'i güncellemek onu başa döndürmez. [Güncelleme rehberi](/tr/blog/update-seine-miner/) güncellemelerin nasıl çalıştığını açıklar.
 
-Bilerek tekrarlanabilir yapılandırma istediğinizde sabit sayı kullanın. `--threads 4` dört CPU iş parçacığı ister ve normalde sayı ile çekirdek ayarını kapatır. `--cpu-autotune-threads` sayı verilse bile ayarı açar; `--disable-cpu-autotune-threads` otomatik uyarlamayı kapatır. [Bayrak referansı](https://github.com/zpalmtree/seine/blob/v0.2.36/docs/MINER_FLAGS.md) arama sınırlarını ve etkileşimlerini belgeler.
+## Diğer programlar RAM'e ihtiyaç duyduğunda ne olur?
 
-Günlük kullanımda varsayılanlarla başlayın ve üretken karşılaştırmalara zaman tanıyın. CPU satırı, ayar mesajları ve kabul edilen payları birlikte inceleyin. Benzer yük ve bellek koşullarını karşılaştırın. Havuz hash gücü gelen paylardan tahmin edilir; denemeyi anlamak için yerel CPU ölçümlerini, kredilendirilen işi izlemek için [havuz istatistiklerini](https://bntpool.com/blog/tr/track-your-miner-on-bntpool/) kullanın.
+seine boş RAM'i saniyede bir kontrol eder. Diğer programların belleğe ihtiyacı olduğunda CPU iş parçacıkları mevcut hash'lerini bitirir, bekler ve alanlarını serbest bırakır; satır `low on RAM` gösterir. Bellek yeniden boşaldığında iş parçacıkları geri döner. Öğrendiği en iyi sayı kayıtlı kalır, böylece kısa bir sıkışma onu silmez.
 
-<CTA target="seine" title="Otomatik CPU ayarıyla madencilik yapın" text="seine&#x27;ı indirin, varsayılan ayarları koruyun ve kararları panelden izleyin." />
+Linux'ta serbest bırakılan açık HugeTLB alanları ayrılmış huge pages havuzuna döner; seine bu havuzun boyutunu değiştirmez. [Huge pages rehberi](/tr/blog/huge-pages-blocknet-mining/) huge pages ayırmayı anlatır.
+
+## Kayıtlı ayarlama sonuçları nasıl yeniden kullanılır?
+
+Sonuçlar veri dizinindeki `seine.cpu-autotune.json` dosyasına kaydedilir, varsayılan olarak `seine-data`. Bir sonraki başlangıçta seine doğrudan kayıtlı sonuca döner ve satır `done` gösterir. Hash gücü geçen seferden açıkça farklıysa yeniden ayarlama yapar ve günlük nedenini söyler. seine'in dosyayı bulabilmesi için çalıştırmalar arasında aynı veri dizinini kullanın ve her cihazın kendi dosyasını oluşturmasına izin verin: başka bir makinenin dosyasını kopyalamak işe yaramaz, çünkü sonuç tam donanıma ve ayarlara bağlıdır.
+
+## İş parçacığı sayısını kendiniz değiştirebilir misiniz?
+
+Evet. Bir CPU iş parçacığını çıkarmak veya eklemek için panelde `-` veya `+` tuşuna basın. Ayarlama `done` gösterdiğinde değişiklik çalışan iş parçacıklarına hemen uygulanır; GPU'lar ve havuz bağlantısı çalışmaya devam eder. Ayarlama hâlâ bir sayı seçerken tuşlar bekler ve panel ayarlamanın ne kadar süresi kaldığını gösterir. Bir tuş basışı yalnızca o çalıştırma için geçerlidir; sonraki başlangıç yine kayıtlı sonucu kullanır.
+
+Sayıyı en baştan sabitlemek için `--threads` kullanın, örneğin `--threads 4`. seine bu durumda o sayıyı korur ve onun için yine en iyi kerneli seçer. `--disable-cpu-autotune-threads` iş parçacığı ve kernel ayarını tamamen kapatır. [Bayrak başvurusu](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/MINER_FLAGS.md) bu seçenekleri belgeler; [bilgisayarınızı kullanırken madencilik](/tr/blog/mine-while-using-pc/) bir masaüstünü madencilikle nasıl paylaşacağınızı gösterir.
+
+Günlük madencilik için varsayılanlarla başlayın ve ayarlamanın `done` noktasına ulaşmasına izin verin. Bir ayarlama denemesini izlemek için CPU aygıt satırını, hesabınıza yazılan madencilik etkinliğini izlemek için [havuz istatistiklerini](https://bntpool.com/blog/tr/track-your-miner-on-bntpool/) kullanın.
+
+<CTA target="seine" title="Otomatik CPU ayarıyla kazın" text="seine'i indirin, varsayılan ayarları koruyun; CPU'nuz için en hızlı iş parçacığı sayısını ve kerneli dakikalar içinde bulsun." />

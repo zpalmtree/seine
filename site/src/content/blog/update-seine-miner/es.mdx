@@ -1,31 +1,47 @@
 ---
 title: 'Cómo actualizar el minero de Blocknet'
-description: 'Actualiza el minero seine para Blocknet, conserva la configuración, verifica la descarga oficial y comprueba la conexión y el envío de shares aceptadas.'
+description: 'Mantén actualizado el minero seine para Blocknet: cómo instalan las actualizaciones automáticas cada versión, cómo actualizar a mano y cómo confirmar que la nueva versión mina.'
 tags: ['Guía de minería', 'seine', 'Actualizaciones']
 faq:
   - q: '¿seine instala las actualizaciones automáticamente?'
-    a: 'El comprobador anuncia las versiones nuevas en el panel y el registro. Tú decides cuándo descargarlas e instalarlas. Descarga y verifica el archivo oficial, detén el minero, sustituye los archivos de la aplicación y reinícialo con el mismo directorio de datos y las mismas opciones de inicio.'
+    a: 'Sí, desde v0.3.0. Cuando sale una versión nueva, el panel cuenta 60 segundos atrás mientras sigue minando; después seine verifica la descarga firmada, se detiene limpiamente y se reinicia con la nueva versión y los mismos ajustes. Pulsa u para actualizar al momento, s para omitir esa versión, o inicia seine con --no-auto-update para actualizar a mano.'
   - q: '¿Qué archivos guardan mi configuración?'
     a: 'La configuración predeterminada está en seine-data/seine.config.json, relativa al directorio desde el que inicias el programa. data-dir permite cambiar esa ubicación. Conserva el directorio de datos y el script o servicio de inicio: las opciones de backend e hilos son independientes de los datos de conexión guardados.'
   - q: '¿Por qué vuelve a pedirme la dirección después de actualizar?'
     a: 'Comprueba primero el directorio de trabajo y el argumento data-dir. Iniciar desde una carpeta recién extraída puede hacer que seine busque otra configuración. Detén esa instancia, localiza el directorio de datos original y reinicia con la ruta correcta. Comprueba la dirección y el pool antes de continuar.'
-sourceHash: '1d2a2deba793'
+sourceHash: '37fa2d9966c0'
 translation: draft
 ---
 
-Actualiza seine conservando la conexión al pool y las opciones de inicio que ya funcionan. Esta guía se basa en la versión pública v0.2.36 y cubre la preparación, la sustitución de archivos y la comprobación. Para una primera instalación, consulta las guías de [Windows](/es/blog/mine-blocknet-on-windows/), [Linux](/es/blog/mine-blocknet-on-linux/) o [Mac](/es/blog/mine-blocknet-on-mac/).
+Mantén seine en la última versión con la conexión al pool y las opciones de inicio que ya funcionan en tu máquina. Esta guía sigue la versión pública v0.3.1: cómo funcionan las actualizaciones automáticas, qué hacer una vez si vienes de una versión anterior y cómo actualizar a mano. Para una primera instalación, consulta las guías de [Windows](/es/blog/mine-blocknet-on-windows/), [Linux](/es/blog/mine-blocknet-on-linux/) o [Mac](/es/blog/mine-blocknet-on-mac/).
 
 ## ¿Cómo se actualiza el minero seine?
 
 <Answer>
-Descarga y verifica el archivo oficial para tu sistema, detén el minero, conserva su directorio de datos y sustituye los archivos de la aplicación. Reinicia con el mismo directorio de trabajo y argumentos. Comprueba la versión, el destino de pago, la conexión al pool y las shares aceptadas antes de actualizar otra máquina.
+Deja seine en marcha. Busca una versión nueva al arrancar y cada 12 horas, cuenta 60 segundos atrás en la cabecera del panel mientras sigue minando, y después instala la versión firmada y se reinicia con los mismos argumentos y ajustes. Para actualizar a mano, detén seine, sustituye sus archivos por los del archivo oficial e inícialo de la misma forma.
 </Answer>
+
+## ¿Cómo funcionan las actualizaciones automáticas?
+
+Cuando sale una versión más reciente, la cabecera muestra `update vX.Y.Z available`, el registro enlaza a la versión y después la cabecera inicia una cuenta atrás: `updating to vX.Y.Z in 42s`. La minería continúa durante la cuenta atrás. Pulsa `u` para actualizar enseguida o `s` para omitir esa versión; seine recuerda la omisión en su directorio de datos y te ofrece la siguiente versión como siempre.
+
+Tras la cuenta atrás, seine comprueba la firma de la versión, se asegura de que el nuevo ejecutable arranca y solo entonces sustituye el anterior. Detiene la minería limpiamente y se reinicia con los mismos argumentos, y el nuevo panel registra `updated to seine vX.Y.Z`. La nueva versión arranca con tu ajuste guardado y solo prueba lo que cambió en la versión, así que recupera enseguida la velocidad completa.
+
+Si un pool envía trabajo que necesita una versión más reciente, por ejemplo en una actualización de la red, seine pausa la minería e instala la actualización de inmediato, aunque sea una versión que omitiste. Usa `--no-auto-update` para quedarte solo con el aviso, o `--disable-update-check` para desactivar la comprobación. Las compilaciones propias muestran el aviso y te dejan a ti la actualización.
+
+## ¿Qué haces una vez si vienes de una versión anterior?
+
+La mayoría de los rigs no necesitan nada. Algunas configuraciones necesitan un paso en la primera actualización automática a v0.3.1:
+
+- **Linux, desde v0.2.45:** v0.2.45 instala la nueva versión y después se cierra. Inicia seine una vez más. Las configuraciones que reinician seine por sí solas, como un servicio systemd, no necesitan nada.
+- **Windows, desde v0.2.45 o v0.3.0:** la versión antigua inicia la nueva y se cierra. Si un script o servicio también reinicia seine cuando se cierra, detenlo una vez tras la actualización para que solo quede un seine en marcha.
+- **HiveOS y mmpOS, desde el paquete v0.3.0:** cambia tu flight sheet o perfil al paquete v0.3.1 de la [página de versiones](https://github.com/zpalmtree/seine/releases). A partir de v0.3.1, el paquete se actualiza a través del sistema de minería: cambia la versión en su URL, como muestra la [guía de HiveOS y mmpOS](/es/blog/mine-blocknet-hiveos-mmpos/).
 
 <img src="/assets/blog/miner-update.svg" alt="Se sustituye el paquete de la aplicación conservando la carpeta de configuración y después se comprueba la conexión." width="1200" height="675" loading="lazy" />
 
 ## ¿Cómo compruebas tu versión actual?
 
-Ejecuta el comando de versión sobre el ejecutable que utilizas realmente. Una copia antigua en otra carpeta puede dar un resultado distinto al programa iniciado por un acceso directo o servicio. Anota la ruta del ejecutable, el directorio de trabajo y los argumentos para poder repetir el procedimiento. En Windows, abre PowerShell en la carpeta actual del minero:
+La cabecera del panel muestra la versión que estás ejecutando. También puedes ejecutar el comando de versión sobre el ejecutable que utilizas realmente. Una copia antigua en otra carpeta puede dar un resultado distinto al programa iniciado por un acceso directo o servicio. Anota la ruta del ejecutable, el directorio de trabajo y los argumentos para poder repetir el procedimiento. En Windows, abre PowerShell en la carpeta actual del minero:
 
 ```powershell
 .\seine.exe --version
@@ -37,7 +53,7 @@ En Linux o macOS, abre un terminal en esa carpeta:
 ./seine --version
 ```
 
-Compara el resultado con las [versiones oficiales](https://github.com/zpalmtree/seine/releases). seine busca una versión nueva al arrancar y cada 12 horas, y muestra un aviso en el panel y el registro. El aviso incluye el enlace de descarga; tú eliges cuándo instalarla. Lee las notas sobre cambios de plataforma, bibliotecas de ejecución u opciones de inicio.
+Compara el resultado con las [versiones oficiales](https://github.com/zpalmtree/seine/releases) y lee las notas sobre cambios de plataforma, bibliotecas de ejecución u opciones de inicio.
 
 ## ¿Qué configuración debes conservar?
 
@@ -45,11 +61,11 @@ Por defecto, seine lee `./seine-data/seine.config.json`. `./` indica el director
 
 La configuración guarda datos como el modo de minería, la dirección de pago, la URL del pool y el nombre del equipo. Conserva todo el directorio de datos, incluidos los archivos de ajuste. Guarda también el comando, script o definición del servicio: opciones como `--backend` y `--threads` son independientes de esos datos de conexión. Conservando ambos mantienes la configuración prevista al reiniciar.
 
-## Descarga y verifica el reemplazo
+## ¿Cómo actualizas seine a mano?
 
-Usa la [página de descargas](/es/#download) o la versión oficial y elige el archivo para tu sistema y arquitectura de CPU. Descarga también el recurso independiente `SHA256SUMS.txt` de esa misma versión. Compara la suma del archivo antes de extraerlo en otra carpeta. La [guía de verificación](/es/blog/antivirus-flags-crypto-miner/) explica el procedimiento en Windows y cómo actuar ante un aviso de descarga.
+Si usas `--no-auto-update` o prefieres elegir tú el momento, actualiza a mano. Usa la [página de descargas](/es/#download) o la versión oficial y elige el archivo para tu sistema y arquitectura de CPU. Descarga también el recurso independiente `SHA256SUMS.txt` de esa misma versión. Compara la suma del archivo antes de extraerlo en otra carpeta. La [guía de verificación](/es/blog/antivirus-flags-crypto-miner/) explica el procedimiento en Windows y cómo actuar ante un aviso de descarga.
 
-Mantén juntos todos los archivos del paquete. El de Windows incluye bibliotecas de NVIDIA junto a `seine.exe`; copiar solo el ejecutable puede dejar una instalación con componentes de distintas versiones. La [guía de NVIDIA](/es/blog/mine-blocknet-nvidia-gpu/) cubre esas bibliotecas. La [referencia de configuración de v0.2.36](https://github.com/zpalmtree/seine/blob/v0.2.36/docs/guides/configuration.md) documenta los ajustes guardados y el comportamiento de inicio descrito aquí.
+Mantén juntos todos los archivos del paquete. El de Windows incluye bibliotecas de NVIDIA junto a `seine.exe`; copiar solo el ejecutable puede dejar una instalación con componentes de distintas versiones. La [guía de NVIDIA](/es/blog/mine-blocknet-nvidia-gpu/) cubre esas bibliotecas. La [referencia de configuración de v0.3.1](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/configuration.md) documenta los ajustes guardados, las actualizaciones automáticas y el comportamiento de inicio descrito aquí.
 
 ## Detén, respalda y sustituye
 

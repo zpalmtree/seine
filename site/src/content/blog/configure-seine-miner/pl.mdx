@@ -11,7 +11,7 @@ faq:
     a: 'Seine wybiera liczbę wątków za Ciebie, więc ustawiasz ją tylko wtedy, gdy chcesz zostawić miejsce na inną pracę. Każdy wątek zajmuje około 2 GB RAM. Naciskaj klawisz minus w panelu, aż komputer będzie działał komfortowo, i użyj tej liczby.'
   - q: 'Gdzie seine zapisuje swoje ustawienia?'
     a: 'Seine zapisuje Twój adres, pulę i nazwę workera w seine-data/seine.config.json, wewnątrz folderu, z którego go uruchamiasz. Opcje wątków i backendu nie są tam zapisywane, więc umieść je w małym pliku startowym, jeśli chcesz je mieć przy każdym uruchomieniu.'
-sourceHash: b5ca5a9a16d8
+sourceHash: 'cbfaa904cdbf'
 translation: draft
 ---
 
@@ -129,6 +129,8 @@ Aby użyć innej wartości tylko podczas jednego uruchomienia, dodaj ją do pole
 ```
 
 Pozostałe dwa ustawienia to `--address` i `--pool-url`. [Poradnik zmiany adresu](https://bntpool.com/blog/pl/change-mining-wallet-address/) wyjaśnia, jak pula zalicza Twoją pracę po zmianie adresu.
+
+Aby kopać solo na bntpool.com, dodaj `solo:` przed adresem, na przykład `"address": "solo:@yourname"` w pliku lub `--address solo:YOUR_ADDRESS` w wierszu poleceń. Pula wypłaca Ci wtedy całą nagrodę za każdy blok znaleziony przez Twoją koparkę. [Kopanie solo na bntpool.com](https://bntpool.com/blog/pl/solo-mine-blocknet-on-bntpool/) wyjaśnia, jak wypłacane są bloki solo.
 
 ## Co zrobić, gdy ustawienie nie działa?
 

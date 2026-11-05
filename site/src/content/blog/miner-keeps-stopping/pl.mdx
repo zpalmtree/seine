@@ -9,11 +9,11 @@ faq:
     a: 'Zachowaj konfigurację i zanotuj jej położenie przed zmianami. Błąd parsowania wskazuje konkretny plik lub wartość. Zrób kopię, popraw wskazany problem i zachowaj adres oraz ustawienia uruchamiania. Usunięcie wszystkiego utrudnia porównanie z ostatnim poprawnym uruchomieniem.'
   - q: 'Jakie informacje pomagają diagnozować powtarzające się zatrzymania?'
     a: 'Zapisz wersję seine, system, CPU, GPU, dostępną pamięć, pełne argumenty, katalog roboczy i czas zatrzymania. Dodaj ostatnie komunikaty oraz istotne zdarzenia systemowe. Przed udostępnieniem usuń dane uwierzytelniające i osobowe; nigdy nie dołączaj frazy odzyskiwania ani kluczy prywatnych portfela.'
-sourceHash: '2e054f0c0100'
+sourceHash: '333d8de81191'
 translation: draft
 ---
 
-Ustal etap zatrzymania, aby przywrócić regularną pracę minera Blocknet. Poradnik dotyczy seine v0.2.37 i zaczyna od danych dostępnych na własnym komputerze. Zachowaj ostatnie działające polecenie i konfigurację. Zmieniaj pojedyncze istotne ustawienie, aby wynik następnej próby miał wartość diagnostyczną.
+Ustal etap zatrzymania, aby przywrócić regularną pracę minera Blocknet. Poradnik dotyczy seine v0.3.1 i zaczyna od danych dostępnych na własnym komputerze. Zachowaj ostatnie działające polecenie i konfigurację. Zmieniaj pojedyncze istotne ustawienie, aby wynik następnej próby miał wartość diagnostyczną.
 
 ## Co sprawdzić, gdy miner się zatrzymuje?
 
@@ -27,7 +27,13 @@ Ustal, czy proces się zakończył, komputer zasnął, czy trwa przywracanie po�
 
 Otwórz terminal w zwykłym katalogu startowym i wykonaj dotychczasowe polecenie. Dodaj `--ui plain`, aby uzyskać tekstowy dziennik zamiast panelu, pozostawiając inne argumenty. Uruchamia to kopanie z obecną konfiguracją. Skopiuj końcowe komunikaty, także pierwszy błąd przed powtarzającymi się komunikatami ponownego łączenia lub zamykania.
 
-Zapisz razem wersję programu, katalog roboczy i wybrany katalog danych. W tej wersji obsłużony błąd krytyczny jest wypisywany z `fatal:` przed wyjściem. Zakończenie przez system może zostawić inne ślady. Jeśli proces działa, użyj [kontroli połączenia z pulą](https://bntpool.com/blog/pl/track-your-miner-on-bntpool/); brak udziału lub chwilowa utrata połączenia nie dowodzi awarii procesu.
+Zapisz razem wersję programu, katalog roboczy i wybrany katalog danych. Obsłużony błąd krytyczny jest wypisywany z `fatal:` przed wyjściem. Gdy w Windows uruchomisz `seine.exe` dwukrotnym kliknięciem, po błędzie krytycznym konsola pozostaje otwarta do naciśnięcia Enter, więc możesz przeczytać komunikat. Zakończenie przez system może zostawić inne ślady. Jeśli proces działa, użyj [kontroli połączenia z pulą](https://bntpool.com/blog/pl/track-your-miner-on-bntpool/); brak udziału lub chwilowa utrata połączenia nie dowodzi awarii procesu.
+
+## Czy seine zatrzymał się z powodu aktualizacji?
+
+Krótkie zatrzymanie może być aktualizacją. Przy włączonych automatycznych aktualizacjach seine odlicza czas w nagłówku panelu, instaluje nowe wydanie, poprawnie zatrzymuje kopanie i uruchamia się ponownie z tymi samymi argumentami; nowy panel zapisuje w logu `updated to seine vX.Y.Z`. Jeśli pula wysyła pracę wymagającą nowszego wydania, na przykład przy aktualizacji sieci, seine wstrzymuje kopanie i zapisuje `installing seine vX.Y.Z now: mining is paused until Seine is updated`, a potem kontynuuje, gdy aktualizacja zostanie zainstalowana.
+
+Przy przejściu z v0.2.45 w Linuksie stara wersja instaluje aktualizację i kończy działanie, więc uruchom seine jeszcze raz; usługa systemd lub inny program uruchamiający ponownie nie wymaga niczego. [Poradnik aktualizacji](/pl/blog/update-seine-miner/) wymienia jednorazowe kroki także dla Windows, HiveOS i mmpOS.
 
 ## Czy zatrzymuje się przed rozpoczęciem kopania?
 
@@ -43,9 +49,9 @@ Jawnie wymagany tryb stron potrzebuje odpowiedniej rezerwacji systemowej. Błąd
 
 ## Sprawdź etap GPU osobno
 
-Gdy start wskazuje bibliotekę CUDA, urządzenie lub alokację GPU, zapisz dokładny komunikat i wersję sterownika. [Poradnik NVIDIA](/pl/blog/mine-blocknet-nvidia-gpu/) opisuje wymagania wydania, biblioteki wykonawcze i wybór urządzeń. Porównaj je z instalacją przed zmianą kernela lub strojenia. Poprawne pobranie archiwum nie potwierdza gotowości środowiska wykonawczego.
+Gdy start wskazuje bibliotekę CUDA lub HIP, urządzenie lub alokację GPU, zapisz dokładny komunikat i wersję sterownika. [Poradnik NVIDIA](/pl/blog/mine-blocknet-nvidia-gpu/) i [poradnik AMD](/pl/blog/mine-blocknet-amd-gpu/) opisują wymagania wydania, biblioteki wykonawcze i wybór urządzeń. Porównaj je z instalacją przed zmianą kernela lub strojenia. Poprawne pobranie archiwum nie potwierdza gotowości środowiska wykonawczego.
 
-seine może odizolować błąd backendu, podczas gdy pozostałe aktywne backendy pracują. Sprawdź komunikaty i pozostałą aktywność przed uznaniem, że zatrzymała się cała aplikacja. Zachowaj dane przed restartem, bo nowa sesja może ukryć poprzednią sekwencję. Przy próbie prostszego wyboru backendów zachowaj oryginalne polecenie i porównaj start, dalszą pracę oraz zaakceptowane zgłoszenia.
+seine może odizolować błąd backendu, podczas gdy pozostałe aktywne backendy pracują. Jeśli środowisko uruchomieniowe AMD dwa razy z rzędu zamknie seine podczas pracy na GPU, seine przestaje sam wybierać karty AMD i kopie dalej na pozostałym sprzęcie; po aktualizacji sterownika uruchom go raz z `--backend cpu,amd`, aby ponownie spróbować kart. Sprawdź komunikaty i pozostałą aktywność przed uznaniem, że zatrzymała się cała aplikacja. Zachowaj dane przed restartem, bo nowa sesja może ukryć poprzednią sekwencję. Przy próbie prostszego wyboru backendów zachowaj oryginalne polecenie i porównaj start, dalszą pracę oraz zaakceptowane zgłoszenia.
 
 ## Czy komputer zasnął lub uruchomił się ponownie?
 

@@ -1,0 +1,107 @@
+---
+title: 'HiveOS ve mmpOS üzerinde Blocknet madenciliği nasıl yapılır'
+description: 'Her sürümdeki seine paketiyle HiveOS veya mmpOS üzerinde Blocknet kazın. Flight sheet veya madenci profili kurun, GPU ya da CPU seçin ve tek adımda güncelleyin.'
+tags: ['Madencilik rehberi', 'HiveOS', 'mmpOS', 'GPU']
+sourceHash: 'e49fce300603'
+translation: draft
+faq:
+  - q: 'HiveOS üzerinde Blocknet kazabilir miyim?'
+    a: 'Evet. Her seine sürümü bir HiveOS paketi içerir. Bir BNT cüzdanı ekleyin, Pool değeri Configure in miner ve Miner değeri Custom olan bir flight sheet oluşturun, paket bağlantısını Installation URL olarak yapıştırın ve cihazlarınıza uygulayın. HiveOS paneli ardından GPU başına hash gücünü ve kabul edilen payları gösterir.'
+  - q: 'mmpOS üzerinde Blocknet kazabilir miyim?'
+    a: 'Evet. Her seine sürümü bir mmpOS paketi içerir. seine mmpOS rehberindeki hazır madenci profilini içe aktarın; bu profil BNT cüzdanını, bntpool.com havuzunu ve seine madencisini tek adımda ekler. Ardından onu cihazlarınızda etkin madenci profili yapın.'
+  - q: 'HiveOS paketi CPU''da da kazar mı?'
+    a: 'GPU cihazlarında paket yalnızca GPU''larda kazar, çünkü her CPU iş parçacığı 2 GB sistem RAM''i gerektirir ve birçok GPU cihazında az RAM vardır. GPU''su olmayan cihazlar CPU''da kazar. Bir GPU cihazına CPU madenciliği eklemek için Extra config arguments alanına --backend nvidia,cpu --threads 2 yazın.'
+  - q: 'seine HiveOS veya mmpOS üzerinde nasıl güncellenir?'
+    a: 'Kurulum veya indirme URL''sindeki sürüm numarasını en yeni sürümle değiştirin ve flight sheet''i veya profili yeniden uygulayın. Madencilik işletim sistemi yeni paketi indirir ve seine kayıtlı ayarlama sonuçlarını korur, böylece cihazlar birkaç saniye içinde yeniden hash hesaplamaya başlar.'
+---
+
+Bu rehber, seine ile HiveOS ve mmpOS üzerinde Blocknet madenciliğinin nasıl yapılacağını gösterir. Her seine sürümü iki madencilik işletim sistemi için de bir paket içerir; seine'i tek bir bağlantıyla özel madenci olarak eklersiniz ve cihazlarınız hash gücünü ve payları zaten kullandığınız panelde bildirir. seine v0.3.1'i izler.
+
+## Hangi pakete ihtiyacınız var?
+
+[seine sürümler sayfasındaki](https://github.com/zpalmtree/seine/releases/latest) her sürüm iki madencilik işletim sistemi paketi taşır:
+
+| Madencilik işletim sistemi | Paket |
+|---|---|
+| HiveOS | `seine-hiveos-X.Y.Z.tar.gz` |
+| mmpOS | `seine-mmpos-X.Y.Z.tar.gz` |
+
+`X.Y.Z` sürüm numarasıdır, örneğin `0.3.1`. Her paket, madencilik işletim sisteminin sistem kitaplıklarına göre derlenmiş bir seine, seine'in kullandığı NVIDIA kernel derleyici kitaplığı ve seine'i panele bağlayan betikleri içerir. Cihaza başka bir şey kurmazsınız.
+
+## HiveOS üzerinde Blocknet nasıl kazılır?
+
+<Answer>
+Blocknet adresinizi BNT cüzdanı olarak ekleyin, ardından Pool değeri Configure in miner ve Miner değeri Custom olan bir flight sheet oluşturun. Setup Miner Config içinde seine-hiveos paket bağlantısını Installation URL olarak yapıştırın, cüzdan ve worker şablonu olarak %WAL%.%WORKER_NAME% kullanın ve havuz URL'sini ayarlayın. Flight sheet'i cihazlarınıza uygulayın.
+</Answer>
+
+1. **Bir cüzdan ekleyin.** **Wallets** (cüzdanlar) bölümünü açın ve Blocknet ödeme adresinizi ekleyin. BNT coin listesinde yoksa coin adı olarak `BNT` yazın. `@name` gibi bir Blocknet ID adı da çalışır; `@` biçimini kullanın, çünkü HiveOS `$` karakterini özel olarak işler.
+2. **Bir flight sheet oluşturun.** BNT coin'inizi ve cüzdanınızı seçin, **Pool** değerini *Configure in miner*, **Miner** değerini *Custom* yapın.
+3. **Setup Miner Config'e tıklayın** ve doldurun:
+
+   | Field | Value |
+   |---|---|
+   | Miner name | `seine-hiveos` (HiveOS URL'den doldurur) |
+   | Installation URL | `https://github.com/zpalmtree/seine/releases/download/vX.Y.Z/seine-hiveos-X.Y.Z.tar.gz` |
+   | Hash algorithm | boş bırakın |
+   | Wallet and worker template | `%WAL%.%WORKER_NAME%` |
+   | Pool URL | `stratum+tcp://bntpool.com:3333` |
+   | Pass | boş bırakın |
+
+4. **Flight sheet'i** cihazlarınıza **uygulayın**.
+
+`X.Y.Z` yerine en yeni sürümü yazın veya paket bağlantısını sürümler sayfasından kopyalayın. Yedek havuzlar **Pool URL** içinde ayrı satırlara yazılır; seine onları sırayla dener ve ilk havuz düzelince ona döner. **Pool URL** boşsa seine bntpool.com'da kazar.
+
+HiveOS paneli ardından seine'in GPU başına hash gücünü, kabul edilen ve reddedilen payları, GPU sıcaklıklarını ve fanlarını gösterir.
+
+## mmpOS üzerinde Blocknet nasıl kazılır?
+
+<Answer>
+mmpOS'un coin listelerinde henüz BNT yok, bu yüzden bunun yerine hazır bir profili içe aktarırsınız. seine mmpOS rehberindeki madenci profili JSON'unu kopyalayın, Blocknet adresinizi ve sürüm numarasını girin ve Miner profiles altında içe aktarın. Oluşturduğu cüzdanı, havuzu ve profili ekleyin, ardından cihazlarınızda seine BNT'yi etkin madenci profili yapın.
+</Answer>
+
+1. **Profili düzenleyin.** JSON profilini [seine mmpOS rehberinden](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/mmpos.md) kopyalayın. `YOUR_BLOCKNET_ADDRESS` yerine ödeme adresinizi veya `@name` adınızı, `custom_url` içindeki iki `X.Y.Z` yerine de en yeni sürümü yazın.
+2. **İçe aktarın.** **Miner profiles** (madenci profilleri) bölümünü açın, **Import from JSON**'a tıklayın, profili yapıştırın ve **Import**'a tıklayın.
+3. **Her parçayı** içe aktarma sonucundan sırayla **ekleyin**: **Add wallet**, ardından **Add pool** (BNT cüzdanı kendiliğinden dolar), ardından `bntpool` havuzu seçili olarak **Add miner profile**. BNT mmpOS listelerinde olmadığı için coin ve madenci alanları boş görünür; içe aktarılan değerler yine de kaydedilir.
+4. **Profili atayın.** Her cihazda **Active miner profile** değerini `seine BNT` yapın.
+
+Profil, mmpOS madenciyi başlattığında cüzdanınızı, cihaz adınızı ve havuzu doldurur; mmpOS paneli de seine'in GPU başına hash gücünü ve paylarını gösterir. mmpOS paketi Ubuntu 20.04 veya daha yenisi üzerine kurulu bir imaj gerektirir.
+
+## Paket hangi donanımda kazar?
+
+Paket, aygıtları madencilik işletim sisteminin algıladığı donanıma göre seçer:
+
+- **GPU cihazları GPU'larda kazar.** Her Blocknet hash'i 2 GB bellek gerektirir: GPU'da video belleği, CPU'da sistem RAM'i. Birçok GPU cihazında 4 ila 8 GB RAM vardır, bu yüzden paket CPU'yu sisteme bırakır.
+- **GPU'su olmayan cihazlar CPU'da kazar;** iş parçacığı sayısı boş RAM'e göre belirlenir.
+- **NVIDIA** kartlar CUDA 12 destekli bir sürücü gerektirir; RTX 50 serisi kartlar 570 veya daha yeni bir sürücü gerektirir.
+- **AMD Radeon RX 6000, RX 7000 ve RX 9000** kartlar cihazda ROCm HIP çalışma zamanını gerektirir. [AMD GPU rehberi](/tr/blog/mine-blocknet-amd-gpu/) kartların neye ihtiyaç duyduğunu açıklar.
+
+İlk başlatmada seine, hash gücü görünmeden önce birkaç dakika boyunca kendini her GPU'ya göre ayarlar, ardından sonucu kaydeder; böylece sonraki başlatmalar saniyeler içinde hash hesaplamaya başlar. HiveOS watchdog'unun düşük hash gücünde yeniden başlatma özelliğini kullanıyorsanız, bu ilk ayarlama çalışmasını yarıda kesmemesi için 10 dakikadan uzun bir süre verin.
+
+## CPU madenciliği veya başka ayarlar nasıl eklenir?
+
+HiveOS'ta **Extra config arguments** alanına veya mmpOS profilinin argümanlarının sonuna yazdığınız her şey seine'e olduğu gibi iletilir ve paket varsayılanlarının önüne geçer. Bir GPU cihazının CPU'sunda da kazmak için iki backend'i ve boş RAM'inize uyan bir iş parçacığı sayısını yazın; her 2 GB için bir iş parçacığı, sisteme en az 2 GB bırakarak:
+
+```text
+--backend nvidia,cpu --threads 2
+```
+
+AMD cihazlarda `amd,cpu`, karma cihazlarda `nvidia,amd,cpu` kullanın. `--threads` yazmazsanız seine CPU iş parçacıklarını boş RAM'e göre kendisi belirler ve ayarlar. Diğer faydalı argümanlar:
+
+| Argüman | Etkisi |
+|---|---|
+| `--backend nvidia --nvidia-devices 0,1,3` | Yalnızca bazı NVIDIA GPU'larda kazar |
+| `--nvidia-max-lanes 4` | Her NVIDIA GPU'da daha az video belleği kullanır |
+
+Paket panel bağlantısını, düz günlük çıktısını ve veri dizinini sizin için ayarlar. `--api-bind`, `--api-cookie` ve `--api-token` değerlerini paketin ayarladığı gibi bırakın, çünkü panel seine'in istatistiklerini bunlar üzerinden okur. [Ayarlar rehberi](/tr/blog/configure-seine-miner/) diğer seine seçeneklerini açıklar.
+
+## seine bir madencilik işletim sisteminde nasıl güncellenir?
+
+HiveOS ve mmpOS'ta yeni sürümler paket aracılığıyla gelir. Daha yeni bir sürüm çıktığında seine günlüğe bir bildirim yazar. Installation URL'deki veya mmpOS profilinin indirme URL'sindeki sürümü yeni sürümle değiştirin ve flight sheet'i veya profili yeniden uygulayın. Madencilik işletim sistemi yeni paketi indirir; seine ayarlama sonuçlarını ve ayarlarını veri dizininde tuttuğu için cihazlar saniyeler içinde tam hash gücüne döner.
+
+Cihazlarınız v0.3.0 paketini çalıştırıyorsa flight sheet'i veya profili v0.3.1 paketine geçirin; başlatma betikleri de güncellenmiştir.
+
+## Payları ve ödemeleri nerede görürsünüz?
+
+Madencilik işletim sisteminin paneli her cihazın hash gücünü ve paylarını gösterir. Hesabınıza yazılan iş, bakiye ve ödemeler için adresinizi [bntpool.com](https://bntpool.com/stats) üzerinde arayın. Her cihaz HiveOS worker adı veya mmpOS cihaz adıyla görünür; [madenci takip rehberi](https://bntpool.com/blog/tr/track-your-miner-on-bntpool/) istatistik sayfasını açıklar. Tam günlükler madencilik işletim sisteminin madenci günlüğündedir; HiveOS'ta `/var/log/miner/custom/seine-hiveos.log`.
+
+<CTA target="seine" title="seine madencilik işletim sistemi paketlerini alın" text="Her sürüm HiveOS ve mmpOS paketleri içerir: flight sheet'inize veya profilinize tek bir bağlantı yapıştırın, cihazlarınız Blocknet kazsın." />

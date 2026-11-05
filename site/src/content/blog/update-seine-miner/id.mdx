@@ -1,31 +1,47 @@
 ---
 title: 'Cara memperbarui miner Blocknet'
-description: 'Perbarui miner seine untuk Blocknet, simpan pengaturan, verifikasi unduhan resmi, lalu periksa versi, koneksi pool, dan share yang diterima setelah mulai ulang.'
+description: 'Jaga miner seine untuk Blocknet tetap terbaru: cara pembaruan otomatis memasang rilis baru, cara memperbarui secara manual, dan cara memastikan versi baru menambang.'
 tags: ['Panduan penambangan', 'seine', 'Pembaruan']
 faq:
   - q: 'Apakah seine memasang pembaruan otomatis?'
-    a: 'Pemeriksa versi mengumumkan rilis baru di dasbor dan log. Anda memilih waktu pemasangan. Unduh dan verifikasi arsip resmi, hentikan miner, ganti berkas aplikasi, lalu mulai ulang dengan direktori data dan opsi peluncuran yang sama.'
+    a: 'Ya, sejak v0.3.0. Saat rilis baru tersedia, dasbor menghitung mundur 60 detik sementara penambangan berlanjut, lalu seine memverifikasi unduhan bertanda tangan, berhenti dengan rapi dan mulai ulang dengan versi baru dan pengaturan yang sama. Tekan u untuk langsung memperbarui, s untuk melewati versi itu, atau jalankan seine dengan --no-auto-update untuk memperbarui secara manual.'
   - q: 'Berkas mana menyimpan pengaturan saya?'
     a: 'Konfigurasi bawaan berada di seine-data/seine.config.json, relatif terhadap direktori peluncuran. data-dir mengubah lokasinya. Simpan direktori data beserta skrip atau konfigurasi layanan: opsi backend dan thread terpisah dari rincian koneksi yang disimpan.'
   - q: 'Mengapa alamat diminta lagi setelah pembaruan?'
     a: 'Periksa direktori kerja dan data-dir. Menjalankan dari folder baru dapat membuat seine mencari konfigurasi di tempat lain. Hentikan instans itu, temukan data asli, lalu jalankan dengan jalur yang benar. Periksa alamat dan pool sebelum melanjutkan.'
-sourceHash: '1d2a2deba793'
+sourceHash: '37fa2d9966c0'
 translation: draft
 ---
 
-Perbarui seine sambil mempertahankan koneksi pool dan opsi yang sudah berfungsi. Panduan ini mengikuti rilis publik v0.2.36 untuk persiapan, penggantian, dan pemeriksaan. Untuk pemasangan pertama, gunakan panduan [Windows](/id/blog/mine-blocknet-on-windows/), [Linux](/id/blog/mine-blocknet-on-linux/), atau [Mac](/id/blog/mine-blocknet-on-mac/).
+Jaga seine tetap pada rilis terbaru dengan koneksi pool dan opsi peluncuran yang sudah berfungsi di mesin Anda. Panduan ini mengikuti rilis publik v0.3.1: cara kerja pembaruan otomatis, apa yang perlu dilakukan sekali saat datang dari versi lama, dan cara memperbarui secara manual. Untuk pemasangan pertama, gunakan panduan [Windows](/id/blog/mine-blocknet-on-windows/), [Linux](/id/blog/mine-blocknet-on-linux/), atau [Mac](/id/blog/mine-blocknet-on-mac/).
 
 ## Bagaimana cara memperbarui seine?
 
 <Answer>
-Unduh dan verifikasi arsip resmi untuk sistem Anda, hentikan miner, simpan direktori datanya, lalu ganti berkas aplikasi. Mulai ulang dengan direktori kerja dan argumen yang sama. Periksa versi, tujuan pembayaran, koneksi pool, serta share diterima sebelum memperbarui mesin berikutnya.
+Biarkan seine berjalan. seine memeriksa rilis baru saat mulai dan setiap 12 jam, menghitung mundur 60 detik di header dasbor sambil terus menambang, lalu memasang rilis bertanda tangan dan mulai ulang dengan argumen dan pengaturan yang sama. Untuk memperbarui secara manual, hentikan seine, ganti berkasnya dari arsip resmi, lalu jalankan dengan cara yang sama.
 </Answer>
+
+## Bagaimana pembaruan otomatis bekerja?
+
+Saat rilis yang lebih baru tersedia, header menampilkan `update vX.Y.Z available`, log menautkan ke rilis itu, lalu header menghitung mundur: `updating to vX.Y.Z in 42s`. Penambangan berlanjut selama hitung mundur. Tekan `u` untuk langsung memperbarui, atau `s` untuk melewati versi itu; seine mengingat pilihan lewati di direktori datanya dan menawarkan rilis berikutnya seperti biasa.
+
+Setelah hitung mundur, seine memeriksa tanda tangan rilis, memastikan executable baru dapat berjalan, dan baru kemudian mengganti yang lama. seine menghentikan penambangan dengan rapi dan mulai ulang dengan argumen yang sama, dan dasbor baru mencatat `updated to seine vX.Y.Z`. Versi baru mulai dari hasil penyetelan tersimpan dan hanya menguji yang diubah rilis, sehingga cepat kembali ke kecepatan penuh.
+
+Jika pool mengirim pekerjaan yang memerlukan rilis lebih baru, misalnya saat upgrade jaringan, seine menjeda penambangan dan langsung memasang pembaruan, bahkan versi yang Anda lewati. Gunakan `--no-auto-update` untuk hanya menampilkan pemberitahuan, atau `--disable-update-check` untuk mematikan pemeriksaan. Build yang Anda kompilasi sendiri menampilkan pemberitahuan dan menyerahkan pembaruan kepada Anda.
+
+## Apa yang dilakukan sekali saat datang dari versi lama?
+
+Sebagian besar rig tidak perlu apa-apa. Beberapa pengaturan memerlukan satu langkah pada pembaruan otomatis pertama ke v0.3.1:
+
+- **Linux, dari v0.2.45:** v0.2.45 memasang versi baru lalu keluar. Jalankan seine sekali lagi. Pengaturan yang memulai ulang seine dengan sendirinya, seperti layanan systemd, tidak perlu apa-apa.
+- **Windows, dari v0.2.45 atau v0.3.0:** versi lama menjalankan versi baru lalu keluar. Jika skrip atau layanan juga memulai ulang seine saat keluar, hentikan sekali setelah pembaruan agar hanya satu seine yang tetap berjalan.
+- **HiveOS dan mmpOS, dari paket v0.3.0:** alihkan flight sheet atau profile ke paket v0.3.1 dari [halaman rilis](https://github.com/zpalmtree/seine/releases). Mulai v0.3.1, paket diperbarui melalui OS penambangan: ubah versi di URL-nya, seperti ditunjukkan [panduan HiveOS dan mmpOS](/id/blog/mine-blocknet-hiveos-mmpos/).
 
 <img src="/assets/blog/miner-update.svg" alt="Paket aplikasi diganti, folder konfigurasi dipertahankan, lalu koneksi diperiksa." width="1200" height="675" loading="lazy" />
 
 ## Bagaimana memeriksa versi saat ini?
 
-Jalankan perintah versi pada executable yang benar-benar digunakan. Salinan lama dapat berbeda dari yang dijalankan pintasan atau layanan. Catat jalur executable, direktori kerja, dan argumen bersama agar proses dapat diulangi. Di Windows, buka PowerShell di folder miner saat ini:
+Header dasbor menampilkan versi yang sedang berjalan. Anda juga dapat menjalankan perintah versi pada executable yang benar-benar digunakan. Salinan lama dapat berbeda dari yang dijalankan pintasan atau layanan. Catat jalur executable, direktori kerja, dan argumen bersama agar proses dapat diulangi. Di Windows, buka PowerShell di folder miner saat ini:
 
 ```powershell
 .\seine.exe --version
@@ -37,7 +53,7 @@ Di Linux atau macOS, buka terminal di folder tersebut:
 ./seine --version
 ```
 
-Bandingkan hasilnya dengan [rilis resmi](https://github.com/zpalmtree/seine/releases). seine memeriksa saat mulai dan setiap 12 jam, lalu menampilkan pemberitahuan di dasbor dan log. Pemberitahuan menyediakan tautan unduhan; Anda memilih pemasangannya. Baca catatan tentang platform, runtime, dan opsi peluncuran.
+Bandingkan hasilnya dengan [rilis resmi](https://github.com/zpalmtree/seine/releases) dan baca catatan rilis tentang perubahan yang memengaruhi platform, runtime, atau opsi peluncuran Anda.
 
 ## Pengaturan apa yang perlu disimpan?
 
@@ -45,11 +61,11 @@ Secara bawaan, seine membaca `./seine-data/seine.config.json`. `./` berarti dire
 
 Konfigurasi menyimpan mode penambangan, alamat pembayaran, URL pool, dan nama rig. Simpan seluruh direktori data termasuk berkas tuning. Simpan pula perintah, skrip, atau definisi layanan: `--backend` dan `--threads` terpisah dari kolom koneksi tersebut. Keduanya mempertahankan konfigurasi yang dimaksud saat mulai ulang.
 
-## Unduh dan verifikasi pengganti
+## Bagaimana memperbarui seine secara manual?
 
-Pilih arsip sistem dan arsitektur CPU dari [halaman unduhan](/id/#download) atau rilis resmi. Unduh juga aset terpisah `SHA256SUMS.txt` dari rilis yang sama. Bandingkan checksum sebelum mengekstrak ke folder lain. [Panduan verifikasi](/id/blog/antivirus-flags-crypto-miner/) menjelaskan langkah Windows dan peringatan unduhan.
+Jika Anda menjalankan dengan `--no-auto-update` atau ingin memilih waktunya sendiri, perbarui secara manual. Pilih arsip sistem dan arsitektur CPU dari [halaman unduhan](/id/#download) atau rilis resmi. Unduh juga aset terpisah `SHA256SUMS.txt` dari rilis yang sama. Bandingkan checksum sebelum mengekstrak ke folder lain. [Panduan verifikasi](/id/blog/antivirus-flags-crypto-miner/) menjelaskan langkah Windows dan peringatan unduhan.
 
-Simpan semua berkas paket bersama. Paket Windows menyertakan pustaka runtime NVIDIA di samping `seine.exe`; menyalin executable saja dapat mencampur versi. [Panduan NVIDIA](/id/blog/mine-blocknet-nvidia-gpu/) membahas runtime. [Referensi v0.2.36](https://github.com/zpalmtree/seine/blob/v0.2.36/docs/guides/configuration.md) mendokumentasikan konfigurasi tersimpan dan perilaku peluncuran ini.
+Simpan semua berkas paket bersama. Paket Windows menyertakan pustaka runtime NVIDIA di samping `seine.exe`; menyalin executable saja dapat mencampur versi. [Panduan NVIDIA](/id/blog/mine-blocknet-nvidia-gpu/) membahas runtime. [Referensi konfigurasi v0.3.1](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/configuration.md) mendokumentasikan konfigurasi tersimpan, pembaruan otomatis, dan perilaku peluncuran yang dipakai di sini.
 
 ## Hentikan, cadangkan, dan ganti
 

@@ -1,0 +1,107 @@
+---
+title: 'HiveOS와 mmpOS에서 Blocknet 채굴하기'
+description: '각 릴리스의 seine 패키지로 HiveOS나 mmpOS에서 Blocknet을 채굴하세요. flight sheet나 채굴기 프로필 설정, GPU·CPU 선택, 한 번에 업그레이드하는 방법 안내.'
+tags: ['채굴 가이드', 'HiveOS', 'mmpOS', 'GPU']
+sourceHash: e49fce300603
+translation: draft
+faq:
+  - q: 'HiveOS에서 Blocknet을 채굴할 수 있나요?'
+    a: '네. seine의 모든 릴리스에는 HiveOS 패키지가 포함됩니다. BNT 지갑을 추가하고 Pool을 Configure in miner, Miner를 Custom으로 설정한 flight sheet를 만든 뒤 패키지 링크를 설치 URL로 붙여 넣고 장비에 적용하세요. 그러면 HiveOS 대시보드에 GPU별 해시레이트와 승인된 셰어가 표시됩니다.'
+  - q: 'mmpOS에서 Blocknet을 채굴할 수 있나요?'
+    a: '네. seine의 모든 릴리스에는 mmpOS 패키지가 포함됩니다. seine mmpOS 가이드의 미리 만든 채굴기 프로필을 가져오면 BNT 지갑, bntpool.com 풀, seine 채굴기가 한 번에 추가됩니다. 그런 다음 장비의 활성 채굴기 프로필로 설정하세요.'
+  - q: 'HiveOS 패키지는 CPU로도 채굴하나요?'
+    a: 'GPU 장비에서는 패키지가 GPU로만 채굴합니다. CPU 스레드 하나에 시스템 RAM 2 GB가 필요한데 RAM이 적은 GPU 장비가 많기 때문입니다. GPU가 없는 장비는 CPU로 채굴합니다. GPU 장비에 CPU 채굴을 추가하려면 Extra config arguments에 --backend nvidia,cpu --threads 2를 넣으세요.'
+  - q: 'HiveOS나 mmpOS에서 seine을 어떻게 업그레이드하나요?'
+    a: '설치 URL이나 다운로드 URL의 버전 번호를 최신 릴리스로 바꾸고 flight sheet나 프로필을 다시 적용하세요. 채굴 OS가 새 패키지를 내려받고 seine은 저장된 튜닝 결과를 유지하므로, 장비는 몇 초 안에 다시 해시를 계산합니다.'
+---
+
+이 가이드는 seine으로 HiveOS와 mmpOS에서 Blocknet을 채굴하는 방법을 보여 줍니다. seine의 각 릴리스에는 두 채굴 OS용 패키지가 포함되어 있으므로 링크 하나로 seine을 사용자 지정 채굴기로 추가할 수 있고, 장비는 이미 사용 중인 대시보드에 해시레이트와 셰어를 보고합니다. 내용은 seine v0.3.1 기준입니다.
+
+## 어떤 패키지가 필요한가요?
+
+[seine 릴리스 페이지](https://github.com/zpalmtree/seine/releases/latest)의 모든 릴리스에는 채굴 OS용 패키지 두 개가 있습니다.
+
+| 채굴 OS | 패키지 |
+|---|---|
+| HiveOS | `seine-hiveos-X.Y.Z.tar.gz` |
+| mmpOS | `seine-mmpos-X.Y.Z.tar.gz` |
+
+`X.Y.Z`는 릴리스 버전으로, 예를 들면 `0.3.1`입니다. 각 패키지에는 해당 채굴 OS의 시스템 라이브러리에 맞춘 seine 빌드, seine이 사용하는 NVIDIA 커널 컴파일러 라이브러리, seine을 대시보드에 연결하는 스크립트가 들어 있습니다. 장비에 다른 것을 설치할 필요가 없습니다.
+
+## HiveOS에서 Blocknet을 채굴하려면 어떻게 하나요?
+
+<Answer>
+Blocknet 주소를 BNT 지갑으로 추가한 다음, Pool을 Configure in miner, Miner를 Custom으로 설정한 flight sheet를 만드세요. Setup Miner Config에서 seine-hiveos 패키지 링크를 설치 URL로 붙여 넣고, 지갑 및 워커 템플릿으로 %WAL%.%WORKER_NAME%을 사용하고, 풀 URL을 설정합니다. flight sheet를 장비에 적용하세요.
+</Answer>
+
+1. **지갑을 추가합니다.** **Wallets**를 열고 Blocknet 지급 주소를 추가하세요. 코인 목록에 BNT가 없으면 코인 이름으로 `BNT`를 입력하세요. `@name` 같은 Blocknet ID 이름도 쓸 수 있습니다. HiveOS는 `$`를 특별하게 처리하므로 `@` 형식을 사용하세요.
+2. **flight sheet를 만듭니다.** BNT 코인과 지갑을 선택하고 **Pool**을 *Configure in miner*, **Miner**를 *Custom*으로 설정하세요.
+3. **Setup Miner Config를 클릭**하고 다음과 같이 입력하세요.
+
+   | Field | Value |
+   |---|---|
+   | Miner name | `seine-hiveos`(HiveOS가 URL에서 자동 입력) |
+   | Installation URL | `https://github.com/zpalmtree/seine/releases/download/vX.Y.Z/seine-hiveos-X.Y.Z.tar.gz` |
+   | Hash algorithm | 비워 둠 |
+   | Wallet and worker template | `%WAL%.%WORKER_NAME%` |
+   | Pool URL | `stratum+tcp://bntpool.com:3333` |
+   | Pass | 비워 둠 |
+
+4. **flight sheet를 장비에 적용합니다.**
+
+`X.Y.Z`를 최신 버전으로 바꾸거나 릴리스 페이지에서 패키지 링크를 복사하세요. 백업 풀은 **Pool URL**에 한 줄씩 입력합니다. seine은 순서대로 시도하고 첫 번째 풀이 복구되면 그곳으로 돌아갑니다. **Pool URL**이 비어 있으면 seine은 bntpool.com에서 채굴합니다.
+
+그러면 HiveOS 대시보드에 seine의 GPU별 해시레이트, 승인 및 거부된 셰어, GPU 온도와 팬이 표시됩니다.
+
+## mmpOS에서 Blocknet을 채굴하려면 어떻게 하나요?
+
+<Answer>
+mmpOS의 코인 목록에는 아직 BNT가 없으므로 대신 미리 만든 프로필을 가져옵니다. seine mmpOS 가이드에서 채굴기 프로필 JSON을 복사하고 Blocknet 주소와 릴리스 버전을 넣은 뒤 Miner profiles에서 가져오세요. 생성된 지갑, 풀, 프로필을 추가하고 장비의 활성 채굴기 프로필을 seine BNT로 설정하세요.
+</Answer>
+
+1. **프로필을 편집합니다.** [seine mmpOS 가이드](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/mmpos.md)에서 JSON 프로필을 복사하세요. `YOUR_BLOCKNET_ADDRESS`를 지급 주소나 `@name`으로 바꾸고, `custom_url`에 있는 `X.Y.Z` 두 곳을 최신 버전으로 바꾸세요.
+2. **가져옵니다.** **Miner profiles**를 열고 **Import from JSON**을 클릭한 뒤 프로필을 붙여 넣고 **Import**를 클릭하세요.
+3. **가져오기 결과에서 각 항목을 순서대로 추가합니다.** **Add wallet**, 그다음 **Add pool**(BNT 지갑은 자동으로 채워짐), 마지막으로 `bntpool` 풀을 선택한 상태에서 **Add miner profile**입니다. BNT가 mmpOS 목록에 없어서 코인과 채굴기 칸이 비어 보이지만, 가져온 값은 그대로 저장되어 있습니다.
+4. **프로필을 지정합니다.** 각 장비에서 **Active miner profile**을 `seine BNT`로 설정하세요.
+
+mmpOS가 채굴기를 시작하면 프로필이 지갑, 장비 이름, 풀을 채우고, mmpOS 대시보드에 seine의 GPU별 해시레이트와 셰어가 표시됩니다. mmpOS 패키지에는 Ubuntu 20.04 이상 기반 이미지가 필요합니다.
+
+## 패키지는 무엇으로 채굴하나요?
+
+패키지는 채굴 OS가 감지한 하드웨어에서 장치를 선택합니다.
+
+- **GPU 장비는 GPU로 채굴합니다.** Blocknet 해시 하나에는 2 GB 메모리가 필요하며, GPU는 비디오 메모리, CPU는 시스템 RAM을 사용합니다. GPU 장비 중에는 RAM이 4~8 GB인 경우가 많아 패키지는 CPU를 시스템용으로 비워 둡니다.
+- **GPU가 없는 장비는 CPU로 채굴하며,** 스레드 수는 여유 RAM에 맞춰 정해집니다.
+- **NVIDIA** 카드에는 CUDA 12를 지원하는 드라이버가 필요하며, RTX 50 시리즈 카드에는 드라이버 570 이상이 필요합니다.
+- **AMD Radeon RX 6000, RX 7000, RX 9000** 카드에는 장비에 ROCm HIP 런타임이 필요합니다. 카드에 필요한 사항은 [AMD GPU 가이드](/ko/blog/mine-blocknet-amd-gpu/)에서 설명합니다.
+
+첫 시작에서 seine은 해시레이트가 나타나기 전 몇 분 동안 각 GPU에 맞춰 스스로 튜닝한 뒤 결과를 저장하므로, 이후에는 몇 초 안에 해시를 계산합니다. HiveOS 워치독의 낮은 해시레이트 재시작을 사용한다면, 첫 튜닝이 중간에 끊기지 않도록 10분보다 길게 설정하세요.
+
+## CPU 채굴이나 다른 설정은 어떻게 추가하나요?
+
+HiveOS의 **Extra config arguments**나 mmpOS 프로필 인수 끝에 넣은 내용은 그대로 seine에 전달되며 패키지 기본값보다 우선합니다. GPU 장비의 CPU로도 채굴하려면 두 백엔드와 여유 RAM에 맞는 스레드 수를 지정하세요. 2 GB마다 스레드 하나이며, 시스템용으로 최소 2 GB를 남겨 두세요.
+
+```text
+--backend nvidia,cpu --threads 2
+```
+
+AMD 장비에서는 `amd,cpu`, 혼합 장비에서는 `nvidia,amd,cpu`를 사용하세요. `--threads`를 빼면 seine이 여유 RAM에 맞춰 CPU 스레드 수를 스스로 정하고 튜닝합니다. 그 밖의 유용한 인수는 다음과 같습니다.
+
+| 인수 | 효과 |
+|---|---|
+| `--backend nvidia --nvidia-devices 0,1,3` | 일부 NVIDIA GPU로만 채굴 |
+| `--nvidia-max-lanes 4` | 각 NVIDIA GPU에서 비디오 메모리를 덜 사용 |
+
+대시보드 연결, 일반 로그 출력, 데이터 디렉터리는 패키지가 설정합니다. 대시보드가 이를 통해 seine의 통계를 읽으므로 `--api-bind`, `--api-cookie`, `--api-token`은 패키지 설정대로 두세요. seine의 다른 옵션은 [설정 가이드](/ko/blog/configure-seine-miner/)에서 설명합니다.
+
+## 채굴 OS에서 seine을 어떻게 업그레이드하나요?
+
+HiveOS와 mmpOS에서는 새 버전이 패키지로 제공됩니다. 새 릴리스가 나오면 seine이 로그에 알림을 남깁니다. 설치 URL이나 mmpOS 프로필의 다운로드 URL에 있는 버전을 새 릴리스로 바꾸고 flight sheet나 프로필을 다시 적용하세요. 채굴 OS가 새 패키지를 내려받고, seine은 데이터 디렉터리에 튜닝 결과와 설정을 보관하므로 장비는 몇 초 안에 최대 해시레이트로 돌아옵니다.
+
+장비가 v0.3.0 패키지를 사용 중이라면 flight sheet나 프로필을 v0.3.1 패키지로 바꾸세요. 실행 스크립트도 업데이트되었습니다.
+
+## 셰어와 지급은 어디에서 확인하나요?
+
+채굴 OS 대시보드에는 각 장비의 해시레이트와 셰어가 표시됩니다. 적립된 작업, 잔액, 지급은 [bntpool.com](https://bntpool.com/stats?lang=ko)에서 주소를 조회해 확인하세요. 각 장비는 HiveOS 워커 이름이나 mmpOS 장비 이름으로 표시되며, [채굴기 추적 가이드](https://bntpool.com/blog/ko/track-your-miner-on-bntpool/)에서 통계 페이지를 설명합니다. 전체 로그는 채굴 OS의 채굴기 로그에 있으며, HiveOS에서는 `/var/log/miner/custom/seine-hiveos.log`입니다.
+
+<CTA target="seine" title="seine 채굴 OS 패키지 받기" text="각 릴리스에 HiveOS와 mmpOS 패키지가 포함됩니다. flight sheet나 프로필에 링크 하나만 붙여 넣으면 장비가 Blocknet을 채굴합니다." />

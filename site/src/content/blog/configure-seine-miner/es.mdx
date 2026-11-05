@@ -11,7 +11,7 @@ faq:
     a: 'Seine elige el número de hilos por ti, así que solo necesitas fijarlo cuando quieras dejar margen para otras tareas. Cada hilo usa unos 2 GB de RAM. Pulsa la tecla menos en el dashboard hasta que tu equipo se sienta bien y usa ese número.'
   - q: '¿Dónde guarda seine sus ajustes?'
     a: 'Seine guarda tu dirección, el pool y el nombre del worker en seine-data/seine.config.json, dentro de la carpeta desde la que lo inicias. Las opciones de hilos y backend no se guardan ahí, así que ponlas en un pequeño archivo de inicio si las quieres en cada arranque.'
-sourceHash: b5ca5a9a16d8
+sourceHash: cbfaa904cdbf
 translation: draft
 ---
 
@@ -129,6 +129,8 @@ Para usar un valor distinto en una sola ejecución, añádelo al comando. El arc
 ```
 
 Los otros dos ajustes son `--address` y `--pool-url`. La [guía para cambiar la dirección](https://bntpool.com/blog/es/change-mining-wallet-address/) explica cómo acredita el pool tu trabajo después de cambiar de dirección.
+
+Para minar en solitario en bntpool.com, pon `solo:` delante de la dirección, por ejemplo `"address": "solo:@yourname"` en el archivo o `--address solo:YOUR_ADDRESS` en la línea de comandos. El pool te paga entonces la recompensa completa de cada bloque que encuentre tu rig. [Minería en solitario en bntpool.com](https://bntpool.com/blog/es/solo-mine-blocknet-on-bntpool/) explica cómo se pagan los bloques en solitario.
 
 ## ¿Qué hago si un ajuste no funciona?
 

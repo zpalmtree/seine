@@ -8,10 +8,10 @@ faq:
   - q: 'Combien de mots compte une phrase de récupération Blocknet ?'
     a: 'Une phrase de récupération Blocknet compte 12 mots. Dans le portefeuille en ligne de commande, la commande seed l''affiche après un avertissement et la saisie du mot de passe de votre portefeuille. Écrivez les mots sur papier et conservez-les hors ligne. Avec ces 12 mots, la commande import peut reconstruire votre portefeuille sur n''importe quelle machine, même si le fichier du portefeuille et le mot de passe sont perdus.'
   - q: 'Quand les paiements de bntpool.com apparaissent-ils dans mon portefeuille ?'
-    a: 'Un bloc du pool a besoin de 60 confirmations, soit environ cinq heures avec le temps de bloc de cinq minutes de Blocknet, avant que ses récompenses soient versées. Dès que votre solde confirmé sur le pool atteint 0,1 BNT, le pool l''envoie à votre adresse. Le paiement apparaît dans l''historique comme une transaction ordinaire et devient dépensable après 10 confirmations, soit environ 50 minutes.'
+    a: 'Un bloc du pool a besoin de 60 confirmations, soit environ cinq heures avec le temps de bloc de cinq minutes de Blocknet, avant que ses récompenses soient versées. Dès que votre solde confirmé sur le pool atteint 1 BNT, le pool l''envoie à votre adresse. Le paiement apparaît dans l''historique comme une transaction ordinaire et devient dépensable après 10 confirmations, soit environ 50 minutes.'
   - q: 'Puis-je utiliser la même adresse sur plusieurs machines de minage ?'
     a: 'Oui. Chaque machine qui fait tourner seine peut miner vers la même adresse ou le même nom court Blocknet ID, et bntpool.com additionne leurs shares dans un seul solde. La page de statistiques du pool liste chaque machine connectée sous votre adresse. Le portefeuille et sa phrase de récupération restent tout le temps sur votre propre ordinateur.'
-sourceHash: '9f4ecc0f989f'
+sourceHash: 'd01002f3db3c'
 translation: draft
 ---
 
@@ -151,7 +151,7 @@ Une machine de minage n'a besoin que de votre adresse. seine n'a besoin que d'un
 
 ## Comment les paiements de minage apparaissent-ils dans votre portefeuille ?
 
-bntpool.com verse les récompenses une fois que leur bloc a atteint sa maturité. Un bloc du pool a besoin de 60 confirmations, soit environ cinq heures avec le temps de bloc de cinq minutes de Blocknet. Quand votre solde confirmé atteint le minimum de 0,1 BNT, le pool l'envoie à votre adresse sous forme de transaction Blocknet normale.
+bntpool.com verse les récompenses une fois que leur bloc a atteint sa maturité. Un bloc du pool a besoin de 60 confirmations, soit environ cinq heures avec le temps de bloc de cinq minutes de Blocknet. Quand votre solde confirmé atteint le minimum de 1 BNT, le pool l'envoie à votre adresse sous forme de transaction Blocknet normale.
 
 Dans le portefeuille, consultez `balance` (ou `bal`) :
 
@@ -170,4 +170,4 @@ Votre portefeuille affiche un paiement dès que son nœud a rattrapé la chaîne
 
 Vous débutez dans le minage ? Le [guide pour miner Blocknet](/fr/blog/how-to-mine-blocknet/) explique comment télécharger seine, choisir le nombre de threads et ce qui vous attend sur bntpool.com.
 
-<CTA target="pool" title="Minez vers votre nouvelle adresse" text="Collez votre adresse Blocknet dans seine, acceptez bntpool.com et voyez les paiements arriver dans votre portefeuille dès que votre solde atteint 0,1 BNT." />
+<CTA target="pool" title="Minez vers votre nouvelle adresse" text="Collez votre adresse Blocknet dans seine, acceptez bntpool.com et voyez les paiements arriver dans votre portefeuille dès que votre solde atteint 1 BNT." />

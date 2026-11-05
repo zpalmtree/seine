@@ -1,0 +1,107 @@
+---
+title: 'Blocknet minen op HiveOS en mmpOS'
+description: 'Mine Blocknet op HiveOS of mmpOS met het seine-pakket uit elke release. Stel een flight sheet of minerprofiel in, kies GPU of CPU en upgrade in één stap.'
+tags: ['Mininghandleiding', 'HiveOS', 'mmpOS', 'GPU']
+sourceHash: 'e49fce300603'
+translation: draft
+faq:
+  - q: 'Kan ik Blocknet minen op HiveOS?'
+    a: 'Ja. Elke seine-release bevat een HiveOS-pakket. Voeg een BNT-wallet toe, maak een flight sheet met Pool op Configure in miner en Miner op Custom, plak de pakketlink als Installation URL en pas hem toe op je rigs. Het HiveOS-dashboard toont dan de hashrate per GPU en geaccepteerde shares.'
+  - q: 'Kan ik Blocknet minen op mmpOS?'
+    a: 'Ja. Elke seine-release bevat een mmpOS-pakket. Importeer het kant-en-klare minerprofiel uit de mmpOS-gids van seine, dat in één stap de BNT-wallet, de pool bntpool.com en de miner seine toevoegt, en stel het daarna in als actief minerprofiel op je rigs.'
+  - q: 'Minet het HiveOS-pakket ook op de CPU?'
+    a: 'Op GPU-rigs minet het pakket alleen op de GPU''s, omdat elke CPU-thread 2 GB systeem-RAM nodig heeft en veel GPU-rigs weinig RAM hebben. Rigs zonder GPU minen op de CPU. Zet --backend nvidia,cpu --threads 2 in Extra config arguments om CPU-mining aan een GPU-rig toe te voegen.'
+  - q: 'Hoe upgrade ik seine op HiveOS of mmpOS?'
+    a: 'Vervang het versienummer in de installatie- of download-URL door de nieuwste release en pas de flight sheet of het profiel opnieuw toe. Het mining-OS downloadt het nieuwe pakket en seine bewaart zijn opgeslagen tuningresultaten, dus de rigs hashen binnen enkele seconden weer.'
+---
+
+Deze gids laat zien hoe je Blocknet minet op HiveOS en mmpOS met seine. Elke seine-release bevat een pakket voor beide mining-besturingssystemen, dus je voegt seine met één link toe als custom miner en je rigs melden hashrate en shares op het dashboard dat je al gebruikt. Hij volgt seine v0.3.1.
+
+## Welk pakket heb je nodig?
+
+Elke release op de [releasepagina van seine](https://github.com/zpalmtree/seine/releases/latest) bevat twee pakketten voor mining-besturingssystemen:
+
+| Mining-OS | Pakket |
+|---|---|
+| HiveOS | `seine-hiveos-X.Y.Z.tar.gz` |
+| mmpOS | `seine-mmpos-X.Y.Z.tar.gz` |
+
+`X.Y.Z` is de releaseversie, bijvoorbeeld `0.3.1`. Elk pakket bevat een seine-build voor de systeembibliotheken van het mining-OS, de NVIDIA-kernelcompilerbibliotheek die seine gebruikt en de scripts die seine aan het dashboard koppelen. Je installeert verder niets op de rig.
+
+## Hoe mine je Blocknet op HiveOS?
+
+<Answer>
+Voeg je Blocknet-adres toe als BNT-wallet en maak dan een flight sheet met Pool op Configure in miner en Miner op Custom. Plak in Setup Miner Config de link naar het seine-hiveos-pakket als Installation URL, gebruik %WAL%.%WORKER_NAME% als wallet- en workertemplate en stel de Pool URL in. Pas de flight sheet toe op je rigs.
+</Answer>
+
+1. **Voeg een wallet toe.** Open **Wallets** en voeg je Blocknet-uitbetalingsadres toe. Staat BNT niet in de muntenlijst, typ dan `BNT` als muntnaam. Een Blocknet ID-naam zoals `@name` werkt ook; gebruik de vorm met `@`, omdat HiveOS `$` speciaal behandelt.
+2. **Maak een flight sheet.** Kies je BNT-munt en wallet, en zet **Pool** op *Configure in miner* en **Miner** op *Custom*.
+3. **Klik op Setup Miner Config** en vul in:
+
+   | Field | Value |
+   |---|---|
+   | Miner name | `seine-hiveos` (HiveOS vult het in vanuit de URL) |
+   | Installation URL | `https://github.com/zpalmtree/seine/releases/download/vX.Y.Z/seine-hiveos-X.Y.Z.tar.gz` |
+   | Hash algorithm | leeg laten |
+   | Wallet and worker template | `%WAL%.%WORKER_NAME%` |
+   | Pool URL | `stratum+tcp://bntpool.com:3333` |
+   | Pass | leeg laten |
+
+4. **Pas de flight sheet toe** op je rigs.
+
+Vervang `X.Y.Z` door de nieuwste versie, of kopieer de pakketlink van de releasepagina. Back-uppools zet je op aparte regels in **Pool URL**; seine probeert ze op volgorde en keert terug naar de eerste zodra die weer werkt. Met een lege **Pool URL** minet seine op bntpool.com.
+
+Het HiveOS-dashboard toont daarna de hashrate van seine per GPU, geaccepteerde en afgewezen shares, en de temperaturen en fans van de GPU's.
+
+## Hoe mine je Blocknet op mmpOS?
+
+<Answer>
+De muntenlijsten van mmpOS bevatten BNT nog niet, dus je importeert in plaats daarvan een kant-en-klaar profiel. Kopieer de JSON van het minerprofiel uit de mmpOS-gids van seine, vul je Blocknet-adres en de releaseversie in en importeer het onder Miner profiles. Voeg de wallet, pool en het profiel toe die het aanmaakt, en stel daarna seine BNT in als actief minerprofiel op je rigs.
+</Answer>
+
+1. **Bewerk het profiel.** Kopieer het JSON-profiel uit de [mmpOS-gids van seine](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/mmpos.md). Vervang `YOUR_BLOCKNET_ADDRESS` door je uitbetalingsadres of `@name`, en beide `X.Y.Z` in `custom_url` door de nieuwste versie.
+2. **Importeer het.** Open **Miner profiles**, klik op **Import from JSON**, plak het profiel en klik op **Import**.
+3. **Voeg elk onderdeel toe** uit het importresultaat, op volgorde: **Add wallet**, dan **Add pool** (de BNT-wallet wordt vanzelf ingevuld), dan **Add miner profile** met de pool `bntpool` geselecteerd. De munt- en minervelden lijken leeg omdat BNT niet in de lijsten van mmpOS staat; de geïmporteerde waarden zijn toch opgeslagen.
+4. **Wijs het profiel toe.** Zet op elke rig **Active miner profile** op `seine BNT`.
+
+Het profiel vult je wallet, rignaam en pool in wanneer mmpOS de miner start, en het mmpOS-dashboard toont de hashrate van seine per GPU en zijn shares. Het mmpOS-pakket vereist een image op basis van Ubuntu 20.04 of nieuwer.
+
+## Waarop minet het pakket?
+
+Het pakket kiest de apparaten op basis van de hardware die het mining-OS detecteert:
+
+- **GPU-rigs minen op de GPU's.** Elke Blocknet-hash heeft 2 GB geheugen nodig: videogeheugen op een GPU en systeem-RAM op de CPU. Veel GPU-rigs hebben 4 tot 8 GB RAM, dus het pakket laat de CPU vrij voor het systeem.
+- **Rigs zonder GPU minen op de CPU,** met het aantal threads afgestemd op het vrije RAM.
+- **NVIDIA**-kaarten hebben een driver met CUDA 12-ondersteuning nodig; kaarten uit de RTX 50-serie hebben driver 570 of nieuwer nodig.
+- **AMD Radeon RX 6000-, RX 7000- en RX 9000**-kaarten hebben de ROCm HIP-runtime op de rig nodig. De [AMD-GPU-gids](/nl/blog/mine-blocknet-amd-gpu/) legt uit wat de kaarten nodig hebben.
+
+Bij de eerste start stemt seine zich een paar minuten af op elke GPU voordat er hashrate verschijnt, en slaat dan het resultaat op zodat latere starts binnen seconden hashen. Gebruik je de herstart bij lage hashrate van de HiveOS-watchdog, geef die dan meer dan 10 minuten, zodat hij die eerste tuningrun niet afbreekt.
+
+## Hoe voeg je CPU-mining of andere instellingen toe?
+
+Alles wat je in **Extra config arguments** van HiveOS zet, of aan het einde van de argumenten van het mmpOS-profiel, gaat ongewijzigd naar seine en gaat voor de standaardwaarden van het pakket. Om ook op de CPU van een GPU-rig te minen, geef je beide backends op en een aantal threads dat past bij je vrije RAM, één thread per 2 GB, met minstens 2 GB over voor het systeem:
+
+```text
+--backend nvidia,cpu --threads 2
+```
+
+Gebruik `amd,cpu` op AMD-rigs of `nvidia,amd,cpu` op gemengde rigs. Laat `--threads` weg en seine bepaalt en tunet de CPU-threads zelf op basis van het vrije RAM. Andere nuttige argumenten:
+
+| Argument | Effect |
+|---|---|
+| `--backend nvidia --nvidia-devices 0,1,3` | Alleen op sommige NVIDIA-GPU's minen |
+| `--nvidia-max-lanes 4` | Minder videogeheugen gebruiken op elke NVIDIA-GPU |
+
+Het pakket stelt de dashboardverbinding, eenvoudige logboekuitvoer en de datamap voor je in. Laat `--api-bind`, `--api-cookie` en `--api-token` staan zoals het pakket ze instelt, omdat het dashboard de statistieken van seine daarmee leest. De [instellingengids](/nl/blog/configure-seine-miner/) legt de andere opties van seine uit.
+
+## Hoe upgrade je seine op een mining-OS?
+
+Op HiveOS en mmpOS komen nieuwe versies via het pakket binnen. Als er een nieuwere release is, meldt seine dat in het logboek. Vervang de versie in de Installation URL, of in de download-URL van het mmpOS-profiel, door de nieuwe release en pas de flight sheet of het profiel opnieuw toe. Het mining-OS downloadt het nieuwe pakket, en seine bewaart zijn tuningresultaten en instellingen in zijn datamap, dus de rigs zijn binnen enkele seconden terug op volle hashrate.
+
+Draaien je rigs het pakket v0.3.0, zet de flight sheet of het profiel dan over op het pakket v0.3.1; de startscripts zijn ook bijgewerkt.
+
+## Waar zie je shares en uitbetalingen?
+
+Het dashboard van het mining-OS toont de hashrate en shares van elke rig. Voor bijgeschreven werk, saldo en uitbetalingen zoek je je adres op [bntpool.com](https://bntpool.com/stats). Elke rig verschijnt onder zijn HiveOS-workernaam of mmpOS-rignaam, en de [gids voor het volgen van je miner](https://bntpool.com/blog/nl/track-your-miner-on-bntpool/) legt de statistiekenpagina uit. De volledige logboeken staan in het minerlogboek van het mining-OS; op HiveOS is dat `/var/log/miner/custom/seine-hiveos.log`.
+
+<CTA target="seine" title="Download de seine-pakketten voor mining-OS" text="Elke release bevat pakketten voor HiveOS en mmpOS: plak één link in je flight sheet of profiel en je rigs minen Blocknet." />

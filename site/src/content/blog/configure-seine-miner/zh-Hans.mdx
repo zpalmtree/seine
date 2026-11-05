@@ -11,7 +11,7 @@ faq:
     a: 'seine 会自动选择线程数，所以只有想给其他工作留出余量时才需要设置。每个线程大约使用 2 GB 内存。在仪表盘中按减号键，直到电脑用起来合适，然后使用这个数字。'
   - q: 'seine 把设置保存在哪里？'
     a: 'seine 把你的地址、矿池和矿工名保存在启动它的文件夹内的 seine-data/seine.config.json 中。线程和 backend 选项不会保存在那里，所以如果想让它们每次启动都生效，请把它们写进一个小的启动文件。'
-sourceHash: b5ca5a9a16d8
+sourceHash: cbfaa904cdbf
 translation: draft
 ---
 
@@ -129,6 +129,8 @@ cd "$(dirname "$0")"
 ```
 
 另外两个设置是 `--address` 和 `--pool-url`。[更改地址指南](https://bntpool.com/blog/zh-hans/change-mining-wallet-address/)说明了更改地址后矿池如何计入你的工作量。
+
+要在 bntpool.com 上单独挖矿，请在地址前加上 `solo:`，例如在文件中写 `"address": "solo:@yourname"`，或在命令行中使用 `--address solo:YOUR_ADDRESS`。矿池随后会把你的矿机找到的每个区块的全部奖励支付给你。[在 bntpool.com 上单独挖矿](https://bntpool.com/blog/zh-hans/solo-mine-blocknet-on-bntpool/)介绍了单独挖矿区块如何支付。
 
 ## 设置不生效怎么办？
 

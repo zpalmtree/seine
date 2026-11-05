@@ -1,0 +1,96 @@
+---
+title: 'AMD GPU로 Blocknet 채굴하기'
+description: 'seine으로 AMD Radeon RX 6000, RX 7000, RX 9000과 Radeon PRO에서 Blocknet을 채굴하세요. Windows·Linux 설정, 카드 선택, GPU별 작동 확인 안내.'
+tags: ['채굴 가이드', 'AMD', 'Radeon', 'GPU']
+sourceHash: 60f795ed50a7
+translation: draft
+faq:
+  - q: 'Blocknet을 채굴할 수 있는 AMD 그래픽 카드는 무엇인가요?'
+    a: 'seine은 Windows x86_64와 Linux x86_64에서 AMD Radeon RX 6000, RX 7000, RX 9000 카드와 같은 칩을 쓰는 Radeon PRO 카드로 채굴합니다. 외장 AMD 카드를 모두 자동으로 찾아 CPU와 함께 채굴합니다. 내장 Radeon 그래픽은 --backend amd를 추가하지 않으면 꺼진 상태로 둡니다.'
+  - q: 'Windows에서 AMD GPU 채굴에 무엇을 설치해야 하나요?'
+    a: 'AMD 그래픽 드라이버(Adrenalin 또는 Radeon PRO)만 있으면 됩니다. 드라이버에 seine이 사용하는 HIP 런타임이 포함되어 있고, 릴리스 바이너리에는 RX 6000, RX 7000, RX 9000 카드용 GPU 커널이 이미 들어 있습니다. HIP SDK나 다른 다운로드는 필요하지 않습니다.'
+  - q: 'Linux에서 AMD GPU 채굴에 무엇을 설치해야 하나요?'
+    a: '최신 배포판에 포함된 amdgpu 커널 드라이버와 AMD의 ROCm HIP 런타임(hip-runtime-amd 패키지 또는 전체 ROCm 설치)이 필요합니다. 사용자에게 GPU 장치 파일 접근 권한도 있어야 하며, 대부분의 배포판에서는 render와 video 그룹에 가입하면 됩니다.'
+  - q: '한 컴퓨터에서 AMD와 NVIDIA 카드로 함께 채굴할 수 있나요?'
+    a: '네. backend 옵션을 지정하지 않으면 seine은 CPU와 찾은 모든 NVIDIA 카드 및 외장 AMD 카드로 채굴합니다. CPU를 비워 두려면 --backend nvidia,amd로 실행하세요. 각 카드는 Devices 패널에 별도 행으로 표시되므로 GPU마다 따로 확인할 수 있습니다.'
+---
+
+seine은 CPU와 함께 AMD Radeon 그래픽 카드로도 Blocknet을 채굴합니다. 이 가이드는 Windows와 Linux에서 설치할 항목, 카드를 선택하는 방법, 각 GPU가 해시를 계산하는지 확인하는 방법, 카드가 보이지 않을 때 확인할 사항을 다룹니다. 내용은 seine v0.3.1 기준입니다.
+
+## seine은 어떤 AMD 카드를 지원하나요?
+
+<Answer>
+seine은 AMD Radeon RX 6000, RX 7000, RX 9000 카드와 같은 RDNA2, RDNA3, RDNA4 칩을 쓰는 Radeon PRO 카드로 채굴합니다. Windows x86_64와 Linux x86_64에서 실행됩니다. 외장 AMD 카드는 모두 자동으로 선택되어 설정을 바꾸지 않아도 CPU와 함께 채굴합니다.
+</Answer>
+
+각 카드는 여러 레인으로 채굴하며 레인마다 해시 하나를 계산합니다. 레인 하나에 비디오 메모리가 약 2 GB 필요하고 RDNA2, RDNA3, RDNA4에서는 조금 덜 필요하므로, 메모리가 많은 카드일수록 더 많은 레인을 동시에 실행합니다. 16 GB 카드는 약 9개 레인을 실행합니다. seine이 시작할 때 비어 있는 메모리를 보고 크기를 정하므로 직접 계산할 필요가 없습니다.
+
+Ryzen 프로세서의 내장 Radeon 그래픽은 기본적으로 꺼져 있습니다. 원하면 `--backend amd`로 추가할 수 있습니다.
+
+## Windows에서 AMD GPU 채굴을 설정하려면 어떻게 하나요?
+
+[AMD 드라이버 페이지](https://www.amd.com/en/support/download/drivers.html)에서 카드에 맞는 최신 AMD 그래픽 드라이버를 설치하세요. Radeon RX 카드는 Adrenalin, PRO 카드는 Radeon PRO 드라이버입니다. 드라이버에 seine이 사용하는 HIP 런타임이 포함되어 있고, 릴리스 바이너리에는 RX 6000, RX 7000, RX 9000 카드용으로 미리 빌드된 GPU 커널이 들어 있습니다. 다른 것은 필요하지 않습니다.
+
+[다운로드 영역](/ko/#download)에서 `seine-windows-x86_64.zip`을 받아 압축 파일 전체를 쓰기 가능한 폴더에 풀고 실행하세요.
+
+```powershell
+.\seine.exe
+```
+
+첫 실행에서 지급 주소를 붙여 넣고 Enter를 눌러 bntpool.com을 선택하세요. [Windows 설정 가이드](/ko/blog/mine-blocknet-on-windows/)에서 다운로드와 압축 해제를 단계별로 안내합니다.
+
+## Linux에서 AMD GPU 채굴을 설정하려면 어떻게 하나요?
+
+<Answer>
+최신 배포판에 포함된 amdgpu 커널 드라이버와 AMD의 ROCm HIP 런타임(hip-runtime-amd 패키지 또는 전체 ROCm 설치)을 설치하세요. seine이 GPU를 열 수 있도록 사용자를 render와 video 그룹에 추가하고 다시 로그인한 뒤 Linux x86_64용 seine을 실행합니다. seine이 AMD 카드를 자동으로 찾습니다.
+</Answer>
+
+1. **런타임을 설치합니다.** 배포판용 AMD ROCm 저장소를 추가하고 `hip-runtime-amd`를 설치하세요. 이미 전체 ROCm을 사용하고 있다면 그것도 됩니다. 지원 배포판은 AMD의 [ROCm 설치 가이드](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/)에 나와 있습니다.
+2. **사용자에게 GPU 접근 권한을 줍니다.** seine은 `/dev/kfd`와 `/dev/dri/renderD*`를 엽니다.
+
+   ```bash
+   sudo usermod -aG render,video $USER
+   ```
+
+   새 그룹이 적용되도록 로그아웃했다가 다시 로그인하세요.
+3. **seine을 실행합니다.** [다운로드 영역](/ko/#download)에서 `seine-linux-x86_64.tar.gz`를 받아 압축을 풀고 실행하세요.
+
+   ```bash
+   ./seine
+   ```
+
+hipRTC가 설치되어 있으면 seine은 시작할 때 사용 중인 카드에 맞춰 커널을 컴파일합니다. RX 6000, RX 7000, RX 9000 카드는 hipRTC 없이도 릴리스에 내장된 커널로 실행됩니다. 압축 파일과 시스템 요구 사항은 [Linux 채굴 가이드](/ko/blog/mine-blocknet-on-linux/)에서 설명합니다.
+
+RX 7000과 Radeon PRO W7000 카드에서 seine을 root로 실행하면 채굴하는 동안 카드의 전력 레벨을 `high`로 설정하고, 종료할 때 이전 레벨로 되돌립니다. root가 아니면 같은 작업을 하는 한 줄 명령을 출력하므로 직접 적용할 수 있습니다.
+
+## 채굴할 카드는 어떻게 선택하나요?
+
+backend 옵션을 지정하지 않으면 CPU와 모든 외장 AMD 카드로 채굴합니다. GPU 채굴은 유지하고 CPU를 비워 두려면 `amd`를 선택하세요.
+
+```bash
+./seine --backend amd
+```
+
+카드 한 장으로만 채굴하면서 CPU 채굴도 유지하려면 두 백엔드와 카드 인덱스를 함께 지정하세요.
+
+```bash
+./seine --backend cpu,amd --amd-devices 0
+```
+
+`--amd-devices 0,1`은 카드 두 장을 선택합니다. NVIDIA와 AMD 카드가 모두 있는 컴퓨터에서는 `--backend nvidia,amd`로 CPU 없이 모든 카드로 채굴합니다. 같은 카드에서 게임이나 다른 앱을 위해 비디오 메모리를 남겨 두려면 `--amd-max-lanes 2`로 레인 수를 제한하세요. 이 옵션들을 매번 시작할 때 유지하는 방법은 [설정 가이드](/ko/blog/configure-seine-miner/)에서 보여 줍니다.
+
+## AMD GPU가 채굴 중인지 어떻게 확인하나요?
+
+AMD 카드는 CPU가 이미 채굴하는 동안 백그라운드에서 시작됩니다. 각 카드는 Devices 패널에 `amd#1`, `amd#2` 같은 자체 행을 가지며, 온라인이 되면 로그에 레인 수와 함께 표시됩니다. 예를 들면 `amd#1: online (initialized in background, 9 lanes)`입니다. 그다음 해당 행에 카드의 현재 해시레이트와 평균 해시레이트가 표시됩니다.
+
+Mining 패널의 승인된 셰어는 풀이 작업을 적립하고 있음을 확인해 줍니다. [대시보드 가이드](/ko/blog/seine-dashboard-explained/)에서 모든 패널을 설명하며, bntpool.com에서 장비를 확인하는 방법은 [채굴기 추적 가이드](https://bntpool.com/blog/ko/track-your-miner-on-bntpool/)에 있습니다.
+
+## AMD 카드가 보이지 않으면 무엇을 확인해야 하나요?
+
+- **드라이버와 런타임을 확인하세요.** Windows에서는 AMD 드라이버를 설치하거나 업데이트하세요. Linux에서는 `hip-runtime-amd`를 설치하고 사용자가 `render`와 `video` 그룹에 속해 있는지 확인하세요. 런타임이 없으면 seine은 CPU로 채굴하며, `--backend amd`를 쓰면 시작할 때 없는 런타임을 알려 줍니다.
+- **명령을 확인하세요.** `--backend cpu`는 프로세서로만 채굴합니다. 기본 명령을 쓰거나 백엔드 목록에 `amd`를 포함하세요. `--amd-devices`를 지정했다면 해당 인덱스가 있는지 확인하세요.
+- **드라이버 업데이트 후에는 amd를 직접 지정하세요.** AMD 런타임이 seine을 두 번 연속 종료시키면, seine은 AMD 카드 자동 선택을 멈추고 나머지 장치로 계속 채굴하다가 다음 업데이트 후 카드를 다시 시도합니다. 바로 다시 시도하려면 `--backend cpu,amd`로 한 번 실행하세요.
+
+전체 요구 사항은 [seine AMD 가이드](https://github.com/zpalmtree/seine/blob/master/docs/guides/amd.md)에 있으며, 채굴 OS 사용자는 각 릴리스의 [HiveOS](https://github.com/zpalmtree/seine/blob/master/docs/guides/hiveos.md) 또는 [mmpOS](https://github.com/zpalmtree/seine/blob/master/docs/guides/mmpos.md) 패키지를 설치할 수 있습니다.
+
+<CTA target="seine" title="AMD GPU 채굴용 seine 다운로드" text="Windows 또는 Linux x86_64 압축 파일을 선택하면 seine이 CPU와 찾은 모든 Radeon 카드로 채굴합니다." />

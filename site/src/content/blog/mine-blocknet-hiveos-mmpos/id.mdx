@@ -1,0 +1,107 @@
+---
+title: 'Cara menambang Blocknet di HiveOS dan mmpOS'
+description: 'Tambang Blocknet di HiveOS atau mmpOS dengan paket seine dari setiap rilis. Siapkan flight sheet atau miner profile, pilih GPU atau CPU, dan perbarui dalam satu langkah.'
+tags: ['Panduan penambangan', 'HiveOS', 'mmpOS', 'GPU']
+sourceHash: 'e49fce300603'
+translation: draft
+faq:
+  - q: 'Bisakah saya menambang Blocknet di HiveOS?'
+    a: 'Ya. Setiap rilis seine menyertakan paket HiveOS. Tambahkan wallet BNT, buat flight sheet dengan Pool diatur ke Configure in miner dan Miner diatur ke Custom, tempel tautan paket sebagai Installation URL, lalu terapkan ke rig Anda. Dasbor HiveOS kemudian menampilkan hashrate per GPU dan share yang diterima.'
+  - q: 'Bisakah saya menambang Blocknet di mmpOS?'
+    a: 'Ya. Setiap rilis seine menyertakan paket mmpOS. Impor miner profile siap pakai dari panduan mmpOS seine, yang memasukkan wallet BNT, pool bntpool.com dan penambang seine dalam satu langkah, lalu jadikan sebagai Active miner profile pada rig Anda.'
+  - q: 'Apakah paket HiveOS juga menambang dengan CPU?'
+    a: 'Pada rig GPU, paket hanya menambang dengan GPU, karena setiap thread CPU memerlukan 2 GB RAM sistem dan banyak rig GPU memiliki RAM kecil. Rig tanpa GPU menambang dengan CPU. Untuk menambahkan penambangan CPU pada rig GPU, masukkan --backend nvidia,cpu --threads 2 di Extra config arguments.'
+  - q: 'Bagaimana memperbarui seine di HiveOS atau mmpOS?'
+    a: 'Ubah nomor versi di URL instalasi atau unduhan ke rilis terbaru dan terapkan flight sheet atau profile lagi. OS penambangan mengunduh paket baru, dan seine menyimpan hasil penyetelannya, sehingga rig kembali menambang dalam hitungan detik.'
+---
+
+Panduan ini menunjukkan cara menambang Blocknet di HiveOS dan mmpOS dengan seine. Setiap rilis seine menyertakan paket untuk kedua sistem operasi penambangan itu, jadi Anda menambahkan seine sebagai penambang kustom dengan satu tautan, dan rig Anda melaporkan hashrate serta share di dasbor yang sudah Anda pakai. Panduan ini mengikuti seine v0.3.1.
+
+## Paket mana yang Anda perlukan?
+
+Setiap rilis di [halaman rilis seine](https://github.com/zpalmtree/seine/releases/latest) membawa dua paket OS penambangan:
+
+| OS penambangan | Paket |
+|---|---|
+| HiveOS | `seine-hiveos-X.Y.Z.tar.gz` |
+| mmpOS | `seine-mmpos-X.Y.Z.tar.gz` |
+
+`X.Y.Z` adalah versi rilis, misalnya `0.3.1`. Setiap paket berisi build seine untuk pustaka sistem OS penambangan itu, pustaka compiler kernel NVIDIA yang dipakai seine, dan skrip yang menghubungkan seine ke dasbor. Anda tidak perlu memasang apa pun lagi di rig.
+
+## Bagaimana menambang Blocknet di HiveOS?
+
+<Answer>
+Tambahkan alamat Blocknet Anda sebagai wallet BNT, lalu buat flight sheet dengan Pool diatur ke Configure in miner dan Miner diatur ke Custom. Di Setup Miner Config, tempel tautan paket seine-hiveos sebagai Installation URL, gunakan %WAL%.%WORKER_NAME% sebagai templat wallet dan worker, dan atur Pool URL. Terapkan flight sheet ke rig Anda.
+</Answer>
+
+1. **Tambahkan wallet.** Buka **Wallets** dan tambahkan alamat pembayaran Blocknet Anda. Jika BNT tidak ada di daftar koin, ketik `BNT` sebagai nama koin. Nama Blocknet ID seperti `@name` juga bisa; gunakan bentuk `@`, karena HiveOS memperlakukan `$` secara khusus.
+2. **Buat flight sheet.** Pilih koin dan wallet BNT Anda, atur **Pool** ke *Configure in miner* dan **Miner** ke *Custom*.
+3. **Klik Setup Miner Config** dan isi:
+
+   | Field | Nilai |
+   |---|---|
+   | Miner name | `seine-hiveos` (HiveOS mengisinya dari URL) |
+   | Installation URL | `https://github.com/zpalmtree/seine/releases/download/vX.Y.Z/seine-hiveos-X.Y.Z.tar.gz` |
+   | Hash algorithm | biarkan kosong |
+   | Wallet and worker template | `%WAL%.%WORKER_NAME%` |
+   | Pool URL | `stratum+tcp://bntpool.com:3333` |
+   | Pass | biarkan kosong |
+
+4. **Terapkan flight sheet** ke rig Anda.
+
+Ganti `X.Y.Z` dengan versi terbaru, atau salin tautan paket dari halaman rilis. Pool cadangan ditulis di baris terpisah dalam **Pool URL**; seine mencobanya berurutan dan kembali ke yang pertama saat pulih. Dengan **Pool URL** kosong, seine menambang di bntpool.com.
+
+Dasbor HiveOS kemudian menampilkan hashrate seine per GPU, share yang diterima dan ditolak, serta suhu dan kipas GPU.
+
+## Bagaimana menambang Blocknet di mmpOS?
+
+<Answer>
+Daftar koin mmpOS belum memuat BNT, jadi Anda mengimpor profile siap pakai. Salin JSON miner profile dari panduan mmpOS seine, masukkan alamat Blocknet dan versi rilis, lalu impor di Miner profiles. Tambahkan wallet, pool dan profile yang dibuatnya, lalu jadikan seine BNT sebagai Active miner profile pada rig Anda.
+</Answer>
+
+1. **Sunting profile.** Salin JSON profile dari [panduan mmpOS seine](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/mmpos.md). Ganti `YOUR_BLOCKNET_ADDRESS` dengan alamat pembayaran atau `@name` Anda, dan kedua `X.Y.Z` di `custom_url` dengan versi terbaru.
+2. **Impor.** Buka **Miner profiles**, klik **Import from JSON**, tempel profile dan klik **Import**.
+3. **Tambahkan setiap bagian** dari hasil impor, berurutan: **Add wallet**, lalu **Add pool** (wallet BNT terisi sendiri), lalu **Add miner profile** dengan pool `bntpool` terpilih. Field koin dan penambang tampak kosong karena BNT tidak ada di daftar mmpOS; nilai yang diimpor tetap tersimpan.
+4. **Tetapkan profile.** Di setiap rig, atur **Active miner profile** ke `seine BNT`.
+
+Profile mengisi wallet, nama rig dan pool Anda saat mmpOS memulai penambang, dan dasbor mmpOS menampilkan hashrate seine per GPU dan share-nya. Paket mmpOS memerlukan image yang dibuat di atas Ubuntu 20.04 atau lebih baru.
+
+## Paket menambang dengan apa?
+
+Paket memilih perangkat dari perangkat keras yang dideteksi OS penambangan:
+
+- **Rig GPU menambang dengan GPU.** Setiap hash Blocknet memerlukan memori 2 GB, memori video pada GPU dan RAM sistem pada CPU. Banyak rig GPU memiliki RAM 4 sampai 8 GB, jadi paket membiarkan CPU bebas untuk sistem.
+- **Rig tanpa GPU menambang dengan CPU,** dengan jumlah thread disesuaikan dengan RAM bebas.
+- **Kartu NVIDIA** memerlukan driver dengan dukungan CUDA 12; kartu seri RTX 50 memerlukan driver 570 atau lebih baru.
+- **Kartu AMD Radeon RX 6000, RX 7000 dan RX 9000** memerlukan runtime ROCm HIP di rig. [Panduan GPU AMD](/id/blog/mine-blocknet-amd-gpu/) menjelaskan kebutuhan kartu-kartu itu.
+
+Saat pertama dijalankan, seine menyetel dirinya untuk setiap GPU selama beberapa menit sebelum hashrate muncul, lalu menyimpan hasilnya sehingga mulai berikutnya langsung menambang dalam hitungan detik. Jika Anda memakai restart karena hashrate rendah dari watchdog HiveOS, beri waktu lebih dari 10 menit agar penyetelan pertama itu tidak terpotong.
+
+## Bagaimana menambahkan penambangan CPU atau pengaturan lain?
+
+Apa pun yang Anda masukkan di **Extra config arguments** HiveOS, atau di akhir argumen profile mmpOS, diteruskan apa adanya ke seine dan mengalahkan default paket. Untuk menambang juga dengan CPU pada rig GPU, sebutkan kedua backend dan jumlah thread yang sesuai dengan RAM sisa, satu thread per 2 GB, dengan menyisakan setidaknya 2 GB untuk sistem:
+
+```text
+--backend nvidia,cpu --threads 2
+```
+
+Gunakan `amd,cpu` pada rig AMD atau `nvidia,amd,cpu` pada rig campuran. Tanpa `--threads`, seine menentukan dan menyetel thread CPU sesuai RAM bebas dengan sendirinya. Argumen berguna lainnya:
+
+| Argumen | Efek |
+|---|---|
+| `--backend nvidia --nvidia-devices 0,1,3` | Hanya menambang dengan sebagian GPU NVIDIA |
+| `--nvidia-max-lanes 4` | Memakai lebih sedikit memori video pada setiap GPU NVIDIA |
+
+Paket mengatur koneksi dasbor, keluaran log biasa dan direktori data untuk Anda. Biarkan `--api-bind`, `--api-cookie` dan `--api-token` seperti yang diatur paket, karena dasbor membaca statistik seine melaluinya. [Panduan pengaturan](/id/blog/configure-seine-miner/) menjelaskan opsi seine lainnya.
+
+## Bagaimana memperbarui seine di OS penambangan?
+
+Di HiveOS dan mmpOS, versi baru datang melalui paket. Saat rilis yang lebih baru tersedia, seine mencatat pemberitahuan di log. Ubah versi di Installation URL, atau di URL unduhan profile mmpOS, ke rilis baru dan terapkan flight sheet atau profile lagi. OS penambangan mengunduh paket baru, dan seine menyimpan hasil penyetelan serta pengaturannya di direktori data, sehingga rig kembali ke hashrate penuh dalam hitungan detik.
+
+Jika rig Anda menjalankan paket v0.3.0, alihkan flight sheet atau profile ke paket v0.3.1; skrip peluncurannya juga diperbarui.
+
+## Di mana melihat share dan pembayaran?
+
+Dasbor OS penambangan menampilkan hashrate dan share setiap rig. Untuk pekerjaan yang dikreditkan, saldo dan pembayaran, cari alamat Anda di [bntpool.com](https://bntpool.com/stats). Setiap rig muncul dengan nama worker HiveOS atau nama rig mmpOS-nya, dan [panduan pelacakan penambang](https://bntpool.com/blog/id/track-your-miner-on-bntpool/) menjelaskan halaman statistik. Log lengkap ada di log penambang OS penambangan; di HiveOS, `/var/log/miner/custom/seine-hiveos.log`.
+
+<CTA target="seine" title="Dapatkan paket seine untuk OS penambangan" text="Setiap rilis menyertakan paket HiveOS dan mmpOS: tempel satu tautan ke flight sheet atau profile Anda dan rig Anda menambang Blocknet." />

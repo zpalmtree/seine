@@ -1095,3 +1095,53 @@ fn export_auto_update_showcase() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(std::path::Path::new(&dir).join("index.html"), html).unwrap();
 }
+
+#[test]
+#[ignore = "writes the blog dashboard capture; pass SEINE_SHOWCASE_DIR to choose where"]
+fn export_blog_dashboard_capture() {
+    use LogLevel::{Info, Success, Warn};
+    let log: &[(LogLevel, &str, &str, f64)] = &[
+        (
+            Info,
+            "BACKEND",
+            "cpu: starting 21 threads (~42.0 GiB RAM)",
+            7_500.0,
+        ),
+        (Success, "CONN", "connected to pool", 7_500.0),
+        (Success, "CPU", "tuned to 21 threads", 7_100.0),
+        (Success, "SHARE", "share accepted", 2_400.0),
+        (Warn, "SHARE", "rejected (stale share)", 2_380.0),
+        (Success, "SHARE", "share accepted", 4.0),
+    ];
+    let mut state = mining_fixture("working", log);
+    state.log_entries[3].count = 118;
+    state.log_entries[5].count = 104;
+    state.backends_desc = "cpu#1 (21 lanes, ~42.0 GiB RAM)".into();
+    state.threads = 21;
+    state.tuning_status = Some("done".into());
+    state.height = "73,481".into();
+    state.network_hashrate = "51.36 KH/s".into();
+    state.round_hashrate = "16.63 H/s".into();
+    state.avg_hashrate = "16.41 H/s".into();
+    state.total_hashes = 124_310;
+    state.submitted = 223;
+    state.accepted = 222;
+    state.stale_shares = 1;
+    state.share_difficulty = Some(48);
+    state.pool_pending = "0.8341 BNT".into();
+    state.pool_paid = "6.1250 BNT".into();
+    state.device_hashrates = vec![DeviceHashrate {
+        name: "cpu#1".into(),
+        current: "16.63 H/s".into(),
+        average: "16.41 H/s".into(),
+    }];
+    for secs in [7_420u64, 7_455, 7_470, 7_488] {
+        state.block_found_ticks.push_back(secs);
+    }
+    let page = format!(
+        "<!doctype html><html><meta charset=utf-8><style>body{{margin:0;background:#080b10}}pre{{margin:0;padding:10px;background:#080b10;color:#b4bec8;font:15px/1.22 'DejaVu Sans Mono',monospace;width:max-content}}</style>{}</html>",
+        capture_full(&state, 120, 26)
+    );
+    let dir = std::env::var("SEINE_SHOWCASE_DIR").unwrap_or_else(|_| ".".into());
+    std::fs::write(format!("{dir}/blog-dashboard.html"), page).unwrap();
+}

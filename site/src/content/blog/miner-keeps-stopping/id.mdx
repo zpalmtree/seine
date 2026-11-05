@@ -9,11 +9,11 @@ faq:
     a: 'Simpan konfigurasi dan catat lokasinya sebelum mengubah apa pun. Pesan parsing menunjukkan berkas atau nilai tertentu. Cadangkan berkas itu, perbaiki masalah yang disebutkan, dan pertahankan alamat serta pengaturan peluncur. Menghapus semuanya mempersulit perbandingan dengan sesi terakhir yang berhasil.'
   - q: 'Informasi apa yang membantu memeriksa penghentian berulang?'
     a: 'Catat versi seine, sistem operasi, CPU, GPU, memori tersedia, argumen lengkap, direktori kerja dan waktu berhenti. Sertakan pesan terakhir dan kejadian sistem terkait. Hapus kredensial dan data pribadi sebelum berbagi; jangan pernah menyertakan frasa pemulihan atau private key wallet.'
-sourceHash: '2e054f0c0100'
+sourceHash: '333d8de81191'
 translation: draft
 ---
 
-Jalankan penambang Blocknet secara konsisten dengan mengenali tahap saat ia berhenti. Panduan ini mengikuti seine v0.2.37 dan dimulai dari bukti yang bisa Anda kumpulkan di komputer sendiri. Simpan perintah dan konfigurasi terakhir yang berhasil, lalu ubah satu pengaturan terkait pada satu waktu agar hasil berikutnya berguna.
+Jalankan penambang Blocknet secara konsisten dengan mengenali tahap saat ia berhenti. Panduan ini mengikuti seine v0.3.1 dan dimulai dari bukti yang bisa Anda kumpulkan di komputer sendiri. Simpan perintah dan konfigurasi terakhir yang berhasil, lalu ubah satu pengaturan terkait pada satu waktu agar hasil berikutnya berguna.
 
 ## Apa yang diperiksa ketika penambang berhenti?
 
@@ -27,7 +27,13 @@ Periksa apakah proses keluar, komputer tidur, atau koneksi pool sedang pulih. Si
 
 Buka terminal di direktori peluncuran biasa dan jalankan perintah yang sudah Anda gunakan. Tambahkan `--ui plain` untuk log teks alih-alih dasbor, tanpa mengubah argumen lain. Ini memulai penambangan dengan pengaturan Anda. Salin pesan akhir, termasuk kesalahan pertama sebelum pesan koneksi ulang atau penghentian yang berulang.
 
-Catat versi program, direktori kerja dan direktori data yang dipilih bersama-sama. Pada rilis ini, kesalahan fatal yang ditangani dicetak dengan `fatal:` sebelum keluar. Penghentian oleh sistem operasi dapat meninggalkan bukti berbeda. Jika proses masih hidup, ikuti [pemeriksaan koneksi pool](https://bntpool.com/blog/id/track-your-miner-on-bntpool/); share yang belum datang atau putus sementara bukan bukti crash.
+Catat versi program, direktori kerja dan direktori data yang dipilih bersama-sama. Kesalahan fatal yang ditangani dicetak dengan `fatal:` sebelum keluar. Di Windows, saat Anda menjalankan `seine.exe` dengan klik dua kali, konsol tetap terbuka setelah kesalahan fatal sampai Anda menekan Enter, sehingga Anda dapat membaca pesannya. Penghentian oleh sistem operasi dapat meninggalkan bukti berbeda. Jika proses masih hidup, ikuti [pemeriksaan koneksi pool](https://bntpool.com/blog/id/track-your-miner-on-bntpool/); share yang belum datang atau putus sementara bukan bukti crash.
+
+## Apakah seine berhenti karena pembaruan?
+
+Berhenti sebentar bisa karena pembaruan. Dengan pembaruan otomatis aktif, seine menghitung mundur di header dasbor, memasang rilis baru, menghentikan penambangan dengan rapi dan mulai ulang dengan argumen yang sama; dasbor baru mencatat `updated to seine vX.Y.Z`. Jika pool mengirim pekerjaan yang memerlukan rilis lebih baru, misalnya saat upgrade jaringan, seine menjeda penambangan dan mencatat `installing seine vX.Y.Z now: mining is paused until Seine is updated`, lalu melanjutkan setelah pembaruan terpasang.
+
+Jika datang dari v0.2.45 di Linux, versi lama memasang pembaruan lalu keluar, jadi jalankan seine sekali lagi; layanan systemd atau peluncur lain yang memulai ulang tidak perlu apa-apa. [Panduan pembaruan](/id/blog/update-seine-miner/) juga mencantumkan langkah satu kali untuk Windows, HiveOS dan mmpOS.
 
 ## Apakah berhenti sebelum penambangan dimulai?
 
@@ -43,9 +49,9 @@ Mode halaman yang diwajibkan membutuhkan reservasi sistem operasi yang sesuai. K
 
 ## Periksa tahap GPU secara terpisah
 
-Jika awal program menyebut pustaka CUDA, perangkat atau alokasi GPU, catat pesan tepat dan versi driver terpasang. [Panduan NVIDIA](/id/blog/mine-blocknet-nvidia-gpu/) membahas kebutuhan rilis, pustaka runtime dan pemilihan perangkat. Bandingkan dengan lingkungan Anda sebelum mengubah kernel atau tuning. Unduhan arsip yang berhasil belum membuktikan runtime siap.
+Jika awal program menyebut pustaka CUDA atau HIP, perangkat atau alokasi GPU, catat pesan tepat dan versi driver terpasang. [Panduan NVIDIA](/id/blog/mine-blocknet-nvidia-gpu/) dan [panduan AMD](/id/blog/mine-blocknet-amd-gpu/) membahas kebutuhan rilis, pustaka runtime dan pemilihan perangkat. Bandingkan dengan lingkungan Anda sebelum mengubah kernel atau tuning. Unduhan arsip yang berhasil belum membuktikan runtime siap.
 
-seine dapat mengisolasi kegagalan backend sementara backend aktif lainnya terus bekerja. Periksa pesan dan aktivitas tersisa sebelum menyimpulkan seluruh aplikasi berhenti. Simpan bukti sebelum memulai ulang karena sesi baru dapat menutupi urutan sebelumnya. Jika menguji pilihan backend lebih sederhana, simpan perintah asli dan bandingkan awal, pekerjaan berkelanjutan serta kiriman diterima.
+seine dapat mengisolasi kegagalan backend sementara backend aktif lainnya terus bekerja. Jika runtime AMD menutup seine dua kali berturut-turut saat memakai GPU, seine berhenti memilih kartu AMD dengan sendirinya dan tetap menambang dengan yang lain; jalankan sekali dengan `--backend cpu,amd` setelah pembaruan driver untuk mencoba kartu lagi. Periksa pesan dan aktivitas tersisa sebelum menyimpulkan seluruh aplikasi berhenti. Simpan bukti sebelum memulai ulang karena sesi baru dapat menutupi urutan sebelumnya. Jika menguji pilihan backend lebih sederhana, simpan perintah asli dan bandingkan awal, pekerjaan berkelanjutan serta kiriman diterima.
 
 ## Apakah komputer tidur atau dimulai ulang?
 

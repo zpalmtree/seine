@@ -1,31 +1,47 @@
 ---
 title: 'Jak zaktualizować miner Blocknet'
-description: 'Zaktualizuj seine do kopania Blocknet, zachowaj ustawienia, zweryfikuj oficjalny plik i sprawdź wersję, połączenie z pulą oraz zaakceptowane udziały.'
+description: 'Utrzymuj miner seine dla Blocknet w aktualnej wersji: jak automatyczne aktualizacje instalują nowe wydania, jak zaktualizować ręcznie i jak sprawdzić, że nowa wersja kopie.'
 tags: ['Poradnik kopania', 'seine', 'Aktualizacje']
 faq:
   - q: 'Czy seine sam instaluje aktualizacje?'
-    a: 'Kontrola wersji informuje o nowym wydaniu w panelu i logu. Sam wybierasz termin instalacji. Pobierz i sprawdź oficjalne archiwum, zatrzymaj miner, zastąp pliki aplikacji i uruchom ponownie z tym samym katalogiem danych oraz opcjami.'
+    a: 'Tak, od wersji v0.3.0. Gdy pojawi się nowe wydanie, panel odlicza 60 sekund, a kopanie trwa dalej, potem seine weryfikuje podpisany plik, zatrzymuje się poprawnie i uruchamia ponownie w nowej wersji z tymi samymi ustawieniami. Naciśnij u, aby zaktualizować od razu, s, aby pominąć tę wersję, albo uruchom seine z --no-auto-update, aby aktualizować ręcznie.'
   - q: 'Które pliki przechowują ustawienia?'
     a: 'Domyślnie konfiguracja to seine-data/seine.config.json względem katalogu uruchomienia. data-dir zmienia tę lokalizację. Zachowaj katalog danych i skrypt lub definicję usługi: parametry backendu i wątków są oddzielne od zapisanych danych połączenia.'
   - q: 'Dlaczego po aktualizacji znów pojawia się pytanie o adres?'
     a: 'Sprawdź katalog roboczy i data-dir. Start z nowego folderu może skierować seine do innej konfiguracji. Zatrzymaj tę instancję, znajdź pierwotne dane i uruchom z właściwą ścieżką. Przed wznowieniem sprawdź adres i pulę.'
-sourceHash: '1d2a2deba793'
+sourceHash: '37fa2d9966c0'
 translation: draft
 ---
 
-Zaktualizuj seine, zachowując działające połączenie z pulą i opcje startowe. Poradnik opiera się na publicznym wydaniu v0.2.36 i obejmuje przygotowanie, wymianę oraz kontrolę. Pierwszą instalację opisują poradniki [Windows](/pl/blog/mine-blocknet-on-windows/), [Linux](/pl/blog/mine-blocknet-on-linux/) i [Mac](/pl/blog/mine-blocknet-on-mac/).
+Utrzymuj seine na najnowszym wydaniu, zachowując działające połączenie z pulą i opcje startowe. Poradnik opiera się na publicznym wydaniu v0.3.1: jak działają automatyczne aktualizacje, co zrobić jednorazowo przy przejściu ze starszej wersji i jak zaktualizować ręcznie. Pierwszą instalację opisują poradniki [Windows](/pl/blog/mine-blocknet-on-windows/), [Linux](/pl/blog/mine-blocknet-on-linux/) i [Mac](/pl/blog/mine-blocknet-on-mac/).
 
 ## Jak zaktualizować seine?
 
 <Answer>
-Pobierz i zweryfikuj oficjalne archiwum swojego systemu, zatrzymaj miner, zachowaj katalog danych i zastąp pliki aplikacji. Uruchom z tym samym katalogiem roboczym i argumentami. Sprawdź wersję, adres wypłat, pulę i zaakceptowane udziały przed aktualizacją kolejnego komputera.
+Zostaw seine uruchomiony. Sprawdza nowe wydania przy starcie i co 12 godzin, odlicza 60 sekund w nagłówku panelu, nadal kopiąc, a potem instaluje podpisane wydanie i uruchamia się ponownie z tymi samymi argumentami i ustawieniami. Aby zaktualizować ręcznie, zatrzymaj seine, zastąp jego pliki z oficjalnego archiwum i uruchom go tak samo jak wcześniej.
 </Answer>
+
+## Jak działają automatyczne aktualizacje?
+
+Gdy pojawi się nowsze wydanie, nagłówek pokazuje `update vX.Y.Z available`, log podaje link do wydania, a potem nagłówek odlicza: `updating to vX.Y.Z in 42s`. Podczas odliczania kopanie trwa. Naciśnij `u`, aby zaktualizować od razu, albo `s`, aby pominąć tę wersję; seine zapamiętuje pominięcie w katalogu danych i jak zwykle zaproponuje kolejne wydanie.
+
+Po odliczaniu seine sprawdza podpis wydania, upewnia się, że nowy plik wykonywalny się uruchamia, i dopiero wtedy zastępuje stary. Poprawnie zatrzymuje kopanie i uruchamia się ponownie z tymi samymi argumentami, a nowy panel zapisuje w logu `updated to seine vX.Y.Z`. Nowa wersja startuje z zapisanymi wynikami strojenia i testuje tylko to, co zmieniło wydanie, więc szybko wraca do pełnej prędkości.
+
+Jeśli pula wysyła pracę wymagającą nowszego wydania, na przykład przy aktualizacji sieci, seine wstrzymuje kopanie i od razu instaluje aktualizację, nawet wersję, którą pominąłeś. Użyj `--no-auto-update`, aby zostawić tylko powiadomienie, albo `--disable-update-check`, aby wyłączyć sprawdzanie. Wersje zbudowane samodzielnie pokazują powiadomienie i zostawiają aktualizację Tobie.
+
+## Co zrobić jednorazowo przy przejściu ze starszej wersji?
+
+Większość koparek nie wymaga niczego. Kilka konfiguracji wymaga jednego kroku przy pierwszej automatycznej aktualizacji do v0.3.1:
+
+- **Linux, z v0.2.45:** v0.2.45 instaluje nową wersję i kończy działanie. Uruchom seine jeszcze raz. Konfiguracje, które same uruchamiają seine ponownie, na przykład usługa systemd, nie wymagają niczego.
+- **Windows, z v0.2.45 lub v0.3.0:** stara wersja uruchamia nową i kończy działanie. Jeśli skrypt lub usługa także uruchamiają seine ponownie po jego zamknięciu, zatrzymaj je raz po aktualizacji, aby działał tylko jeden seine.
+- **HiveOS i mmpOS, z pakietu v0.3.0:** przełącz flight sheet lub profil na pakiet v0.3.1 ze [strony wydań](https://github.com/zpalmtree/seine/releases). Od v0.3.1 pakiet aktualizuje się przez system do kopania: zmień wersję w jego adresie URL, jak pokazuje [poradnik HiveOS i mmpOS](/pl/blog/mine-blocknet-hiveos-mmpos/).
 
 <img src="/assets/blog/miner-update.svg" alt="Wymiana aplikacji z zachowaniem folderu konfiguracji, następnie kontrola połączenia." width="1200" height="675" loading="lazy" />
 
 ## Jak sprawdzić obecną wersję?
 
-Wykonaj polecenie wersji dla faktycznie używanego programu. Stara kopia może różnić się od tej uruchamianej skrótem lub usługą. Zapisz ścieżkę programu, katalog roboczy i argumenty razem, aby móc powtórzyć aktualizację. W Windows otwórz PowerShell w aktualnym folderze minera:
+Nagłówek panelu pokazuje uruchomioną wersję. Możesz też wykonać polecenie wersji dla faktycznie używanego programu. Stara kopia może różnić się od tej uruchamianej skrótem lub usługą. Zapisz ścieżkę programu, katalog roboczy i argumenty razem, aby móc powtórzyć aktualizację. W Windows otwórz PowerShell w aktualnym folderze minera:
 
 ```powershell
 .\seine.exe --version
@@ -37,7 +53,7 @@ W Linux lub macOS otwórz terminal w tym folderze:
 ./seine --version
 ```
 
-Porównaj wynik z [oficjalnymi wydaniami](https://github.com/zpalmtree/seine/releases). seine sprawdza nową wersję przy starcie i co 12 godzin, pokazując informację w panelu i logu. Komunikat daje link do pobrania; termin instalacji wybierasz sam. Przeczytaj uwagi o platformie, bibliotekach wykonawczych i opcjach startu.
+Porównaj wynik z [oficjalnymi wydaniami](https://github.com/zpalmtree/seine/releases) i przeczytaj informacje o wydaniu dotyczące zmian dla Twojej platformy, środowiska wykonawczego lub opcji startu.
 
 ## Jakie ustawienia zachować?
 
@@ -45,11 +61,11 @@ Domyślnie seine czyta `./seine-data/seine.config.json`. `./` oznacza katalog ro
 
 Konfiguracja zapisuje tryb kopania, adres wypłat, URL puli i nazwę maszyny. Zachowaj cały katalog danych, także pliki strojenia. Zapisz również polecenie, skrypt lub definicję usługi: `--backend` i `--threads` są oddzielne od pól połączenia. Oba elementy zachowują zamierzoną konfigurację po restarcie.
 
-## Pobierz i zweryfikuj nowe pliki
+## Jak zaktualizować seine ręcznie?
 
-Na [stronie pobierania](/pl/#download) lub oficjalnym wydaniu wybierz archiwum systemu i architektury CPU. Pobierz też osobny `SHA256SUMS.txt` z tego samego wydania. Porównaj sumę przed rozpakowaniem do osobnego folderu. [Poradnik weryfikacji](/pl/blog/antivirus-flags-crypto-miner/) opisuje procedurę Windows i ostrzeżenia pobierania.
+Jeśli uruchamiasz seine z `--no-auto-update` albo wolisz sam wybrać moment, zaktualizuj ręcznie. Na [stronie pobierania](/pl/#download) lub oficjalnym wydaniu wybierz archiwum systemu i architektury CPU. Pobierz też osobny `SHA256SUMS.txt` z tego samego wydania. Porównaj sumę przed rozpakowaniem do osobnego folderu. [Poradnik weryfikacji](/pl/blog/antivirus-flags-crypto-miner/) opisuje procedurę Windows i ostrzeżenia pobierania.
 
-Trzymaj razem wszystkie pliki archiwum. Pakiet Windows zawiera biblioteki NVIDIA obok `seine.exe`; skopiowanie samego programu może pomieszać wersje. [Poradnik NVIDIA](/pl/blog/mine-blocknet-nvidia-gpu/) opisuje środowisko wykonawcze. [Dokumentacja v0.2.36](https://github.com/zpalmtree/seine/blob/v0.2.36/docs/guides/configuration.md) potwierdza zapisywane ustawienia i opisany start.
+Trzymaj razem wszystkie pliki archiwum. Pakiet Windows zawiera biblioteki NVIDIA obok `seine.exe`; skopiowanie samego programu może pomieszać wersje. [Poradnik NVIDIA](/pl/blog/mine-blocknet-nvidia-gpu/) opisuje środowisko wykonawcze. [Dokumentacja konfiguracji v0.3.1](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/configuration.md) opisuje zapisywane ustawienia, automatyczne aktualizacje i opisany tu start.
 
 ## Zatrzymaj, zabezpiecz i zastąp
 

@@ -9,11 +9,11 @@ faq:
     a: 'Değişiklik yapmadan yapılandırmayı koruyup konumunu kaydedin. Ayrıştırma mesajı belirli dosyayı veya değeri gösterir. Dosyayı yedekleyin, bildirilen sorunu düzeltin, adresi ve başlatma ayarlarını koruyun. Her şeyi silmek son çalışan oturumla karşılaştırmayı zorlaştırır.'
   - q: 'Tekrarlanan durmayı araştırmak için hangi bilgiler gerekir?'
     a: 'seine sürümü, işletim sistemi, CPU, GPU, kullanılabilir bellek, tüm başlatma argümanları, çalışma dizini ve durma saatini kaydedin. Son günlük mesajlarıyla ilgili sistem olaylarını ekleyin. Paylaşmadan kimlik bilgilerini ve kişisel verileri çıkarın; kurtarma ifadesi veya özel anahtarları asla eklemeyin.'
-sourceHash: '2e054f0c0100'
+sourceHash: '333d8de81191'
 translation: draft
 ---
 
-Blocknet madencinizin hangi aşamada durduğunu belirleyerek düzenli çalışmasını sağlayın. Bu rehber seine v0.2.37'yi izler ve kendi bilgisayarınızdan toplayabileceğiniz kanıtlarla başlar. Son çalışan komutu ve yapılandırmayı saklayın; sonraki sonucu anlayabilmek için her seferinde ilgili tek ayarı değiştirin.
+Blocknet madencinizin hangi aşamada durduğunu belirleyerek düzenli çalışmasını sağlayın. Bu rehber seine v0.3.1'i izler ve kendi bilgisayarınızdan toplayabileceğiniz kanıtlarla başlar. Son çalışan komutu ve yapılandırmayı saklayın; sonraki sonucu anlayabilmek için her seferinde ilgili tek ayarı değiştirin.
 
 ## Madenci durduğunda neyi kontrol etmelisiniz?
 
@@ -27,7 +27,13 @@ Sürecin kapandığını mı, bilgisayarın uyuduğunu mu, havuz bağlantısın�
 
 Normal başlatma dizininde terminal açıp mevcut komutunuzu çalıştırın. Pano yerine metin günlükleri için `--ui plain` ekleyin, diğer argümanları koruyun. Bu mevcut kurulumla madenciliği başlatır. Tekrarlanan bağlantı veya kapanma mesajlarından önceki ilk hata dahil son mesajları kopyalayın.
 
-Program sürümü, çalışma dizini ve seçilen veri dizinini birlikte kaydedin. Bu sürüm, ele alınan ölümcül hatayı çıkmadan önce `fatal:` ile yazdırır. İşletim sisteminin sonlandırması farklı kanıt bırakabilir. Süreç hâlâ çalışıyorsa [havuz bağlantısı kontrollerini](https://bntpool.com/blog/tr/track-your-miner-on-bntpool/) izleyin; gelmeyen pay veya geçici bağlantı kaybı çökme kanıtı değildir.
+Program sürümü, çalışma dizini ve seçilen veri dizinini birlikte kaydedin. Ele alınan ölümcül hata çıkmadan önce `fatal:` ile yazdırılır. Windows'ta `seine.exe` dosyasını çift tıklayarak başlattığınızda, ölümcül bir hatadan sonra konsol siz Enter'a basana kadar açık kalır, böylece mesajı okuyabilirsiniz. İşletim sisteminin sonlandırması farklı kanıt bırakabilir. Süreç hâlâ çalışıyorsa [havuz bağlantısı kontrollerini](https://bntpool.com/blog/tr/track-your-miner-on-bntpool/) izleyin; gelmeyen pay veya geçici bağlantı kaybı çökme kanıtı değildir.
+
+## seine bir güncelleme için mi durdu?
+
+Kısa bir duruş bir güncelleme olabilir. Otomatik güncellemeler açıkken seine panel başlığında geri sayar, yeni sürümü kurar, madenciliği düzgünce durdurur ve aynı argümanlarla yeniden başlar; yeni panel günlüğe `updated to seine vX.Y.Z` yazar. Bir havuz, örneğin bir ağ yükseltmesinde, daha yeni bir sürüm gerektiren iş gönderirse seine madenciliği duraklatır ve `installing seine vX.Y.Z now: mining is paused until Seine is updated` yazar, güncelleme kurulunca da devam eder.
+
+Linux'ta v0.2.45'ten geliyorsanız eski sürüm güncellemeyi kurar ve ardından kapanır, bu yüzden seine'i bir kez daha başlatın; bir systemd hizmeti veya yeniden başlatan başka bir başlatıcı hiçbir şey gerektirmez. [Güncelleme rehberi](/tr/blog/update-seine-miner/) Windows, HiveOS ve mmpOS için tek seferlik adımları da listeler.
 
 ## Madencilik başlamadan mı duruyor?
 
@@ -43,9 +49,9 @@ Açıkça zorunlu tutulan sayfa modu ilgili işletim sistemi rezervasyonunu gere
 
 ## GPU aşamasını ayrı kontrol edin
 
-Başlangıç CUDA kütüphanesi, aygıt veya GPU ayırmasından söz ediyorsa tam mesajı ve kurulu sürücü sürümünü kaydedin. [NVIDIA rehberi](/tr/blog/mine-blocknet-nvidia-gpu/) sürüm gereksinimlerini, çalışma zamanı kütüphanelerini ve aygıt seçimini kapsar. Çekirdek veya ayarları değiştirmeden ortamınızla karşılaştırın. Arşivin indirilmesi çalışma zamanının hazır olduğunu kanıtlamaz.
+Başlangıç CUDA veya HIP kütüphanesi, aygıt veya GPU ayırmasından söz ediyorsa tam mesajı ve kurulu sürücü sürümünü kaydedin. [NVIDIA rehberi](/tr/blog/mine-blocknet-nvidia-gpu/) ve [AMD rehberi](/tr/blog/mine-blocknet-amd-gpu/) sürüm gereksinimlerini, çalışma zamanı kütüphanelerini ve aygıt seçimini kapsar. Çekirdek veya ayarları değiştirmeden ortamınızla karşılaştırın. Arşivin indirilmesi çalışma zamanının hazır olduğunu kanıtlamaz.
 
-seine bir arka uç hatasını yalıtırken diğer etkin arka uçlar çalışabilir. Tüm uygulamanın durduğuna karar vermeden mesajları ve kalan etkinliği inceleyin. Yeni oturum eski sıralamayı gizleyebileceğinden yeniden başlatmadan kanıtları kaydedin. Daha basit arka uç seçimini denerseniz asıl komutu saklayıp başlangıç, devam eden çalışma ve kabul edilen gönderimleri karşılaştırın.
+seine bir arka uç hatasını yalıtırken diğer etkin arka uçlar çalışabilir. AMD çalışma zamanı GPU'yu kullanırken seine'i art arda iki kez kapatırsa seine AMD kartları kendiliğinden seçmeyi bırakır ve geri kalan donanımda kazmaya devam eder; kartları yeniden denemek için sürücü güncellemesinden sonra seine'i bir kez `--backend cpu,amd` ile başlatın. Tüm uygulamanın durduğuna karar vermeden mesajları ve kalan etkinliği inceleyin. Yeni oturum eski sıralamayı gizleyebileceğinden yeniden başlatmadan kanıtları kaydedin. Daha basit arka uç seçimini denerseniz asıl komutu saklayıp başlangıç, devam eden çalışma ve kabul edilen gönderimleri karşılaştırın.
 
 ## Bilgisayar uyudu mu veya yeniden mi başladı?
 

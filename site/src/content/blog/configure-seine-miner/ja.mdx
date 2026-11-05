@@ -11,7 +11,7 @@ faq:
     a: 'seineがスレッド数を自動で選ぶため、他の作業用に余裕を残したいときだけ設定すれば十分です。スレッド1つにつき約2 GBのRAMを使います。ダッシュボードでマイナスキーを押し、パソコンの動作がちょうどよくなったら、その数を使います。'
   - q: 'seineは設定をどこに保存しますか？'
     a: 'seineはアドレス、プール、ワーカー名を、起動したフォルダー内のseine-data/seine.config.jsonに保存します。スレッドとbackendのオプションはここには保存されないため、起動のたびに使いたい場合は小さな起動ファイルに書いておきます。'
-sourceHash: b5ca5a9a16d8
+sourceHash: cbfaa904cdbf
 translation: draft
 ---
 
@@ -129,6 +129,8 @@ seineを閉じ、`seine-data/seine.config.json` をテキストエディター�
 ```
 
 ほかの2つの設定は `--address` と `--pool-url` です。アドレスを変更した後にプールがあなたの作業をどう反映するかは、[アドレス変更ガイド](https://bntpool.com/blog/ja/change-mining-wallet-address/)で説明しています。
+
+bntpool.com でソロマイニングするには、アドレスの前に `solo:` を付けます。たとえば、ファイルでは `"address": "solo:@yourname"`、コマンドラインでは `--address solo:YOUR_ADDRESS` です。プールは、リグが見つけた各ブロックの全報酬を支払います。ソロブロックの支払い方法は [bntpool.com でのソロマイニング](https://bntpool.com/blog/ja/solo-mine-blocknet-on-bntpool/)で説明しています。
 
 ## 設定が機能しないときは？
 

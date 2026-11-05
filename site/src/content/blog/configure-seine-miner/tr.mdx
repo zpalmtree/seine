@@ -11,7 +11,7 @@ faq:
     a: 'seine iş parçacığı sayısını sizin için seçer; bu yüzden yalnızca başka işlere yer bırakmak istediğinizde ayarlamanız yeterlidir. Her iş parçacığı yaklaşık 2 GB RAM kullanır. Bilgisayarınız rahat edene kadar panelde eksi tuşuna basın, sonra o sayıyı kullanın.'
   - q: 'seine ayarlarını nereye kaydeder?'
     a: 'seine adresinizi, havuzunuzu ve worker adınızı, başlattığınız klasörün içindeki seine-data/seine.config.json dosyasına kaydeder. İş parçacığı ve backend seçenekleri oraya kaydedilmez; her başlatmada istiyorsanız bunları küçük bir başlatma dosyasına yazın.'
-sourceHash: b5ca5a9a16d8
+sourceHash: 'cbfaa904cdbf'
 translation: draft
 ---
 
@@ -129,6 +129,8 @@ Tek bir çalıştırma için farklı bir değer kullanmak istiyorsanız onu komu
 ```
 
 Diğer iki ayar `--address` ve `--pool-url` ayarlarıdır. [Adres değiştirme rehberi](https://bntpool.com/blog/tr/change-mining-wallet-address/), adresinizi değiştirdikten sonra havuzun işinizi nasıl hesabınıza yazdığını açıklar.
+
+bntpool.com'da solo kazmak için adresin önüne `solo:` koyun; örneğin dosyada `"address": "solo:@yourname"` veya komut satırında `--address solo:YOUR_ADDRESS`. Havuz bu durumda cihazınızın bulduğu her bloğun ödülünün tamamını size öder. [bntpool.com'da solo madencilik](https://bntpool.com/blog/tr/solo-mine-blocknet-on-bntpool/) solo blokların nasıl ödendiğini açıklar.
 
 ## Bir ayar çalışmazsa ne yapılır?
 

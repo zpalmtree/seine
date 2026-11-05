@@ -1,55 +1,57 @@
 ---
 title: Das seine-Dashboard erklärt
-description: 'Ein Rundgang durch das Mining-Dashboard von seine (Hashrate, Shares, Status, Threads, Pool-Guthaben, Log) und wie du ihm beim Selbst-Tuning zusiehst.'
+description: 'Ein Rundgang Panel für Panel durch das Mining-Dashboard von seine (Hashrate, Shares, Status, Threads, Tuning, Pool-Guthaben, Log) und die Tasten, mit denen du es beim Minen steuerst.'
 tags: [seine, Mining-Anleitung, Dashboard, Auto-Tuning]
 faq:
   - q: 'Warum ist die durchschnittliche Hashrate von seine niedriger als die aktuelle?'
-    a: 'Average teilt alle in dieser Sitzung abgeschlossenen Hashes durch die Mining-Zeit und schließt damit die ersten Minuten ein, in denen jeder Thread seinen ersten Hash beendet und der Tuner unterhalb der vollen Kapazität beginnt, bevor er sich hocharbeitet. Current betrachtet nur die letzten fünf Sekunden. Je länger seine läuft, desto näher kommen sich die beiden Werte.'
-  - q: 'Wie ändere ich die Anzahl der Threads, während seine läuft?'
-    a: 'Drücke die Plustaste oder die Gleichheitszeichen-Taste, um pro CPU-Backend einen Thread hinzuzufügen, und die Minustaste, um einen zu entfernen. seine startet die Mining-Backends mit der neuen Anzahl neu und behält Sitzungsstatistik, Laufzeit und Durchschnitt. Eine manuelle Änderung schaltet das Thread-Auto-Tuning für diesen Lauf ab und wird nicht als neuer Standard gespeichert.'
+    a: 'Average teilt alle in dieser Sitzung fertigen Hashes durch die Mining-Zeit und enthält daher die ersten Minuten, in denen jeder Thread seinen ersten Hash beendet und das Tuning noch die Thread-Zahl wählt. Current betrachtet nur die letzten fünf Sekunden. Je länger seine läuft, desto näher kommen sich beide Werte.'
+  - q: 'Wie ändere ich die Thread-Zahl, während seine läuft?'
+    a: 'Drücke die Plustaste oder die Gleichheitstaste, um einen CPU-Thread hinzuzufügen, und die Minustaste, um einen zu entfernen. Sobald die Zeile Tuning done zeigt, gilt die Änderung sofort für die laufenden Threads, während GPUs und Pool-Verbindung weiterlaufen. Die Änderung gilt nur für diesen Lauf.'
   - q: 'Was bedeuten die goldenen Rauten in der Kopfzeile?'
-    a: 'Jede Raute markiert beim Pool-Mining einen akzeptierten Share oder beim Solo-Mining einen akzeptierten Block. Sie erscheint am rechten Rand der Welle und wandert jede Sekunde eine Spalte nach links, die sichtbaren Rauten sind also die Arbeit, die in den letzten paar Minuten akzeptiert wurde.'
-  - q: 'Kann ich seine ohne das Dashboard betreiben?'
-    a: 'Ja. Starte es mit --ui plain, dann bekommst du statt des Vollbild-Dashboards ein einfaches, scrollendes Log. Das passt zu Servern, Logdateien und Prozessmanagern. Der Standard --ui auto zeigt das Dashboard nur, wenn seine in einem interaktiven Terminal läuft, umgeleitete Ausgabe bekommt also schon einfache Logs.'
-sourceHash: '024e87683a82'
-translation: reviewed
+    a: 'Jede Raute markiert einen Share, den der Pool akzeptiert hat, oder einen Block, den dein Rig gefunden hat. Sie erscheint am rechten Rand der Welle und wandert jede Sekunde eine Spalte nach links, die sichtbaren Rauten zeigen also die akzeptierte Arbeit der letzten etwa zwei Minuten.'
+  - q: 'Kann ich seine ohne das Dashboard starten?'
+    a: 'Ja. Starte es mit --ui plain, um statt des Vollbild-Dashboards ein einfaches, scrollendes Log zu bekommen. Das passt zu Servern, Logdateien und Prozessmanagern. Die Voreinstellung --ui auto zeigt das Dashboard nur, wenn seine in einem interaktiven Terminal läuft, umgeleitete Ausgabe bekommt also bereits einfache Logs.'
+sourceHash: '7f9d55be8e18'
+translation: draft
 ---
 
-Starte seine, und es füllt das Terminal mit einem Live-Dashboard: wie schnell du hashst, wie viele Shares der Pool akzeptiert hat, was dir zusteht, und ein Log von allem, was es tut. Dieser Rundgang geht Panel für Panel durch seine v0.2.22, erklärt, was jede Beschriftung bedeutet und woher ihre Zahl stammt, und zeigt, wie Auto-Tuning und Tastatursteuerung beim Minen aussehen.
+Starte seine, und es öffnet sofort ein Live-Dashboard: wie schnell du hashst, wie viele Shares der Pool akzeptiert hat, was dir zusteht, wie das Tuning läuft, und ein Log seiner Aktivitäten. Dieser Rundgang geht Panel für Panel durch seine v0.3.1, erklärt jede Beschriftung und woher jede Zahl kommt, und behandelt die Tasten, die du beim Minen nutzen kannst.
 
-![Das Terminal-Dashboard von seine auf einem Apple M4 Max beim Mining auf bntpool.com: aktuelle Hashrate 30,63 H/s, 14 Threads, 5 Shares eingereicht, 0 abgelehnt und 5 akzeptiert, darunter das Pool-Guthaben und ein Log mit Jobs und akzeptierten Shares](/assets/blog/seine-dashboard.webp "Das seine-Dashboard auf einem Apple M4 Max")
+![Das Terminal-Dashboard von seine v0.3.1 beim Minen auf bntpool.com: aktuelle Hashrate 16,63 H/s mit 21 CPU-Threads, Tuning abgeschlossen, 222 akzeptierte und 1 abgelehnter Share, das Pool-Guthaben mit 1 BNT Mindestauszahlung und ein Log akzeptierter Shares](/assets/blog/seine-dashboard-v031.webp "Das Dashboard von seine in v0.3.1")
 
-Der Screenshot zeigt einen Apple M4 Max beim Mining auf bntpool.com etwa zehn Minuten nach dem Start, aufgenommen im Oktober 2026 für die README von seine. Er dient als Referenz für den Rest dieses Beitrags.
+Das Bild ist der Dashboard-Code von seine v0.3.1 selbst, gerendert mit 120 × 26 Zeichen und Demowerten: ein Ryzen 9 9950X mit seinen gemessenen 16,63 H/s auf 21 Threads, zwei Stunden nach Beginn einer Sitzung auf bntpool.com. Die Adresse ist gekürzt und erfunden. Es dient als Referenz für den Rest dieses Artikels.
 
 ## Was zeigt das Dashboard von seine?
 
 <Answer>
-Das Dashboard von seine zeigt deine aktuelle und durchschnittliche Hashrate, abgeschlossene Hashes, Blockhöhe und Netzwerk-Hashrate, den Status des Miners, eingereichte, abgelehnte und akzeptierte Shares, die Hashrate jedes Geräts, deinen Pool-Endpunkt und die Thread-Anzahl, dein Guthaben auf bntpool.com und ein Log mit Zeitangaben. Es aktualisiert sich beim Minen etwa einmal pro Sekunde.
+Das Dashboard von seine zeigt deine aktuelle und durchschnittliche Hashrate, fertige Hashes, Blockhöhe und Netzwerk-Hashrate, den Status des Miners, deine Share-Difficulty mit abgelehnten und akzeptierten Shares, die Hashrate jedes Geräts, deinen Pool, die Thread-Zahl und den Tuning-Status, dein bntpool.com-Guthaben und ein Log, durch das du zurückscrollen kannst. Es aktualisiert sich etwa einmal pro Sekunde.
 </Answer>
 
-Von oben nach unten sind die Panels: die Kopfzeile, eine Reihe aus drei Statistik-Panels (`HASHRATE`, `NETWORK`, `MINING`), `DEVICES`, `CONFIG`, `POOL BALANCE` und `LOG`. In einem Terminal mit mindestens 148 Spalten Breite stehen `CONFIG` und das Guthaben-Panel nebeneinander.
+Von oben nach unten folgen die Kopfzeile, eine Reihe mit drei Statistik-Panels (`HASHRATE`, `NETWORK`, `MINING`), `DEVICES`, `CONFIG`, `POOL BALANCE` und `LOG`. In einem breiten Terminal stehen `CONFIG` und das Guthaben-Panel nebeneinander.
 
-## Die Kopfzeile: Version, Wellen und Laufzeit
+Das Dashboard öffnet sich, bevor das Mining beginnt. Beim ersten Start fragt seine im Dashboard selbst nach deiner Auszahlungsadresse und deinem Pool und zeigt dann Hardware-Prüfungen und den Startfortschritt auf dem Bildschirm, sodass du jeden Schritt verfolgen kannst.
 
-Der Titel der Kopfzeile zeigt die seine-Version, zum Beispiel `seine v0.2.22`. Gibt es ein neueres Release, erscheint daneben ein hervorgehobenes Badge `update vX.Y.Z available`, und das Log bekommt eine Zeile mit dem Download-Link. seine prüft GitHub beim Start und alle 12 Stunden, und die Prüfung unterbricht das Mining nie.
+## Die Kopfzeile: Version, Wellen und Updates
 
-Unter dem Titel ziehen zwei Reihen Wellen mit einem Schritt pro Sekunde vorbei. Jedes Mal, wenn der Pool einen deiner Shares akzeptiert (oder im Solo-Modus der Node deinen Block), landet eine goldene Raute am rechten Rand der oberen Reihe und scrollt mit einer Spalte pro Sekunde nach links. In einem Terminal mit etwa 130 Spalten Breite sind die sichtbaren Rauten also ungefähr die akzeptierte Arbeit der letzten zwei Minuten. `uptime` steht am Ende der unteren Reihe.
+Der Titel der Kopfzeile zeigt die seine-Version, hier `seine v0.3.1`. Ist ein neueres Release verfügbar, zeigt sie `update vX.Y.Z available` und zählt dann bis zur automatischen Installation herunter: `updating to vX.Y.Z in 42s`, daneben `u now  s skip`. Drücke `u`, um sofort zu installieren, oder `s`, um diese Version zu überspringen. Während des Countdowns läuft das Mining weiter, und die [Update-Anleitung](/de/blog/update-seine-miner/) erklärt, was danach passiert.
+
+Unter dem Titel ziehen zwei Reihen Wellen mit einem Schritt pro Sekunde vorbei. Jedes Mal, wenn der Pool einen deiner Shares akzeptiert oder dein Rig einen Block findet, landet am rechten Rand der oberen Reihe eine goldene Raute und wandert pro Sekunde eine Spalte nach links. In einem etwa 120 Spalten breiten Terminal zeigen die sichtbaren Rauten ungefähr die akzeptierte Arbeit der letzten zwei Minuten. `uptime` steht am Ende der unteren Reihe.
 
 ## Wie misst seine die Hashrate?
 
 Das Panel `HASHRATE` hat drei Zeilen:
 
-- **Current** ist deine Hashrate über ein gleitendes Fenster von fünf Sekunden. Ein Hash ist hier eine vollständige Argon2id-Berechnung über 2 GiB, H/s zählt also abgeschlossene Hashes pro Sekunde. NVIDIA-GPUs erledigen Arbeit in Schüben, deshalb nutzt ihr aktueller Wert ein Fenster von 30 Sekunden, um stabil zu bleiben.
-- **Average** ist die Zahl aller Hashes dieser Sitzung geteilt durch die Mining-Zeit. Wartezeit (auf die Synchronisierung eines Nodes, auf ein Wallet-Passwort oder nach einer ungültigen Adresse) zählt nicht mit, und der Durchschnitt bleibt erhalten, wenn du die Thread-Anzahl änderst.
-- **Total** ist die Zahl der Hashes, die seit dem Start von seine abgeschlossen wurden.
+- **Current** (aktuell) ist deine Hashrate über ein gleitendes Fenster von fünf Sekunden. Ein Hash ist hier eine vollständige Argon2id-Berechnung über 2 GiB, H/s zählt also fertige Hashes pro Sekunde. NVIDIA-GPUs erledigen Arbeit in Schüben, deshalb nutzt ihre aktuelle Rate ein 30-Sekunden-Fenster, damit sie ruhig bleibt.
+- **Average** (Durchschnitt) sind alle Hashes dieser Sitzung geteilt durch die Mining-Zeit. Wartezeit, etwa auf die Synchronisierung eines Nodes oder nach einer ungültigen Adresse, zählt nicht mit.
+- **Total** ist die Zahl der fertigen Hashes seit dem Start von seine.
 
-Im Screenshot steht bei Current 30,63 H/s und bei Average 29,33 H/s. Average beginnt niedriger, weil es die ersten Minuten einschließt, in denen jeder Thread seinen ersten Hash beendet und der Tuner unterhalb der vollen Kapazität beginnt, bevor er sich hocharbeitet. Je länger seine läuft, desto näher kommen sich die beiden Werte.
+Im Bild zeigt Current 16,63 H/s und Average 16,41 H/s. Average startet niedriger, weil es die ersten Minuten enthält, in denen jeder Thread seinen ersten Hash beendet und das Tuning noch die Thread-Zahl wählt. Je länger seine läuft, desto näher kommen sich beide Werte.
 
-## Netzwerk und Status
+## Netzwerk, Status und Shares
 
-Das Panel `NETWORK` zeigt die Blockhöhe (`Height`), auf der du minst, und die Netzwerk-Hashrate (`Global`). Im Pool-Modus liest seine die Netzwerk-Hashrate aus den öffentlichen Statistiken von bntpool.com und aktualisiert sie höchstens alle 30 Sekunden.
+Das Panel `NETWORK` zeigt die Blockhöhe (`Height`), auf der du minst, und die Netzwerk-Hashrate (`Global`), die seine im Pool-Modus aus den öffentlichen Statistiken von bntpool.com liest.
 
-`State` sagt dir, was der Miner gerade macht. Ein grünes `working` ist das, was du sehen willst. Im Pool-Modus siehst du beim Start und bei Neuverbindungen außerdem diese Zustände:
+`State` sagt dir, was der Miner gerade tut. Ein grünes `working` willst du sehen. Im Pool-Modus siehst du beim Start und bei Neuverbindungen außerdem diese Zustände:
 
 | Status | Bedeutung |
 |---|---|
@@ -57,69 +59,62 @@ Das Panel `NETWORK` zeigt die Blockhöhe (`Height`), auf der du minst, und die N
 | `pool-connected` | Verbunden, meldet sich an |
 | `pool-authenticated` | Anmeldung akzeptiert, wartet auf den ersten Job |
 | `working` | Hasht am aktuellen Job |
-| `pool-disconnected` | Verbindung abgebrochen; seine verbindet sich selbst neu |
-| `pool-login-rejected` | Der Pool hat die Anmeldung abgelehnt; die Zeile `AUTH` im Log nennt den Grund |
+| `pool-disconnected` | Verbindung unterbrochen; seine verbindet sich selbst neu |
+| `pool-login-rejected` | Der Pool hat die Anmeldung abgelehnt; das Log nennt den Grund |
 
-Solo-Mining mit deinem eigenen Node bringt Zustände wie `daemon-syncing`, `stale-tip` (ein neuer Block ist eingetroffen, eine frische Vorlage wird geholt) und `solved` hinzu. Während seine auf etwas wartet, fällt Current auf null, damit es nie eine Rate anzeigt, die es gerade nicht erzeugt.
-
-## Was bedeuten Submitted, Rejected und Accepted?
+Solo-Mining mit deinem eigenen Node bringt weitere Zustände wie `daemon-syncing` und `stale-tip`. Solange seine auf etwas wartet, fällt Current auf null, damit nie eine Rate angezeigt wird, die gerade nicht entsteht.
 
 Das Panel `MINING` zählt die Shares dieser Sitzung:
 
-- **Submitted:** Shares, die seine an den Pool gesendet hat.
-- **Rejected:** Shares, die der Pool nicht akzeptiert hat. Im Solo-Modus heißt diese Zeile `Stale` und zählt Lösungen, die den Node erst erreicht haben, nachdem die Chain schon weiter war.
-- **Accepted:** Shares, die der Pool dir gutgeschrieben hat.
+- **Difficulty**: die Share-Difficulty, die der Pool für dieses Rig festgelegt hat.
+- **Rejected** (abgelehnt): Shares, die der Pool nicht akzeptiert hat.
+- **Accepted** (akzeptiert): Shares, die der Pool dir gutgeschrieben hat.
 
-bntpool.com passt die Share-Difficulty jeder Verbindung so an, dass etwa 10 Shares alle fünf Minuten entstehen, ein Share ungefähr alle 30 Sekunden ist also normal, egal wie hoch deine Hashrate ist. Die 5 eingereichten und 5 akzeptierten Shares nach zehn Minuten im Screenshot sind ein guter Start. Deine Auszahlung richtet sich nach den akzeptierten Shares, und ein Rejected-Wert von null heißt, dass jeder gesendete Share gutgeschrieben wurde.
+bntpool.com passt die Share-Difficulty jedes Rigs so an, dass es unabhängig von seiner Hashrate einen gleichmäßigen Strom von Shares sendet, ein schnelleres Rig bekommt also eine höhere Difficulty. Deine Auszahlung folgt den akzeptierten Shares. Im Daemon-Modus zeigt das Panel stattdessen `Submitted`, `Stale` und `Accepted` und zählt damit die an deinen eigenen Node gesendeten Lösungen.
 
 ## Geräte, Konfiguration und Pool-Guthaben
 
-`DEVICES` listet jedes Mining-Backend mit aktueller und durchschnittlicher Hashrate auf: `cpu#1` für die CPU, dann `nvidia#1`, `nvidia#2` und so weiter für jede NVIDIA-GPU. Eine GPU, die noch startet, zeigt stattdessen ihren Fortschritt, von `starting CUDA runtime` bis `preparing NVIDIA backend`. Beim ersten Start werden die GPU-Kernel kompiliert und optimiert, deshalb dauert er länger als spätere Starts.
+`DEVICES` listet jedes Mining-Backend mit seiner aktuellen und durchschnittlichen Hashrate: `cpu#1` für die CPU, dann `nvidia#1`, `amd#1` und so weiter für jede GPU. GPUs starten im Hintergrund, während die CPU bereits mint, und eine Karte, die noch startet, zeigt ihren Fortschritt, bis sie online ist.
 
 `CONFIG` zeigt, wie dieser Lauf eingerichtet ist:
 
-- **Endpoint** ist die Pool-Adresse (standardmäßig `stratum+tcp://bntpool.com:3333`) oder im Solo-Modus die API-Adresse deines Nodes. Daneben steht der Name, mit dem sich dieses Rig beim Pool anmeldet.
-- **Threads** ist die Anzahl der CPU-Mining-Threads, gefolgt vom Hinweis `[+] [-]` für die Tastatursteuerung.
-- **Backends** beschreibt jedes Backend. `cpu#1 (14 lanes, ~28.0 GiB RAM)` bedeutet 14 Threads, die je einen 2-GiB-Speicherbereich halten, also 14 × 2 GiB = 28 GiB.
+- **Pool** ist die Pooladresse, standardmäßig `bntpool.com:3333`, oder im Daemon-Modus `Daemon` mit der API-Adresse deines Nodes.
+- **Threads** ist die Zahl der CPU-Mining-Threads. Wenn die Tasten verfügbar sind, erscheint daneben `[+] [-]`. **Worker** ist der Rig-Name, mit dem sich dieser Rechner beim Pool anmeldet.
+- **Tuning** zeigt die automatische CPU-Abstimmung: was sie gerade vergleicht und wie lange sie noch braucht, dann `done`. Die [Anleitung zur CPU-Abstimmung](/de/blog/seine-automatic-cpu-tuning/) erklärt jeden Zustand.
 
-Um einem Rig im Pool einen erkennbaren Namen zu geben, übergib ihn beim Start:
+Um einem Rig auf dem Pool einen erkennbaren Namen zu geben, übergib ihn beim Start:
 
 ```sh
 ./seine --pool-worker rig-01
 ```
 
-`POOL BALANCE` liest dein Guthaben alle paar Sekunden von bntpool.com. `Pending` ist, was du verdient hast und dir noch nicht ausgezahlt wurde, `Paid` ist, was der Pool an deine Adresse gesendet hat, und `Miner` rechts ist deine Adresse, gekürzt auf ihre ersten und letzten sechs Zeichen. bntpool.com zahlt aus, sobald dein Guthaben 0,1 BNT erreicht. Im Solo-Modus wird dieses Panel zu `WALLET`, mit den Guthaben `Pending` und `Unlocked` der Wallet deines Nodes.
+`POOL BALANCE` liest dein Guthaben alle paar Sekunden von bntpool.com. `Pending` ist, was du verdient hast und dir noch nicht ausgezahlt wurde, einschließlich geschätzter Belohnungen aus Blöcken, die noch reifen, `Paid` ist, was der Pool an deine Adresse gesendet hat, und `Miner` rechts ist deine Adresse, gekürzt auf ihre ersten und letzten sechs Zeichen. Wenn du auf dem Pool solo minst, mit `solo:` vor deiner Adresse, zeigt diese Beschriftung `Solo`. `Min payout` zeigt die Mindestauszahlung des Pools, auf bntpool.com 1 BNT. Im Daemon-Modus wird dieses Panel zu `WALLET`, mit den Guthaben `Pending` und `Unlocked` der Wallet deines Nodes.
 
 ## Das Log lesen
 
-`LOG` behält die letzten 200 Einträge, die neuesten unten, jeweils mit einem Level-Badge, einem Tag und der Angabe, wie lange das Ereignis her ist. Die Badges sind `INFO`, `OK` (etwas hat geklappt), `WARN`, `ERR` und `**` für einen gelösten Block. Die Tags, die du in einem Pool am häufigsten siehst, sind:
+`LOG` listet, was seine tut, das Neueste unten, jede Zeile mit einem Tag und der Angabe, wie lange es her ist. Wiederholte Zeilen werden mit einem Zähler zu einer zusammengefasst, etwa `share accepted ×104`, damit das Log auch in einer langen Sitzung lesbar bleibt. Auf einem Pool siehst du am häufigsten diese Tags:
 
-- `AUTH`: die Pool-Anmeldung, etwa `login accepted (protocol v2, required=submit_claimed_hash)`
-- `JOB`: ein neuer Job vom Pool, mit Blockhöhe und Difficulty
-- `SHARE`: `submitted (backend=cpu#1)` und dann `accepted (backend=cpu#1)`
-- `VARDIFF`: Der Pool hat deine Share-Difficulty geändert
-- `MINER`: Entscheidungen des Auto-Tunings
+- `CONN`: die Pool-Verbindung, etwa `connected to pool`
+- `SHARE`: `share accepted` oder eine Ablehnung mit Grund
+- `CPU`: Tuning-Ergebnisse, etwa `tuned to 21 threads`
+- `BACKEND`: startende Geräte, etwa `cpu: starting 21 threads (~42.0 GiB RAM)`
 
-## Wie sieht das Auto-Tuning aus, während seine läuft?
+Standardmäßig zeigt das Log, was du brauchst. Mit `--verbose` siehst du interne Einstellungen und Routineaktivität wie jeden neuen Job.
 
-seine beginnt sofort mit dem Mining und optimiert anhand echter Mining-Arbeit, und im Log kannst du dabei zusehen. Die erste Zeile `MINER` lautet `cpu-autotune | starting with N threads`, gefolgt von `initial estimate` auf einem neuen Rechner oder `cached starting point`, wenn seine ihn schon kennt.
-
-Danach vergleicht es Einstellungen der Reihe nach: die aktuelle Thread-Anzahl, einen Kandidaten und dann wieder die aktuelle Anzahl. Jedes Fenster dauert mindestens 30 Sekunden und sammelt mindestens 20 Hashes. Du siehst Zeilen wie `measuring useful mining work` und `checking baseline again`, und die Zahl bei Threads in `CONFIG` zieht mit. Hat es sich festgelegt, meldet das Log `done` und nennt die behaltene Thread-Anzahl.
-
-CPU-Kernel werden genauso verglichen, zum Beispiel `comparing avx2 and avx512 while mining`, und seine wechselt erst, wenn zwei Vergleiche den Gewinn bestätigen: `confirmed faster ... path in two comparisons`. Die Ergebnisse werden zwischengespeichert, sodass der nächste Start dort weitermacht, wo dieser aufgehört hat. Das Tuning verbindet sich nie neu mit dem Pool und startet keine GPU neu. Die [Anleitung zum Auto-Tuning](https://github.com/zpalmtree/seine/blob/master/docs/guides/autotuning.md) geht ins Detail, und die [Argon2id-Erklärung](/de/blog/argon2id-proof-of-work-explained/) zeigt, warum die Speicherbandbreite bestimmt, wo die beste Thread-Anzahl liegt.
-
-## Kannst du die Threads im Dashboard ändern?
+## Welche Tasten funktionieren im Dashboard?
 
 <Answer>
-Ja. Drücke + (oder =, ohne Umschalttaste), um pro CPU-Backend einen Thread hinzuzufügen, und -, um einen zu entfernen. seine startet die Mining-Backends mit der neuen Anzahl neu und behält Sitzungsstatistik, Laufzeit und durchschnittliche Hashrate. Mit q oder Strg+C beendest du es. Eine manuelle Änderung schaltet das Thread-Auto-Tuning für diesen Lauf ab.
+Drücke + oder =, um einen CPU-Thread hinzuzufügen, und -, um einen zu entfernen, sobald die Zeile Tuning done zeigt. Mit den Pfeiltasten, Bild auf (PgUp), Bild ab (PgDn) und Pos1 (Home) scrollst du im Log zurück, mit Ende (End) folgst du wieder neuen Zeilen. Während eines Update-Countdowns installiert u sofort und s überspringt diese Version. Beende mit q oder Ctrl+C.
 </Answer>
 
-Während die Änderung angewendet wird, zeigt `CONFIG` `Restarting: 14 -> 15 threads...`, und weitere Tastendrücke werden ignoriert, bis sie abgeschlossen ist. Erhöhungen enden an der automatischen Obergrenze für CPU und RAM, und die gewählte Anzahl wird nicht als neuer Standard gespeichert. Für eine feste Anzahl von Anfang an nutze `--threads`.
+Thread-Änderungen gelten sofort für die laufenden CPU-Threads, während GPUs und Pool-Verbindung weiterlaufen. Solange das Tuning noch eine Zahl wählt, warten die Tasten, und das Dashboard zeigt, wie lange das Tuning noch braucht. Ein Tastendruck gilt nur für diesen Lauf; der nächste Start nutzt wieder deine gespeicherte Abstimmung. Für eine feste Zahl ab dem Start nutze `--threads`.
+
+Während du zurückscrollst, zeigt der Titel des Logs `LOG  paused, End to follow`, und die Ansicht bleibt stehen, bis du `End` (Ende) drückst.
 
 ## Kleine Terminals und einfache Ausgabe
 
-In einem Terminal mit weniger als 80 Spalten Breite stapeln sich die drei Statistik-Panels übereinander. In einem niedrigen Fenster wechselt seine zu einer kompakten Ansicht, die Threads, State, Current, Average, die Share-Zähler und Height über dem Log auf dem Bildschirm hält. Der Standard `--ui auto` zeigt das Dashboard nur in einem interaktiven Terminal; `--ui plain` liefert ein einfaches, scrollendes Log für Server, Logdateien und Prozessmanager.
+In einem Terminal mit weniger als 80 Spalten stapeln sich die drei Statistik-Panels untereinander. In einem niedrigen Fenster wechselt seine in eine kompakte Ansicht, die Threads, State, Current und Average über dem Log auf dem Bildschirm hält. Die Voreinstellung `--ui auto` zeigt das Dashboard nur in einem interaktiven Terminal; `--ui plain` liefert ein einfaches, scrollendes Log für Server, Logdateien und Prozessmanager.
 
-Wenn du seine noch nicht eingerichtet hast, führt dich die [Anleitung zum Blocknet-Mining](/de/blog/how-to-mine-blocknet/) vom Download bis zum ersten akzeptierten Share.
+Wenn du seine noch nicht eingerichtet hast, führt dich die [Anleitung zum Blocknet-Mining](/de/blog/how-to-mine-blocknet/) vom Download bis zu deinem ersten akzeptierten Share.
 
-<CTA target="seine" title="seine herunterladen und beim Tuning zusehen" text="Starte das Mining mit einem Befehl, und das Dashboard zeigt deine Hashrate, Shares und dein Guthaben auf bntpool.com, während seine die Threads und Kernel für deinen Rechner optimiert." />
+<CTA target="seine" title="seine herunterladen und beim Tuning zusehen" text="Starte das Mining mit einem Befehl, und das Dashboard zeigt Hashrate, Shares und dein bntpool.com-Guthaben, während seine Threads und Kernel für deinen Rechner abstimmt." />

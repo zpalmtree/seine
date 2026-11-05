@@ -8,10 +8,10 @@ faq:
   - q: '¿Cuántas palabras tiene una semilla de recuperación de Blocknet?'
     a: 'Una semilla de recuperación de Blocknet tiene 12 palabras. En la billetera de línea de comandos, el comando seed la muestra tras una advertencia y después de pedirte la contraseña de la billetera. Escribe las palabras en papel y guárdalas sin conexión. Con esas 12 palabras, el comando import puede reconstruir tu billetera en cualquier equipo, aunque se pierdan el archivo de la billetera y la contraseña.'
   - q: '¿Cuándo aparecen los pagos de bntpool.com en mi billetera?'
-    a: 'Un bloque del pool necesita 60 confirmaciones, unas cinco horas con el tiempo de bloque de cinco minutos de Blocknet, antes de que se paguen sus recompensas. Cuando tu saldo confirmado en el pool llega a 0,1 BNT, el pool lo envía a tu dirección. El pago aparece en el historial como una transacción normal y se puede gastar tras 10 confirmaciones, unos 50 minutos.'
+    a: 'Un bloque del pool necesita 60 confirmaciones, unas cinco horas con el tiempo de bloque de cinco minutos de Blocknet, antes de que se paguen sus recompensas. Cuando tu saldo confirmado en el pool llega a 1 BNT, el pool lo envía a tu dirección. El pago aparece en el historial como una transacción normal y se puede gastar tras 10 confirmaciones, unos 50 minutos.'
   - q: '¿Puedo usar la misma dirección en varios equipos de minería?'
     a: 'Sí. Todos los equipos que ejecutan seine pueden minar a la misma dirección o al mismo nombre corto de Blocknet ID, y bntpool.com suma sus shares en un solo saldo. La página de estadísticas del pool muestra cada equipo conectado bajo tu dirección. La billetera y su semilla de recuperación se quedan en tu propia computadora en todo momento.'
-sourceHash: '9f4ecc0f989f'
+sourceHash: 'd01002f3db3c'
 translation: reviewed
 ---
 
@@ -151,7 +151,7 @@ Un equipo de minería solo necesita tu dirección. seine solo necesita una direc
 
 ## ¿Cómo aparecen los pagos de minería en tu billetera?
 
-bntpool.com paga las recompensas cuando su bloque ha madurado. Un bloque del pool necesita 60 confirmaciones, unas cinco horas con el tiempo de bloque de cinco minutos de Blocknet. Cuando tu saldo confirmado llega al mínimo de 0,1 BNT, el pool lo envía a tu dirección como una transacción normal de Blocknet.
+bntpool.com paga las recompensas cuando su bloque ha madurado. Un bloque del pool necesita 60 confirmaciones, unas cinco horas con el tiempo de bloque de cinco minutos de Blocknet. Cuando tu saldo confirmado llega al mínimo de 1 BNT, el pool lo envía a tu dirección como una transacción normal de Blocknet.
 
 En la billetera, consulta `balance` (o `bal`):
 
@@ -170,4 +170,4 @@ Tu billetera muestra un pago cuando su nodo se ha puesto al día con la cadena. 
 
 ¿Eres nuevo en la minería? La [guía para minar Blocknet](/es/blog/how-to-mine-blocknet/) explica cómo descargar seine, elegir los hilos y qué esperar en bntpool.com.
 
-<CTA target="pool" title="Mina a tu nueva dirección" text="Pega tu dirección de Blocknet en seine, acepta bntpool.com y mira cómo llegan los pagos a tu billetera cuando tu saldo alcance 0,1 BNT." />
+<CTA target="pool" title="Mina a tu nueva dirección" text="Pega tu dirección de Blocknet en seine, acepta bntpool.com y mira cómo llegan los pagos a tu billetera cuando tu saldo alcance 1 BNT." />

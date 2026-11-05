@@ -1,11 +1,12 @@
 ---
 title: 'How to update your Blocknet miner'
-description: 'Update the seine Blocknet miner, preserve your saved settings, verify the official download, and confirm the new version reconnects and submits accepted shares.'
+description: 'Keep the seine Blocknet miner up to date: how automatic updates install new releases, how to update by hand, and how to confirm the new version mines.'
 date: 2026-10-26
+updated: 2026-11-04
 tags: ['Mining guide', 'seine', 'Updates']
 faq:
   - q: 'Does seine install updates automatically?'
-    a: 'The release checker announces a newer version in the dashboard and log. You choose when to download and install it. Download the official archive, verify it, stop the existing miner, replace the application files and restart with the same data directory and launch settings.'
+    a: 'Yes, since v0.3.0. When a new release is out, the dashboard counts down 60 seconds while mining continues, then seine verifies the signed download, stops cleanly and restarts on the new version with the same settings. Press u to update at once, s to skip that version, or start seine with --no-auto-update to update by hand.'
   - q: 'Which files keep my mining settings?'
     a: 'The default saved configuration is seine-data/seine.config.json relative to the directory you launch from. A custom data-dir changes that location. Preserve the data directory and your startup script or service configuration: command-line options such as backend and thread choices are separate from the saved connection details.'
   - q: 'Why does seine ask for my address again after updating?'
@@ -14,19 +15,35 @@ related: [configure-seine-miner, start-miner-automatically-windows, mine-blockne
 image: /assets/blog/miner-update.svg
 ---
 
-Update seine while keeping the pool connection and launch settings that already work on your machine. This guide follows the public v0.2.36 release and covers preparation, file replacement and verification. For a first installation, use the [Windows](/blog/mine-blocknet-on-windows/), [Linux](/blog/mine-blocknet-on-linux/) or [Mac](/blog/mine-blocknet-on-mac/) setup guide.
+Keep seine on the latest release with the pool connection and launch settings that already work on your machine. This guide follows the public v0.3.1 release: how automatic updates work, what to do once when you come from an older version, and how to update by hand. For a first installation, use the [Windows](/blog/mine-blocknet-on-windows/), [Linux](/blog/mine-blocknet-on-linux/) or [Mac](/blog/mine-blocknet-on-mac/) setup guide.
 
 ## How do you update the seine miner?
 
 <Answer>
-Download and verify the official archive for your operating system, stop the running miner, preserve its data directory and replace the application files. Restart with the same working directory and arguments. Confirm the new version, payout destination, pool connection and accepted shares before updating another machine.
+Leave seine running. It checks for a new release at startup and every 12 hours, counts down 60 seconds in the dashboard header while it keeps mining, then installs the signed release and restarts with the same arguments and settings. To update by hand instead, stop seine, replace its files from the official archive and start it the same way.
 </Answer>
+
+## How do automatic updates work?
+
+When a newer release is out, the header shows `update vX.Y.Z available`, the log links to the release, and the header then counts down: `updating to vX.Y.Z in 42s`. Mining continues during the countdown. Press `u` to update right away, or `s` to skip that version; seine remembers the skip in its data directory and offers the next release as usual.
+
+After the countdown, seine checks the release's signature, makes sure the new executable starts, and only then replaces the old one. It stops mining cleanly and restarts with the same arguments, and the new dashboard logs `updated to seine vX.Y.Z`. The new version starts on your saved tuning and only tests what the release changed, so it is back to full speed quickly.
+
+If a pool sends work that needs a newer release, for example at a network upgrade, seine pauses mining and installs the update right away, even a version you skipped. Pass `--no-auto-update` to keep only the notice, or `--disable-update-check` to turn the check off. Builds you compile yourself show the notice and leave the update to you.
+
+## What do you do once when coming from an older version?
+
+Most rigs need nothing. A few setups need one step on the first automatic update to v0.3.1:
+
+- **Linux, from v0.2.45:** v0.2.45 installs the new version and then exits. Start seine once more. Setups that restart seine by themselves, such as a systemd service, need nothing.
+- **Windows, from v0.2.45 or v0.3.0:** the old version starts the new one and exits. If a script or service also restarts seine when it exits, stop it once after the update so only one seine keeps running.
+- **HiveOS and mmpOS, from the v0.3.0 package:** switch your flight sheet or profile to the v0.3.1 package from the [release page](https://github.com/zpalmtree/seine/releases). From v0.3.1 on, the package upgrades through the mining OS: change the version in its URL, as the [HiveOS and mmpOS guide](/blog/mine-blocknet-hiveos-mmpos/) shows.
 
 <img src="/assets/blog/miner-update.svg" alt="An application package changes while the saved configuration folder is preserved, followed by a successful connection check." width="1200" height="675" loading="lazy" />
 
 ## How do you check your current version?
 
-Run the version command against the executable you actually use. An old copy in another folder can give a different answer from the miner launched by a shortcut or service. Record the executable path, working directory and startup arguments together; those three details make the update repeatable. On Windows, open PowerShell in the current miner folder:
+The dashboard header shows the version you are running. You can also run the version command against the executable you actually use. An old copy in another folder can give a different answer from the miner launched by a shortcut or service. Record the executable path, working directory and startup arguments together; those three details make the update repeatable. On Windows, open PowerShell in the current miner folder:
 
 ```powershell
 .\seine.exe --version
@@ -38,7 +55,7 @@ On Linux or macOS, use the terminal in that folder:
 ./seine --version
 ```
 
-Compare the result with the [official releases](https://github.com/zpalmtree/seine/releases). Seine checks for a newer release at startup and every 12 hours, showing a notice in the dashboard and log. That notice supplies a download link; installation happens when you choose. Read the release notes for changes that affect your platform, runtime or launch options.
+Compare the result with the [official releases](https://github.com/zpalmtree/seine/releases) and read the release notes for changes that affect your platform, runtime or launch options.
 
 ## Which settings should you preserve?
 
@@ -46,11 +63,11 @@ By default, seine reads `./seine-data/seine.config.json`. The `./` means the cur
 
 The saved configuration holds connection details such as mining mode, payout address, pool URL and rig name. Keep the whole data directory, including existing tuning files. Also save the startup command, script or service definition: options such as `--backend` and `--threads` are separate from those saved connection fields. Retaining both preserves your intended setup across the restart.
 
-## Download and verify the replacement
+## How do you update seine by hand?
 
-Use the [download page](/#download) or the official release page and select the archive for your operating system and CPU architecture. Download the separate `SHA256SUMS.txt` asset from the same release. Compare the archive with its matching checksum before extracting it into a separate folder. The [download-verification guide](/blog/antivirus-flags-crypto-miner/) explains the Windows checksum procedure and how to handle a download warning.
+If you run with `--no-auto-update` or prefer to choose the moment yourself, update by hand. Use the [download page](/#download) or the official release page and select the archive for your operating system and CPU architecture. Download the separate `SHA256SUMS.txt` asset from the same release. Compare the archive with its matching checksum before extracting it into a separate folder. The [download-verification guide](/blog/antivirus-flags-crypto-miner/) explains the Windows checksum procedure and how to handle a download warning.
 
-Keep all files shipped in the archive together. In particular, the Windows package includes NVIDIA runtime libraries beside `seine.exe`; copying only the executable can leave a mismatched installation. The [NVIDIA guide](/blog/mine-blocknet-nvidia-gpu/) covers runtime setup. The [v0.2.36 configuration reference](https://github.com/zpalmtree/seine/blob/v0.2.36/docs/guides/configuration.md) documents the saved configuration and current startup behavior used here.
+Keep all files shipped in the archive together. In particular, the Windows package includes NVIDIA runtime libraries beside `seine.exe`; copying only the executable can leave a mismatched installation. The [NVIDIA guide](/blog/mine-blocknet-nvidia-gpu/) covers runtime setup. The [v0.3.1 configuration reference](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/configuration.md) documents the saved configuration, automatic updates and startup behavior used here.
 
 ## Stop, back up and replace
 

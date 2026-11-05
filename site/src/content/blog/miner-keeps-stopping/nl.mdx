@@ -9,11 +9,11 @@ faq:
     a: 'Bewaar de configuratie en noteer de locatie voordat je iets verandert. Een parsefout wijst op een bepaald bestand of een bepaalde waarde. Maak een kopie, herstel het gemelde probleem en behoud adres en startinstellingen. Alles verwijderen maakt vergelijken met de laatste werkende sessie moeilijker.'
   - q: 'Welke gegevens helpen bij herhaald stoppen?'
     a: 'Noteer seine-versie, besturingssysteem, CPU, GPU, beschikbaar geheugen, volledige startargumenten, werkmap en tijdstip. Voeg laatste logmeldingen en relevante systeemgebeurtenissen toe. Verwijder inloggegevens en persoonsgegevens voordat je deelt. Deel nooit herstelzinnen of privésleutels van je wallet.'
-sourceHash: '2e054f0c0100'
+sourceHash: '333d8de81191'
 translation: draft
 ---
 
-Laat je Blocknet-miner consequent werken door vast te stellen waar hij stopt. Deze handleiding volgt seine v0.2.37 en begint met gegevens die je op je eigen computer verzamelt. Bewaar de laatste werkende opdracht en configuratie. Verander telkens één relevante instelling zodat het volgende resultaat bruikbare informatie geeft.
+Laat je Blocknet-miner consequent werken door vast te stellen waar hij stopt. Deze handleiding volgt seine v0.3.1 en begint met gegevens die je op je eigen computer verzamelt. Bewaar de laatste werkende opdracht en configuratie. Verander telkens één relevante instelling zodat het volgende resultaat bruikbare informatie geeft.
 
 ## Wat controleer je als een miner stopt?
 
@@ -27,7 +27,13 @@ Controleer of het proces is afgesloten, de computer slaapt of de poolverbinding 
 
 Open een terminal in je gebruikelijke startmap en voer je bestaande opdracht uit. Voeg `--ui plain` toe voor tekstlogs in plaats van het dashboard; behoud alle andere argumenten. Dit start mining met je bestaande instellingen. Kopieer de laatste meldingen, inclusief de eerste fout vóór herhaalde verbindings- of afsluitmeldingen.
 
-Noteer versie van het programma, werkmap en gekozen gegevensmap samen. Deze versie toont een afgehandelde fatale fout met `fatal:` voordat het proces afsluit. Beëindiging door het besturingssysteem kan andere sporen achterlaten. Leeft het proces nog, volg dan de [poolverbindingscontroles](https://bntpool.com/blog/nl/track-your-miner-on-bntpool/): een ontbrekende share of tijdelijke onderbreking bewijst geen crash.
+Noteer versie van het programma, werkmap en gekozen gegevensmap samen. Een afgehandelde fatale fout wordt met `fatal:` getoond voordat het proces afsluit. Start je op Windows `seine.exe` met een dubbelklik, dan blijft de console na een fatale fout open tot je op Enter drukt, zodat je de melding kunt lezen. Beëindiging door het besturingssysteem kan andere sporen achterlaten. Leeft het proces nog, volg dan de [poolverbindingscontroles](https://bntpool.com/blog/nl/track-your-miner-on-bntpool/): een ontbrekende share of tijdelijke onderbreking bewijst geen crash.
+
+## Stopte seine voor een update?
+
+Een korte stop kan een update zijn. Met automatische updates aan telt seine af in de dashboardkop, installeert de nieuwe release, stopt het minen netjes en start opnieuw met dezelfde argumenten; het nieuwe dashboard logt `updated to seine vX.Y.Z`. Als een pool werk stuurt dat een nieuwere release vereist, bijvoorbeeld bij een netwerkupgrade, pauzeert seine het minen en logt `installing seine vX.Y.Z now: mining is paused until Seine is updated`, en gaat verder zodra de update is geïnstalleerd.
+
+Kom je op Linux van v0.2.45, dan installeert de oude versie de update en sluit daarna af, dus start seine nog een keer; een systemd-service of andere launcher die herstart hoeft niets te doen. De [updatehandleiding](/nl/blog/update-seine-miner/) noemt ook de eenmalige stappen voor Windows, HiveOS en mmpOS.
 
 ## Stopt het voordat mining begint?
 
@@ -43,9 +49,9 @@ Een expliciet vereiste paginamodus vraagt de bijbehorende reservering van het be
 
 ## Controleer de GPU-fase apart
 
-Noemt de start een CUDA-bibliotheek, apparaat of GPU-toewijzing, noteer dan de exacte melding en geïnstalleerde driverversie. De [NVIDIA-handleiding](/nl/blog/mine-blocknet-nvidia-gpu/) behandelt releasevereisten, runtimebibliotheken en apparaatkeuze. Vergelijk die met je omgeving voordat je kernel- of tuningopties wijzigt. Een correct gedownload archief bewijst niet dat de runtime gereed is.
+Noemt de start een CUDA- of HIP-bibliotheek, apparaat of GPU-toewijzing, noteer dan de exacte melding en geïnstalleerde driverversie. De [NVIDIA-handleiding](/nl/blog/mine-blocknet-nvidia-gpu/) en de [AMD-handleiding](/nl/blog/mine-blocknet-amd-gpu/) behandelen releasevereisten, runtimebibliotheken en apparaatkeuze. Vergelijk die met je omgeving voordat je kernel- of tuningopties wijzigt. Een correct gedownload archief bewijst niet dat de runtime gereed is.
 
-seine kan een backendfout isoleren terwijl andere actieve backends doorgaan. Controleer berichten en resterende activiteit voordat je concludeert dat alles stopte. Bewaar bewijs vóór een herstart, want een nieuwe sessie kan de vorige volgorde verbergen. Test je bewust een eenvoudigere backendkeuze, behoud dan de originele opdracht en vergelijk start, doorlopend werk en geaccepteerde inzendingen.
+seine kan een backendfout isoleren terwijl andere actieve backends doorgaan. Sluit de AMD-runtime seine twee keer achter elkaar af terwijl het de GPU gebruikt, dan kiest seine AMD-kaarten niet meer vanzelf en blijft het op de rest minen; start het na een driverupdate één keer met `--backend cpu,amd` om de kaarten opnieuw te proberen. Controleer berichten en resterende activiteit voordat je concludeert dat alles stopte. Bewaar bewijs vóór een herstart, want een nieuwe sessie kan de vorige volgorde verbergen. Test je bewust een eenvoudigere backendkeuze, behoud dan de originele opdracht en vergelijk start, doorlopend werk en geaccepteerde inzendingen.
 
 ## Sliep de computer of werd hij opnieuw gestart?
 
