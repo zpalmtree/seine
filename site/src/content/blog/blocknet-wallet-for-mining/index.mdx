@@ -13,7 +13,7 @@ faq:
     a: A pool block needs 60 confirmations, about five hours at Blocknet's five-minute block time, before its rewards are paid. Once your confirmed pool balance reaches 1 BNT, the pool sends it to your address. The payout appears in history as a regular transaction and becomes spendable after 10 confirmations, about 50 minutes.
   - q: Can I use the same address on several mining machines?
     a: Yes. Every machine running seine can mine to the same address or Blocknet ID shortname, and bntpool.com adds their shares to one balance. The pool's stats page lists each connected machine under your address. The wallet and its recovery seed stay on your own computer the whole time.
-related: [blocknet-desktop-wallet, blocknet-wallet-node-miner, blocknet-wallet-backup-restore, blocknet-sign-verify-message]
+related: [blocknet-desktop-wallet, blocknet-wallet-node-miner, blocknet-wallet-backup-restore, blocknet-wallets]
 ---
 
 To mine Blocknet you need an address for your rewards, and the official wallet gives you one in a few minutes. This guide shows how to create a wallet with the command-line or desktop wallet, back up its recovery seed, find the address to paste into seine, and check your balance when bntpool.com pays you.
@@ -26,6 +26,7 @@ Use one of the two official wallets from Blocknet Privacy: the command-line wall
 
 - **Command-line wallet.** The `blocknet` program installs, starts and updates a Blocknet core, the background process that runs the node, wallet and network. You manage your wallet from an interactive shell. Download it from the [command-line releases](https://github.com/blocknetprivacy/blocknet/releases/latest), which have builds for Windows, macOS and Linux.
 - **Desktop wallet.** A graphical wallet that bundles the Blocknet daemon. Download it from the [desktop releases](https://github.com/blocknetprivacy/blocknet-gui/releases/latest).
+- **Gyroid.** A community wallet with a graphical interface and command-line tools in one program, by Blocknet core contributor obselate. The [wallet comparison](/blog/blocknet-wallets/) covers all three.
 
 Pick whichever you prefer. The steps below walk through the command-line wallet, because every command is documented, and then cover the desktop install.
 
