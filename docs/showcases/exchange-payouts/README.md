@@ -35,6 +35,5 @@ retain a separate line to keep both values readable. The 18 dashboard tests
 and desktop/mobile captures were rerun after this layout change.
 
 Memo compatibility: 81 pool/protocol/runtime tests and 18 dashboard tests passed;
-the default-feature binary check passed. Live, share-free TLS login checks passed
-on both Longhorn regions. The new memo-without-minimum and Longhorn captures show
-successful mining fixtures with no minimum label. Payouts were not exercised.
+the default-feature binary check passed. The memo-without-minimum capture shows
+a successful mining fixture with no minimum label. Payouts were not exercised.

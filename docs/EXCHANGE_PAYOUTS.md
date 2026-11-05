@@ -23,12 +23,8 @@ proxy.
 
 ## Which pools work
 
-The pool has to support memos:
-
-- **bntpool.com** supports them. The minimum payout to a memo is 10 BNT.
-- **Longhorn** supports them on `stratum+ssl://us.longhornpool.net:3334` and
-  `stratum+ssl://asia.longhornpool.net:3334`. Its memos must be printable ASCII with no
-  spaces.
+The pool has to support memos. **bntpool.com** supports them, and the minimum payout
+to a memo is 10 BNT.
 
 If a pool doesn't confirm your memo, Seine won't mine on it, so your work can't be paid
 to the wrong place.

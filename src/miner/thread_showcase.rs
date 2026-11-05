@@ -414,12 +414,6 @@ fn export_exchange_payout_showcase() {
             "hashing",
         ),
         (
-            "longhorn",
-            "Longhorn / memo account without a reported minimum",
-            None,
-            "hashing",
-        ),
-        (
             "legacy",
             "Pool without a minimum in its reply",
             None,
@@ -440,10 +434,6 @@ fn export_exchange_payout_showcase() {
         state.pool_pending = "2.50 BNT".into();
         state.pool_paid = "10.00 BNT".into();
         state.pool_payout_minimum = minimum.map(str::to_string);
-        if slug == "longhorn" {
-            state.api_url = "stratum+ssl://us.longhornpool.net:3334".into();
-        }
-
         if slug == "empty" {
             state.pool_pending = "0.00 BNT".into();
             state.pool_paid = "0.00 BNT".into();
@@ -466,13 +456,6 @@ fn export_exchange_payout_showcase() {
         }
         html.push_str(&format!("<section id='{slug}'><h2>{title}</h2><div class='desktop'>{}</div><div class='mobile'>{}</div></section>", capture(&state, 120, 30), capture(&state, 40, 18)));
     }
-    let memo_error = crate::pool::payout_account_for_pool(
-        "stratum+ssl://us.longhornpool.net:3334",
-        "demo-address",
-        Some("contains spaces"),
-    )
-    .unwrap_err();
-    html.push_str(&format!("<section id='longhorn-invalid'><h2>Longhorn / unsupported memo characters</h2><pre class='prompt'>Error: {}</pre></section>", escape(&memo_error.to_string())));
     let prompts: Vec<(String, String)> =
         serde_json::from_str(&std::fs::read_to_string(path.join("prompts.json")).unwrap()).unwrap();
     for (index, (title, text)) in prompts.iter().enumerate() {
