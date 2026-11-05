@@ -1,0 +1,102 @@
+---
+title: 'Portfele Blocknet: desktopowy, wiersza poleceń i Gyroid'
+seoTitle: 'Portfele Blocknet (BNT): desktopowy, wiersz poleceń i Gyroid'
+description: 'Wybierz portfel Blocknet (BNT): oficjalną aplikację desktopową, oficjalny portfel wiersza poleceń lub Gyroid. Porównaj platformy i sprawdź pobrany plik.'
+tags: ['Blocknet', 'Portfel', 'Pierwsze kroki']
+faq:
+  - q: 'Którego portfela Blocknet używać?'
+    a: 'Wybierz oficjalny portfel desktopowy, jeśli chcesz aplikacji graficznej na Windows, macOS, Linux lub Android. Wybierz oficjalny portfel wiersza poleceń do serwerów, skryptów i pracy w terminalu. Wybierz Gyroid, jeśli chcesz mieć portfel graficzny i narzędzia wiersza poleceń w jednym programie na Windows, Linux lub Macu z Apple silicon.'
+  - q: 'Czy jest portfel Blocknet na Androida?'
+    a: 'Tak. Wydanie oficjalnego portfela desktopowego zawiera pakiet na Androida dla telefonów arm64, a oficjalny portfel wiersza poleceń również publikuje wersję na Android arm64. Pobierz dowolny z nich ze strony wydań na GitHubie i przed instalacją sprawdź plik z listą SHA256SUMS z tego samego wydania.'
+  - q: 'Czy mogę przenieść portfel Blocknet z jednej aplikacji do drugiej?'
+    a: 'Tak. Wszystkie trzy aplikacje uruchamiają core Blocknet i potrafią odtworzyć portfel z jego 12 słów odzyskiwania, więc te same słowa dają ten sam adres w każdej z nich. Możesz też wczytać kopię pliku portfela z jego hasłem. Po przeniesieniu sprawdź pełny adres, zanim zaczniesz na nim polegać.'
+  - q: 'Czy do korzystania z portfela Blocknet potrzebuję osobnego węzła?'
+    a: 'Nie. Każdy portfel uruchamia core Blocknet za Ciebie, a core pobiera blockchain i skanuje go w poszukiwaniu Twoich płatności. Portfel desktopowy ma core w zestawie, portfel wiersza poleceń instaluje go i uruchamia, a Gyroid korzysta z zainstalowanego core albo pobiera najnowsze wydanie i sprawdza je przed uruchomieniem.'
+sourceHash: '26d3c5b2cc79'
+translation: draft
+---
+
+Blocknet ma trzy aplikacje portfela, które możesz zainstalować już dziś: oficjalny portfel desktopowy, oficjalny portfel wiersza poleceń oraz Gyroid, czyli portfel graficzny z wbudowanymi narzędziami wiersza poleceń. Ten przewodnik porównuje, na czym działa każdy z nich i w czym się sprawdza, pokazuje, jak sprawdzić pobrany plik, i kieruje do instrukcji krok po kroku dla wybranego portfela.
+
+## Którego portfela Blocknet używać?
+
+<Answer>
+Wybierz oficjalny portfel desktopowy, jeśli chcesz aplikacji obsługiwanej myszką na Windows, macOS, Linux lub Android. Wybierz oficjalny portfel wiersza poleceń do serwerów, skryptów i pracy w terminalu. Wybierz Gyroid, jeśli chcesz portfel graficzny z narzędziami wiersza poleceń w tym samym programie. Wszystkie trzy trzymają Twoje klucze na Twoim komputerze i uruchamiają za Ciebie core Blocknet.
+</Answer>
+
+| Portfel | Interfejs | Działa na |
+|---|---|---|
+| [Portfel desktopowy](https://github.com/blocknetprivacy/blocknet-gui/releases/latest) v0.23.0 | Graficzny | Windows x64, macOS (Apple silicon i Intel), Linux x64, Android arm64 |
+| [Portfel wiersza poleceń](https://github.com/blocknetprivacy/blocknet/releases/latest) v1.2.1 | Terminal | Windows x64, macOS (x64 i arm64), Linux (x64 i arm64), Android arm64 |
+| [Gyroid](https://github.com/obselate/gyroid/releases/latest) v0.2.9 | Graficzny i terminal | Windows x64, Linux x64, macOS na Apple silicon |
+
+Wersje to najnowsze wydania na dzień 5 listopada 2026. Strona wydań każdego projektu zawsze pokazuje aktualną wersję.
+
+## Oficjalny portfel desktopowy
+
+Portfel desktopowy to aplikacja graficzna publikowana przez projekt Blocknet. Ma w zestawie core Blocknet, więc instalując jeden pakiet, dostajesz jednocześnie węzeł i portfel. Tworzysz portfel z hasłem, zapisujesz słowa odzyskiwania, a potem korzystasz z paska bocznego, aby sprawdzić saldo, adres odbiorczy, płatności i historię.
+
+Obecne wydanie zawiera instalator dla Windows, pakiety AppImage, Debian, RPM i Flatpak dla Linuxa, osobne wersje macOS dla Maców z Apple silicon i z procesorem Intel oraz pakiet na Androida. To najprostsza droga, jeśli nigdy wcześniej nie korzystałeś z Blocknet. [Przewodnik po portfelu desktopowym](/pl/blog/blocknet-desktop-wallet/) prowadzi od ekranu powitalnego do pierwszej płatności, ze zrzutami ekranu z każdego kroku.
+
+## Oficjalny portfel wiersza poleceń
+
+Program `blocknet` to terminalowy portfel projektu Blocknet. Instaluje, uruchamia i aktualizuje core Blocknet, a następnie daje interaktywną powłokę portfela do sald, adresów, płatności, historii, dowodów i kluczy podglądu. Po zamknięciu powłoki core dalej działa w tle, co pasuje do serwera lub komputera włączonego przez cały czas.
+
+Spośród trzech ma najdłuższą listę platform: wersje x64 i arm64 dla Linuxa i macOS, a do tego Windows i Android. Polecenia łatwo powtarzać i używać w skryptach, a każda wysyłka pokazuje podgląd, zanim ją potwierdzisz. [Poradnik portfela dla górników](/pl/blog/blocknet-wallet-for-mining/) pokazuje, jak utworzyć w nim portfel, zrobić kopię zapasową słów odzyskiwania i skopiować swój adres.
+
+## Gyroid: portfel graficzny z narzędziami wiersza poleceń
+
+Gyroid to portfel Blocknet o otwartym kodzie źródłowym, stworzony przez obselate, współtwórcę core Blocknet, i wydany na licencji MIT. Jeden program zawiera zarówno interfejs graficzny, jak i pełny zestaw poleceń terminalowych, więc tym samym portfelem możesz zarządzać na oba sposoby.
+
+Część graficzna obejmuje to, czego potrzebujesz na co dzień:
+
+- tworzenie, odtwarzanie lub importowanie portfela oraz trzymanie kilku w jednej bibliotece
+- odbieranie, wysyłanie z notatką i śledzenie historii
+- płacenie na Blocknet ID `@name` lub otwieranie linku płatności `blocknet://`
+- książkę adresową, wiadomości między portfelami, licznik automatycznej blokady oraz ekrany stanu synchronizacji, sieci i kopania
+
+<img src="/assets/blog/gyroid-wallet-library.jpg" alt="Biblioteka portfeli Gyroid z opcjami Create, Restore z 12 słów, Import view keys i Open file; ścieżka folderu rozmyta." width="1280" height="800" loading="lazy" />
+
+Część terminalowa odpowiada jej poleceniami takimi jak `gyroid status`, `gyroid balance`, `gyroid address`, `gyroid history` oraz `gyroid send <address> <amount> --dry-run`, które pokazuje podgląd płatności przed wysłaniem. Uruchom `gyroid --help`, aby zobaczyć pełną listę, która obejmuje też podpisywanie wiadomości, dowody płatności i portfele tylko do podglądu.
+
+Gyroid korzysta z już zainstalowanego core Blocknet. Jeśli go nie znajdzie, pobiera najnowsze wydanie core i przed uruchomieniem sprawdza je z listą sum kontrolnych tego wydania, więc nie musisz samodzielnie konfigurować węzła.
+
+<img src="/assets/blog/gyroid-first-sync.jpg" alt="Gyroid v0.2.9 przy pierwszym uruchomieniu synchronizuje łańcuch Blocknet od wbudowanego punktu kontrolnego, 64,7%." width="1280" height="800" loading="lazy" />
+
+### Czego Gyroid potrzebuje do działania?
+
+Na Windows i Linuxie Gyroid potrzebuje sterownika graficznego Vulkan. Na Linuxie potrzebuje też sesji Wayland oraz glibc 2.38 lub nowszej. Na Macu potrzebuje Apple silicon i macOS 14 lub nowszego: skopiuj `Gyroid.app` z obrazu dysku do folderu Aplikacje. Aplikacja jest podpisana bez notaryzacji Apple, więc przy pierwszym otwarciu zezwól na nią w Ustawieniach systemowych, Prywatność i ochrona, Otwórz mimo to.
+
+## Jak sprawdzić, czy pobrany portfel jest oryginalny?
+
+<Answer>
+Pobierz archiwum i plik SHA256SUMS z tej samej strony wydania, a następnie oblicz skrót SHA-256 archiwum i porównaj go z odpowiednim wierszem w SHA256SUMS. Wszystkie trzy portfele publikują ten plik z każdym wydaniem. Instaluj archiwum tylko wtedy, gdy skróty zgadzają się dokładnie, i pobieraj wyłącznie z oficjalnych stron wydań.
+</Answer>
+
+Na Linuxie lub macOS uruchom to w folderze, w którym są oba pliki:
+
+```sh
+sha256sum --ignore-missing --check SHA256SUMS.txt
+```
+
+Na Macu bez `sha256sum` uruchom `shasum -a 256 -c SHA256SUMS.txt` i odczytaj wiersz dla swojego pliku. Lista Gyroid nazywa się `SHA256SUMS`, a nie `SHA256SUMS.txt`. Wiersz kończący się na `OK` oznacza, że plik się zgadza.
+
+Na Windows otwórz PowerShell w folderze pobranych plików i wyświetl skrót:
+
+```powershell
+Get-FileHash .\gyroid-0.2.9-win-x64.zip
+```
+
+Zastąp nazwę pliku nazwą pobranego archiwum, a potem porównaj skrót z jego wierszem w pliku sum kontrolnych. Nasz [poradnik o ostrzeżeniach antywirusa](/pl/blog/antivirus-flags-crypto-miner/) stosuje to samo sprawdzenie dla pobranych plików seine.
+
+## Czy mogę używać tego samego portfela w więcej niż jednej aplikacji?
+
+Tak. Wszystkie trzy aplikacje działają na core Blocknet, więc portfel nie należy do jednej aplikacji. Odtwórz go w innej aplikacji z 12 słów odzyskiwania albo wczytaj kopię pliku portfela z jego hasłem, a gdy portfel przeskanuje łańcuch, zobaczysz ten sam adres i tę samą historię.
+
+Przed zmianą zrób świeżą kopię zapasową i trzymaj słowa odzyskiwania offline. Po przeniesieniu porównaj pełny adres odbiorczy z adresem w starej aplikacji, zanim go udostępnisz lub skierujesz na niego wypłaty. [Poradnik kopii zapasowej i odtwarzania](/pl/blog/blocknet-wallet-backup-restore/) opisuje obie drogi krok po kroku, razem z kontrolami, które warto wykonać przed wycofaniem starej kopii.
+
+## Kop Blocknet na adres swojego portfela
+
+Niezależnie od tego, który portfel wybierzesz, jego adres odbiorczy jest też adresem wypłat z kopania. Skopiuj go, wklej do seine i już kopiesz na bntpool.com za pomocą procesora i karty graficznej. Wypłaty trafiają do tego samego portfela, a moc obliczeniową (hashrate) i saldo możesz śledzić na stronie My Stats puli. [Poradnik o portfelu, węźle i minerze](/pl/blog/blocknet-wallet-node-miner/) wyjaśnia, które programy muszą pozostać otwarte podczas kopania.
+
+<CTA target="seine" title="Pobierz seine" text="Wklej adres z portfela Blocknet i zacznij kopać na bntpool.com w kilka minut." />

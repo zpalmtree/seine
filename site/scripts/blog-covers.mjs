@@ -30,6 +30,7 @@ const scenes = {
   'blocknet-wallet-for-mining': ['wallet','miner','key'],
   'blocknet-wallet-node-miner': ['block','wallet','miner'],
   'blocknet-wallet-not-syncing': ['update','wallet','block'],
+  'blocknet-wallets': ['wallet','laptop','check'],
   'bulletproofs-explained': ['shield','coin','check'],
   'configure-seine-miner': ['sliders','document','miner'],
   'cpu-mining-2026': ['chip','coin','miner'],

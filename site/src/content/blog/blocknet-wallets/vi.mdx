@@ -1,0 +1,102 @@
+---
+title: 'Ví Blocknet: ví desktop, ví dòng lệnh và Gyroid'
+seoTitle: 'Ví Blocknet (BNT): ví desktop, ví dòng lệnh và Gyroid'
+description: 'Chọn ví Blocknet (BNT): ứng dụng desktop chính thức, ví dòng lệnh chính thức hoặc Gyroid. So sánh nền tảng và tính năng, rồi kiểm tra tệp bạn tải về.'
+tags: ['Blocknet', 'Ví', 'Bắt đầu']
+faq:
+  - q: 'Tôi nên dùng ví Blocknet nào?'
+    a: 'Dùng ví desktop chính thức nếu bạn muốn một ứng dụng đồ họa trên Windows, macOS, Linux hoặc Android. Dùng ví dòng lệnh chính thức cho máy chủ, script và công việc trên terminal. Dùng Gyroid nếu bạn muốn ví đồ họa và công cụ dòng lệnh trong cùng một chương trình trên Windows, Linux hoặc máy Mac chip Apple silicon.'
+  - q: 'Có ví Blocknet cho Android không?'
+    a: 'Có. Bản phát hành của ví desktop chính thức có gói Android cho điện thoại arm64, và ví dòng lệnh chính thức cũng phát hành bản dựng Android arm64. Tải một trong hai từ trang phát hành GitHub của nó và đối chiếu tệp với danh sách SHA256SUMS trong cùng bản phát hành trước khi cài đặt.'
+  - q: 'Tôi có thể chuyển ví Blocknet từ ứng dụng này sang ứng dụng khác không?'
+    a: 'Có. Cả ba ứng dụng đều chạy Blocknet core và có thể khôi phục ví từ 12 từ khôi phục, nên cùng một bộ từ cho ra cùng một địa chỉ trong bất kỳ ứng dụng nào. Bạn cũng có thể mở bản sao tệp ví cùng mật khẩu của nó. Sau khi chuyển, hãy kiểm tra toàn bộ địa chỉ trước khi dựa vào nó.'
+  - q: 'Tôi có cần chạy node riêng để dùng ví Blocknet không?'
+    a: 'Không. Mỗi ví đều tự chạy hoặc khởi động Blocknet core cho bạn; core tải blockchain về và quét để tìm các khoản thanh toán của bạn. Ví desktop đi kèm core, ví dòng lệnh cài đặt và khởi động core, còn Gyroid dùng core đã cài sẵn hoặc tải bản phát hành mới nhất và kiểm tra trước khi khởi động.'
+sourceHash: '26d3c5b2cc79'
+translation: draft
+---
+
+Blocknet hiện có ba ứng dụng ví bạn có thể cài đặt: ví desktop chính thức, ví dòng lệnh chính thức và Gyroid, một ví đồ họa tích hợp sẵn công cụ dòng lệnh. Hướng dẫn này so sánh mỗi ví chạy trên những nền tảng nào và mạnh ở điểm gì, chỉ cách kiểm tra tệp bạn tải về, và dẫn bạn đến hướng dẫn từng bước cho ví bạn chọn.
+
+## Tôi nên dùng ví Blocknet nào?
+
+<Answer>
+Chọn ví desktop chính thức nếu bạn muốn một ứng dụng chỉ cần bấm chuột trên Windows, macOS, Linux hoặc Android. Chọn ví dòng lệnh chính thức cho máy chủ, script và dùng trên terminal. Chọn Gyroid nếu bạn muốn ví đồ họa kèm công cụ dòng lệnh trong cùng một chương trình. Cả ba đều giữ khóa trên máy tính của bạn và tự chạy Blocknet core cho bạn.
+</Answer>
+
+| Ví | Giao diện | Chạy trên |
+|---|---|---|
+| [Ví desktop](https://github.com/blocknetprivacy/blocknet-gui/releases/latest) v0.23.0 | Đồ họa | Windows x64, macOS (Apple silicon và Intel), Linux x64, Android arm64 |
+| [Ví dòng lệnh](https://github.com/blocknetprivacy/blocknet/releases/latest) v1.2.1 | Terminal | Windows x64, macOS (x64 và arm64), Linux (x64 và arm64), Android arm64 |
+| [Gyroid](https://github.com/obselate/gyroid/releases/latest) v0.2.9 | Đồ họa và terminal | Windows x64, Linux x64, macOS trên Apple silicon |
+
+Các phiên bản trên là bản phát hành mới nhất tính đến ngày 5 tháng 11 năm 2026. Trang phát hành của mỗi dự án luôn có phiên bản hiện tại.
+
+## Ví desktop chính thức
+
+Ví desktop là ứng dụng đồ họa do dự án Blocknet phát hành. Ứng dụng đi kèm Blocknet core, nên chỉ cần cài một gói là bạn có cả node lẫn ví. Bạn tạo ví bằng mật khẩu, lưu lại các từ khôi phục, rồi dùng thanh bên để xem số dư, địa chỉ nhận, thanh toán và lịch sử.
+
+Bản phát hành hiện tại có trình cài đặt cho Windows, các gói AppImage, Debian, RPM và Flatpak cho Linux, bản dựng macOS riêng cho máy Mac chip Apple silicon và Intel, cùng một gói Android. Đây là cách trực tiếp nhất nếu bạn chưa từng dùng Blocknet. [Hướng dẫn ví desktop](/vi/blog/blocknet-desktop-wallet/) đưa bạn từ màn hình chào mừng đến khoản thanh toán đầu tiên, có ảnh chụp màn hình cho từng bước.
+
+## Ví dòng lệnh chính thức
+
+Chương trình `blocknet` là ví terminal của dự án Blocknet. Chương trình cài đặt, khởi động và cập nhật Blocknet core, rồi mở cho bạn một shell ví tương tác để xem số dư, địa chỉ, thanh toán, lịch sử, bằng chứng thanh toán và khóa xem (view key). Khi đóng shell, core vẫn chạy nền, phù hợp với máy chủ hoặc máy tính luôn bật.
+
+Ví này hỗ trợ nhiều nền tảng nhất trong ba ví: bản dựng x64 và arm64 cho Linux và macOS, cùng Windows và Android. Các lệnh dễ lặp lại và đưa vào script, và mỗi lần gửi đều hiện bản xem trước để bạn xác nhận. [Hướng dẫn ví cho thợ đào](/vi/blog/blocknet-wallet-for-mining/) hướng dẫn tạo ví bằng chương trình này, sao lưu các từ khôi phục và sao chép địa chỉ của bạn.
+
+## Gyroid: ví đồ họa kèm công cụ dòng lệnh
+
+Gyroid là ví Blocknet mã nguồn mở của obselate, một người đóng góp cho Blocknet core, phát hành theo giấy phép MIT. Một chương trình chứa cả giao diện đồ họa lẫn bộ lệnh terminal đầy đủ, nên bạn có thể quản lý cùng một ví theo cách nào cũng được.
+
+Phần đồ họa đáp ứng nhu cầu hằng ngày:
+
+- tạo, khôi phục hoặc nhập ví, và giữ nhiều ví trong một thư viện
+- nhận, gửi kèm ghi chú (memo) và theo dõi lịch sử
+- thanh toán cho một Blocknet ID `@name` hoặc mở liên kết thanh toán `blocknet://`
+- sổ địa chỉ, tin nhắn giữa các ví, hẹn giờ tự khóa, và các màn hình trạng thái đồng bộ, mạng và đào coin
+
+<img src="/assets/blog/gyroid-wallet-library.jpg" alt="Thư viện ví của Gyroid với Create, Restore từ 12 từ, Import view keys và Open file; đường dẫn thư mục đã được làm mờ." width="1280" height="800" loading="lazy" />
+
+Phần terminal có các chức năng tương ứng qua những lệnh như `gyroid status`, `gyroid balance`, `gyroid address`, `gyroid history`, và `gyroid send <address> <amount> --dry-run` để xem trước một khoản thanh toán trước khi gửi. Chạy `gyroid --help` để xem danh sách đầy đủ, bao gồm cả ký tin nhắn, bằng chứng thanh toán và ví chỉ xem (view-only).
+
+Gyroid dùng Blocknet core đã được cài sẵn. Nếu không tìm thấy, Gyroid tải bản phát hành core mới nhất và đối chiếu với danh sách checksum của bản phát hành đó trước khi khởi động, nên bạn không phải tự thiết lập node.
+
+<img src="/assets/blog/gyroid-first-sync.jpg" alt="Gyroid v0.2.9 ở lần khởi động đầu tiên, đang đồng bộ chuỗi Blocknet từ checkpoint tích hợp, đạt 64,7%." width="1280" height="800" loading="lazy" />
+
+### Gyroid cần gì để chạy?
+
+Trên Windows và Linux, Gyroid cần trình điều khiển đồ họa hỗ trợ Vulkan. Trên Linux, Gyroid còn cần phiên Wayland và glibc 2.38 trở lên. Trên máy Mac, Gyroid cần chip Apple silicon và macOS 14 trở lên: sao chép `Gyroid.app` từ ảnh đĩa vào Applications. Ứng dụng được ký nhưng chưa được Apple công chứng (notarization), nên lần đầu mở, hãy cho phép trong System Settings, Privacy & Security, Open Anyway.
+
+## Làm sao để kiểm tra tệp ví tải về là chính hãng?
+
+<Answer>
+Tải tệp nén và tệp SHA256SUMS từ cùng một trang phát hành, rồi tính mã băm SHA-256 của tệp nén và so sánh với dòng tương ứng trong SHA256SUMS. Cả ba ví đều phát hành tệp này kèm mỗi phiên bản. Chỉ cài đặt tệp nén khi mã băm khớp hoàn toàn, và chỉ tải từ các trang phát hành chính thức.
+</Answer>
+
+Trên Linux hoặc macOS, chạy lệnh này trong thư mục chứa cả hai tệp:
+
+```sh
+sha256sum --ignore-missing --check SHA256SUMS.txt
+```
+
+Trên máy Mac không có `sha256sum`, chạy `shasum -a 256 -c SHA256SUMS.txt` và đọc dòng của tệp bạn tải. Danh sách của Gyroid có tên là `SHA256SUMS` thay vì `SHA256SUMS.txt`. Dòng kết thúc bằng `OK` nghĩa là tệp khớp.
+
+Trên Windows, mở PowerShell trong thư mục tải về và in mã băm:
+
+```powershell
+Get-FileHash .\gyroid-0.2.9-win-x64.zip
+```
+
+Thay tên tệp bằng tệp nén bạn đã tải, rồi so sánh mã băm với dòng của nó trong tệp checksum. [Hướng dẫn về cảnh báo của phần mềm diệt virus](/vi/blog/antivirus-flags-crypto-miner/) của chúng tôi dùng cùng cách kiểm tra này cho các tệp tải seine.
+
+## Tôi có thể dùng cùng một ví trong nhiều ứng dụng không?
+
+Có. Cả ba ứng dụng đều chạy Blocknet core bên dưới, nên một ví không thuộc riêng ứng dụng nào. Khôi phục ví trong ứng dụng khác từ 12 từ khôi phục, hoặc mở bản sao tệp ví cùng mật khẩu của nó, và bạn sẽ có cùng địa chỉ và lịch sử sau khi ví quét xong chuỗi khối.
+
+Trước khi chuyển, hãy tạo bản sao lưu mới và cất giữ các từ khôi phục ngoại tuyến. Sau khi chuyển, so sánh toàn bộ địa chỉ nhận với ứng dụng cũ trước khi chia sẻ hoặc dùng địa chỉ đó để nhận thanh toán đào. [Hướng dẫn sao lưu và khôi phục](/vi/blog/blocknet-wallet-backup-restore/) trình bày từng bước cả hai cách, bao gồm các bước kiểm tra trước khi ngừng dùng bản cũ.
+
+## Dùng địa chỉ ví để đào Blocknet
+
+Dù bạn chọn ví nào, địa chỉ nhận của ví cũng là địa chỉ nhận thanh toán đào coin. Sao chép địa chỉ, dán vào seine, và bạn đã đào trên bntpool.com bằng CPU và card đồ họa của mình. Các khoản thanh toán về cùng ví đó, và bạn có thể theo dõi tốc độ băm (hashrate) và số dư trên trang My Stats của pool. [Hướng dẫn ví, node và phần mềm đào](/vi/blog/blocknet-wallet-node-miner/) giải thích những chương trình nào cần mở trong lúc bạn đào.
+
+<CTA target="seine" title="Tải seine" text="Dán địa chỉ từ ví Blocknet của bạn và bắt đầu đào trên bntpool.com chỉ trong vài phút." />

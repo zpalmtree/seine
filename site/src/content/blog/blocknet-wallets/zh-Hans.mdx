@@ -1,0 +1,102 @@
+---
+title: 'Blocknet 钱包：桌面版、命令行版和 Gyroid'
+seoTitle: 'Blocknet（BNT）钱包：桌面版、命令行版和 Gyroid'
+description: '选择 Blocknet（BNT）钱包：官方桌面应用、官方命令行钱包或 Gyroid。比较支持的平台和功能，并校验下载的文件。'
+tags: ['Blocknet', '钱包', '入门']
+faq:
+  - q: '我应该使用哪个 Blocknet 钱包？'
+    a: '如果你想在 Windows、macOS、Linux 或 Android 上使用图形界面应用，请使用官方桌面钱包。服务器、脚本和终端操作请使用官方命令行钱包。如果你想在 Windows、Linux 或 Apple silicon Mac 上用一个程序同时获得图形界面钱包和命令行工具，请使用 Gyroid。'
+  - q: '有适用于 Android 的 Blocknet 钱包吗？'
+    a: '有。官方桌面钱包的发布版本包含适用于 arm64 手机的 Android 安装包，官方命令行钱包也提供 Android arm64 版本。请从各自的 GitHub 发布页面下载，并在安装前用同一版本中的 SHA256SUMS 列表核对文件。'
+  - q: '可以把 Blocknet 钱包从一个应用迁移到另一个应用吗？'
+    a: '可以。这三个应用都运行 Blocknet 核心，都能用 12 个恢复词恢复钱包，因此同一组恢复词在任何一个应用中都会得到相同的地址。你也可以加载钱包文件的副本并输入其密码。迁移后，请先核对完整地址，再依赖它收款。'
+  - q: '使用 Blocknet 钱包需要单独的节点吗？'
+    a: '不需要。每个钱包都会为你运行或启动 Blocknet 核心，由它下载区块链并扫描属于你的付款。桌面钱包内置核心，命令行钱包会安装并启动核心，Gyroid 则使用已安装的核心，或下载最新版本并校验后再启动。'
+sourceHash: '26d3c5b2cc79'
+translation: draft
+---
+
+Blocknet 目前有三款可以安装的钱包应用：官方桌面钱包、官方命令行钱包，以及内置命令行工具的图形界面钱包 Gyroid。本指南比较它们各自支持的平台和擅长的用途，介绍如何校验下载的文件，并为你选择的钱包指出对应的分步指南。
+
+## 我应该使用哪个 Blocknet 钱包？
+
+<Answer>
+如果你想在 Windows、macOS、Linux 或 Android 上使用点选操作的应用，请选择官方桌面钱包。服务器、脚本和终端使用请选择官方命令行钱包。如果你想在同一个程序中同时使用图形界面钱包和命令行工具，请选择 Gyroid。三者都把密钥保存在你自己的电脑上，并为你运行 Blocknet 核心。
+</Answer>
+
+| 钱包 | 界面 | 支持平台 |
+|---|---|---|
+| [桌面钱包](https://github.com/blocknetprivacy/blocknet-gui/releases/latest) v0.23.0 | 图形界面 | Windows x64、macOS（Apple silicon 和 Intel）、Linux x64、Android arm64 |
+| [命令行钱包](https://github.com/blocknetprivacy/blocknet/releases/latest) v1.2.1 | 终端 | Windows x64、macOS（x64 和 arm64）、Linux（x64 和 arm64）、Android arm64 |
+| [Gyroid](https://github.com/obselate/gyroid/releases/latest) v0.2.9 | 图形界面和终端 | Windows x64、Linux x64、Apple silicon 上的 macOS |
+
+以上版本为 2026年11月5日的最新版本。各项目的发布页面始终提供当前版本。
+
+## 官方桌面钱包
+
+桌面钱包是 Blocknet 项目发布的图形界面应用。它内置 Blocknet 核心，因此安装一个软件包就能同时获得节点和钱包。你用密码创建钱包，保存恢复词，然后通过侧边栏查看余额、收款地址、付款和历史记录。
+
+当前版本提供 Windows 安装程序，Linux 的 AppImage、Debian、RPM 和 Flatpak 软件包，分别适用于 Apple silicon Mac 和 Intel Mac 的 macOS 版本，以及 Android 安装包。如果你从未用过 Blocknet，这是最直接的方式。[桌面钱包使用指南](/zh-hans/blog/blocknet-desktop-wallet/)从欢迎页面一直讲到第一笔付款，每一步都配有截图。
+
+## 官方命令行钱包
+
+`blocknet` 程序是 Blocknet 项目的终端钱包。它负责安装、启动和更新 Blocknet 核心，并提供一个交互式钱包 shell，用于查看余额、地址、付款、历史记录、证明和查看密钥。关闭 shell 后，核心仍在后台运行，适合服务器或长期开机的电脑。
+
+它是三者中支持平台最多的：提供 Linux 和 macOS 的 x64 与 arm64 版本，以及 Windows 和 Android 版本。命令便于重复执行和编写脚本，每次发送前都会显示预览，确认后才会发出。[挖矿钱包指南](/zh-hans/blog/blocknet-wallet-for-mining/)介绍了如何用它创建钱包、备份恢复词并复制地址。
+
+## Gyroid：带命令行工具的图形界面钱包
+
+Gyroid 是 Blocknet 核心贡献者 obselate 开发的开源 Blocknet 钱包，采用 MIT 许可证发布。一个程序同时包含图形界面和完整的终端命令，因此你可以用任意一种方式管理同一个钱包。
+
+图形界面涵盖日常所需的功能：
+
+- 创建、恢复或导入钱包，并在一个钱包库中管理多个钱包
+- 收款、带备注发送付款以及查看历史记录
+- 向 Blocknet ID `@name` 付款或打开 `blocknet://` 付款链接
+- 地址簿、钱包之间的消息、自动锁定计时器，以及同步、网络和挖矿状态页面
+
+<img src="/assets/blog/gyroid-wallet-library.jpg" alt="Gyroid 钱包列表，包含 Create、用 12 个词 Restore、Import view keys 和 Open file；文件夹路径已模糊处理。" width="1280" height="800" loading="lazy" />
+
+终端部分提供相同的功能，命令包括 `gyroid status`、`gyroid balance`、`gyroid address`、`gyroid history`，以及在发送前预览付款的 `gyroid send <address> <amount> --dry-run`。运行 `gyroid --help` 可查看完整列表，其中还包括消息签名、付款证明和只读钱包。
+
+Gyroid 会使用已经安装的 Blocknet 核心。如果找不到，它会下载最新的核心版本，并用该版本的校验和列表核对后再启动，因此你无需自己设置节点。
+
+<img src="/assets/blog/gyroid-first-sync.jpg" alt="首次启动的 Gyroid v0.2.9，正从内置检查点同步 Blocknet 区块链（64.7%）。" width="1280" height="800" loading="lazy" />
+
+### 运行 Gyroid 需要什么？
+
+在 Windows 和 Linux 上，Gyroid 需要 Vulkan 显卡驱动。在 Linux 上还需要 Wayland 会话和 glibc 2.38 或更高版本。在 Mac 上需要 Apple silicon 和 macOS 14 或更高版本：将 `Gyroid.app` 从磁盘映像复制到“应用程序”文件夹。该应用已签名，但未经过 Apple 公证，因此第一次打开时，请在“系统设置”的“隐私与安全性”中选择“仍要打开”来允许它运行。
+
+## 如何确认下载的钱包是正版？
+
+<Answer>
+从同一个发布页面下载压缩包和 SHA256SUMS 文件，然后计算压缩包的 SHA-256 哈希值，并与 SHA256SUMS 中对应的那一行比较。三款钱包的每个版本都会发布这个文件。只有在哈希值完全一致时才安装压缩包，并且只从官方发布页面下载。
+</Answer>
+
+在 Linux 或 macOS 上，在同时存放这两个文件的文件夹中运行：
+
+```sh
+sha256sum --ignore-missing --check SHA256SUMS.txt
+```
+
+如果 Mac 上没有 `sha256sum`，请运行 `shasum -a 256 -c SHA256SUMS.txt`，并查看对应你文件的那一行。Gyroid 的列表文件名为 `SHA256SUMS`，而不是 `SHA256SUMS.txt`。以 `OK` 结尾的行表示文件一致。
+
+在 Windows 上，在下载文件夹中打开 PowerShell 并输出哈希值：
+
+```powershell
+Get-FileHash .\gyroid-0.2.9-win-x64.zip
+```
+
+把文件名替换为你下载的压缩包，然后将哈希值与校验和文件中对应的那一行比较。我们的[杀毒软件警告指南](/zh-hans/blog/antivirus-flags-crypto-miner/)也用同样的方法校验 seine 的下载文件。
+
+## 同一个钱包可以在多个应用中使用吗？
+
+可以。这三个应用底层都运行 Blocknet 核心，因此钱包并不属于某一个应用。在另一个应用中用 12 个恢复词恢复钱包，或加载钱包文件的副本并输入密码，钱包扫描完区块链后，你就会看到相同的地址和历史记录。
+
+切换之前，请先做一次新的备份，并将恢复词离线保存。迁移后，在分享地址或把挖矿收益指向它之前，请将完整的收款地址与旧应用中的地址核对。[备份与恢复指南](/zh-hans/blog/blocknet-wallet-backup-restore/)分步介绍了这两种方式，包括停用旧副本之前要做的检查。
+
+## 用你的钱包地址挖 Blocknet
+
+无论选择哪款钱包，它的收款地址也就是你的挖矿收款地址。复制地址并粘贴到 seine 中，你就能用 CPU 和显卡在 bntpool.com 上挖矿。挖矿收益会打入同一个钱包，你可以在矿池的 My Stats 页面查看算力和余额。[钱包、节点和矿工软件指南](/zh-hans/blog/blocknet-wallet-node-miner/)说明了挖矿时哪些程序需要保持运行。
+
+<CTA target="seine" title="下载 seine" text="粘贴你的 Blocknet 钱包地址，几分钟内即可开始在 bntpool.com 上挖矿。" />

@@ -1,0 +1,102 @@
+---
+title: 'Blocknet 지갑: 데스크톱, 명령줄, Gyroid'
+seoTitle: 'Blocknet(BNT) 지갑: 공식 앱과 Gyroid'
+description: 'Blocknet(BNT) 지갑 고르기: 공식 데스크톱 앱, 공식 명령줄 지갑, Gyroid의 지원 플랫폼과 기능을 비교하고 다운로드 파일을 확인하세요.'
+tags: ['Blocknet', '지갑', '시작하기']
+faq:
+  - q: '어떤 Blocknet 지갑을 사용해야 하나요?'
+    a: 'Windows, macOS, Linux, Android에서 그래픽 앱을 원한다면 공식 데스크톱 지갑을 사용하세요. 서버, 스크립트, 터미널 작업에는 공식 명령줄 지갑을 사용하세요. Windows, Linux 또는 Apple silicon Mac에서 그래픽 지갑과 명령줄 도구를 한 프로그램으로 쓰고 싶다면 Gyroid를 사용하세요.'
+  - q: 'Android용 Blocknet 지갑이 있나요?'
+    a: '네. 공식 데스크톱 지갑 릴리스에는 arm64 휴대폰용 Android 패키지가 포함되어 있고, 공식 명령줄 지갑도 Android arm64 빌드를 제공합니다. 각각의 GitHub 릴리스 페이지에서 다운로드하고, 설치하기 전에 같은 릴리스의 SHA256SUMS 목록과 파일을 대조하세요.'
+  - q: 'Blocknet 지갑을 다른 앱으로 옮길 수 있나요?'
+    a: '네. 세 앱 모두 Blocknet 코어를 실행하고 12개 복구 단어로 지갑을 복원할 수 있으므로, 같은 단어를 쓰면 어느 앱에서든 같은 주소가 나옵니다. 지갑 파일 사본을 비밀번호와 함께 불러올 수도 있습니다. 옮긴 뒤에는 사용하기 전에 전체 주소를 확인하세요.'
+  - q: 'Blocknet 지갑을 쓰려면 별도의 노드가 필요한가요?'
+    a: '아니요. 각 지갑이 Blocknet 코어를 대신 실행하거나 시작하며, 코어가 블록체인을 다운로드하고 내 결제를 찾아 스캔합니다. 데스크톱 지갑은 코어를 포함하고, 명령줄 지갑은 코어를 설치하고 시작하며, Gyroid는 설치된 코어를 사용하거나 최신 릴리스를 다운로드해 확인한 뒤 시작합니다.'
+sourceHash: '26d3c5b2cc79'
+translation: draft
+---
+
+Blocknet에는 지금 설치할 수 있는 지갑 앱이 세 가지 있습니다. 공식 데스크톱 지갑, 공식 명령줄 지갑, 그리고 명령줄 도구가 내장된 그래픽 지갑 Gyroid입니다. 이 가이드는 각 지갑이 어디서 실행되고 무엇을 잘하는지 비교하고, 다운로드 파일을 확인하는 방법을 보여 주며, 선택한 지갑의 단계별 가이드를 안내합니다.
+
+## 어떤 Blocknet 지갑을 사용해야 하나요?
+
+<Answer>
+Windows, macOS, Linux, Android에서 클릭만으로 쓰는 앱을 원한다면 공식 데스크톱 지갑을 선택하세요. 서버, 스크립트, 터미널 사용에는 공식 명령줄 지갑을 선택하세요. 그래픽 지갑과 명령줄 도구를 한 프로그램에서 쓰고 싶다면 Gyroid를 선택하세요. 세 지갑 모두 키를 내 컴퓨터에 보관하고 Blocknet 코어를 대신 실행합니다.
+</Answer>
+
+| 지갑 | 인터페이스 | 지원 플랫폼 |
+|---|---|---|
+| [데스크톱 지갑](https://github.com/blocknetprivacy/blocknet-gui/releases/latest) v0.23.0 | 그래픽 | Windows x64, macOS(Apple silicon 및 Intel), Linux x64, Android arm64 |
+| [명령줄 지갑](https://github.com/blocknetprivacy/blocknet/releases/latest) v1.2.1 | 터미널 | Windows x64, macOS(x64 및 arm64), Linux(x64 및 arm64), Android arm64 |
+| [Gyroid](https://github.com/obselate/gyroid/releases/latest) v0.2.9 | 그래픽 및 터미널 | Windows x64, Linux x64, Apple silicon macOS |
+
+버전은 2026년 11월 5일 기준 최신 릴리스입니다. 각 프로젝트의 릴리스 페이지에서 항상 최신 버전을 확인할 수 있습니다.
+
+## 공식 데스크톱 지갑
+
+데스크톱 지갑은 Blocknet 프로젝트가 배포하는 그래픽 앱입니다. Blocknet 코어가 포함되어 있어 패키지 하나만 설치하면 노드와 지갑을 함께 갖게 됩니다. 비밀번호로 지갑을 만들고 복구 단어를 저장한 다음, 사이드바에서 잔액, 수신 주소, 결제, 내역을 이용합니다.
+
+현재 릴리스에는 Windows 설치 프로그램, Linux용 AppImage, Debian, RPM, Flatpak 패키지, Apple silicon Mac과 Intel Mac용 별도 macOS 빌드, 그리고 Android 패키지가 있습니다. Blocknet을 처음 사용한다면 가장 간단한 방법입니다. [데스크톱 지갑 사용법](/ko/blog/blocknet-desktop-wallet/)은 시작 화면부터 첫 결제까지 각 단계를 화면과 함께 안내합니다.
+
+## 공식 명령줄 지갑
+
+`blocknet` 프로그램은 Blocknet 프로젝트의 터미널 지갑입니다. Blocknet 코어를 설치, 시작, 업데이트한 다음 잔액, 주소, 결제, 내역, 증명, 보기 키를 다루는 대화형 지갑 셸을 제공합니다. 셸을 닫아도 코어는 백그라운드에서 계속 실행되므로 서버나 항상 켜 둔 컴퓨터에 잘 맞습니다.
+
+세 지갑 중 지원 플랫폼이 가장 넓습니다. Linux와 macOS용 x64 및 arm64 빌드에 더해 Windows와 Android 빌드도 있습니다. 명령은 반복하거나 스크립트로 만들기 쉽고, 모든 송금은 확인하기 전에 미리보기를 보여 줍니다. [채굴용 지갑 가이드](/ko/blog/blocknet-wallet-for-mining/)에서 이 지갑으로 지갑을 만들고, 복구 단어를 백업하고, 주소를 복사하는 과정을 설명합니다.
+
+## Gyroid: 명령줄 도구가 있는 그래픽 지갑
+
+Gyroid는 Blocknet 코어 기여자인 obselate가 만든 오픈 소스 Blocknet 지갑으로, MIT 라이선스로 배포됩니다. 한 프로그램에 그래픽 인터페이스와 전체 터미널 명령이 함께 들어 있어 같은 지갑을 어느 쪽으로든 관리할 수 있습니다.
+
+그래픽 쪽은 일상적으로 필요한 기능을 갖추고 있습니다.
+
+- 지갑 생성, 복원, 가져오기와 여러 지갑을 하나의 라이브러리에서 관리
+- 받기, 메모와 함께 보내기, 내역 확인
+- Blocknet ID `@name`으로 결제하거나 `blocknet://` 결제 링크 열기
+- 주소록, 지갑 간 메시지, 자동 잠금 타이머, 동기화·네트워크·채굴 상태 화면
+
+<img src="/assets/blog/gyroid-wallet-library.jpg" alt="Create, 12단어 Restore, Import view keys, Open file이 있는 Gyroid 지갑 목록. 폴더 경로는 흐리게 처리했습니다." width="1280" height="800" loading="lazy" />
+
+터미널 쪽도 `gyroid status`, `gyroid balance`, `gyroid address`, `gyroid history`, 그리고 보내기 전에 결제를 미리 보는 `gyroid send <address> <amount> --dry-run` 같은 명령으로 같은 기능을 제공합니다. 전체 목록은 `gyroid --help`로 확인할 수 있으며, 메시지 서명, 결제 증명, 보기 전용 지갑도 포함됩니다.
+
+Gyroid는 이미 설치된 Blocknet 코어를 사용합니다. 코어를 찾지 못하면 최신 코어 릴리스를 다운로드하고 해당 릴리스의 체크섬 목록과 대조한 뒤 시작하므로, 노드를 직접 설정할 필요가 없습니다.
+
+<img src="/assets/blog/gyroid-first-sync.jpg" alt="처음 실행한 Gyroid v0.2.9가 내장 체크포인트부터 Blocknet 체인을 동기화하는 화면(64.7%)." width="1280" height="800" loading="lazy" />
+
+### Gyroid를 실행하려면 무엇이 필요한가요?
+
+Windows와 Linux에서 Gyroid를 실행하려면 Vulkan 그래픽 드라이버가 필요합니다. Linux에서는 Wayland 세션과 glibc 2.38 이상도 필요합니다. Mac에서는 Apple silicon과 macOS 14 이상이 필요하며, 디스크 이미지에서 `Gyroid.app`을 응용 프로그램 폴더로 복사합니다. 앱은 서명되어 있지만 Apple 공증은 받지 않았으므로, 처음 열 때 시스템 설정의 개인정보 보호 및 보안에서 그래도 열기를 선택해 허용하세요.
+
+## 지갑 다운로드가 진짜인지 어떻게 확인하나요?
+
+<Answer>
+같은 릴리스 페이지에서 압축 파일과 SHA256SUMS 파일을 다운로드한 다음, 압축 파일의 SHA-256 해시를 계산해 SHA256SUMS의 해당 줄과 비교하세요. 세 지갑 모두 릴리스마다 이 파일을 제공합니다. 해시가 정확히 일치할 때만 압축 파일을 설치하고, 공식 릴리스 페이지에서만 다운로드하세요.
+</Answer>
+
+Linux나 macOS에서는 두 파일이 있는 폴더에서 다음을 실행하세요.
+
+```sh
+sha256sum --ignore-missing --check SHA256SUMS.txt
+```
+
+`sha256sum`이 없는 Mac에서는 `shasum -a 256 -c SHA256SUMS.txt`를 실행하고 내 파일에 해당하는 줄을 확인하세요. Gyroid의 목록 이름은 `SHA256SUMS.txt`가 아니라 `SHA256SUMS`입니다. `OK`로 끝나는 줄은 파일이 일치한다는 뜻입니다.
+
+Windows에서는 다운로드 폴더에서 PowerShell을 열고 해시를 출력하세요.
+
+```powershell
+Get-FileHash .\gyroid-0.2.9-win-x64.zip
+```
+
+파일 이름을 다운로드한 압축 파일로 바꾼 다음, 해시를 체크섬 파일의 해당 줄과 비교하세요. [백신 경고 가이드](/ko/blog/antivirus-flags-crypto-miner/)에서도 seine 다운로드에 같은 확인 방법을 사용합니다.
+
+## 같은 지갑을 여러 앱에서 쓸 수 있나요?
+
+네. 세 앱 모두 내부에서 Blocknet 코어를 실행하므로 지갑이 특정 앱에 묶이지 않습니다. 다른 앱에서 12개 복구 단어로 복원하거나 지갑 파일 사본을 비밀번호와 함께 불러오면, 지갑이 체인 스캔을 마친 뒤 같은 주소와 내역을 볼 수 있습니다.
+
+바꾸기 전에 새 백업을 만들고 복구 단어는 오프라인에 보관하세요. 옮긴 뒤에는 주소를 공유하거나 지급 대상으로 지정하기 전에 전체 수신 주소를 이전 앱과 비교하세요. [백업 및 복원 가이드](/ko/blog/blocknet-wallet-backup-restore/)는 두 방법과 이전 사본을 정리하기 전에 해야 할 확인을 단계별로 설명합니다.
+
+## 지갑 주소로 Blocknet 채굴하기
+
+어떤 지갑을 고르든 그 수신 주소가 곧 채굴 지급 주소입니다. 주소를 복사해 seine에 붙여 넣으면 CPU와 그래픽 카드로 bntpool.com에서 채굴을 시작합니다. 지급은 같은 지갑으로 들어오며, 풀의 My Stats 페이지에서 해시레이트와 잔액을 확인할 수 있습니다. [지갑, 노드, 채굴기 가이드](/ko/blog/blocknet-wallet-node-miner/)에서 채굴하는 동안 열어 두어야 할 프로그램을 설명합니다.
+
+<CTA target="seine" title="seine 다운로드" text="Blocknet 지갑의 주소를 붙여 넣고 몇 분 안에 bntpool.com에서 채굴을 시작하세요." />

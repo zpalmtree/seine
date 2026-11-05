@@ -1,0 +1,102 @@
+---
+title: 'Blocknet cüzdanları: masaüstü, komut satırı ve Gyroid'
+seoTitle: 'Blocknet (BNT) cüzdanları: masaüstü, komut satırı ve Gyroid'
+description: 'Blocknet (BNT) cüzdanı seçin: resmi masaüstü uygulaması, resmi komut satırı cüzdanı veya Gyroid. Platformları ve özellikleri karşılaştırın, dosyayı doğrulayın.'
+tags: ['Blocknet', 'Cüzdan', 'Başlangıç']
+faq:
+  - q: 'Hangi Blocknet cüzdanını kullanmalıyım?'
+    a: 'Windows, macOS, Linux veya Android''de grafik arayüzlü bir uygulama istiyorsanız resmi masaüstü cüzdanını kullanın. Sunucular, betikler ve terminal işleri için resmi komut satırı cüzdanını kullanın. Windows, Linux veya Apple silicon Mac''te grafik cüzdanı ve komut satırı araçlarını tek programda istiyorsanız Gyroid''i kullanın.'
+  - q: 'Android için Blocknet cüzdanı var mı?'
+    a: 'Evet. Resmi masaüstü cüzdanı sürümü arm64 telefonlar için bir Android paketi içerir, resmi komut satırı cüzdanı da bir Android arm64 derlemesi yayınlar. İkisinden birini GitHub sürümler sayfasından indirin ve kurmadan önce dosyayı aynı sürümdeki SHA256SUMS listesiyle karşılaştırın.'
+  - q: 'Blocknet cüzdanımı bir uygulamadan diğerine taşıyabilir miyim?'
+    a: 'Evet. Üç uygulamanın üçü de Blocknet core''u çalıştırır ve bir cüzdanı 12 kurtarma kelimesinden geri yükleyebilir, bu yüzden aynı kelimeler hepsinde aynı adresi verir. Cüzdan dosyasının bir kopyasını parolasıyla da açabilirsiniz. Taşımadan sonra adrese güvenmeden önce tam adresi kontrol edin.'
+  - q: 'Blocknet cüzdanı kullanmak için ayrı bir düğüm gerekir mi?'
+    a: 'Hayır. Her cüzdan Blocknet core''u sizin için çalıştırır veya başlatır; core blok zincirini indirir ve ödemeleriniz için tarar. Masaüstü cüzdanı core''u içinde barındırır, komut satırı cüzdanı onu kurup başlatır, Gyroid ise kurulu bir core kullanır ya da en son sürümü indirip başlatmadan önce doğrular.'
+sourceHash: '26d3c5b2cc79'
+translation: draft
+---
+
+Blocknet için bugün kurabileceğiniz üç cüzdan uygulaması var: resmi masaüstü cüzdanı, resmi komut satırı cüzdanı ve komut satırı araçları yerleşik bir grafik cüzdan olan Gyroid. Bu rehber her birinin hangi sistemlerde çalıştığını ve neyi iyi yaptığını karşılaştırıyor, indirdiğiniz dosyayı nasıl doğrulayacağınızı gösteriyor ve seçtiğiniz cüzdanın adım adım rehberine yönlendiriyor.
+
+## Hangi Blocknet cüzdanını kullanmalıyım?
+
+<Answer>
+Windows, macOS, Linux veya Android'de tıklayarak kullanılan bir uygulama için resmi masaüstü cüzdanını seçin. Sunucular, betikler ve terminal kullanımı için resmi komut satırı cüzdanını seçin. Komut satırı araçlarıyla aynı programda bir grafik cüzdan için Gyroid'i seçin. Üçü de anahtarlarınızı kendi bilgisayarınızda tutar ve Blocknet core'u sizin için çalıştırır.
+</Answer>
+
+| Cüzdan | Arayüz | Çalıştığı sistemler |
+|---|---|---|
+| [Masaüstü cüzdanı](https://github.com/blocknetprivacy/blocknet-gui/releases/latest) v0.23.0 | Grafik | Windows x64, macOS (Apple silicon ve Intel), Linux x64, Android arm64 |
+| [Komut satırı cüzdanı](https://github.com/blocknetprivacy/blocknet/releases/latest) v1.2.1 | Terminal | Windows x64, macOS (x64 ve arm64), Linux (x64 ve arm64), Android arm64 |
+| [Gyroid](https://github.com/obselate/gyroid/releases/latest) v0.2.9 | Grafik ve terminal | Windows x64, Linux x64, Apple silicon'lı macOS |
+
+Sürümler 5 Kasım 2026 itibarıyla en son sürümlerdir. Her projenin sürümler sayfasında her zaman güncel olanı bulunur.
+
+## Resmi masaüstü cüzdanı
+
+Masaüstü cüzdanı, Blocknet projesinin yayınladığı grafik arayüzlü uygulamadır. Blocknet core'u içinde barındırır, bu yüzden tek bir paket kurduğunuzda düğümü ve cüzdanı birlikte edinirsiniz. Parolayla bir cüzdan oluşturur, kurtarma kelimelerinizi kaydeder, ardından bakiyeniz, alma adresiniz, ödemeleriniz ve geçmişiniz için kenar çubuğunu kullanırsınız.
+
+Güncel sürümde Windows için bir yükleyici, Linux için AppImage, Debian, RPM ve Flatpak paketleri, Apple silicon ve Intel Mac'ler için ayrı macOS derlemeleri ve bir Android paketi var. Blocknet'i daha önce hiç kullanmadıysanız en doğrudan yol budur. [Masaüstü cüzdanı rehberi](/tr/blog/blocknet-desktop-wallet/), her adımın ekran görüntüsüyle sizi karşılama ekranından ilk ödemenize götürür.
+
+## Resmi komut satırı cüzdanı
+
+`blocknet` programı, Blocknet projesinin terminal cüzdanıdır. Blocknet core'u kurar, başlatır ve günceller, ardından bakiyeler, adresler, ödemeler, geçmiş, ödeme kanıtları ve görüntüleme anahtarları için etkileşimli bir cüzdan kabuğu açar. Kabuğu kapattığınızda core arka planda çalışmaya devam eder; bu da bir sunucu ya da sürekli açık bir bilgisayar için uygundur.
+
+Üçü arasında en geniş platform listesi ondadır: Linux ve macOS için x64 ve arm64 derlemeleri, ayrıca Windows ve Android. Komutları tekrarlamak ve betiklere eklemek kolaydır, her gönderim de onaylamadan önce bir ön izleme gösterir. [Madenciler için cüzdan rehberi](/tr/blog/blocknet-wallet-for-mining/), bununla cüzdan oluşturmayı, kurtarma kelimelerini yedeklemeyi ve adresinizi kopyalamayı adım adım anlatır.
+
+## Gyroid: komut satırı araçlarıyla grafik cüzdan
+
+Gyroid, Blocknet core katkıcısı obselate tarafından geliştirilen, MIT lisansıyla yayınlanan açık kaynaklı bir Blocknet cüzdanıdır. Tek program hem grafik arayüzü hem de eksiksiz bir terminal komutları setini içerir, böylece aynı cüzdanı iki yoldan da yönetebilirsiniz.
+
+Grafik tarafı günlük ihtiyaçlarınızı karşılar:
+
+- cüzdan oluşturma, geri yükleme veya içe aktarma ve birden çok cüzdanı tek bir kütüphanede tutma
+- ödeme alma, not (memo) ile gönderme ve geçmişinizi izleme
+- bir Blocknet ID `@name` adresine ödeme yapma veya bir `blocknet://` ödeme bağlantısını açma
+- adres defteri, cüzdandan cüzdana mesajlar, otomatik kilit zamanlayıcısı ve eşitleme, ağ ve madencilik durumu ekranları
+
+<img src="/assets/blog/gyroid-wallet-library.jpg" alt="Gyroid cüzdan kitaplığı: Create, 12 kelimeden Restore, Import view keys ve Open file; klasör yolu bulanıklaştırıldı." width="1280" height="800" loading="lazy" />
+
+Terminal tarafı bunu `gyroid status`, `gyroid balance`, `gyroid address`, `gyroid history` gibi komutlarla ve bir ödemeyi göndermeden önce ön izlemek için `gyroid send <address> <amount> --dry-run` ile karşılar. Tam liste için `gyroid --help` çalıştırın; liste mesaj imzalama, ödeme kanıtları ve yalnızca görüntüleme cüzdanlarını da kapsar.
+
+Gyroid zaten kurulu olan bir Blocknet core'u kullanır. Bulamazsa en son core sürümünü indirir ve başlatmadan önce o sürümün sağlama toplamı listesiyle karşılaştırır, böylece düğümü kendiniz kurmanız gerekmez.
+
+<img src="/assets/blog/gyroid-first-sync.jpg" alt="Gyroid v0.2.9 ilk açılışta Blocknet zincirini yerleşik kontrol noktasından eşitliyor, %64,7." width="1280" height="800" loading="lazy" />
+
+### Gyroid'in çalışması için neler gerekir?
+
+Windows ve Linux'ta Gyroid bir Vulkan grafik sürücüsü gerektirir. Linux'ta ayrıca bir Wayland oturumu ve glibc 2.38 veya daha yenisi gerekir. Mac'te Apple silicon ve macOS 14 veya daha yenisi gerekir: `Gyroid.app` uygulamasını disk görüntüsünden Applications klasörüne kopyalayın. Uygulama Apple noterlemesi olmadan imzalanmıştır, bu yüzden ilk açışınızda System Settings, Privacy & Security, Open Anyway yoluyla izin verin.
+
+## İndirdiğim cüzdanın gerçek olduğunu nasıl kontrol ederim?
+
+<Answer>
+Arşivi ve SHA256SUMS dosyasını aynı sürüm sayfasından indirin, ardından arşivin SHA-256 özetini hesaplayıp SHA256SUMS içindeki ilgili satırla karşılaştırın. Üç cüzdan da bu dosyayı her sürümle yayınlar. Arşivi yalnızca özetler birebir eşleştiğinde kurun ve yalnızca resmi sürüm sayfalarından indirin.
+</Answer>
+
+Linux veya macOS'ta, iki dosyanın da bulunduğu klasörde şunu çalıştırın:
+
+```sh
+sha256sum --ignore-missing --check SHA256SUMS.txt
+```
+
+`sha256sum` olmayan bir Mac'te `shasum -a 256 -c SHA256SUMS.txt` çalıştırın ve dosyanızın satırına bakın. Gyroid'in listesinin adı `SHA256SUMS.txt` değil, `SHA256SUMS` şeklindedir. `OK` ile biten bir satır dosyanın eşleştiği anlamına gelir.
+
+Windows'ta indirmeler klasörünüzde PowerShell'i açın ve özeti yazdırın:
+
+```powershell
+Get-FileHash .\gyroid-0.2.9-win-x64.zip
+```
+
+Dosya adını indirdiğiniz arşivle değiştirin, ardından özeti sağlama toplamı dosyasındaki satırıyla karşılaştırın. [Antivirüs uyarıları rehberimiz](/tr/blog/antivirus-flags-crypto-miner/) seine indirmeleri için aynı kontrolü kullanır.
+
+## Aynı cüzdanı birden fazla uygulamada kullanabilir miyim?
+
+Evet. Üç uygulamanın üçü de altta Blocknet core'u çalıştırır, bu yüzden bir cüzdan tek bir uygulamaya ait değildir. Onu başka bir uygulamada 12 kurtarma kelimenizden geri yükleyin ya da cüzdan dosyasının bir kopyasını parolasıyla açın; cüzdan zinciri taradıktan sonra aynı adresi ve geçmişi görürsünüz.
+
+Geçiş yapmadan önce yeni bir yedek alın ve kurtarma kelimelerinizi çevrim dışı saklayın. Taşımadan sonra, adresi paylaşmadan veya ödemeleri ona yönlendirmeden önce tam alma adresini eski uygulamayla karşılaştırın. [Yedekleme ve geri yükleme rehberi](/tr/blog/blocknet-wallet-backup-restore/), eski kopyayı bırakmadan önce yapılacak kontroller dahil iki yolu da adım adım anlatır.
+
+## Blocknet madenciliği için cüzdan adresinizi kullanın
+
+Hangi cüzdanı seçerseniz seçin, alma adresi aynı zamanda madencilik ödeme adresinizdir. Kopyalayın, seine'e yapıştırın; işlemciniz ve ekran kartınızla bntpool.com'da madencilik yapıyorsunuz. Ödemeler aynı cüzdana gelir ve hash gücünüzü ve bakiyenizi havuzun My Stats sayfasında izleyebilirsiniz. [Cüzdan, düğüm ve madenci rehberi](/tr/blog/blocknet-wallet-node-miner/), madencilik yaparken hangi programların açık kalması gerektiğini açıklar.
+
+<CTA target="seine" title="seine'i indirin" text="Blocknet cüzdanınızdaki adresi yapıştırın ve birkaç dakika içinde bntpool.com'da madenciliğe başlayın." />

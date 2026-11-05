@@ -1,0 +1,102 @@
+---
+title: 'Carteiras Blocknet: desktop, linha de comando e Gyroid'
+seoTitle: 'Carteiras Blocknet (BNT): desktop, linha de comando e Gyroid'
+description: 'Escolha uma carteira Blocknet (BNT): o app desktop oficial, a carteira de linha de comando oficial ou o Gyroid. Compare plataformas e verifique seu download.'
+tags: ['Blocknet', 'Carteira', 'Primeiros passos']
+faq:
+  - q: 'Qual carteira Blocknet devo usar?'
+    a: 'Use a carteira desktop oficial se quiser um app gráfico no Windows, macOS, Linux ou Android. Use a carteira de linha de comando oficial para servidores, scripts e trabalho no terminal. Use o Gyroid se quiser uma carteira gráfica e ferramentas de linha de comando em um só programa no Windows, Linux ou em um Mac com Apple silicon.'
+  - q: 'Existe carteira Blocknet para Android?'
+    a: 'Sim. A versão da carteira desktop oficial inclui um pacote Android para celulares arm64, e a carteira de linha de comando oficial também publica uma build para Android arm64. Baixe qualquer uma delas na página de versões do GitHub e confira o arquivo com a lista SHA256SUMS da mesma versão antes de instalar.'
+  - q: 'Posso levar minha carteira Blocknet de um app para outro?'
+    a: 'Sim. Os três aplicativos rodam o core do Blocknet e podem restaurar uma carteira a partir das suas 12 palavras de recuperação, então as mesmas palavras dão o mesmo endereço em qualquer um deles. Você também pode carregar uma cópia do arquivo da carteira com a senha dela. Confira o endereço completo depois da mudança antes de confiar nele.'
+  - q: 'Preciso de um nó separado para usar uma carteira Blocknet?'
+    a: 'Não. Cada carteira roda ou inicia o core do Blocknet para você, que baixa a blockchain e a examina em busca dos seus pagamentos. A carteira desktop já inclui o core, a carteira de linha de comando instala e inicia o core, e o Gyroid usa um core instalado ou baixa a versão mais recente e a verifica antes de iniciá-la.'
+sourceHash: '26d3c5b2cc79'
+translation: draft
+---
+
+O Blocknet tem três aplicativos de carteira que você pode instalar hoje: a carteira desktop oficial, a carteira de linha de comando oficial e o Gyroid, uma carteira gráfica com ferramentas de linha de comando embutidas. Este guia compara onde cada uma roda e no que cada uma se destaca, mostra como verificar seu download e indica o guia passo a passo da que você escolher.
+
+## Qual carteira Blocknet devo usar?
+
+<Answer>
+Escolha a carteira desktop oficial para um app de apontar e clicar no Windows, macOS, Linux ou Android. Escolha a carteira de linha de comando oficial para servidores, scripts e uso no terminal. Escolha o Gyroid para uma carteira gráfica com ferramentas de linha de comando no mesmo programa. As três mantêm suas chaves no seu próprio computador e rodam o core do Blocknet para você.
+</Answer>
+
+| Carteira | Interface | Roda em |
+|---|---|---|
+| [Carteira desktop](https://github.com/blocknetprivacy/blocknet-gui/releases/latest) v0.23.0 | Gráfica | Windows x64, macOS (Apple silicon e Intel), Linux x64, Android arm64 |
+| [Carteira de linha de comando](https://github.com/blocknetprivacy/blocknet/releases/latest) v1.2.1 | Terminal | Windows x64, macOS (x64 e arm64), Linux (x64 e arm64), Android arm64 |
+| [Gyroid](https://github.com/obselate/gyroid/releases/latest) v0.2.9 | Gráfica e terminal | Windows x64, Linux x64, macOS com Apple silicon |
+
+As versões são as mais recentes em 5 de novembro de 2026. A página de versões de cada projeto sempre mostra a atual.
+
+## A carteira desktop oficial
+
+A carteira desktop é o app gráfico publicado pelo projeto Blocknet. Ela já vem com o core do Blocknet, então instalar um único pacote dá a você o nó e a carteira juntos. Você cria uma carteira com uma senha, guarda suas palavras de recuperação e depois usa a barra lateral para ver saldo, endereço de recebimento, pagamentos e histórico.
+
+A versão atual tem um instalador para Windows, pacotes AppImage, Debian, RPM e Flatpak para Linux, builds separadas de macOS para Macs com Apple silicon e com Intel, e um pacote Android. É o caminho mais direto se você nunca usou o Blocknet. O [passo a passo da carteira desktop](/pt-br/blog/blocknet-desktop-wallet/) leva você da tela de boas-vindas até o primeiro pagamento, com capturas de tela de cada etapa.
+
+## A carteira de linha de comando oficial
+
+O programa `blocknet` é a carteira de terminal do projeto Blocknet. Ele instala, inicia e atualiza o core do Blocknet e depois oferece um shell interativo da carteira para saldos, endereços, pagamentos, histórico, provas e chaves de visualização. Fechar o shell deixa o core rodando em segundo plano, o que combina com um servidor ou um computador sempre ligado.
+
+Ela tem a maior lista de plataformas das três: builds x64 e arm64 para Linux e macOS, além de Windows e Android. Os comandos são fáceis de repetir e de usar em scripts, e cada envio mostra uma prévia antes de você confirmar. O [guia de carteira para mineradores](/pt-br/blog/blocknet-wallet-for-mining/) mostra como criar uma carteira com ela, fazer backup das palavras de recuperação e copiar seu endereço.
+
+## Gyroid: uma carteira gráfica com ferramentas de linha de comando
+
+O Gyroid é uma carteira Blocknet de código aberto criada por obselate, colaborador do core do Blocknet, e lançada sob a licença MIT. Um só programa reúne a interface gráfica e um conjunto completo de comandos de terminal, então você pode gerenciar a mesma carteira das duas formas.
+
+O lado gráfico cobre o que você precisa no dia a dia:
+
+- criar, restaurar ou importar uma carteira e manter várias em uma mesma biblioteca
+- receber, enviar com memo e acompanhar seu histórico
+- pagar um Blocknet ID `@name` ou abrir um link de pagamento `blocknet://`
+- uma agenda de endereços, mensagens entre carteiras, um timer de bloqueio automático e telas de status de sincronização, rede e mineração
+
+<img src="/assets/blog/gyroid-wallet-library.jpg" alt="Biblioteca de carteiras do Gyroid com Create, Restore a partir de 12 palavras, Import view keys e Open file; caminho da pasta desfocado." width="1280" height="800" loading="lazy" />
+
+O lado do terminal espelha tudo isso com comandos como `gyroid status`, `gyroid balance`, `gyroid address`, `gyroid history` e `gyroid send <address> <amount> --dry-run` para ver a prévia de um pagamento antes de enviá-lo. Rode `gyroid --help` para ver a lista completa, que também inclui assinatura de mensagens, provas de pagamento e carteiras somente de visualização.
+
+O Gyroid usa um core do Blocknet que já esteja instalado. Se não encontrar nenhum, ele baixa a versão mais recente do core e a confere com a lista de checksums dessa versão antes de iniciá-la, então você não precisa configurar o nó por conta própria.
+
+<img src="/assets/blog/gyroid-first-sync.jpg" alt="Gyroid v0.2.9 na primeira inicialização, sincronizando a blockchain do Blocknet a partir do checkpoint embutido, em 64,7%." width="1280" height="800" loading="lazy" />
+
+### Do que o Gyroid precisa para rodar?
+
+No Windows e no Linux, o Gyroid precisa de um driver gráfico Vulkan. No Linux ele também precisa de uma sessão Wayland e da glibc 2.38 ou mais recente. No Mac ele precisa de Apple silicon e do macOS 14 ou mais recente: copie `Gyroid.app` da imagem de disco para Aplicativos. O app é assinado sem notarização da Apple, então na primeira vez que você abri-lo, permita a abertura em Ajustes do Sistema, Privacidade e Segurança, Abrir Mesmo Assim.
+
+## Como verifico se o download da minha carteira é genuíno?
+
+<Answer>
+Baixe o arquivo compactado e o arquivo SHA256SUMS da mesma página de versão, calcule o hash SHA-256 do arquivo compactado e compare com a linha correspondente no SHA256SUMS. As três carteiras publicam esse arquivo em toda versão. Só instale o arquivo compactado quando os hashes forem exatamente iguais, e só baixe das páginas de versões oficiais.
+</Answer>
+
+No Linux ou macOS, rode isto na pasta que contém os dois arquivos:
+
+```sh
+sha256sum --ignore-missing --check SHA256SUMS.txt
+```
+
+Em um Mac sem `sha256sum`, rode `shasum -a 256 -c SHA256SUMS.txt` e leia a linha do seu arquivo. A lista do Gyroid se chama `SHA256SUMS` em vez de `SHA256SUMS.txt`. Uma linha terminando em `OK` significa que o arquivo confere.
+
+No Windows, abra o PowerShell na sua pasta de downloads e exiba o hash:
+
+```powershell
+Get-FileHash .\gyroid-0.2.9-win-x64.zip
+```
+
+Troque o nome do arquivo pelo arquivo compactado que você baixou e compare o hash com a linha dele no arquivo de checksums. Nosso [guia sobre alertas de antivírus](/pt-br/blog/antivirus-flags-crypto-miner/) usa a mesma verificação para os downloads do seine.
+
+## Posso usar a mesma carteira em mais de um app?
+
+Sim. Os três aplicativos rodam o core do Blocknet por baixo, então uma carteira não pertence a um único app. Restaure-a em outro app com suas 12 palavras de recuperação, ou carregue uma cópia do arquivo da carteira com a senha dela, e você terá o mesmo endereço e o mesmo histórico assim que a carteira tiver examinado a cadeia.
+
+Antes de trocar, faça um backup novo e guarde suas palavras de recuperação offline. Depois da mudança, compare o endereço de recebimento completo com o do app antigo antes de compartilhá-lo ou de direcionar pagamentos para ele. O [guia de backup e restauração](/pt-br/blog/blocknet-wallet-backup-restore/) mostra os dois caminhos passo a passo, incluindo as verificações a fazer antes de aposentar a cópia antiga.
+
+## Use o endereço da sua carteira para minerar Blocknet
+
+Seja qual for a carteira escolhida, o endereço de recebimento dela também é o seu endereço de pagamentos da mineração. Copie, cole no seine e você já está minerando no bntpool.com com sua CPU e sua placa de vídeo. Os pagamentos chegam na mesma carteira, e você pode acompanhar seu hashrate e seu saldo na página My Stats da pool. O [guia de carteira, nó e minerador](/pt-br/blog/blocknet-wallet-node-miner/) explica quais programas precisam ficar abertos enquanto você minera.
+
+<CTA target="seine" title="Baixe o seine" text="Cole o endereço da sua carteira Blocknet e comece a minerar no bntpool.com em poucos minutos." />

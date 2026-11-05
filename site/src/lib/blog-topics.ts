@@ -28,6 +28,7 @@ const groups: Record<string, readonly string[]> = {
     "get-first-blocknet",
     "blocknet-wallet-node-miner",
     "blocknet-desktop-wallet",
+    "blocknet-wallets",
     "configure-seine-miner",
     "start-miner-automatically-windows",
     "update-seine-miner",

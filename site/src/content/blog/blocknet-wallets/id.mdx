@@ -1,0 +1,102 @@
+---
+title: 'Wallet Blocknet: desktop, baris perintah, dan Gyroid'
+seoTitle: 'Wallet Blocknet (BNT): desktop, baris perintah, dan Gyroid'
+description: 'Pilih wallet Blocknet (BNT): aplikasi desktop resmi, wallet baris perintah resmi, atau Gyroid. Bandingkan platform dan fiturnya, lalu verifikasi unduhan Anda.'
+tags: ['Blocknet', 'Wallet', 'Memulai']
+faq:
+  - q: 'Wallet Blocknet mana yang sebaiknya saya pakai?'
+    a: 'Pakai wallet desktop resmi jika Anda ingin aplikasi grafis di Windows, macOS, Linux, atau Android. Pakai wallet baris perintah resmi untuk server, skrip, dan pekerjaan di terminal. Pakai Gyroid jika Anda ingin wallet grafis dan alat baris perintah dalam satu program di Windows, Linux, atau Mac Apple silicon.'
+  - q: 'Apakah ada wallet Blocknet untuk Android?'
+    a: 'Ada. Rilis wallet desktop resmi menyertakan paket Android untuk ponsel arm64, dan wallet baris perintah resmi juga menerbitkan build Android arm64. Unduh salah satunya dari halaman rilis GitHub-nya dan cocokkan file dengan daftar SHA256SUMS di rilis yang sama sebelum memasangnya.'
+  - q: 'Bisakah saya memindahkan wallet Blocknet dari satu aplikasi ke aplikasi lain?'
+    a: 'Bisa. Ketiga aplikasi menjalankan core Blocknet dan dapat memulihkan wallet dari 12 kata pemulihannya, sehingga kata yang sama memberi alamat yang sama di aplikasi mana pun. Anda juga bisa membuka salinan file wallet dengan kata sandinya. Periksa alamat lengkapnya setelah pindah sebelum Anda mengandalkannya.'
+  - q: 'Apakah saya perlu node terpisah untuk memakai wallet Blocknet?'
+    a: 'Tidak. Setiap wallet menjalankan atau memulai core Blocknet untuk Anda, yang mengunduh blockchain dan memindainya untuk mencari pembayaran Anda. Wallet desktop sudah menyertakan core, wallet baris perintah memasang dan memulainya, dan Gyroid memakai core yang sudah terpasang atau mengunduh rilis terbaru dan memeriksanya sebelum menjalankannya.'
+sourceHash: '26d3c5b2cc79'
+translation: draft
+---
+
+Blocknet punya tiga aplikasi wallet yang bisa Anda pasang hari ini: wallet desktop resmi, wallet baris perintah resmi, dan Gyroid, wallet grafis dengan alat baris perintah bawaan. Panduan ini membandingkan di mana masing-masing berjalan dan apa keunggulannya, menunjukkan cara memeriksa unduhan Anda, dan mengarahkan Anda ke panduan langkah demi langkah untuk wallet yang Anda pilih.
+
+## Wallet Blocknet mana yang sebaiknya saya pakai?
+
+<Answer>
+Pilih wallet desktop resmi untuk aplikasi tunjuk-dan-klik di Windows, macOS, Linux, atau Android. Pilih wallet baris perintah resmi untuk server, skrip, dan penggunaan terminal. Pilih Gyroid untuk wallet grafis dengan alat baris perintah dalam program yang sama. Ketiganya menyimpan kunci Anda di komputer Anda sendiri dan menjalankan core Blocknet untuk Anda.
+</Answer>
+
+| Wallet | Antarmuka | Berjalan di |
+|---|---|---|
+| [Wallet desktop](https://github.com/blocknetprivacy/blocknet-gui/releases/latest) v0.23.0 | Grafis | Windows x64, macOS (Apple silicon dan Intel), Linux x64, Android arm64 |
+| [Wallet baris perintah](https://github.com/blocknetprivacy/blocknet/releases/latest) v1.2.1 | Terminal | Windows x64, macOS (x64 dan arm64), Linux (x64 dan arm64), Android arm64 |
+| [Gyroid](https://github.com/obselate/gyroid/releases/latest) v0.2.9 | Grafis dan terminal | Windows x64, Linux x64, macOS di Apple silicon |
+
+Versi di atas adalah rilis terbaru per 5 November 2026. Halaman rilis tiap proyek selalu memuat versi terkini.
+
+## Wallet desktop resmi
+
+Wallet desktop adalah aplikasi grafis yang diterbitkan proyek Blocknet. Aplikasi ini sudah menyertakan core Blocknet, jadi dengan memasang satu paket Anda mendapatkan node dan wallet sekaligus. Anda membuat wallet dengan kata sandi, menyimpan kata pemulihan, lalu memakai bilah samping untuk saldo, alamat penerima, pembayaran, dan riwayat.
+
+Rilis saat ini punya installer untuk Windows, paket AppImage, Debian, RPM, dan Flatpak untuk Linux, build macOS terpisah untuk Mac Apple silicon dan Intel, serta paket Android. Ini jalur paling langsung jika Anda belum pernah memakai Blocknet. [Panduan wallet desktop](/id/blog/blocknet-desktop-wallet/) membawa Anda dari layar sambutan hingga pembayaran pertama, dengan tangkapan layar untuk setiap langkah.
+
+## Wallet baris perintah resmi
+
+Program `blocknet` adalah wallet terminal dari proyek Blocknet. Program ini memasang, menjalankan, dan memperbarui core Blocknet, lalu memberi Anda shell wallet interaktif untuk saldo, alamat, pembayaran, riwayat, bukti pembayaran, dan view key. Menutup shell membiarkan core tetap berjalan di latar belakang, cocok untuk server atau komputer yang selalu menyala.
+
+Daftar platformnya paling luas di antara ketiganya: build x64 dan arm64 untuk Linux dan macOS, ditambah Windows dan Android. Perintahnya mudah diulang dan dimasukkan ke skrip, dan setiap pengiriman menampilkan pratinjau sebelum Anda mengonfirmasinya. [Panduan wallet untuk penambang](/id/blog/blocknet-wallet-for-mining/) menjelaskan cara membuat wallet dengannya, mencadangkan kata pemulihan, dan menyalin alamat Anda.
+
+## Gyroid: wallet grafis dengan alat baris perintah
+
+Gyroid adalah wallet Blocknet sumber terbuka buatan obselate, kontributor core Blocknet, yang dirilis dengan lisensi MIT. Satu program memuat antarmuka grafis sekaligus perangkat perintah terminal yang lengkap, jadi Anda bisa mengelola wallet yang sama dengan cara mana pun.
+
+Sisi grafisnya mencakup kebutuhan sehari-hari:
+
+- membuat, memulihkan, atau mengimpor wallet, dan menyimpan beberapa wallet dalam satu pustaka
+- menerima, mengirim dengan memo, dan memantau riwayat
+- membayar ke Blocknet ID `@name` atau membuka tautan pembayaran `blocknet://`
+- buku alamat, pesan antar-wallet, pengatur waktu kunci otomatis, serta layar status sinkronisasi, jaringan, dan penambangan
+
+<img src="/assets/blog/gyroid-wallet-library.jpg" alt="Pustaka wallet Gyroid dengan Create, Restore dari 12 kata, Import view keys, dan Open file; jalur folder diburamkan." width="1280" height="800" loading="lazy" />
+
+Sisi terminalnya mencerminkan hal itu dengan perintah seperti `gyroid status`, `gyroid balance`, `gyroid address`, `gyroid history`, dan `gyroid send <address> <amount> --dry-run` untuk melihat pratinjau pembayaran sebelum mengirimnya. Jalankan `gyroid --help` untuk daftar lengkapnya, yang juga mencakup penandatanganan pesan, bukti pembayaran, dan wallet khusus lihat (view-only).
+
+Gyroid memakai core Blocknet yang sudah terpasang. Jika tidak menemukannya, Gyroid mengunduh rilis core terbaru dan mencocokkannya dengan daftar checksum rilis tersebut sebelum menjalankannya, jadi Anda tidak perlu menyiapkan node sendiri.
+
+<img src="/assets/blog/gyroid-first-sync.jpg" alt="Gyroid v0.2.9 saat pertama dijalankan, menyinkronkan rantai Blocknet dari checkpoint bawaan, 64,7%." width="1280" height="800" loading="lazy" />
+
+### Apa yang dibutuhkan Gyroid untuk berjalan?
+
+Di Windows dan Linux, Gyroid membutuhkan driver grafis Vulkan. Di Linux, Gyroid juga membutuhkan sesi Wayland dan glibc 2.38 atau lebih baru. Di Mac, Gyroid membutuhkan Apple silicon dan macOS 14 atau lebih baru: salin `Gyroid.app` dari image disk ke Applications. Aplikasi ini ditandatangani tanpa notarisasi Apple, jadi saat pertama kali membukanya, izinkan melalui System Settings, Privacy & Security, Open Anyway.
+
+## Bagaimana cara memeriksa bahwa unduhan wallet saya asli?
+
+<Answer>
+Unduh arsip dan file SHA256SUMS dari halaman rilis yang sama, lalu hitung hash SHA-256 arsip dan bandingkan dengan baris yang sesuai di SHA256SUMS. Ketiga wallet menerbitkan file ini di setiap rilis. Pasang arsip hanya jika hash-nya cocok persis, dan unduh hanya dari halaman rilis resmi.
+</Answer>
+
+Di Linux atau macOS, jalankan ini di folder yang berisi kedua file:
+
+```sh
+sha256sum --ignore-missing --check SHA256SUMS.txt
+```
+
+Di Mac tanpa `sha256sum`, jalankan `shasum -a 256 -c SHA256SUMS.txt` dan baca baris untuk file Anda. Daftar milik Gyroid bernama `SHA256SUMS`, bukan `SHA256SUMS.txt`. Baris yang berakhir dengan `OK` berarti file cocok.
+
+Di Windows, buka PowerShell di folder unduhan Anda dan tampilkan hash-nya:
+
+```powershell
+Get-FileHash .\gyroid-0.2.9-win-x64.zip
+```
+
+Ganti nama file dengan arsip yang Anda unduh, lalu bandingkan hash dengan barisnya di file checksum. [Panduan peringatan antivirus](/id/blog/antivirus-flags-crypto-miner/) kami memakai pemeriksaan yang sama untuk unduhan seine.
+
+## Bisakah saya memakai wallet yang sama di lebih dari satu aplikasi?
+
+Bisa. Ketiga aplikasi menjalankan core Blocknet di baliknya, jadi wallet tidak terikat pada satu aplikasi. Pulihkan wallet di aplikasi lain dari 12 kata pemulihan Anda, atau buka salinan file wallet dengan kata sandinya, dan Anda akan mendapatkan alamat dan riwayat yang sama setelah wallet selesai memindai rantai.
+
+Sebelum berpindah, buat cadangan baru dan simpan kata pemulihan Anda secara offline. Setelah pindah, bandingkan alamat penerima lengkap dengan aplikasi lama sebelum Anda membagikannya atau mengarahkan pembayaran ke sana. [Panduan cadangan dan pemulihan](/id/blog/blocknet-wallet-backup-restore/) membahas kedua cara langkah demi langkah, termasuk pemeriksaan yang perlu dijalankan sebelum Anda berhenti memakai salinan lama.
+
+## Pakai alamat wallet Anda untuk menambang Blocknet
+
+Wallet mana pun yang Anda pilih, alamat penerimanya juga menjadi alamat pembayaran penambangan Anda. Salin, tempel ke seine, dan Anda sudah menambang di bntpool.com dengan CPU dan kartu grafis Anda. Pembayaran masuk ke wallet yang sama, dan Anda bisa memantau hashrate dan saldo di halaman My Stats milik pool. [Panduan wallet, node, dan penambang](/id/blog/blocknet-wallet-node-miner/) menjelaskan program mana yang perlu tetap terbuka selama Anda menambang.
+
+<CTA target="seine" title="Unduh seine" text="Tempel alamat dari wallet Blocknet Anda dan mulai menambang di bntpool.com dalam beberapa menit." />

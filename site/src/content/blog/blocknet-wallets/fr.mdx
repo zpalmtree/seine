@@ -1,0 +1,102 @@
+---
+title: 'Portefeuilles Blocknet : bureau, ligne de commande et Gyroid'
+seoTitle: 'Portefeuilles Blocknet (BNT) : bureau, terminal et Gyroid'
+description: 'Choisissez un portefeuille Blocknet (BNT) : app de bureau officielle, portefeuille officiel en ligne de commande ou Gyroid. Comparez, puis vérifiez.'
+tags: ['Blocknet', 'Portefeuille', 'Premiers pas']
+faq:
+  - q: 'Quel portefeuille Blocknet utiliser ?'
+    a: 'Utilisez le portefeuille de bureau officiel si vous voulez une application graphique sous Windows, macOS, Linux ou Android. Utilisez le portefeuille en ligne de commande officiel pour les serveurs, les scripts et le travail dans un terminal. Utilisez Gyroid si vous voulez un portefeuille graphique et des outils en ligne de commande dans un seul programme sous Windows, Linux ou sur un Mac Apple silicon.'
+  - q: 'Existe-t-il un portefeuille Blocknet pour Android ?'
+    a: 'Oui. La version du portefeuille de bureau officiel comprend un paquet Android pour les téléphones arm64, et le portefeuille en ligne de commande officiel publie aussi une version Android arm64. Téléchargez l''un ou l''autre depuis sa page de versions GitHub et vérifiez le fichier avec la liste SHA256SUMS de la même version avant de l''installer.'
+  - q: 'Puis-je passer mon portefeuille Blocknet d''une application à une autre ?'
+    a: 'Oui. Les trois applications font tourner le core Blocknet et peuvent restaurer un portefeuille à partir de ses 12 mots de récupération, donc les mêmes mots vous donnent la même adresse dans chacune d''elles. Vous pouvez aussi charger une copie du fichier du portefeuille avec son mot de passe. Vérifiez l''adresse complète après le transfert avant de vous y fier.'
+  - q: 'Faut-il un nœud séparé pour utiliser un portefeuille Blocknet ?'
+    a: 'Non. Chaque portefeuille fait tourner ou démarre le core Blocknet pour vous, qui télécharge la blockchain et l''analyse pour trouver vos paiements. Le portefeuille de bureau intègre le core, le portefeuille en ligne de commande l''installe et le démarre, et Gyroid utilise un core installé ou télécharge la dernière version et la vérifie avant de la démarrer.'
+sourceHash: '26d3c5b2cc79'
+translation: draft
+---
+
+Blocknet propose trois applications de portefeuille que vous pouvez installer dès aujourd'hui : le portefeuille de bureau officiel, le portefeuille en ligne de commande officiel et Gyroid, un portefeuille graphique avec des outils en ligne de commande intégrés. Ce guide compare les systèmes sur lesquels chacun fonctionne et ses points forts, montre comment vérifier votre téléchargement et vous renvoie vers le guide pas à pas de celui que vous choisissez.
+
+## Quel portefeuille Blocknet utiliser ?
+
+<Answer>
+Choisissez le portefeuille de bureau officiel pour une application pilotée à la souris sous Windows, macOS, Linux ou Android. Choisissez le portefeuille en ligne de commande officiel pour les serveurs, les scripts et l'usage en terminal. Choisissez Gyroid pour un portefeuille graphique avec des outils en ligne de commande dans le même programme. Les trois gardent vos clés sur votre propre ordinateur et font tourner le core Blocknet pour vous.
+</Answer>
+
+| Portefeuille | Interface | Fonctionne sous |
+|---|---|---|
+| [Portefeuille de bureau](https://github.com/blocknetprivacy/blocknet-gui/releases/latest) v0.23.0 | Graphique | Windows x64, macOS (Apple silicon et Intel), Linux x64, Android arm64 |
+| [Portefeuille en ligne de commande](https://github.com/blocknetprivacy/blocknet/releases/latest) v1.2.1 | Terminal | Windows x64, macOS (x64 et arm64), Linux (x64 et arm64), Android arm64 |
+| [Gyroid](https://github.com/obselate/gyroid/releases/latest) v0.2.9 | Graphique et terminal | Windows x64, Linux x64, macOS sur Apple silicon |
+
+Les versions indiquées sont les dernières au 5 novembre 2026. La page de versions de chaque projet affiche toujours la version actuelle.
+
+## Le portefeuille de bureau officiel
+
+Le portefeuille de bureau est l'application graphique publiée par le projet Blocknet. Il intègre le core Blocknet : en installant un seul paquet, vous obtenez à la fois le nœud et le portefeuille. Vous créez un portefeuille avec un mot de passe, vous sauvegardez vos mots de récupération, puis vous utilisez la barre latérale pour votre solde, votre adresse de réception, vos paiements et votre historique.
+
+La version actuelle propose un installateur pour Windows, des paquets AppImage, Debian, RPM et Flatpak pour Linux, des versions macOS distinctes pour les Mac Apple silicon et Intel, et un paquet Android. C'est la voie la plus directe si vous n'avez jamais utilisé Blocknet. Le [tutoriel du portefeuille de bureau](/fr/blog/blocknet-desktop-wallet/) vous mène de l'écran d'accueil à votre premier paiement, avec des captures d'écran de chaque étape.
+
+## Le portefeuille en ligne de commande officiel
+
+Le programme `blocknet` est le portefeuille en terminal du projet Blocknet. Il installe, démarre et met à jour le core Blocknet, puis vous ouvre un shell de portefeuille interactif pour les soldes, les adresses, les paiements, l'historique, les preuves et les clés de visualisation. Fermer le shell laisse le core tourner en arrière-plan, ce qui convient à un serveur ou à un ordinateur toujours allumé.
+
+C'est celui qui couvre le plus de plateformes des trois : des versions x64 et arm64 pour Linux et macOS, plus Windows et Android. Les commandes sont faciles à répéter et à scripter, et chaque envoi affiche un aperçu avant que vous le confirmiez. Le [guide du portefeuille pour les mineurs](/fr/blog/blocknet-wallet-for-mining/) explique comment créer un portefeuille avec lui, sauvegarder les mots de récupération et copier votre adresse.
+
+## Gyroid : un portefeuille graphique avec des outils en ligne de commande
+
+Gyroid est un portefeuille Blocknet open source créé par obselate, contributeur du core Blocknet, et publié sous licence MIT. Un seul programme réunit l'interface graphique et un ensemble complet de commandes en terminal, vous pouvez donc gérer le même portefeuille de l'une ou l'autre façon.
+
+La partie graphique couvre ce dont vous avez besoin au quotidien :
+
+- créer, restaurer ou importer un portefeuille, et en garder plusieurs dans une même bibliothèque
+- recevoir, envoyer avec un mémo et suivre votre historique
+- payer un Blocknet ID `@name` ou ouvrir un lien de paiement `blocknet://`
+- un carnet d'adresses, des messages entre portefeuilles, un minuteur de verrouillage automatique et des écrans d'état pour la synchronisation, le réseau et le minage
+
+<img src="/assets/blog/gyroid-wallet-library.jpg" alt="Bibliothèque de portefeuilles de Gyroid avec Create, Restore à partir de 12 mots, Import view keys et Open file ; chemin du dossier flouté." width="1280" height="800" loading="lazy" />
+
+La partie terminal la reflète avec des commandes comme `gyroid status`, `gyroid balance`, `gyroid address`, `gyroid history` et `gyroid send <address> <amount> --dry-run` pour prévisualiser un paiement avant de l'envoyer. Lancez `gyroid --help` pour la liste complète, qui couvre aussi la signature de messages, les preuves de paiement et les portefeuilles en lecture seule.
+
+Gyroid utilise un core Blocknet déjà installé. S'il n'en trouve pas, il télécharge la dernière version du core et la vérifie avec la liste des sommes de contrôle de cette version avant de la démarrer, vous n'avez donc pas à configurer le nœud vous-même.
+
+<img src="/assets/blog/gyroid-first-sync.jpg" alt="Gyroid v0.2.9 au premier démarrage, synchronisant la chaîne Blocknet depuis son point de contrôle intégré, à 64,7 %." width="1280" height="800" loading="lazy" />
+
+### De quoi Gyroid a-t-il besoin pour fonctionner ?
+
+Sous Windows et Linux, Gyroid a besoin d'un pilote graphique Vulkan. Sous Linux, il lui faut aussi une session Wayland et glibc 2.38 ou plus récent. Sur Mac, il lui faut Apple silicon et macOS 14 ou plus récent : copiez `Gyroid.app` depuis l'image disque vers Applications. L'application est signée sans notarisation Apple, donc la première fois que vous l'ouvrez, autorisez-la dans Réglages Système, Confidentialité et sécurité, Ouvrir quand même.
+
+## Comment vérifier que le téléchargement de mon portefeuille est authentique ?
+
+<Answer>
+Téléchargez l'archive et le fichier SHA256SUMS depuis la même page de version, puis calculez le hash SHA-256 de l'archive et comparez-le à la ligne correspondante de SHA256SUMS. Les trois portefeuilles publient ce fichier à chaque version. N'installez l'archive que si les hashs correspondent exactement, et ne téléchargez que depuis les pages de versions officielles.
+</Answer>
+
+Sous Linux ou macOS, lancez ceci dans le dossier qui contient les deux fichiers :
+
+```sh
+sha256sum --ignore-missing --check SHA256SUMS.txt
+```
+
+Sur un Mac sans `sha256sum`, lancez `shasum -a 256 -c SHA256SUMS.txt` et lisez la ligne de votre fichier. La liste de Gyroid s'appelle `SHA256SUMS` et non `SHA256SUMS.txt`. Une ligne qui se termine par `OK` signifie que le fichier correspond.
+
+Sous Windows, ouvrez PowerShell dans votre dossier de téléchargements et affichez le hash :
+
+```powershell
+Get-FileHash .\gyroid-0.2.9-win-x64.zip
+```
+
+Remplacez le nom du fichier par celui de l'archive que vous avez téléchargée, puis comparez le hash à sa ligne dans le fichier des sommes de contrôle. Notre [guide sur les alertes antivirus](/fr/blog/antivirus-flags-crypto-miner/) utilise la même vérification pour les téléchargements de seine.
+
+## Puis-je utiliser le même portefeuille dans plusieurs applications ?
+
+Oui. Les trois applications font tourner le core Blocknet en arrière-plan, donc un portefeuille n'appartient pas à une seule application. Restaurez-le dans une autre application avec vos 12 mots de récupération, ou chargez une copie du fichier du portefeuille avec son mot de passe, et vous retrouvez la même adresse et le même historique une fois que le portefeuille a analysé la chaîne.
+
+Avant de changer, faites une nouvelle sauvegarde et gardez vos mots de récupération hors ligne. Après le transfert, comparez l'adresse de réception complète avec celle de l'ancienne application avant de la partager ou d'y diriger des paiements. Le [guide de sauvegarde et de restauration](/fr/blog/blocknet-wallet-backup-restore/) détaille les deux méthodes pas à pas, y compris les vérifications à faire avant de retirer l'ancienne copie.
+
+## Utilisez l'adresse de votre portefeuille pour miner du Blocknet
+
+Quel que soit le portefeuille choisi, son adresse de réception est aussi votre adresse de paiement de minage. Copiez-la, collez-la dans seine, et vous minez sur bntpool.com avec votre CPU et votre carte graphique. Les paiements arrivent dans le même portefeuille, et vous pouvez suivre votre taux de hachage (hashrate) et votre solde sur la page My Stats du pool. Le [guide portefeuille, nœud et mineur](/fr/blog/blocknet-wallet-node-miner/) explique quels programmes doivent rester ouverts pendant que vous minez.
+
+<CTA target="seine" title="Télécharger seine" text="Collez l'adresse de votre portefeuille Blocknet et commencez à miner sur bntpool.com en quelques minutes." />

@@ -1,0 +1,102 @@
+---
+title: 'Blocknet wallets: desktop, command line and Gyroid'
+seoTitle: 'Blocknet (BNT) wallets: desktop, command line and Gyroid'
+description: 'Choose a Blocknet (BNT) wallet: the official desktop app, the official command-line wallet or Gyroid. Compare platforms and features, then verify your download.'
+date: 2026-11-05
+tags: ['Blocknet', 'Wallet', 'Getting started']
+faq:
+  - q: 'Which Blocknet wallet should I use?'
+    a: 'Use the official desktop wallet if you want a graphical app on Windows, macOS, Linux or Android. Use the official command-line wallet for servers, scripts and terminal work. Use Gyroid if you want a graphical wallet and command-line tools in one program on Windows, Linux or an Apple silicon Mac.'
+  - q: 'Is there a Blocknet wallet for Android?'
+    a: 'Yes. The official desktop wallet release includes an Android package for arm64 phones, and the official command-line wallet also publishes an Android arm64 build. Download either from its GitHub releases page and check the file against the SHA256SUMS list in the same release before installing it.'
+  - q: 'Can I move my Blocknet wallet from one app to another?'
+    a: 'Yes. All three applications run the Blocknet core and can restore a wallet from its 12 recovery words, so the same words give you the same address in any of them. You can also load a copy of the wallet file with its password. Check the full address after the move before you rely on it.'
+  - q: 'Do I need a separate node to use a Blocknet wallet?'
+    a: 'No. Each wallet runs or starts the Blocknet core for you, which downloads the blockchain and scans it for your payments. The desktop wallet bundles the core, the command-line wallet installs and starts it, and Gyroid uses an installed core or downloads the latest release and checks it before starting it.'
+related: [blocknet-desktop-wallet, blocknet-wallet-for-mining, blocknet-wallet-backup-restore, blocknet-wallet-node-miner]
+---
+
+Blocknet has three wallet applications you can install today: the official desktop wallet, the official command-line wallet and Gyroid, a graphical wallet with built-in command-line tools. This guide compares what each one runs on and what it does well, shows how to check your download, and points you to the step-by-step guide for the one you choose.
+
+## Which Blocknet wallet should I use?
+
+<Answer>
+Choose the official desktop wallet for a point-and-click app on Windows, macOS, Linux or Android. Choose the official command-line wallet for servers, scripts and terminal use. Choose Gyroid for a graphical wallet with command-line tools in the same program. All three keep your keys on your own computer and run the Blocknet core for you.
+</Answer>
+
+| Wallet | Interface | Runs on |
+|---|---|---|
+| [Desktop wallet](https://github.com/blocknetprivacy/blocknet-gui/releases/latest) v0.23.0 | Graphical | Windows x64, macOS (Apple silicon and Intel), Linux x64, Android arm64 |
+| [Command-line wallet](https://github.com/blocknetprivacy/blocknet/releases/latest) v1.2.1 | Terminal | Windows x64, macOS (x64 and arm64), Linux (x64 and arm64), Android arm64 |
+| [Gyroid](https://github.com/obselate/gyroid/releases/latest) v0.2.9 | Graphical and terminal | Windows x64, Linux x64, macOS on Apple silicon |
+
+Versions are the latest releases on November 5, 2026. Each project's releases page always has the current one.
+
+## The official desktop wallet
+
+The desktop wallet is the graphical app published by the Blocknet project. It bundles the Blocknet core, so installing one package gives you the node and the wallet together. You create a wallet with a password, save your recovery words, and then use the sidebar for your balance, receiving address, payments and history.
+
+The current release has an installer for Windows, AppImage, Debian, RPM and Flatpak packages for Linux, separate macOS builds for Apple silicon and Intel Macs, and an Android package. It's the most direct route if you have never used Blocknet before. The [desktop wallet walkthrough](/blog/blocknet-desktop-wallet/) takes you from the welcome screen to your first payment with screenshots of each step.
+
+## The official command-line wallet
+
+The `blocknet` program is the Blocknet project's terminal wallet. It installs, starts and updates the Blocknet core, then gives you an interactive wallet shell for balances, addresses, payments, history, proofs and view keys. Closing the shell leaves the core running in the background, which suits a server or an always-on computer.
+
+It has the widest platform list of the three: x64 and arm64 builds for Linux and macOS, plus Windows and Android. Commands are easy to repeat and script, and every send shows a preview before you confirm it. The [wallet guide for miners](/blog/blocknet-wallet-for-mining/) walks through creating a wallet with it, backing up the recovery words and copying your address.
+
+## Gyroid: a graphical wallet with command-line tools
+
+Gyroid is an open-source Blocknet wallet by obselate, a contributor to the Blocknet core, released under the MIT license. One program holds both the graphical interface and a full set of terminal commands, so you can manage the same wallet either way.
+
+The graphical side covers what you need day to day:
+
+- create, restore or import a wallet, and keep several in one library
+- receive, send with a memo and follow your history
+- pay a Blocknet ID `@name` or open a `blocknet://` payment link
+- an address book, wallet-to-wallet messages, an auto-lock timer, and screens for sync, network and mining status
+
+<img src="/assets/blog/gyroid-wallet-library.jpg" alt="Gyroid wallet library with Create, Restore from 12 words, Import view keys and Open file; folder path blurred." width="1280" height="800" loading="lazy" />
+
+The terminal side mirrors it with commands such as `gyroid status`, `gyroid balance`, `gyroid address`, `gyroid history`, and `gyroid send <address> <amount> --dry-run` to preview a payment before sending it. Run `gyroid --help` for the full list, which also covers message signing, payment proofs and view-only wallets.
+
+Gyroid uses a Blocknet core that's already installed. If it doesn't find one, it downloads the latest core release and checks it against that release's checksum list before starting it, so you don't have to set up the node yourself.
+
+<img src="/assets/blog/gyroid-first-sync.jpg" alt="Gyroid v0.2.9 on its first start, syncing the Blocknet chain from its built-in checkpoint at 64.7%." width="1280" height="800" loading="lazy" />
+
+### What does Gyroid need to run?
+
+On Windows and Linux, Gyroid needs a Vulkan graphics driver. On Linux it also needs a Wayland session and glibc 2.38 or newer. On a Mac it needs Apple silicon and macOS 14 or later: copy `Gyroid.app` from the disk image to Applications. The app is signed without Apple notarization, so the first time you open it, allow it under System Settings, Privacy & Security, Open Anyway.
+
+## How do I check that my wallet download is genuine?
+
+<Answer>
+Download the archive and the SHA256SUMS file from the same release page, then compute the archive's SHA-256 hash and compare it with the matching line in SHA256SUMS. All three wallets publish this file with every release. Only install the archive when the hashes match exactly, and only download from the official releases pages.
+</Answer>
+
+On Linux or macOS, run this in the folder that holds both files:
+
+```sh
+sha256sum --ignore-missing --check SHA256SUMS.txt
+```
+
+On a Mac without `sha256sum`, run `shasum -a 256 -c SHA256SUMS.txt` and read the line for your file. Gyroid's list is named `SHA256SUMS` rather than `SHA256SUMS.txt`. A line ending in `OK` means the file matches.
+
+On Windows, open PowerShell in your downloads folder and print the hash:
+
+```powershell
+Get-FileHash .\gyroid-0.2.9-win-x64.zip
+```
+
+Replace the file name with the archive you downloaded, then compare the hash with its line in the checksum file. Our [guide to antivirus warnings](/blog/antivirus-flags-crypto-miner/) uses the same check for seine downloads.
+
+## Can I use the same wallet in more than one app?
+
+Yes. All three applications run the Blocknet core underneath, so a wallet doesn't belong to one app. Restore it in another app from your 12 recovery words, or load a copy of the wallet file with its password, and you get the same address and history once the wallet has scanned the chain.
+
+Before you switch, make a fresh backup and keep your recovery words offline. After the move, compare the full receiving address with the old app before you share it or point payouts at it. The [backup and restore guide](/blog/blocknet-wallet-backup-restore/) covers both routes step by step, including the checks to run before you retire the old copy.
+
+## Use your wallet address to mine Blocknet
+
+Whichever wallet you pick, its receiving address is also your mining payout address. Copy it, paste it into seine, and you're mining on bntpool.com with your CPU and graphics card. Payouts arrive in the same wallet, and you can follow your hashrate and balance on the pool's My Stats page. The [wallet, node and miner guide](/blog/blocknet-wallet-node-miner/) explains which programs need to stay open while you mine.
+
+<CTA target="seine" title="Download seine" text="Paste the address from your Blocknet wallet and start mining on bntpool.com in a few minutes." />

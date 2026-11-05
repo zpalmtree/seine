@@ -1,0 +1,102 @@
+---
+title: 'Blocknet-wallets: desktop, commandline en Gyroid'
+seoTitle: 'Blocknet (BNT) wallets: desktop, commandline en Gyroid'
+description: 'Kies een Blocknet-wallet (BNT): de officiële desktopapp, de officiële commandline-wallet of Gyroid. Vergelijk platforms en controleer je download.'
+tags: ['Blocknet', 'Wallet', 'Aan de slag']
+faq:
+  - q: 'Welke Blocknet-wallet moet ik gebruiken?'
+    a: 'Gebruik de officiële desktopwallet als je een grafische app wilt op Windows, macOS, Linux of Android. Gebruik de officiële commandline-wallet voor servers, scripts en werk in de terminal. Gebruik Gyroid als je een grafische wallet en commandline-tools in één programma wilt op Windows, Linux of een Mac met Apple silicon.'
+  - q: 'Is er een Blocknet-wallet voor Android?'
+    a: 'Ja. De release van de officiële desktopwallet bevat een Android-pakket voor arm64-telefoons, en de officiële commandline-wallet publiceert ook een build voor Android arm64. Download een van beide via de releasepagina op GitHub en controleer het bestand met de SHA256SUMS-lijst uit dezelfde release voordat je het installeert.'
+  - q: 'Kan ik mijn Blocknet-wallet van de ene app naar de andere verhuizen?'
+    a: 'Ja. Alle drie de applicaties draaien de Blocknet-core en kunnen een wallet herstellen met de 12 herstelwoorden, dus dezelfde woorden geven je in elk van de drie hetzelfde adres. Je kunt ook een kopie van het walletbestand laden met het bijbehorende wachtwoord. Controleer na de verhuizing het volledige adres voordat je erop vertrouwt.'
+  - q: 'Heb ik een aparte node nodig om een Blocknet-wallet te gebruiken?'
+    a: 'Nee. Elke wallet draait of start de Blocknet-core voor je, die de blockchain downloadt en doorzoekt op jouw betalingen. De desktopwallet heeft de core ingebouwd, de commandline-wallet installeert en start hem, en Gyroid gebruikt een geïnstalleerde core of downloadt de nieuwste release en controleert die voordat hij hem start.'
+sourceHash: '26d3c5b2cc79'
+translation: draft
+---
+
+Blocknet heeft drie walletapplicaties die je vandaag kunt installeren: de officiële desktopwallet, de officiële commandline-wallet en Gyroid, een grafische wallet met ingebouwde commandline-tools. Deze gids vergelijkt waarop elk ervan draait en waar elk goed in is, laat zien hoe je je download controleert en verwijst je naar de stapsgewijze handleiding voor de wallet die je kiest.
+
+## Welke Blocknet-wallet moet ik gebruiken?
+
+<Answer>
+Kies de officiële desktopwallet voor een app die je met de muis bedient op Windows, macOS, Linux of Android. Kies de officiële commandline-wallet voor servers, scripts en gebruik in de terminal. Kies Gyroid voor een grafische wallet met commandline-tools in hetzelfde programma. Alle drie houden je sleutels op je eigen computer en draaien de Blocknet-core voor je.
+</Answer>
+
+| Wallet | Interface | Draait op |
+|---|---|---|
+| [Desktopwallet](https://github.com/blocknetprivacy/blocknet-gui/releases/latest) v0.23.0 | Grafisch | Windows x64, macOS (Apple silicon en Intel), Linux x64, Android arm64 |
+| [Commandline-wallet](https://github.com/blocknetprivacy/blocknet/releases/latest) v1.2.1 | Terminal | Windows x64, macOS (x64 en arm64), Linux (x64 en arm64), Android arm64 |
+| [Gyroid](https://github.com/obselate/gyroid/releases/latest) v0.2.9 | Grafisch en terminal | Windows x64, Linux x64, macOS op Apple silicon |
+
+De versies zijn de nieuwste releases op 5 november 2026. De releasepagina van elk project toont altijd de actuele versie.
+
+## De officiële desktopwallet
+
+De desktopwallet is de grafische app die het Blocknet-project publiceert. De Blocknet-core zit erin, dus met één pakket installeer je de node en de wallet samen. Je maakt een wallet aan met een wachtwoord, bewaart je herstelwoorden en gebruikt daarna de zijbalk voor je saldo, ontvangstadres, betalingen en geschiedenis.
+
+De huidige release heeft een installatieprogramma voor Windows, AppImage-, Debian-, RPM- en Flatpak-pakketten voor Linux, aparte macOS-builds voor Macs met Apple silicon en met Intel, en een Android-pakket. Het is de meest directe route als je Blocknet nog nooit hebt gebruikt. De [handleiding voor de desktopwallet](/nl/blog/blocknet-desktop-wallet/) neemt je mee van het welkomstscherm tot je eerste betaling, met schermafbeeldingen van elke stap.
+
+## De officiële commandline-wallet
+
+Het programma `blocknet` is de terminalwallet van het Blocknet-project. Het installeert, start en updatet de Blocknet-core en geeft je daarna een interactieve walletshell voor saldi, adressen, betalingen, geschiedenis, bewijzen en view keys. Als je de shell sluit, blijft de core op de achtergrond draaien, wat goed past bij een server of een computer die altijd aan staat.
+
+Van de drie ondersteunt deze de meeste platforms: x64- en arm64-builds voor Linux en macOS, plus Windows en Android. Commando's zijn makkelijk te herhalen en in scripts te gebruiken, en elke verzending toont een voorbeeld voordat je hem bevestigt. De [walletgids voor miners](/nl/blog/blocknet-wallet-for-mining/) laat zien hoe je er een wallet mee aanmaakt, een back-up van de herstelwoorden maakt en je adres kopieert.
+
+## Gyroid: een grafische wallet met commandline-tools
+
+Gyroid is een opensource Blocknet-wallet van obselate, een bijdrager aan de Blocknet-core, uitgebracht onder de MIT-licentie. Eén programma bevat zowel de grafische interface als een volledige set terminalcommando's, zodat je dezelfde wallet op beide manieren kunt beheren.
+
+De grafische kant dekt wat je dagelijks nodig hebt:
+
+- een wallet aanmaken, herstellen of importeren, en er meerdere in één bibliotheek bewaren
+- ontvangen, verzenden met een memo en je geschiedenis volgen
+- betalen aan een Blocknet ID `@name` of een `blocknet://`-betaallink openen
+- een adresboek, berichten tussen wallets, een timer voor automatisch vergrendelen en schermen met de status van synchronisatie, netwerk en mining
+
+<img src="/assets/blog/gyroid-wallet-library.jpg" alt="Walletbibliotheek van Gyroid met Create, Restore vanuit 12 woorden, Import view keys en Open file; mappad vervaagd." width="1280" height="800" loading="lazy" />
+
+De terminalkant volgt dat met commando's zoals `gyroid status`, `gyroid balance`, `gyroid address`, `gyroid history` en `gyroid send <address> <amount> --dry-run` om een betaling te bekijken voordat je hem verstuurt. Voer `gyroid --help` uit voor de volledige lijst, die ook het ondertekenen van berichten, betalingsbewijzen en wallets met alleen leesrechten omvat.
+
+Gyroid gebruikt een Blocknet-core die al geïnstalleerd is. Vindt het er geen, dan downloadt het de nieuwste core-release en controleert die met de checksumlijst van die release voordat het hem start, zodat je de node niet zelf hoeft in te stellen.
+
+<img src="/assets/blog/gyroid-first-sync.jpg" alt="Gyroid v0.2.9 bij de eerste start, synchroniseert de Blocknet-chain vanaf het ingebouwde checkpoint, op 64,7%." width="1280" height="800" loading="lazy" />
+
+### Wat heeft Gyroid nodig om te draaien?
+
+Op Windows en Linux heeft Gyroid een grafische driver met Vulkan nodig. Op Linux heeft het ook een Wayland-sessie en glibc 2.38 of nieuwer nodig. Op een Mac heeft het Apple silicon en macOS 14 of nieuwer nodig: kopieer `Gyroid.app` uit de schijfkopie naar Apps. De app is ondertekend zonder notarisatie door Apple, dus sta hem de eerste keer dat je hem opent toe via Systeeminstellingen, Privacy en beveiliging, Open toch.
+
+## Hoe controleer ik of mijn walletdownload echt is?
+
+<Answer>
+Download het archief en het bestand SHA256SUMS van dezelfde releasepagina, bereken dan de SHA-256-hash van het archief en vergelijk die met de bijbehorende regel in SHA256SUMS. Alle drie de wallets publiceren dit bestand bij elke release. Installeer het archief alleen als de hashes exact overeenkomen, en download alleen van de officiële releasepagina's.
+</Answer>
+
+Voer op Linux of macOS dit uit in de map waarin beide bestanden staan:
+
+```sh
+sha256sum --ignore-missing --check SHA256SUMS.txt
+```
+
+Op een Mac zonder `sha256sum` voer je `shasum -a 256 -c SHA256SUMS.txt` uit en lees je de regel voor jouw bestand. De lijst van Gyroid heet `SHA256SUMS` in plaats van `SHA256SUMS.txt`. Een regel die eindigt op `OK` betekent dat het bestand overeenkomt.
+
+Open op Windows PowerShell in je downloadmap en toon de hash:
+
+```powershell
+Get-FileHash .\gyroid-0.2.9-win-x64.zip
+```
+
+Vervang de bestandsnaam door het archief dat je hebt gedownload en vergelijk de hash daarna met de bijbehorende regel in het checksumbestand. Onze [gids over antiviruswaarschuwingen](/nl/blog/antivirus-flags-crypto-miner/) gebruikt dezelfde controle voor downloads van seine.
+
+## Kan ik dezelfde wallet in meer dan één app gebruiken?
+
+Ja. Alle drie de applicaties draaien onder de motorkap de Blocknet-core, dus een wallet hoort niet bij één app. Herstel hem in een andere app met je 12 herstelwoorden, of laad een kopie van het walletbestand met het bijbehorende wachtwoord, en je krijgt hetzelfde adres en dezelfde geschiedenis zodra de wallet de chain heeft gescand.
+
+Maak voordat je overstapt een nieuwe back-up en bewaar je herstelwoorden offline. Vergelijk na de verhuizing het volledige ontvangstadres met dat in de oude app voordat je het deelt of er uitbetalingen naartoe stuurt. De [gids voor back-up en herstel](/nl/blog/blocknet-wallet-backup-restore/) behandelt beide routes stap voor stap, inclusief de controles die je doet voordat je de oude kopie buiten gebruik stelt.
+
+## Gebruik je walletadres om Blocknet te minen
+
+Welke wallet je ook kiest, het ontvangstadres is ook je uitbetalingsadres voor mining. Kopieer het, plak het in seine en je bent aan het minen op bntpool.com met je CPU en je videokaart. Uitbetalingen komen binnen in dezelfde wallet, en je kunt je hashrate en saldo volgen op de pagina My Stats van de pool. De [gids over wallet, node en miner](/nl/blog/blocknet-wallet-node-miner/) legt uit welke programma's open moeten blijven terwijl je mint.
+
+<CTA target="seine" title="Download seine" text="Plak het adres uit je Blocknet-wallet en begin binnen een paar minuten met minen op bntpool.com." />
