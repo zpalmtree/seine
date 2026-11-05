@@ -95,11 +95,12 @@ fn cohort_stream_kernel(
         if identity.family != Some(6) {
             return None;
         }
-        // Alder Lake, Raptor Lake and Arrow Lake desktops (AVX2 only), and Haswell-E/EP
-        // and Broadwell-E/EP (06h/3Fh, 4Fh), use the AVX2 streaming path.
+        // Alder Lake, Raptor Lake and Arrow Lake desktops (AVX2 only), Haswell-E/EP and
+        // Broadwell-E/EP (06h/3Fh, 4Fh), and Kaby Lake, Coffee Lake and Comet Lake
+        // (06h/9Eh, A5h) use the AVX2 streaming path.
         if matches!(
             identity.model,
-            Some(0x97 | 0x9a | 0xb7 | 0xba | 0xbf | 0xc6 | 0x3f | 0x4f)
+            Some(0x97 | 0x9a | 0xb7 | 0xba | 0xbf | 0xc6 | 0x3f | 0x4f | 0x9e | 0xa5)
         ) {
             return (AVX2_STREAM_OS && supported.contains(&CpuKernel::Avx2Stream))
                 .then_some(CpuKernel::Avx2Stream);
@@ -182,9 +183,9 @@ const STARTUP_STREAM_MIN_WORKERS: usize = 8;
 
 /// Ryzen 3000 and 4000 (17h 71h, 60h), Ryzen 5000 (19h 21h, 50h), Ryzen 7000 (19h
 /// 61h), EPYC 9004 (19h 11h, A0h), EPYC 9005 (1Ah 02h), Ryzen 9000 (1Ah 44h), Intel
-/// 12th Gen to Core Ultra 200 desktops, Haswell-E/EP and Broadwell-E/EP, and Skylake-SP
-/// to Granite Rapids Xeons start on their cohort kernel at any worker count; EPYC 7002
-/// and 7003 (17h 31h, 19h 01h) from four workers.
+/// 12th Gen to Core Ultra 200 desktops, Kaby Lake to Comet Lake, Haswell-E/EP and
+/// Broadwell-E/EP, and Skylake-SP to Granite Rapids Xeons start on their cohort kernel at
+/// any worker count; EPYC 7002 and 7003 (17h 31h, 19h 01h) from four workers.
 fn startup_stream_min_workers(identity: &crate::runtime_identity::CpuIdentity) -> usize {
     let any_count = match identity.vendor.as_deref() {
         Some("AuthenticAMD") => matches!(
@@ -196,8 +197,8 @@ fn startup_stream_min_workers(identity: &crate::runtime_identity::CpuIdentity) -
         Some("GenuineIntel") => is_intel_model(
             identity,
             &[
-                0x97, 0x9a, 0xb7, 0xba, 0xbf, 0xc6, 0x3f, 0x4f, 0x55, 0x6a, 0x6c, 0x8f, 0xcf, 0xad,
-                0xae,
+                0x97, 0x9a, 0xb7, 0xba, 0xbf, 0xc6, 0x3f, 0x4f, 0x9e, 0xa5, 0x55, 0x6a, 0x6c, 0x8f,
+                0xcf, 0xad, 0xae,
             ],
         ),
         _ => false,
@@ -857,15 +858,17 @@ mod tests {
             candidates_for(&CpuIdentity::default(), &supported),
             supported[..2]
         );
-        // Alder Lake, Raptor Lake and Arrow Lake desktops (AVX2 only) start on AVX2
-        // streaming; other Intel client models keep their start.
+        // Alder Lake, Raptor Lake and Arrow Lake desktops (AVX2 only) and Kaby Lake to
+        // Comet Lake start on AVX2 streaming; other Intel client models keep their start.
         let avx2 = [CpuKernel::Avx2, CpuKernel::Avx2Stream];
         for (model, expected) in [
             (0x97, Some(CpuKernel::Avx2Stream)),
             (0xbf, Some(CpuKernel::Avx2Stream)),
             (0xc6, Some(CpuKernel::Avx2Stream)),
-            (0x9e, None),
-            (0xa5, None),
+            (0x9e, Some(CpuKernel::Avx2Stream)),
+            (0xa5, Some(CpuKernel::Avx2Stream)),
+            (0x8e, None),
+            (0xa6, None),
         ] {
             let intel = CpuIdentity {
                 vendor: Some("GenuineIntel".into()),
@@ -920,7 +923,7 @@ mod tests {
             (0x6c, true),
             (0xad, true),
             (0xae, true),
-            (0x9e, false),
+            (0x8e, false),
         ] {
             let xeon = CpuIdentity {
                 vendor: Some("GenuineIntel".into()),
@@ -950,9 +953,15 @@ mod tests {
             ..skx.clone()
         };
         assert_eq!(startup_kernel_for(&bdw, &supported[1..]), None);
-        // Haswell-E/EP and Broadwell-E/EP start on AVX2 streaming at any count; Coffee
-        // Lake does not.
-        for (model, stream) in [(0x3f, true), (0x4f, true), (0x9e, false), (0x8e, false)] {
+        // Haswell-E/EP, Broadwell-E/EP and Kaby Lake to Comet Lake start on AVX2 streaming
+        // at any count; Kaby Lake R mobile does not.
+        for (model, stream) in [
+            (0x3f, true),
+            (0x4f, true),
+            (0x9e, true),
+            (0xa5, true),
+            (0x8e, false),
+        ] {
             let intel = CpuIdentity {
                 model: Some(model),
                 ..skx.clone()
