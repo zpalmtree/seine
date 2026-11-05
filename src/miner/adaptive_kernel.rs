@@ -538,7 +538,24 @@ fn turin_depth6_startup(
 fn genoa_stream_context(context: &Context) -> bool {
     context.members == 1
         && context.workers == [32]
-        && context.backing == [[0, 0, 32 * CPU_LANE_MEMORY_BYTES, 0, 0]]
+        && context
+            .backing
+            .first()
+            .is_some_and(|backing| full_thp(backing, 32 * CPU_LANE_MEMORY_BYTES))
+}
+
+/// Share of arena bytes on transparent huge pages that counts as full THP backing.
+const FULL_THP_PERCENT: u64 = 95;
+
+/// All `bytes` are on transparent huge pages apart from a few 4 KiB pages, such as
+/// the ends of a mapping that is not 2 MiB aligned.
+fn full_thp(backing: &[u64; 5], bytes: u64) -> bool {
+    let [large, large_1g, thp, regular, heap] = *backing;
+    large == 0
+        && large_1g == 0
+        && heap == 0
+        && thp.saturating_add(regular) == bytes
+        && thp.saturating_mul(100) >= bytes.saturating_mul(FULL_THP_PERCENT)
 }
 
 // Discovering 32 workers on Windows takes many minutes, so start there while
@@ -1129,6 +1146,38 @@ mod tests {
         cfg.cpu_auto_threads_cap = 32;
         host.runtime_environment = "wsl2".into();
         assert!(!genoa_stream_startup(&cfg, &host, &identity, &paths));
+    }
+
+    #[test]
+    fn full_thp_gate_allows_a_few_small_pages_but_not_partial_coverage() {
+        let total = 32 * CPU_LANE_MEMORY_BYTES;
+        let context = |backing: [u64; 5]| Context {
+            members: 1,
+            workers: vec![32],
+            backing: vec![backing],
+        };
+        assert!(genoa_stream_context(&context([0, 0, total, 0, 0])));
+        // An unaligned mapping keeps its two ends on 4 KiB pages.
+        let ends = 2 * 1024 * 1024;
+        assert!(genoa_stream_context(&context([
+            0,
+            0,
+            total - ends,
+            ends,
+            0
+        ])));
+        assert!(!genoa_stream_context(&context([
+            0,
+            0,
+            total / 2,
+            total / 2,
+            0
+        ])));
+        assert!(!genoa_stream_context(&context([0, 0, 0, total, 0])));
+        assert!(!genoa_stream_context(&context([total, 0, 0, 0, 0])));
+        let mut fewer = context([0, 0, total, 0, 0]);
+        fewer.workers = vec![31];
+        assert!(!genoa_stream_context(&fewer));
     }
 
     #[test]
