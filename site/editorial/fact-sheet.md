@@ -214,8 +214,8 @@ Initial research checked 2026-10-25; release, platform and pool facts rechecked 
   - Source: `blocknet-core@pool:api_handlers.go:25`, `blocknet@master:docs/reference-core.md:212`, `blocknet-pool@master:frontend/src/lib/format.ts:114` (checked 2026-10-25)
 - The official site does not state a ticker.
   - Source: https://blocknetcrypto.com (checked 2026-10-25)
-- **Never use the `$BNT` cashtag.** It belongs to Bancor.
-  - Source: `marketing/README.md:81`, `marketing/brand/taglines.md:56` (checked 2026-10-25)
+- **Use the `$BNT` cashtag for Blocknet.** We are reclaiming it from Bancor.
+  - Source: owner decision, 2026-11-05; `marketing/README.md`
 - **Name collision:** an unrelated older project, "Blocknet" at blocknet.org (an interoperability protocol, token **BLOCK**, XBridge/XRouter), ranks for the same name.
   - Our project brands as "Blocknet Privacy" (@blocknetprivacy, blocknetcrypto.com).
   - Never link blocknet.org, and never conflate it with this project.
@@ -454,8 +454,8 @@ From the Blocknet marketing kit, close to verbatim:
   - Source: `marketing/README.md:79`; `marketing/brand/taglines.md:54` (checked 2026-10-25)
 - "Don't say 'more private than Monero' (same ring size today, and Monero's FCMP++ will exceed it)." Also avoid "Most private coin".
   - Source: `marketing/README.md:80`; `marketing/brand/taglines.md:53` (checked 2026-10-25)
-- "Avoid the `$BNT` cashtag; it collides with Bancor."
-  - Source: `marketing/README.md:81`; `marketing/brand/taglines.md:56` (checked 2026-10-25)
+- The `$BNT` cashtag is welcome (owner decision, 2026-11-05; replaces the earlier "avoid" rule).
+  - Source: `marketing/README.md`
 - Positioning: "Lead with usability and fair launch, not 'most private'."
   - Source: `marketing/brand/taglines.md:3-4` (checked 2026-10-25)
 

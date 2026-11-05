@@ -342,3 +342,7 @@ The user approved a general explainer with a short public-announcement section a
 | blocknet wallet; bnt wallet; best blocknet wallet; blocknet gui wallet; blocknet cli wallet; gyroid wallet | `/blog/blocknet-wallets/` | Choose between the official desktop wallet, the official command-line wallet and Gyroid by platform and interface, verify the download, and move a wallet between them |
 
 Search Console (Oct 24–Nov 3) showed "blocknet wallet" landing on our wallet posts at an average position of 6.3, with the top Google results belonging to an unrelated project's documentation. The hub owns the choice of application and routes to the task owners: `blocknet-desktop-wallet` (desktop walkthrough), `blocknet-wallet-for-mining` (create a wallet and copy a mining address, keeping its short which-wallet list for miners), `blocknet-wallet-backup-restore` (the full migration procedure) and `antivirus-flags-crypto-miner` (checksum verification for seine). Research: `batches/2026-11-wallets-hub/research.md`.
+
+## Buying BNT (November 5, 2026)
+
+bntpool.com owns buying and selling: `https://bntpool.com/blog/buy-blocknet-bnt-safetrade/` ("where to buy Blocknet (BNT)", "buy BNT", "safetrade bnt", "$BNT") and `sell-blocknet-bnt-safetrade`. Seine does not publish a competing buying guide. `get-first-blocknet` carries a short "Can I buy BNT?" section that links to the pool guide in the reader's language. The `$BNT` cashtag is allowed in copy (owner decision, 2026-11-05).

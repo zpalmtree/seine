@@ -43,8 +43,8 @@ of them, the same policy as the Sol Incinerator blog.
 
 Readers arrive already knowing what Blocknet is. Don't explain which Blocknet this is, add
 "this is not the BLOCK project" notes, or define the coin in an intro; start with the task.
-Two naming rules still hold: never use the `$BNT` cashtag (Bancor's), and never link
-blocknet.org (an unrelated project).
+One naming rule still holds: never link blocknet.org (an unrelated project). The `$BNT`
+cashtag is welcome; we are reclaiming it from Bancor (owner decision, 2026-11-05).
 
 ## Claims you must not make
 

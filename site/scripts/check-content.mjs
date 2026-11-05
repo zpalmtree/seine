@@ -31,7 +31,6 @@ const FORBIDDEN = [
     [/\buntraceable\b|不可追[踪蹤]|无法追[踪蹤]|無法追[踪蹤]|追跡不可能|추적\s*불가|irrastreab|irrastreáve|intraçable|unverfolgbar|nicht (nach)?verfolgbar|non tracciabil|niewykrywaln|izlenemez|không thể truy vết|untraceer|tidak (dapat|bisa) dilacak|неотслеживаем|невідстежуван|μη ανιχνεύσιμ|ไม่สามารถติดตาม|لا يمكن تتبع/i, "say 'private' (regulator and exchange risk)"],
     [/\banonym|\banónim|\banônim|\banonim|匿名|익명|nặc danh|ẩn danh|аноним|анонім|ανώνυμ|ไม่ระบุตัวตน|مجهول الهوية|إخفاء الهوية/i, "say 'private' (regulator and exchange risk)"],
     [/\bmost private\b|\bmore private than monero\b|最私密|比\s*Monero\s*更私密/i, 'false once Monero ships FCMP++'],
-    [/\$BNT\b/, "the $BNT cashtag is Bancor's"],
     [/\bguaranteed (profit|returns?|income)\b|\bpassive income\b|\brisk[- ]free\b|稳赚|穩賺|保证收益|保證收益|被动收入|被動收入|ingresos? pasivos?|renda passiva|passives? Einkommen|revenus? passifs?|reddito passivo|dochód pasywny|pasif gelir|thu nhập thụ động|passief inkomen|pendapatan pasif|пассивн\S* доход|пасивн\S* дох|παθητικό εισόδημα|不労所得|パッシブインカム|불로소득|รายได้(แบบ)?พาสซีฟ|دخل سلبي/i, 'no earnings promises'],
     [/blocknet\.org/i, 'a different project (the BLOCK token); never link it'],
 ];
