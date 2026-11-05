@@ -1,6 +1,6 @@
 ---
-title: 'Ring signature dijelaskan: cara kripto menyembunyikan pengirim'
-description: 'Ring signature dijelaskan, dari gagasan 2001 hingga key image dan CLSAG: cara penanda tangan bersembunyi di antara public key dan cara Blocknet memakai ring 16 per input.'
+title: 'Apa itu ring signature? Cara kripto menyembunyikan pengirim'
+description: 'Apa itu ring signature? Dari gagasan 2001 hingga key image dan CLSAG: cara penanda tangan bersembunyi di antara public key dan cara Blocknet memakai ring 16 per input.'
 tags: [Privasi, Ring signature, Kriptografi, Blocknet]
 faq:
   - q: 'Apa perbedaan ring signature dan group signature?'
@@ -13,7 +13,7 @@ faq:
     a: 'Blocknet memakai ring berisi tepat 16 untuk setiap input: output asli ditambah 15 decoy, masing-masing berupa output nyata yang sudah ada di rantai. Konsensus menolak ukuran lain apa pun. Karena setiap input memakai ukuran yang sama, ukuran ring tidak pernah bisa menandai sebuah transaksi, dan output asli berada di posisi acak di dalam ring.'
   - q: 'Apakah ring signature menyembunyikan jumlah pembayaran?'
     a: 'Tidak. Ring signature menyembunyikan output mana yang membayar. Jumlah disembunyikan oleh lapisan terpisah: Pedersen commitment, yang mengunci sebuah angka tanpa memperlihatkannya, ditambah range proof Bulletproofs, yang membuktikan setiap jumlah valid. Blocknet memakai semuanya bersama-sama di setiap transaksi, di samping stealth address sekali pakai yang menyembunyikan penerima.'
-sourceHash: '14e1231449a2'
+sourceHash: '1bebc96e0bca'
 translation: draft
 ---
 

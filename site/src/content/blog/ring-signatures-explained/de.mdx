@@ -1,6 +1,6 @@
 ---
-title: 'Ringsignaturen erklärt: wie Krypto den Absender verbirgt'
-description: 'Ringsignaturen erklärt, von 2001 bis zu Key Images und CLSAG: wie sich der Absender unter Public Keys verbirgt und wie Blocknet mit 16er-Ringen signiert.'
+title: 'Was ist eine Ringsignatur? Wie Krypto den Absender verbirgt'
+description: 'Was ist eine Ringsignatur? Von 2001 bis zu Key Images und CLSAG: wie sich der Absender unter Public Keys verbirgt und wie Blocknet mit 16er-Ringen signiert.'
 tags: [Privatsphäre, Ringsignaturen, Kryptografie, Blocknet]
 faq:
   - q: 'Was ist der Unterschied zwischen einer Ringsignatur und einer Gruppensignatur?'
@@ -13,7 +13,7 @@ faq:
     a: 'Blocknet nutzt für jeden Input einen Ring aus genau 16: den echten Output plus 15 Decoys (Köder-Outputs), jeweils ein echter Output, der schon auf der Chain liegt. Der Konsens lehnt jede andere Größe ab. Da jeder Input dieselbe Größe nutzt, kann die Ringgröße nie eine einzelne Transaktion kenntlich machen, und der echte Output sitzt an einer zufälligen Position im Ring.'
   - q: 'Verbergen Ringsignaturen den Betrag einer Zahlung?'
     a: 'Nein. Eine Ringsignatur verbirgt, welcher Output bezahlt hat. Beträge verbirgt eine eigene Schicht: Pedersen-Commitments, die eine Zahl festlegen, ohne sie zu zeigen, plus Range Proofs (Bereichsbeweise) mit Bulletproofs, die beweisen, dass jeder Betrag gültig ist. Blocknet nutzt all das zusammen bei jeder Transaktion, dazu Einmal-Stealth-Adressen, die den Empfänger verbergen.'
-sourceHash: '14e1231449a2'
+sourceHash: '1bebc96e0bca'
 translation: reviewed
 ---
 

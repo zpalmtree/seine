@@ -1,6 +1,6 @@
 ---
-title: 'Firmas de anillo explicadas: cómo una criptomoneda oculta al remitente'
-description: 'Firmas de anillo, de la idea de 2001 a las imágenes de clave y CLSAG: cómo se oculta el firmante entre claves públicas y cómo Blocknet firma cada entrada con un anillo de 16.'
+title: '¿Qué es una firma de anillo? Cómo se oculta al remitente'
+description: '¿Qué es una firma de anillo? De la idea de 2001 a las imágenes de clave y CLSAG: cómo se oculta el firmante entre claves públicas y cómo Blocknet firma con un anillo de 16.'
 tags: [Privacidad, Firmas de anillo, Criptografía, Blocknet]
 faq:
   - q: '¿Qué diferencia hay entre una firma de anillo y una firma de grupo?'
@@ -13,7 +13,7 @@ faq:
     a: 'Blocknet usa un anillo de exactamente 16 en cada entrada: la salida real más 15 señuelos, cada uno una salida real que ya está en la cadena. El consenso rechaza cualquier otro tamaño. Como todas las entradas usan el mismo tamaño, el tamaño del anillo nunca puede señalar una transacción, y la salida real ocupa una posición aleatoria en el anillo.'
   - q: '¿Las firmas de anillo ocultan el importe de un pago?'
     a: 'No. Una firma de anillo oculta qué salida pagó. Los importes se ocultan con una capa aparte: los compromisos de Pedersen, que fijan un número sin mostrarlo, más las pruebas de rango Bulletproofs, que demuestran que cada importe es válido. Blocknet usa todo esto junto en cada transacción, además de direcciones sigilosas de un solo uso que ocultan al destinatario.'
-sourceHash: '14e1231449a2'
+sourceHash: '1bebc96e0bca'
 translation: reviewed
 ---
 

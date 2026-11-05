@@ -1,7 +1,7 @@
 ---
-title: 'Assinaturas em anel explicadas: como as criptomoedas ocultam o remetente'
-seoTitle: 'Assinaturas em anel: como as criptomoedas ocultam o remetente'
-description: 'Assinaturas em anel, da ideia de 2001 às key images e ao CLSAG: como o signatário se esconde entre chaves e o Blocknet assina cada entrada com anel de 16.'
+title: 'O que é uma assinatura em anel? Como as criptomoedas ocultam o remetente'
+seoTitle: 'O que é uma assinatura em anel? Como o remetente é ocultado'
+description: 'O que é uma assinatura em anel? Da ideia de 2001 às key images e ao CLSAG: como o signatário se esconde entre chaves e o Blocknet assina cada entrada com anel de 16.'
 tags: [Privacidade, Assinaturas em anel, Criptografia, Blocknet]
 faq:
   - q: 'Qual é a diferença entre uma assinatura em anel e uma assinatura de grupo?'
@@ -14,7 +14,7 @@ faq:
     a: 'O Blocknet usa um anel de exatamente 16 para toda entrada: a saída real mais 15 iscas, cada uma delas uma saída real que já está na blockchain. O consenso rejeita qualquer outro tamanho. Como toda entrada usa o mesmo tamanho, o tamanho do anel nunca destaca uma transação, e a saída real fica em uma posição aleatória do anel.'
   - q: 'As assinaturas em anel ocultam o valor de um pagamento?'
     a: 'Não. Uma assinatura em anel oculta qual saída pagou. Os valores são ocultados por uma camada separada: compromissos de Pedersen, que fixam um número sem mostrá-lo, mais as provas de intervalo Bulletproofs, que provam que cada valor é válido. O Blocknet usa tudo isso junto em toda transação, além de endereços furtivos de uso único que ocultam o destinatário.'
-sourceHash: '14e1231449a2'
+sourceHash: '1bebc96e0bca'
 translation: reviewed
 ---
 

@@ -1,6 +1,6 @@
 ---
-title: 'Firme ad anello (ring signature) spiegate: come le crypto nascondono il mittente'
-description: 'Le firme ad anello spiegate, dall''idea del 2001 alle key image e a CLSAG: come chi firma si nasconde tra chiavi pubbliche e come Blocknet firma ogni input con un anello di 16.'
+title: 'Cos''è una firma ad anello? Come le crypto nascondono il mittente'
+description: 'Cos''è una firma ad anello (ring signature)? Dall''idea del 2001 alle key image e a CLSAG: come chi firma si nasconde tra chiavi pubbliche e come Blocknet usa anelli di 16.'
 tags: [Privacy, Firme ad anello, Crittografia, Blocknet]
 faq:
   - q: 'Qual è la differenza tra una firma ad anello e una firma di gruppo?'
@@ -13,7 +13,7 @@ faq:
     a: 'Blocknet usa un anello di esattamente 16 per ogni input: l''output reale più 15 decoy, ciascuno un output reale già presente sulla blockchain. Il consenso rifiuta qualsiasi altra dimensione. Poiché ogni input usa la stessa dimensione, la dimensione dell''anello non può mai far risaltare una transazione, e l''output reale si trova in una posizione casuale dell''anello.'
   - q: 'Le firme ad anello nascondono l''importo di un pagamento?'
     a: 'No. Una firma ad anello nasconde quale output ha pagato. Gli importi sono nascosti da un livello separato: i commitment di Pedersen, che fissano un numero senza mostrarlo, più le range proof Bulletproofs, che dimostrano che ogni importo è valido. Blocknet li usa tutti insieme su ogni transazione, insieme agli indirizzi stealth monouso che nascondono il destinatario.'
-sourceHash: '14e1231449a2'
+sourceHash: '1bebc96e0bca'
 translation: reviewed
 ---
 

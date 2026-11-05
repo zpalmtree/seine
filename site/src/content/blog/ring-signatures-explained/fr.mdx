@@ -1,7 +1,7 @@
 ---
-title: 'Les signatures de cercle expliquées : comment une crypto cache l''expéditeur'
-seoTitle: 'Signatures de cercle : comment une crypto cache l''expéditeur'
-description: 'Les signatures de cercle, de l''idée de 2001 à CLSAG et aux images de clé : comment un signataire se cache parmi des clés publiques, et le cercle de 16 de Blocknet.'
+title: 'Qu''est-ce qu''une signature de cercle ? Comment une crypto cache l''expéditeur'
+seoTitle: 'Qu''est-ce qu''une signature de cercle en crypto ?'
+description: 'Qu''est-ce qu''une signature de cercle ? De l''idée de 2001 à CLSAG et aux images de clé : comment un signataire se cache parmi des clés publiques, et le cercle de 16 de Blocknet.'
 tags: [Confidentialité, Signatures de cercle, Cryptographie, Blocknet]
 faq:
   - q: 'Quelle est la différence entre une signature de cercle et une signature de groupe ?'
@@ -14,7 +14,7 @@ faq:
     a: 'Blocknet utilise un cercle d''exactement 16 membres pour chaque entrée : la vraie sortie plus 15 leurres, chacun étant une vraie sortie déjà présente sur la chaîne. Le consensus rejette toute autre taille. Comme chaque entrée utilise la même taille, la taille du cercle ne peut jamais distinguer une transaction, et la vraie sortie occupe une position aléatoire dans le cercle.'
   - q: 'Les signatures de cercle cachent-elles le montant d''un paiement ?'
     a: 'Non. Une signature de cercle cache quelle sortie a payé. Les montants sont cachés par une couche distincte : les engagements de Pedersen, qui fixent un nombre sans le montrer, et les preuves d''intervalle Bulletproofs, qui prouvent que chaque montant est valide. Blocknet utilise tout cela ensemble sur chaque transaction, avec des adresses furtives à usage unique qui cachent le destinataire.'
-sourceHash: '14e1231449a2'
+sourceHash: '1bebc96e0bca'
 translation: draft
 ---
 

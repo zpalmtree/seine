@@ -1,6 +1,6 @@
 ---
-title: 'Ringhandtekeningen uitgelegd: hoe crypto de verzender verbergt'
-description: 'Ringhandtekeningen uitgelegd, van het idee uit 2001 tot key images en CLSAG: hoe een ondertekenaar opgaat tussen publieke sleutels en hoe Blocknet met een ring van 16 ondertekent.'
+title: 'Wat is een ringhandtekening? Zo verbergt crypto de verzender'
+description: 'Wat is een ringhandtekening? Van het idee uit 2001 tot key images en CLSAG: hoe een ondertekenaar opgaat tussen publieke sleutels en hoe Blocknet met een ring van 16 ondertekent.'
 tags: [Privacy, Ringhandtekeningen, Cryptografie, Blocknet]
 faq:
   - q: 'Wat is het verschil tussen een ringhandtekening en een groepshandtekening?'
@@ -13,7 +13,7 @@ faq:
     a: 'Blocknet gebruikt voor elke input een ring van precies 16: de echte output plus 15 decoys, elk een echte output die al op de chain staat. De consensus weigert elke andere grootte. Omdat elke input dezelfde grootte gebruikt, kan de ringgrootte nooit een transactie doen opvallen, en de echte output staat op een willekeurige positie in de ring.'
   - q: 'Verbergen ringhandtekeningen het bedrag van een betaling?'
     a: 'Nee. Een ringhandtekening verbergt welke output heeft betaald. Bedragen worden verborgen door een aparte laag: Pedersen-commitments, die een getal vastleggen zonder het te tonen, plus range proofs met Bulletproofs, die bewijzen dat elk bedrag geldig is. Blocknet gebruikt ze allemaal samen bij elke transactie, naast eenmalige stealth-adressen die de ontvanger verbergen.'
-sourceHash: '14e1231449a2'
+sourceHash: '1bebc96e0bca'
 translation: draft
 ---
 

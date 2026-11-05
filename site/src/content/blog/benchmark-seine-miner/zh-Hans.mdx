@@ -1,6 +1,6 @@
 ---
-title: '如何测试 Blocknet 矿机性能'
-description: '使用 seine 的重复测试、预热轮次和 JSON 报告测量性能。保持内存、后台负载与自动调优条件一致，并比较相同范围的计时结果。'
+title: 'Blocknet 矿机基准测试：用 seine 测算力'
+description: '用 seine 对 Blocknet 矿机做基准测试，测出真实算力：可重复的测试、预热轮次、JSON 报告，以及如何公平比较结果。'
 tags: ['挖矿指南', '性能测试', 'seine']
 faq:
   - q: 'seine 测试会向矿池提交份额吗？'
@@ -9,7 +9,7 @@ faq:
     a: '先用 backend 测试所选挖矿后端。比较时保持模式、版本和设置相同。Kernel、kernel-effective 与 end-to-end 的测量范围不同，应连同算力保存模式和计时信息。'
   - q: '怎样让两次测试可比？'
     a: '使用相同机器、版本、后端、内存、后台负载和缓存策略。每次只改一个设置，交替重复两种配置并保留所有报告。一次短测试无法证明很小的性能差异。'
-sourceHash: '1fa8886f73c0'
+sourceHash: '5f2ff75d1a37'
 translation: draft
 ---
 

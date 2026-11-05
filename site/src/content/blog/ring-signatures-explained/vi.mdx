@@ -1,6 +1,6 @@
 ---
-title: 'Giải thích chữ ký vòng: cách tiền mã hóa che giấu người gửi'
-description: 'Giải thích chữ ký vòng (ring signature), từ ý tưởng năm 2001 đến key image và CLSAG: cách người ký ẩn giữa các khóa công khai và cách Blocknet ký mỗi input bằng vòng 16.'
+title: 'Chữ ký vòng là gì? Cách tiền mã hóa che giấu người gửi'
+description: 'Chữ ký vòng (ring signature) là gì? Từ ý tưởng năm 2001 đến key image và CLSAG: cách người ký ẩn giữa các khóa công khai và cách Blocknet ký mỗi input bằng vòng 16.'
 tags: [Quyền riêng tư, Chữ ký vòng, Mật mã học, Blocknet]
 faq:
   - q: 'Chữ ký vòng khác chữ ký nhóm như thế nào?'
@@ -13,7 +13,7 @@ faq:
     a: 'Blocknet dùng vòng đúng 16 cho mọi input: output thật cộng với 15 output mồi, mỗi output mồi là một output thật đã có trên chuỗi. Đồng thuận từ chối mọi kích thước khác. Vì mọi input dùng cùng kích thước, kích thước vòng không bao giờ làm một giao dịch nổi bật, và output thật nằm ở một vị trí ngẫu nhiên trong vòng.'
   - q: 'Chữ ký vòng có che giấu số tiền thanh toán không?'
     a: 'Không. Chữ ký vòng che giấu output nào đã trả tiền. Số tiền được che giấu bởi một lớp riêng: Pedersen commitment, khóa chặt một con số mà không để lộ nó, cùng range proof Bulletproofs, chứng minh mỗi số tiền là hợp lệ. Blocknet dùng tất cả những thứ này cùng lúc trên mọi giao dịch, bên cạnh địa chỉ ẩn dùng một lần để che giấu người nhận.'
-sourceHash: '14e1231449a2'
+sourceHash: '1bebc96e0bca'
 translation: draft
 ---
 
