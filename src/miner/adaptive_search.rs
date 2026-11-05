@@ -2577,7 +2577,12 @@ mod tests {
             search.peak = setting(8, STREAM);
             search.stage = Stage::Settled;
             let mut out = Output::default();
-            search.start_trial(500, Purpose::Restore, setting(8, STREAM), setting(16, STREAM));
+            search.start_trial(
+                500,
+                Purpose::Restore,
+                setting(8, STREAM),
+                setting(16, STREAM),
+            );
             search.trial.as_mut().unwrap().prior = prior;
             search.finish_trial(900, Verdict::Better, 0.09, 0.025, &mut out);
             search.keep
