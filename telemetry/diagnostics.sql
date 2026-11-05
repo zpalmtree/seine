@@ -1,7 +1,7 @@
 BEGIN READ ONLY;
 -- The on-demand report builds seven-day clusters. Scheduled checks use the
 -- separate diagnostic_alerts.sql query and retain their shorter deadline.
-SET LOCAL statement_timeout = '30s';
+SET LOCAL statement_timeout = '60s';
 SET LOCAL lock_timeout = '2s';
 SET LOCAL TIME ZONE 'America/New_York';
 WITH reports AS (
