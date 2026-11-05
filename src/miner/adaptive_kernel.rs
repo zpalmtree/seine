@@ -183,9 +183,10 @@ const STARTUP_STREAM_MIN_WORKERS: usize = 8;
 
 /// Ryzen 3000 and 4000 (17h 71h, 60h), Ryzen 5000 (19h 21h, 50h), Ryzen 7000 (19h
 /// 61h), EPYC 9004 (19h 11h, A0h), EPYC 9005 (1Ah 02h), Ryzen 9000 (1Ah 44h), Intel
-/// 12th Gen to Core Ultra 200 desktops, Kaby Lake to Comet Lake, Haswell-E/EP and
-/// Broadwell-E/EP, and Skylake-SP to Granite Rapids Xeons start on their cohort kernel at
-/// any worker count; EPYC 7002 and 7003 (17h 31h, 19h 01h) from four workers.
+/// 12th Gen to Core Ultra 200 desktops, Haswell-E/EP and Broadwell-E/EP, and Skylake-SP
+/// to Granite Rapids Xeons start on their cohort kernel at any worker count; EPYC 7002
+/// and 7003 (17h 31h, 19h 01h) and Kaby Lake to Comet Lake (06h/9Eh, A5h) from four
+/// workers.
 fn startup_stream_min_workers(identity: &crate::runtime_identity::CpuIdentity) -> usize {
     let any_count = match identity.vendor.as_deref() {
         Some("AuthenticAMD") => matches!(
@@ -197,17 +198,18 @@ fn startup_stream_min_workers(identity: &crate::runtime_identity::CpuIdentity) -
         Some("GenuineIntel") => is_intel_model(
             identity,
             &[
-                0x97, 0x9a, 0xb7, 0xba, 0xbf, 0xc6, 0x3f, 0x4f, 0x9e, 0xa5, 0x55, 0x6a, 0x6c, 0x8f,
-                0xcf, 0xad, 0xae,
+                0x97, 0x9a, 0xb7, 0xba, 0xbf, 0xc6, 0x3f, 0x4f, 0x55, 0x6a, 0x6c, 0x8f, 0xcf, 0xad,
+                0xae,
             ],
         ),
         _ => false,
     };
-    let from_four = identity.vendor.as_deref() == Some("AuthenticAMD")
+    let from_four = (identity.vendor.as_deref() == Some("AuthenticAMD")
         && matches!(
             (identity.family, identity.model),
             (Some(0x17), Some(0x31)) | (Some(0x19), Some(0x01))
-        );
+        ))
+        || is_intel_model(identity, &[0x9e, 0xa5]);
     if any_count {
         1
     } else if from_four {
@@ -222,6 +224,12 @@ fn startup_kernel_for(
     candidates: &[CpuKernel],
 ) -> Option<CpuKernel> {
     cohort_stream_kernel(identity, candidates)
+}
+
+/// Broadwell-EP Xeons (06h/4Fh) start on their cohort kernel and still compare the plain
+/// kernels against it.
+fn keeps_plain_challengers(identity: &crate::runtime_identity::CpuIdentity) -> bool {
+    is_intel_model(identity, &[0x4f])
 }
 
 fn is_intel_model(identity: &crate::runtime_identity::CpuIdentity, models: &[u32]) -> bool {
@@ -618,6 +626,8 @@ pub(super) struct KernelPlan {
     pub candidates: Vec<CpuKernel>,
     startup: Option<CpuKernel>,
     gate: StartGate,
+    /// The plain kernels stay challengers after the start.
+    keep_plain: bool,
 }
 
 impl KernelPlan {
@@ -700,6 +710,7 @@ impl KernelPlan {
             candidates,
             startup,
             gate,
+            keep_plain: keeps_plain_challengers(identity),
         }
     }
 
@@ -721,6 +732,7 @@ impl KernelPlan {
     /// on its own kernel, that excludes the plain paths.
     pub(super) fn candidates_at(&self, workers: usize) -> Vec<CpuKernel> {
         let skip_plain = self.startup.is_some()
+            && !self.keep_plain
             && matches!(self.gate, StartGate::Workers(minimum) if workers >= minimum);
         self.candidates
             .iter()
@@ -953,14 +965,14 @@ mod tests {
             ..skx.clone()
         };
         assert_eq!(startup_kernel_for(&bdw, &supported[1..]), None);
-        // Haswell-E/EP, Broadwell-E/EP and Kaby Lake to Comet Lake start on AVX2 streaming
-        // at any count; Kaby Lake R mobile does not.
-        for (model, stream) in [
-            (0x3f, true),
-            (0x4f, true),
-            (0x9e, true),
-            (0xa5, true),
-            (0x8e, false),
+        // Haswell-E/EP and Broadwell-E/EP start on AVX2 streaming at any count, Kaby Lake
+        // to Comet Lake from four workers; Kaby Lake R mobile does not.
+        for (model, stream, from) in [
+            (0x3f, true, 1),
+            (0x4f, true, 1),
+            (0x9e, true, 4),
+            (0xa5, true, 4),
+            (0x8e, false, 1),
         ] {
             let intel = CpuIdentity {
                 model: Some(model),
@@ -968,7 +980,16 @@ mod tests {
             };
             let expected = stream.then_some(CpuKernel::Avx2Stream);
             assert_eq!(startup_kernel_for(&intel, &avx2_paths), expected);
-            assert_eq!(static_kernel_for_identity(&intel, &avx2_paths, 1), expected);
+            assert_eq!(
+                static_kernel_for_identity(&intel, &avx2_paths, from),
+                expected
+            );
+            if from > 1 {
+                assert_eq!(
+                    static_kernel_for_identity(&intel, &avx2_paths, from - 1),
+                    None
+                );
+            }
         }
         assert!(is_intel_model(&bdw, &[0x4f, 0x55]));
         assert!(!is_intel_model(
@@ -1354,6 +1375,39 @@ mod tests {
             plan.start_for(&[snapshot_with(4)]),
             Some(CpuKernel::Avx2Stream)
         );
+    }
+
+    #[test]
+    fn plan_keeps_plain_challengers_where_they_sometimes_win() {
+        use crate::runtime_identity::CpuIdentity;
+        let intel = |model| CpuIdentity {
+            vendor: Some("GenuineIntel".into()),
+            family: Some(6),
+            model: Some(model),
+            ..CpuIdentity::default()
+        };
+        let supported = [CpuKernel::Avx2, CpuKernel::Avx2Stream];
+        // Broadwell-EP starts on streaming at any count and keeps plain AVX2 to compare.
+        let broadwell = plan_for(&intel(0x4f), &supported);
+        assert_eq!(
+            broadwell.start_for(&[snapshot_with(2)]),
+            Some(CpuKernel::Avx2Stream)
+        );
+        assert!(broadwell.candidates_at(16).contains(&CpuKernel::Avx2));
+        // Haswell-E/EP drops it.
+        let haswell = plan_for(&intel(0x3f), &supported);
+        assert_eq!(haswell.candidates_at(2), [CpuKernel::Avx2Stream]);
+        // Coffee Lake and Comet Lake start on streaming from four workers.
+        for model in [0x9e, 0xa5] {
+            let plan = plan_for(&intel(model), &supported);
+            assert_eq!(plan.start_for(&[snapshot_with(3)]), None);
+            assert!(plan.candidates_at(3).contains(&CpuKernel::Avx2));
+            assert_eq!(
+                plan.start_for(&[snapshot_with(4)]),
+                Some(CpuKernel::Avx2Stream)
+            );
+            assert_eq!(plan.candidates_at(4), [CpuKernel::Avx2Stream]);
+        }
     }
 
     #[test]
