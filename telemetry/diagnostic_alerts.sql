@@ -1,20 +1,26 @@
 BEGIN READ ONLY;
 SET LOCAL statement_timeout = '30s';
 SET LOCAL lock_timeout = '2s';
+-- Row estimates for the jsonb expansions are far too high; keep the scan parallel.
+SET LOCAL parallel_tuple_cost = 0.01;
 SET LOCAL TIME ZONE 'America/New_York';
 -- Alert evaluation needs counts, not the full seven-day hardware/event clusters.
 WITH covered AS (
-    SELECT installation_id, received_at, payload->>'miner_version' AS version,
-           payload->'diagnostics' AS diagnostics
+    -- Only the last 25 hours read diagnostics; older rows carry narrow columns.
+    SELECT installation_id, received_at, p->>'miner_version' AS version,
+           p #>> '{diagnostics,build_commit}' AS build_commit,
+           CASE WHEN received_at >= now() - interval '25 hours' THEN p->'diagnostics' END AS diagnostics
     FROM telemetry_reports
+    -- Each payload reference would otherwise decompress the stored value again.
+    CROSS JOIN LATERAL unnest(ARRAY[payload || '{}'::jsonb]) p
     WHERE received_at >= now() - interval '7 days'
-      AND NOT (payload->>'debug_build')::boolean
-      AND payload->'diagnostics' IS NOT NULL
-      AND payload->'diagnostics' <> 'null'::jsonb
+      AND NOT (p->>'debug_build')::boolean
+      AND p->'diagnostics' IS NOT NULL
+      AND p->'diagnostics' <> 'null'::jsonb
 ), build_versions AS (
-    SELECT diagnostics->>'build_commit' AS build_commit, min(version) AS version
+    SELECT build_commit, min(version) AS version
     FROM covered
-    WHERE diagnostics->>'build_commit' <> 'unknown'
+    WHERE build_commit <> 'unknown'
     GROUP BY 1 HAVING count(DISTINCT version) = 1
 ), unclean AS (
     SELECT c.*,
