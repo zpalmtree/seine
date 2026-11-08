@@ -1,12 +1,15 @@
 ---
-title: 'Jak prowadzić farmę Blocknet przez jedno proxy'
-description: 'Prowadź całą farmę Blocknet przez jedno proxy farmy seine: ustaw pulę i adres wypłat w jednym miejscu, skieruj na nie każdą koparkę i zachowaj statystyki każdej koparki.'
+title: 'Zarządzaj całą farmą Blocknet z jednego miejsca'
+seoTitle: 'Farma do kopania Blocknet: zarządzanie z jednego miejsca'
+description: 'Zarządzaj każdą koparką na farmie Blocknet z jednego proxy farmy seine: zmieniaj pulę dla całej farmy naraz, dodawaj koparki jedną linią i zachowaj statystyki każdej koparki.'
 tags: ['Poradnik kopania', 'Proxy farmy', 'seine', 'Serwery']
-sourceHash: '043973652634'
+sourceHash: '95a3a4db9574'
 translation: draft
 faq:
   - q: 'Czym jest proxy farmy seine?'
-    a: 'To tryb seine, który działa na jednym komputerze w Twojej sieci lokalnej i łączy się z pulą w imieniu wszystkich koparek. Każda koparka łączy się z proxy zamiast z pulą i kopie własną część pracy. Pula widzi jedno połączenie, a pulę i pule zapasowe ustawiasz w jednym miejscu.'
+    a: 'To tryb seine, który działa na jednym komputerze w Twojej sieci lokalnej i łączy się z pulą w imieniu wszystkich koparek. Każda koparka łączy się z proxy zamiast z pulą i kopie własną część pracy. Pulę i pule zapasowe ustawiasz raz, w proxy, a każda koparka z nich korzysta.'
+  - q: 'Czy muszę zmieniać koparki, aby używać proxy farmy?'
+    a: 'Tylko adres puli. Skieruj każdą koparkę na proxy zamiast na pulę, zachowaj jej adres wypłat i nazwę koparki, a wątki, GPU i strojenie zostaw bez zmian. Flight sheety HiveOS i profile mmpOS przyjmują adres proxy w tym samym polu adresu puli.'
   - q: 'Czy proxy farmy potrzebuje mocnego komputera?'
     a: 'Nie. Proxy nie kopie, więc potrzebuje niewiele mocy CPU i pamięci. Może działać na dowolnym komputerze, do którego koparki mają dostęp w sieci lokalnej, na przykład na małym serwerze albo na jednej z koparek obok jej własnego minera.'
   - q: 'Czy koparki za proxy nadal widać osobno na bntpool.com?'
@@ -15,29 +18,34 @@ faq:
     a: 'Tak. Każda koparka otrzymuje wypłaty na adres, z którym się loguje, więc koparki kopiące na maksymalnie 16 różnych adresów mogą dzielić jedno proxy. Koparka logująca się bez prawidłowego adresu otrzymuje wypłaty na adres podany dla proxy w --address.'
 ---
 
-Ten poradnik pokazuje, jak prowadzić farmę Blocknet przez jedno proxy farmy seine. Uruchamiasz proxy na jednym komputerze w swojej sieci, kierujesz na nie każdą koparkę, a proxy łączy się z bntpool.com w imieniu całej farmy. Pulę, adres wypłat i pule zapasowe ustawiasz w jednym miejscu, a statystyki poszczególnych koparek zostają w puli. Dotyczy seine v0.3.1.
+Gdy każda koparka łączy się z pulą sama, każda zmiana puli oznacza pracę na każdej koparce. Z proxy farmy seine Twoje koparki łączą się z jednym komputerem w Twojej sieci, a ten komputer łączy się z bntpool.com w imieniu całej farmy. Pulę, pule zapasowe lub domyślny adres wypłat zmieniasz raz, a każda koparka za tym podąża. Każda koparka nadal widnieje na bntpool.com pod własną nazwą. Ten poradnik dotyczy seine v0.3.1.
 
-## Co robi proxy farmy?
-
-<Answer>
-Proxy farmy to seine działający jako lokalna pula dla Twoich koparek. Łączy się z bntpool.com raz dla całej farmy i przydziela każdej koparce jej część pracy. Pula widzi jedno połączenie, każda koparka nadal kopie i jest rozliczana osobno, a pulę lub pule zapasowe dla wszystkich koparek zmieniasz w jednym miejscu.
-</Answer>
-
-Proxy farmy przyda się każdemu, kto ma więcej niż kilka koparek:
-
-- **Jedno miejsce na ustawienia.** Ustaw pulę, pule zapasowe i domyślny adres wypłat w proxy, a każda koparka je przejmie.
-- **Jedno połączenie wychodzące.** Koparki rozmawiają z proxy przez sieć lokalną, a proxy otwiera tylko tyle połączeń z pulą, ile potrzebuje farma, zwykle jedno lub kilka.
-- **Statystyki każdej koparki w puli.** bntpool.com zalicza udziały dla każdej koparki osobno, więc każda koparka nadal widnieje pod własną nazwą workera na [stronie statystyk](https://bntpool.com/stats).
-
-Samo proxy nie kopie. Potrzebuje niewiele mocy CPU i pamięci, więc może działać na dowolnym komputerze, do którego mają dostęp koparki, także na jednej z koparek.
-
-## Jak uruchomić proxy?
+## Co daje Ci proxy farmy?
 
 <Answer>
-Uruchom seine z --proxy-listen oraz adresem i portem, z którymi będą łączyć się koparki, a także ze zwykłymi opcjami puli, adresu wypłat i nazwy koparki. Na przykład: ./seine --proxy-listen 0.0.0.0:3333 --pool-url stratum+tcp://bntpool.com:3333 --address YOUR_ADDRESS --pool-worker farm-1. Proxy czeka wtedy na koparki na porcie 3333.
+Proxy farmy to seine działający jako lokalna pula dla Twoich koparek. Łączy się z bntpool.com w imieniu całej farmy i przydziela każdej koparce jej część pracy. Pulami, pulami zapasowymi i domyślnym adresem wypłat zarządzasz w jednym miejscu, a każda koparka nadal kopie i jest rozliczana osobno.
 </Answer>
 
-Na komputerze, na którym będzie działać proxy:
+Oto co się zmienia, gdy farma działa przez proxy:
+
+- **Zmiana puli dla całej farmy jednym restartem.** Pula i pule zapasowe są ustawione w proxy, więc edytujesz jedną linię poleceń zamiast każdej koparki, flight sheetu czy profilu.
+- **Przełączanie awaryjne dla wszystkich koparek naraz.** Wpisz pule zapasowe w proxy, a cała farma przejdzie razem do następnej puli, a potem wróci do pierwszej, gdy znów odpowie.
+- **Nowa koparka jedną linią.** Nowa koparka potrzebuje tylko adresu proxy jako puli. Nic innego na farmie się nie zmienia.
+- **Z internetem łączy się jeden komputer.** Koparki rozmawiają z proxy przez sieć lokalną, a do puli musi docierać tylko proxy. Jedna reguła zapory obejmuje całą farmę, a proxy SOCKS5 dla sieci blokujących porty do kopania ustawiasz tylko w proxy farmy.
+- **Każda koparka nadal ma własne statystyki.** bntpool.com zalicza udziały dla każdej koparki osobno, więc każda koparka widnieje na [stronie statystyk](https://bntpool.com/stats) pod własną nazwą workera, z własnym hashrate i udziałami.
+- **Kilka portfeli na jednym proxy.** Każda koparka otrzymuje wypłaty na adres, z którym się loguje, więc jedno proxy może obsługiwać koparki dla maksymalnie 16 różnych portfeli, na przykład koparki, które prowadzisz dla znajomych lub partnerów.
+
+Samo proxy nie kopie. Potrzebuje niewiele mocy CPU i pamięci, więc może działać na małym serwerze albo na jednej z koparek, obok jej własnego minera.
+
+## Jak skonfigurować proxy farmy?
+
+<Answer>
+Uruchom seine z --proxy-listen oraz adresem i portem, z którymi będą łączyć się koparki, a także ze zwykłymi opcjami puli, adresu wypłat i nazwy koparki. Na przykład: ./seine --proxy-listen 0.0.0.0:3333 --pool-url stratum+tcp://bntpool.com:3333 --address YOUR_ADDRESS --pool-worker farm-1. Następnie ustaw proxy jako adres puli na każdej koparce.
+</Answer>
+
+Konfiguracja ma dwa kroki: uruchom proxy, a potem skieruj na nie koparki.
+
+**1. Uruchom proxy** na komputerze, na którym ma działać:
 
 ```bash
 ./seine --proxy-listen 0.0.0.0:3333 \
@@ -45,38 +53,39 @@ Na komputerze, na którym będzie działać proxy:
         --address YOUR_ADDRESS --pool-worker farm-1
 ```
 
-`--proxy-listen` określa, gdzie proxy przyjmuje koparki; `0.0.0.0:3333` nasłuchuje na wszystkich interfejsach sieciowych na porcie 3333. `--address` to domyślny adres wypłat, używany dla każdej koparki, która loguje się bez prawidłowego adresu. W proxy działa każda opcja puli, także pule zapasowe: wpisz je po kolei, oddzielając przecinkami, a proxy wróci do pierwszej, gdy znów zadziała. [Poradnik konfiguracji seine](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/configuration.md) opisuje opcje puli.
+`--proxy-listen` określa, gdzie proxy przyjmuje koparki; `0.0.0.0:3333` nasłuchuje na wszystkich interfejsach sieciowych na porcie 3333. `--address` to domyślny adres wypłat, używany dla każdej koparki, która loguje się bez prawidłowego adresu. W proxy działa każda opcja puli. Pule zapasowe wpisz po kolei, oddzielając przecinkami, a jeśli Twoja sieć potrzebuje proxy SOCKS5, aby dotrzeć do puli, dodaj `--pool-proxy socks5://host:port`. [Poradnik konfiguracji seine](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/configuration.md) opisuje opcje puli.
 
-Przypisz proxy do swojej sieci lokalnej. Każdy, kto może dotrzeć do jego portu, może przez nie kopać, więc użyj adresu LAN w `--proxy-listen` albo zablokuj port zaporą, zamiast wystawiać go do internetu.
+Trzymaj proxy w swojej sieci lokalnej: użyj adresu LAN w `--proxy-listen` albo zablokuj port zaporą, aby tylko Twoje własne koparki mogły przez nie kopać i płacić na Twój adres.
 
-## Jak skierować koparki na proxy?
-
-Na każdej koparce użyj lokalnego adresu proxy jako puli i nadaj koparce własną nazwę:
+**2. Skieruj każdą koparkę na proxy**, używając lokalnego adresu proxy jako puli i nadając koparce własną nazwę:
 
 ```bash
 ./seine --pool-url 192.168.1.10:3333 --address YOUR_ADDRESS --pool-worker rig-07
 ```
 
-Zastąp `192.168.1.10` adresem komputera z proxy w Twojej sieci. Koparki z systemami do kopania działają tak samo: wpisz adres proxy w polu adresu puli we flight sheet HiveOS lub w profilu mmpOS, jak pokazuje [poradnik HiveOS i mmpOS](/pl/blog/mine-blocknet-hiveos-mmpos/). Seine zapisuje pulę w ustawieniach koparki, więc kolejne uruchomienia same łączą się z proxy.
+Zastąp `192.168.1.10` adresem komputera z proxy w Twojej sieci. W systemie do kopania wpisz adres proxy w polu adresu puli we flight sheet HiveOS lub w profilu mmpOS, jak pokazuje [poradnik HiveOS i mmpOS](/pl/blog/mine-blocknet-hiveos-mmpos/). Seine zapisuje pulę w ustawieniach koparki, więc kolejne uruchomienia same łączą się z proxy, a od tej pory pulami zarządzasz w proxy.
 
 ## Jak rozliczane są koparki za proxy?
 
-Każda koparka otrzymuje wypłaty na pełny adres Blocknet, z którym się loguje. Koparki kopiące do różnych portfeli mogą dzielić jedno proxy, maksymalnie 16 adresów naraz. Koparka, która loguje się bez adresu lub z nieprawidłowym adresem, otrzymuje wypłaty na `--address` proxy.
+Każda koparka otrzymuje wypłaty na pełny adres Blocknet, z którym się loguje, dokładnie tak jak przy połączeniu bezpośrednim. Koparki kopiące do różnych portfeli mogą dzielić jedno proxy, maksymalnie 16 adresów naraz. Koparka, która loguje się bez adresu lub z nieprawidłowym adresem, otrzymuje wypłaty na `--address` proxy, więc jej hashrate i tak trafia do Ciebie.
 
 Gdy używanych jest 16 adresów, koparka z 17. adresem czeka, aż jeden z pozostałych przez 10 minut nie będzie miał żadnych koparek. Jeśli pula odrzuci adres koparki, proxy przekazuje przyczynę podaną przez pulę, abyś mógł ją poprawić na tej koparce.
 
-Koparki za proxy mogą też kopać solo na bntpool.com: dodaj `solo:` przed adresem koparki, a pula wypłaci tej koparce całą nagrodę za każdy znaleziony przez nią blok. [Kopanie solo na bntpool.com](https://bntpool.com/blog/pl/solo-mine-blocknet-on-bntpool/) wyjaśnia nagrody solo. Wypłaty na giełdę wymagają memo wpłaty, którego proxy nie przekazuje, więc łącz koparki giełdowe z pulą bezpośrednio.
+Koparki za proxy mogą też kopać solo na bntpool.com: dodaj `solo:` przed adresem koparki, a pula wypłaci tej koparce całą nagrodę za każdy znaleziony przez nią blok. [Kopanie solo na bntpool.com](https://bntpool.com/blog/pl/solo-mine-blocknet-on-bntpool/) wyjaśnia nagrody solo. Wypłaty na giełdę używają memo wpłaty, którego proxy nie przekazuje, więc koparki wypłacające na giełdę łącz z pulą bezpośrednio.
 
 ## Jak śledzić farmę?
 
 Na bntpool.com wyszukaj każdy adres wypłat na [stronie statystyk](https://bntpool.com/stats). Każda koparka za proxy pojawia się w tabeli Workers pod własną nazwą, z własnym hashrate, udziałami i czasem ostatniego udziału, dokładnie tak jak przy połączeniach bezpośrednich. [Poradnik śledzenia koparki](https://bntpool.com/blog/pl/track-your-miner-on-bntpool/) objaśnia tę stronę.
 
-Proxy co minutę zapisuje też w logu własne podsumowanie: połączone koparki, zaakceptowane i odrzucone udziały, szacowany hashrate i swoje połączenia z pulą. Zapisuje każde połączenie i rozłączenie koparki, więc od razu widać, gdy któraś odpadnie. Własny panel seine na każdej koparce nadal pokazuje jej lokalny hashrate i udziały, jak wyjaśnia [poradnik panelu](/pl/blog/seine-dashboard-explained/).
+Proxy dodaje też własny widok całej farmy. Co minutę zapisuje w logu podsumowanie: połączone koparki, zaakceptowane i odrzucone udziały, szacowany hashrate farmy i swoje połączenia z pulą. Zapisuje też każde połączenie i rozłączenie koparki, więc jeden log pokazuje, kiedy któraś odpadła. Własny panel seine na każdej koparce nadal pokazuje jej lokalny hashrate i udziały, jak wyjaśnia [poradnik panelu](/pl/blog/seine-dashboard-explained/).
 
-## Co jeszcze warto wiedzieć?
+## Czy proxy nadąża, gdy farma rośnie?
 
-- **Połączeń z pulą przybywa wraz z farmą.** Proxy otwiera tyle połączeń z pulą, ile farma potrzebuje, aby każda koparka dostawała pracę przy każdym nowym bloku. W większości farm to jedno lub kilka, a bardzo duże farmy dostają do 64 na adres wypłat.
-- **Każda koparka zachowuje własne ustawienia.** Liczba wątków, wybór GPU i strojenie pozostają na koparce. Opisuje je [poradnik ustawień](/pl/blog/configure-seine-miner/), a duże serwery CPU [poradnik kopania na serwerach](/pl/blog/mine-blocknet-on-servers/).
+Tak. Proxy otwiera tyle połączeń z pulą, ile farma potrzebuje, aby każda koparka dostawała pracę przy każdym nowym bloku. W większości farm to jedno lub kilka, a bardzo duże farmy dostają do 64 na adres wypłat. Nie musisz tego ustawiać: proxy dodaje połączenia w miarę dołączania koparek.
+
+Kilka innych rzeczy działa tak samo jak przy kopaniu bezpośrednim:
+
+- **Każda koparka zachowuje własne strojenie.** Liczba wątków, wybór GPU i strojenie pozostają na koparce. Opisuje je [poradnik ustawień](/pl/blog/configure-seine-miner/), a duże serwery CPU [poradnik kopania na serwerach](/pl/blog/mine-blocknet-on-servers/).
 - **Aktualizacje sieci.** Przy aktualizacji sieci Faraday proxy prosi koparki z wydaniem seine, które jej nie obsługuje, o aktualizację, tak samo jak robi to pula.
 
-<CTA target="seine" title="Pobierz seine dla swojej farmy" text="Uruchom jeden seine jako proxy farmy i skieruj na niego każdą koparkę: jedno miejsce na ustawienia puli i statystyki każdej koparki na bntpool.com." />
+<CTA target="seine" title="Zarządzaj farmą z jednego miejsca" text="Pobierz seine, uruchom jedno proxy farmy i skieruj na nie swoje koparki. Zmieniaj pulę dla wszystkich koparek naraz i zachowaj statystyki każdej koparki na bntpool.com." />

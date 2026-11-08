@@ -1,12 +1,15 @@
 ---
-title: 'Een Blocknet-miningfarm via één proxy draaien'
-description: 'Draai je hele Blocknet-miningfarm via één seine-farmproxy: stel de pool en het uitbetalingsadres op één plek in, wijs elke rig ernaar en houd statistieken per rig.'
+title: 'Beheer je hele Blocknet-miningfarm vanaf één plek'
+seoTitle: 'Een Blocknet-miningfarm vanaf één plek beheren'
+description: 'Beheer elke rig in je Blocknet-miningfarm vanuit één seine-farmproxy: wissel in één keer van pool voor de hele farm, voeg rigs toe met één regel en houd statistieken per rig.'
 tags: ['Mininghandleiding', 'Farmproxy', 'seine', 'Servers']
-sourceHash: '043973652634'
+sourceHash: '95a3a4db9574'
 translation: draft
 faq:
   - q: 'Wat is de farmproxy van seine?'
-    a: 'Het is een modus van seine die op één machine in je lokale netwerk draait en voor al je rigs verbinding maakt met de pool. Elke rig maakt verbinding met de proxy in plaats van de pool en minet zijn eigen deel van het werk. De pool ziet één verbinding, en je stelt de pool en back-uppools op één plek in.'
+    a: 'Het is een modus van seine die op één machine in je lokale netwerk draait en voor al je rigs verbinding maakt met de pool. Elke rig maakt verbinding met de proxy in plaats van de pool en minet zijn eigen deel van het werk. Je stelt de pool en back-uppools één keer in, op de proxy, en elke rig gebruikt ze.'
+  - q: 'Moet ik mijn rigs aanpassen om de farmproxy te gebruiken?'
+    a: 'Alleen het pooladres. Wijs elke rig naar de proxy in plaats van de pool, houd zijn uitbetalingsadres en rignaam, en laat zijn threads, GPU’s en afstemming zoals ze zijn. HiveOS-flight sheets en mmpOS-profielen nemen het adres van de proxy op in hetzelfde pool-URL-veld.'
   - q: 'Heeft de farmproxy een krachtige machine nodig?'
     a: 'Nee. De proxy minet niet, dus hij heeft weinig CPU en geheugen nodig. Hij kan draaien op elke machine die je rigs in het lokale netwerk kunnen bereiken, zoals een kleine server of een van de rigs zelf naast zijn eigen miner.'
   - q: 'Verschijnen rigs achter de proxy nog apart op bntpool.com?'
@@ -15,29 +18,34 @@ faq:
     a: 'Ja. Elke rig wordt uitbetaald aan het adres waarmee hij inlogt, dus rigs die naar maximaal 16 verschillende adressen minen, kunnen één proxy delen. Een rig die zonder geldig adres inlogt, wordt uitbetaald aan het adres dat je de proxy met --address gaf.'
 ---
 
-Deze gids laat zien hoe je een Blocknet-miningfarm via één seine-farmproxy draait. Je start de proxy op één machine in je netwerk, wijst elke rig ernaar, en de proxy maakt voor de hele farm verbinding met bntpool.com. Je stelt de pool, het uitbetalingsadres en back-uppools op één plek in en houdt statistieken per rig op de pool. Hij volgt seine v0.3.1.
+Als elke rig zelf verbinding maakt met de pool, betekent elke poolwijziging werk op elke rig. Met de seine-farmproxy maken je rigs verbinding met één machine in je netwerk, en die machine maakt voor de hele farm verbinding met bntpool.com. Je wijzigt de pool, back-uppools of het standaard uitbetalingsadres één keer, en elke rig volgt. Elke rig staat nog steeds onder zijn eigen naam op bntpool.com. Deze gids volgt seine v0.3.1.
 
-## Wat doet de farmproxy?
-
-<Answer>
-De farmproxy is seine dat als lokale pool voor je rigs draait. Hij maakt één keer verbinding met bntpool.com voor de hele farm en geeft elke rig zijn eigen deel van het werk. De pool ziet één verbinding, elke rig minet nog steeds zelf en krijgt zelf zijn tegoed, en je wijzigt de pool of back-uppools voor elke rig op één plek.
-</Answer>
-
-Een farmproxy past bij iedereen die meer dan een handvol rigs draait:
-
-- **Eén plek voor instellingen.** Stel de pool, back-uppools en het standaard uitbetalingsadres in op de proxy, en elke rig neemt ze over.
-- **Eén uitgaande verbinding.** Rigs praten via je lokale netwerk met de proxy, en de proxy opent alleen de poolverbindingen die de farm nodig heeft, meestal één of een paar.
-- **Statistieken per rig op de pool.** bntpool.com schrijft shares per rig bij, dus elke rig staat nog steeds onder zijn eigen workernaam op de [statistiekenpagina](https://bntpool.com/stats).
-
-De proxy zelf minet niet. Hij heeft weinig CPU en geheugen nodig, dus hij kan draaien op elke machine die de rigs kunnen bereiken, ook op een van de rigs.
-
-## Hoe start je de proxy?
+## Wat levert de farmproxy je op?
 
 <Answer>
-Start seine met --proxy-listen en het adres en de poort waarmee de rigs verbinden, plus de gebruikelijke opties voor pool, uitbetalingsadres en rignaam. Bijvoorbeeld: ./seine --proxy-listen 0.0.0.0:3333 --pool-url stratum+tcp://bntpool.com:3333 --address YOUR_ADDRESS --pool-worker farm-1. De proxy wacht dan op rigs op poort 3333.
+De farmproxy is seine dat als lokale pool voor je rigs draait. Hij maakt voor de hele farm verbinding met bntpool.com en geeft elke rig zijn eigen deel van het werk. Je beheert pools, back-uppools en het standaard uitbetalingsadres op één plek, terwijl elke rig nog steeds zelf minet en zelf zijn tegoed krijgt.
 </Answer>
 
-Op de machine die de proxy draait:
+Dit verandert er zodra de farm via een proxy draait:
+
+- **Wissel van pool voor de hele farm met één herstart.** De pool en back-uppools staan op de proxy, dus je past één opdrachtregel aan in plaats van elke rig, flight sheet of elk profiel.
+- **Failover voor elke rig tegelijk.** Zet back-uppools op de proxy, en de hele farm gaat samen over naar de volgende pool en daarna terug naar de eerste zodra die weer antwoordt.
+- **Voeg een rig toe met één regel.** Een nieuwe rig heeft alleen het adres van de proxy als pool nodig. Verder verandert er niets aan de farm.
+- **Eén machine praat met het internet.** Rigs praten via je lokale netwerk met de proxy, en alleen de proxy hoeft de pool te bereiken. Eén firewallregel dekt de hele farm, en een SOCKS5-proxy voor netwerken die miningpoorten blokkeren, komt alleen op de farmproxy.
+- **Elke rig heeft nog steeds zijn eigen statistieken.** bntpool.com schrijft shares per rig bij, dus elke rig staat op de [statistiekenpagina](https://bntpool.com/stats) onder zijn eigen workernaam, met zijn eigen hashrate en shares.
+- **Meerdere wallets op één proxy.** Elke rig wordt uitbetaald aan het adres waarmee hij inlogt, dus één proxy kan rigs voor maximaal 16 verschillende wallets bedienen, zoals rigs die je voor vrienden of partners draait.
+
+De proxy zelf minet niet. Hij heeft weinig CPU en geheugen nodig, dus hij kan draaien op een kleine server of op een van de rigs, naast de eigen miner van die rig.
+
+## Hoe stel je de farmproxy in?
+
+<Answer>
+Start seine met --proxy-listen en het adres en de poort waarmee de rigs verbinden, plus de gebruikelijke opties voor pool, uitbetalingsadres en rignaam. Bijvoorbeeld: ./seine --proxy-listen 0.0.0.0:3333 --pool-url stratum+tcp://bntpool.com:3333 --address YOUR_ADDRESS --pool-worker farm-1. Wijs daarna de pool-URL van elke rig naar de proxy.
+</Answer>
+
+Het instellen gaat in twee stappen: start de proxy en wijs de rigs ernaar.
+
+**1. Start de proxy** op de machine die hem gaat draaien:
 
 ```bash
 ./seine --proxy-listen 0.0.0.0:3333 \
@@ -45,38 +53,39 @@ Op de machine die de proxy draait:
         --address YOUR_ADDRESS --pool-worker farm-1
 ```
 
-`--proxy-listen` bepaalt waar de proxy rigs accepteert; `0.0.0.0:3333` luistert op elke netwerkinterface op poort 3333. `--address` is het standaard uitbetalingsadres, gebruikt voor elke rig die zonder geldig adres inlogt. Elke pooloptie werkt op de proxy, ook back-uppools: zet ze op volgorde, gescheiden door komma's, en de proxy keert terug naar de eerste zodra die weer werkt. De [configuratiegids van seine](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/configuration.md) behandelt de poolopties.
+`--proxy-listen` bepaalt waar de proxy rigs accepteert; `0.0.0.0:3333` luistert op elke netwerkinterface op poort 3333. `--address` is het standaard uitbetalingsadres, gebruikt voor elke rig die zonder geldig adres inlogt. Elke pooloptie werkt op de proxy. Zet back-uppools op volgorde, gescheiden door komma's, en voeg `--pool-proxy socks5://host:port` toe als je netwerk een SOCKS5-proxy nodig heeft om de pool te bereiken. De [configuratiegids van seine](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/configuration.md) behandelt de poolopties.
 
-Bind de proxy aan je lokale netwerk. Iedereen die zijn poort kan bereiken, kan erdoorheen minen, dus gebruik een LAN-adres in `--proxy-listen` of scherm de poort af met een firewall, in plaats van hem aan het internet bloot te stellen.
+Houd de proxy binnen je lokale netwerk: gebruik een LAN-adres in `--proxy-listen` of scherm de poort af met een firewall, zodat alleen je eigen rigs erdoorheen kunnen minen en naar jouw adres betalen.
 
-## Hoe wijs je rigs naar de proxy?
-
-Gebruik op elke rig het lokale adres van de proxy als pool en geef de rig een eigen naam:
+**2. Wijs elke rig naar de proxy**, met het lokale adres van de proxy als pool en een eigen naam voor de rig:
 
 ```bash
 ./seine --pool-url 192.168.1.10:3333 --address YOUR_ADDRESS --pool-worker rig-07
 ```
 
-Vervang `192.168.1.10` door het adres van de proxymachine in je netwerk. Rigs met een mining-OS werken net zo: zet het adres van de proxy in het pool-URL-veld van de HiveOS-flight sheet of het mmpOS-profiel, zoals de [gids voor HiveOS en mmpOS](/nl/blog/mine-blocknet-hiveos-mmpos/) laat zien. Seine slaat de pool op bij de instellingen van de rig, dus latere starts verbinden vanzelf met de proxy.
+Vervang `192.168.1.10` door het adres van de proxymachine in je netwerk. Zet op een mining-OS het adres van de proxy in het pool-URL-veld van de HiveOS-flight sheet of het mmpOS-profiel, zoals de [gids voor HiveOS en mmpOS](/nl/blog/mine-blocknet-hiveos-mmpos/) laat zien. Seine slaat de pool op bij de instellingen van de rig, dus latere starts verbinden vanzelf met de proxy, en vanaf dan beheer je de pools op de proxy.
 
 ## Hoe worden rigs achter de proxy uitbetaald?
 
-Elke rig wordt uitbetaald aan het volledige Blocknet-adres waarmee hij inlogt. Rigs die naar verschillende wallets minen, kunnen één proxy delen, tot 16 adressen tegelijk. Een rig die zonder adres of met een ongeldig adres inlogt, wordt uitbetaald aan het `--address` van de proxy.
+Elke rig wordt uitbetaald aan het volledige Blocknet-adres waarmee hij inlogt, precies zoals bij een directe verbinding. Rigs die naar verschillende wallets minen, kunnen één proxy delen, tot 16 adressen tegelijk. Een rig die zonder adres of met een ongeldig adres inlogt, wordt uitbetaald aan het `--address` van de proxy, zodat zijn hashrate toch naar jou gaat.
 
 Als er 16 adressen in gebruik zijn, wacht een rig met een 17e adres tot een van de andere 10 minuten lang geen rigs meer heeft. Weigert de pool het adres van een rig, dan geeft de proxy de reden van de pool door, zodat je het op die rig kunt oplossen.
 
-Rigs achter de proxy kunnen ook solo minen op bntpool.com: zet `solo:` voor het adres van de rig, en de pool betaalt die rig de volledige beloning van elk blok dat hij vindt. [Solo minen op bntpool.com](https://bntpool.com/blog/nl/solo-mine-blocknet-on-bntpool/) legt solobeloningen uit. Uitbetalingen naar een beurs hebben een stortingsmemo nodig, die de proxy niet doorgeeft, dus verbind beursrigs rechtstreeks met de pool.
+Rigs achter de proxy kunnen ook solo minen op bntpool.com: zet `solo:` voor het adres van de rig, en de pool betaalt die rig de volledige beloning van elk blok dat hij vindt. [Solo minen op bntpool.com](https://bntpool.com/blog/nl/solo-mine-blocknet-on-bntpool/) legt solobeloningen uit. Uitbetalingen naar een beurs gebruiken een stortingsmemo, die de proxy niet doorgeeft, dus verbind rigs die naar een beurs uitbetalen rechtstreeks met de pool.
 
 ## Hoe volg je de farm?
 
 Zoek op bntpool.com elk uitbetalingsadres op de [statistiekenpagina](https://bntpool.com/stats). Elke rig achter de proxy verschijnt in de Workers-tabel onder zijn eigen rignaam, met zijn hashrate, shares en tijd van de laatste share, precies zoals bij directe verbindingen. De [gids voor het volgen van je miner](https://bntpool.com/blog/nl/track-your-miner-on-bntpool/) legt de pagina uit.
 
-De proxy logt daarnaast elke minuut een eigen samenvatting: verbonden rigs, geaccepteerde en afgewezen shares, een geschatte hashrate en zijn poolverbindingen. Hij logt elke rig die verbinding maakt of verbreekt, zodat je in één oogopslag ziet wanneer een rig wegvalt. Het eigen seine-dashboard van elke rig toont nog steeds zijn lokale hashrate en shares, zoals de [dashboardgids](/nl/blog/seine-dashboard-explained/) uitlegt.
+De proxy voegt er een eigen overzicht van de hele farm aan toe. Elke minuut logt hij een samenvatting: verbonden rigs, geaccepteerde en afgewezen shares, een geschatte hashrate voor de farm en zijn poolverbindingen. Hij logt ook elke rig die verbinding maakt of verbreekt, zodat één log laat zien wanneer een rig wegvalt. Het eigen seine-dashboard van elke rig toont nog steeds zijn lokale hashrate en shares, zoals de [dashboardgids](/nl/blog/seine-dashboard-explained/) uitlegt.
 
-## Wat moet je nog meer weten?
+## Houdt de proxy het bij als de farm groeit?
 
-- **Poolverbindingen groeien mee met de farm.** De proxy opent zoveel poolverbindingen als de farm nodig heeft om elke rig bij elk nieuw blok werk te geven. Voor de meeste farms zijn dat er één of een paar, en zeer grote farms krijgen er tot 64 per uitbetalingsadres.
-- **Elke rig houdt zijn eigen instellingen.** Aantallen threads, GPU-keuze en afstemming blijven op de rig. De [instellingengids](/nl/blog/configure-seine-miner/) behandelt ze, en de [gids voor minen op servers](/nl/blog/mine-blocknet-on-servers/) behandelt grote CPU-servers.
+Ja. De proxy opent zoveel poolverbindingen als de farm nodig heeft om elke rig bij elk nieuw blok werk te geven. Voor de meeste farms zijn dat er één of een paar, en zeer grote farms krijgen er tot 64 per uitbetalingsadres. Je hoeft dit niet in te stellen; de proxy voegt verbindingen toe naarmate er rigs bijkomen.
+
+Nog een paar dingen werken ongewijzigd zoals bij direct minen:
+
+- **Elke rig houdt zijn eigen afstemming.** Aantallen threads, GPU-keuze en afstemming blijven op de rig. De [instellingengids](/nl/blog/configure-seine-miner/) behandelt ze, en de [gids voor minen op servers](/nl/blog/mine-blocknet-on-servers/) behandelt grote CPU-servers.
 - **Netwerkupgrades.** Bij de netwerkupgrade Faraday vraagt de proxy rigs met een seine-release zonder ondersteuning daarvoor om bij te werken, net zoals de pool dat doet.
 
-<CTA target="seine" title="Download seine voor je farm" text="Draai één seine als farmproxy en wijs elke rig ernaar: één plek voor de poolinstellingen, statistieken per rig op bntpool.com." />
+<CTA target="seine" title="Beheer je farm vanaf één plek" text="Download seine, start één farmproxy en wijs je rigs ernaar. Wissel in één keer van pool voor elke rig en houd de statistieken van elke rig op bntpool.com." />

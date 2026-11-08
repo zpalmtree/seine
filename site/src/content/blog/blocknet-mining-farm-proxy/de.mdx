@@ -1,12 +1,15 @@
 ---
-title: 'Eine Blocknet-Mining-Farm über einen Proxy betreiben'
-description: 'Betreibe deine ganze Blocknet-Mining-Farm über einen seine-Farm-Proxy: Pool und Auszahlungsadresse an einer Stelle festlegen, alle Rigs darauf richten und Statistiken pro Rig behalten.'
+title: 'Deine ganze Blocknet-Mining-Farm von einer Stelle aus steuern'
+seoTitle: 'Eine Blocknet-Mining-Farm von einer Stelle aus steuern'
+description: 'Verwalte jedes Rig deiner Blocknet-Farm über einen seine-Farm-Proxy: Pools für die ganze Farm auf einmal wechseln, Rigs mit einer Zeile hinzufügen, Statistiken pro Rig behalten.'
 tags: ['Mining-Anleitung', 'Farm-Proxy', 'seine', 'Server']
-sourceHash: '043973652634'
+sourceHash: '95a3a4db9574'
 translation: draft
 faq:
   - q: 'Was ist der Farm-Proxy von seine?'
-    a: 'Ein Modus von seine, der auf einem Rechner in deinem lokalen Netzwerk läuft und sich für alle deine Rigs mit dem Pool verbindet. Jedes Rig verbindet sich statt mit dem Pool mit dem Proxy und mint seinen eigenen Teil der Arbeit. Der Pool sieht eine Verbindung, und du legst Pool und Backup-Pools an einer Stelle fest.'
+    a: 'Ein Modus von seine, der auf einem Rechner in deinem lokalen Netzwerk läuft und sich für alle deine Rigs mit dem Pool verbindet. Jedes Rig verbindet sich statt mit dem Pool mit dem Proxy und mint seinen eigenen Teil der Arbeit. Du legst Pool und Backup-Pools einmal auf dem Proxy fest, und alle Rigs nutzen sie.'
+  - q: 'Muss ich meine Rigs für den Farm-Proxy umstellen?'
+    a: 'Nur die Pool-Adresse. Richte jedes Rig statt auf den Pool auf den Proxy, behalte seine Auszahlungsadresse und seinen Rig-Namen, und lass Threads, GPUs und Tuning, wie sie sind. HiveOS-Flight-Sheets und mmpOS-Profile nehmen die Proxy-Adresse im selben Pool-URL-Feld auf.'
   - q: 'Braucht der Farm-Proxy einen leistungsstarken Rechner?'
     a: 'Nein. Der Proxy mint nicht und braucht daher wenig CPU und Speicher. Er kann auf jedem Rechner laufen, den deine Rigs im lokalen Netzwerk erreichen, etwa auf einem kleinen Server oder auf einem der Rigs neben dessen eigenem Miner.'
   - q: 'Erscheinen Rigs hinter dem Proxy auf bntpool.com weiterhin einzeln?'
@@ -15,29 +18,34 @@ faq:
     a: 'Ja. Jedes Rig wird an die Adresse ausgezahlt, mit der es sich anmeldet, daher können Rigs mit bis zu 16 verschiedenen Adressen einen Proxy teilen. Ein Rig, das sich ohne gültige Adresse anmeldet, wird an die Adresse ausgezahlt, die du dem Proxy mit --address gegeben hast.'
 ---
 
-Diese Anleitung zeigt dir, wie du eine Blocknet-Mining-Farm über einen einzigen seine-Farm-Proxy betreibst. Du startest den Proxy auf einem Rechner in deinem Netzwerk, richtest alle Rigs darauf, und der Proxy verbindet sich für die ganze Farm mit bntpool.com. Pool, Auszahlungsadresse und Backup-Pools legst du an einer Stelle fest, und auf dem Pool behältst du Statistiken pro Rig. Sie folgt seine v0.3.1.
+Wenn sich jedes Rig selbst mit dem Pool verbindet, ist jeder Pool-Wechsel Arbeit an jedem Rig. Mit dem seine-Farm-Proxy verbinden sich deine Rigs mit einem Rechner in deinem Netzwerk, und dieser Rechner verbindet sich für die ganze Farm mit bntpool.com. Du änderst Pool, Backup-Pools oder Standard-Auszahlungsadresse einmal, und alle Rigs folgen. Jedes Rig erscheint auf bntpool.com weiterhin unter seinem eigenen Namen. Diese Anleitung folgt seine v0.3.1.
 
-## Was macht der Farm-Proxy?
-
-<Answer>
-Der Farm-Proxy ist seine, das als lokaler Pool für deine Rigs läuft. Es verbindet sich einmal für die ganze Farm mit bntpool.com und gibt jedem Rig seinen eigenen Teil der Arbeit. Der Pool sieht eine Verbindung, jedes Rig mint weiter und wird einzeln gutgeschrieben, und du änderst den Pool oder die Backup-Pools für alle Rigs an einer Stelle.
-</Answer>
-
-Ein Farm-Proxy passt für alle, die mehr als eine Handvoll Rigs betreiben:
-
-- **Eine Stelle für Einstellungen.** Lege Pool, Backup-Pools und Standard-Auszahlungsadresse auf dem Proxy fest, und alle Rigs übernehmen sie.
-- **Eine ausgehende Verbindung.** Die Rigs sprechen über dein lokales Netzwerk mit dem Proxy, und der Proxy öffnet nur die Pool-Verbindungen, die die Farm braucht, meist eine oder wenige.
-- **Statistiken pro Rig auf dem Pool.** bntpool.com schreibt Shares pro Rig gut, daher erscheint jedes Rig weiterhin unter seinem eigenen Worker-Namen auf der [Statistikseite](https://bntpool.com/stats).
-
-Der Proxy selbst mint nicht. Er braucht wenig CPU und Speicher und kann daher auf jedem Rechner laufen, den die Rigs erreichen, auch auf einem der Rigs.
-
-## Wie startest du den Proxy?
+## Was bringt dir der Farm-Proxy?
 
 <Answer>
-Starte seine mit --proxy-listen und der Adresse und dem Port, mit denen sich die Rigs verbinden sollen, dazu die üblichen Optionen für Pool, Auszahlungsadresse und Rig-Namen. Zum Beispiel: ./seine --proxy-listen 0.0.0.0:3333 --pool-url stratum+tcp://bntpool.com:3333 --address YOUR_ADDRESS --pool-worker farm-1. Der Proxy wartet dann auf Port 3333 auf Rigs.
+Der Farm-Proxy ist seine, das als lokaler Pool für deine Rigs läuft. Es verbindet sich für die ganze Farm mit bntpool.com und gibt jedem Rig seinen eigenen Teil der Arbeit. Du verwaltest Pools, Backup-Pools und Standard-Auszahlungsadresse an einer Stelle, während jedes Rig weiter selbst mint und einzeln gutgeschrieben wird.
 </Answer>
 
-Auf dem Rechner, der den Proxy ausführen soll:
+Das ändert sich, sobald die Farm über einen Proxy läuft:
+
+- **Pools für die ganze Farm mit einem Neustart wechseln.** Pool und Backup-Pools liegen auf dem Proxy, du bearbeitest also eine Befehlszeile statt jedes Rigs, Flight Sheets oder Profils.
+- **Failover für alle Rigs gleichzeitig.** Liste Backup-Pools auf dem Proxy auf, und die ganze Farm wechselt gemeinsam zum nächsten Pool und kehrt zum ersten zurück, sobald er wieder antwortet.
+- **Ein Rig mit einer Zeile hinzufügen.** Ein neues Rig braucht nur die Adresse des Proxys als Pool. Sonst ändert sich nichts an der Farm.
+- **Nur ein Rechner spricht mit dem Internet.** Die Rigs sprechen über dein lokales Netzwerk mit dem Proxy, und nur der Proxy muss den Pool erreichen. Eine Firewall-Regel deckt die Farm ab, und ein SOCKS5-Proxy für Netzwerke, die Mining-Ports sperren, kommt nur auf den Proxy.
+- **Jedes Rig behält seine eigenen Statistiken.** bntpool.com schreibt Shares pro Rig gut, daher erscheint jedes Rig auf der [Statistikseite](https://bntpool.com/stats) unter seinem eigenen Worker-Namen, mit eigener Hashrate und eigenen Shares.
+- **Mehrere Wallets an einem Proxy.** Jedes Rig wird an die Adresse ausgezahlt, mit der es sich anmeldet, daher kann ein Proxy Rigs für bis zu 16 verschiedene Wallets bedienen, etwa Rigs, die du für Freunde oder Partner betreibst.
+
+Der Proxy selbst mint nicht. Er braucht wenig CPU und Speicher und kann daher auf einem kleinen Server oder auf einem der Rigs laufen, neben dessen eigenem Miner.
+
+## Wie richtest du den Farm-Proxy ein?
+
+<Answer>
+Starte seine mit --proxy-listen und der Adresse und dem Port, mit denen sich die Rigs verbinden sollen, dazu die üblichen Optionen für Pool, Auszahlungsadresse und Rig-Namen. Zum Beispiel: ./seine --proxy-listen 0.0.0.0:3333 --pool-url stratum+tcp://bntpool.com:3333 --address YOUR_ADDRESS --pool-worker farm-1. Richte danach die Pool-URL jedes Rigs auf den Proxy.
+</Answer>
+
+Die Einrichtung hat zwei Schritte: den Proxy starten und dann die Rigs darauf richten.
+
+**1. Starte den Proxy** auf dem Rechner, auf dem er laufen soll:
 
 ```bash
 ./seine --proxy-listen 0.0.0.0:3333 \
@@ -45,38 +53,39 @@ Auf dem Rechner, der den Proxy ausführen soll:
         --address YOUR_ADDRESS --pool-worker farm-1
 ```
 
-`--proxy-listen` legt fest, wo der Proxy Rigs annimmt; `0.0.0.0:3333` lauscht auf allen Netzwerkschnittstellen an Port 3333. `--address` ist die Standard-Auszahlungsadresse für jedes Rig, das sich ohne gültige Adresse anmeldet. Alle Pool-Optionen funktionieren auf dem Proxy, auch Backup-Pools: Liste sie der Reihe nach durch Kommas getrennt auf, und der Proxy kehrt zum ersten zurück, sobald er wieder erreichbar ist. Die [Konfigurationsanleitung von seine](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/configuration.md) behandelt die Pool-Optionen.
+`--proxy-listen` legt fest, wo der Proxy Rigs annimmt; `0.0.0.0:3333` lauscht auf allen Netzwerkschnittstellen an Port 3333. `--address` ist die Standard-Auszahlungsadresse für jedes Rig, das sich ohne gültige Adresse anmeldet. Alle Pool-Optionen funktionieren auf dem Proxy. Backup-Pools listest du der Reihe nach durch Kommas getrennt auf, und `--pool-proxy socks5://host:port` fügst du hinzu, wenn dein Netzwerk einen SOCKS5-Proxy braucht, um den Pool zu erreichen. Die [Konfigurationsanleitung von seine](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/configuration.md) behandelt die Pool-Optionen.
 
-Binde den Proxy an dein lokales Netzwerk. Wer seinen Port erreicht, kann über ihn minen, nutze daher in `--proxy-listen` eine LAN-Adresse oder schütze den Port mit einer Firewall, statt ihn ins Internet zu öffnen.
+Halte den Proxy in deinem lokalen Netzwerk: Nutze in `--proxy-listen` eine LAN-Adresse oder schütze den Port mit einer Firewall, damit nur deine eigenen Rigs über ihn minen und an deine Adresse zahlen können.
 
-## Wie richtest du die Rigs auf den Proxy?
-
-Nutze auf jedem Rig die lokale Adresse des Proxys als Pool und gib dem Rig einen eigenen Namen:
+**2. Richte jedes Rig auf den Proxy**, mit der lokalen Adresse des Proxys als Pool und einem eigenen Namen für das Rig:
 
 ```bash
 ./seine --pool-url 192.168.1.10:3333 --address YOUR_ADDRESS --pool-worker rig-07
 ```
 
-Ersetze `192.168.1.10` durch die Adresse des Proxy-Rechners in deinem Netzwerk. Rigs mit Mining-Betriebssystem funktionieren genauso: Trage die Adresse des Proxys im Pool-URL-Feld des HiveOS-Flight-Sheets oder des mmpOS-Profils ein, wie die [Anleitung für HiveOS und mmpOS](/de/blog/mine-blocknet-hiveos-mmpos/) zeigt. seine speichert den Pool mit den Einstellungen des Rigs, sodass sich spätere Starts von selbst mit dem Proxy verbinden.
+Ersetze `192.168.1.10` durch die Adresse des Proxy-Rechners in deinem Netzwerk. Auf einem Mining-Betriebssystem trägst du die Adresse des Proxys im Pool-URL-Feld des HiveOS-Flight-Sheets oder des mmpOS-Profils ein, wie die [Anleitung für HiveOS und mmpOS](/de/blog/mine-blocknet-hiveos-mmpos/) zeigt. seine speichert den Pool mit den Einstellungen des Rigs, sodass sich spätere Starts von selbst mit dem Proxy verbinden, und ab dann verwaltest du die Pools auf dem Proxy.
 
 ## Wie werden Rigs hinter dem Proxy ausgezahlt?
 
-Jedes Rig wird an die vollständige Blocknet-Adresse ausgezahlt, mit der es sich anmeldet. Rigs, die auf verschiedene Wallets minen, können einen Proxy teilen, mit bis zu 16 Adressen gleichzeitig. Ein Rig, das sich ohne Adresse oder mit einer ungültigen anmeldet, wird an die `--address` des Proxys ausgezahlt.
+Jedes Rig wird an die vollständige Blocknet-Adresse ausgezahlt, mit der es sich anmeldet, genau wie bei einer direkten Verbindung. Rigs, die auf verschiedene Wallets minen, können einen Proxy teilen, mit bis zu 16 Adressen gleichzeitig. Ein Rig, das sich ohne Adresse oder mit einer ungültigen anmeldet, wird an die `--address` des Proxys ausgezahlt, seine Hashrate kommt also weiterhin dir zugute.
 
 Sind 16 Adressen in Gebrauch, wartet ein Rig mit einer 17. Adresse, bis eine der anderen 10 Minuten lang keine Rigs mehr hatte. Lehnt der Pool die Adresse eines Rigs ab, gibt der Proxy den Grund des Pools weiter, damit du ihn auf diesem Rig beheben kannst.
 
-Rigs hinter dem Proxy können auf bntpool.com auch solo minen: Setze `solo:` vor die Adresse des Rigs, und der Pool zahlt diesem Rig die volle Belohnung jedes Blocks, den es findet. [Solo-Mining auf bntpool.com](https://bntpool.com/blog/de/solo-mine-blocknet-on-bntpool/) erklärt Solo-Belohnungen. Auszahlungen an eine Börse brauchen ein Einzahlungs-Memo, das der Proxy nicht weiterleitet, verbinde Börsen-Rigs also direkt mit dem Pool.
+Rigs hinter dem Proxy können auf bntpool.com auch solo minen: Setze `solo:` vor die Adresse des Rigs, und der Pool zahlt diesem Rig die volle Belohnung jedes Blocks, den es findet. [Solo-Mining auf bntpool.com](https://bntpool.com/blog/de/solo-mine-blocknet-on-bntpool/) erklärt Solo-Belohnungen. Auszahlungen an eine Börse nutzen ein Einzahlungs-Memo, das der Proxy nicht weiterleitet, verbinde Rigs, die an eine Börse zahlen, also direkt mit dem Pool.
 
 ## Wie verfolgst du die Farm?
 
 Suche auf bntpool.com jede Auszahlungsadresse auf der [Statistikseite](https://bntpool.com/stats). Jedes Rig hinter dem Proxy erscheint in der Tabelle Workers unter seinem eigenen Rig-Namen, mit Hashrate, Shares und Zeit des letzten Shares, genau wie bei direkten Verbindungen. Die [Anleitung zum Überwachen deines Miners](https://bntpool.com/blog/de/track-your-miner-on-bntpool/) erklärt die Seite.
 
-Der Proxy protokolliert außerdem jede Minute eine eigene Zusammenfassung: verbundene Rigs, akzeptierte und abgelehnte Shares, eine geschätzte Hashrate und seine Pool-Verbindungen. Er protokolliert jedes Rig beim Verbinden und Trennen, sodass du auf einen Blick siehst, wenn ein Rig ausfällt. Das seine-Dashboard jedes Rigs zeigt weiterhin dessen lokale Hashrate und Shares, wie die [Dashboard-Anleitung](/de/blog/seine-dashboard-explained/) erklärt.
+Der Proxy bietet zusätzlich eine eigene Sicht auf die ganze Farm. Jede Minute protokolliert er eine Zusammenfassung: verbundene Rigs, akzeptierte und abgelehnte Shares, eine geschätzte Hashrate der Farm und seine Pool-Verbindungen. Außerdem protokolliert er jedes Rig beim Verbinden und Trennen, sodass ein einziges Log zeigt, wann ein Rig ausfällt. Das seine-Dashboard jedes Rigs zeigt weiterhin dessen lokale Hashrate und Shares, wie die [Dashboard-Anleitung](/de/blog/seine-dashboard-explained/) erklärt.
 
-## Was solltest du noch wissen?
+## Hält der Proxy mit, wenn die Farm wächst?
 
-- **Pool-Verbindungen wachsen mit der Farm.** Der Proxy öffnet so viele Pool-Verbindungen, wie die Farm braucht, damit jedes Rig bei jedem neuen Block Arbeit bekommt. Für die meisten Farmen sind das eine oder wenige, sehr große Farmen kommen auf bis zu 64 pro Auszahlungsadresse.
-- **Jedes Rig behält seine eigenen Einstellungen.** Thread-Zahl, GPU-Auswahl und Tuning bleiben auf dem Rig. Die [Einstellungsanleitung](/de/blog/configure-seine-miner/) behandelt sie, und die [Anleitung zum Mining auf Servern](/de/blog/mine-blocknet-on-servers/) behandelt große CPU-Server.
+Ja. Der Proxy öffnet so viele Pool-Verbindungen, wie die Farm braucht, damit jedes Rig bei jedem neuen Block Arbeit bekommt. Für die meisten Farmen sind das eine oder wenige, sehr große Farmen kommen auf bis zu 64 pro Auszahlungsadresse. Das musst du nicht einstellen: Der Proxy fügt Verbindungen hinzu, wenn Rigs dazukommen.
+
+Einiges bleibt außerdem genau wie beim direkten Mining:
+
+- **Jedes Rig behält sein eigenes Tuning.** Thread-Zahl, GPU-Auswahl und Tuning bleiben auf dem Rig. Die [Einstellungsanleitung](/de/blog/configure-seine-miner/) behandelt sie, und die [Anleitung zum Mining auf Servern](/de/blog/mine-blocknet-on-servers/) behandelt große CPU-Server.
 - **Netzwerk-Upgrades.** Beim Netzwerk-Upgrade Faraday fordert der Proxy Rigs mit einem seine-Release ohne Unterstützung dafür zum Update auf, genau wie der Pool.
 
-<CTA target="seine" title="seine für deine Farm herunterladen" text="Betreibe ein seine als Farm-Proxy und richte alle Rigs darauf: eine Stelle für die Pool-Einstellungen, Statistiken pro Rig auf bntpool.com." />
+<CTA target="seine" title="Deine Farm von einer Stelle aus steuern" text="Lade seine herunter, starte einen Farm-Proxy und richte deine Rigs darauf. Wechsle Pools für alle Rigs auf einmal und behalte die Statistiken jedes Rigs auf bntpool.com." />

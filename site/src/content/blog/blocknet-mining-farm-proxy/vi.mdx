@@ -1,12 +1,15 @@
 ---
-title: 'Vận hành trang trại đào Blocknet qua một proxy'
-description: 'Chạy cả trang trại đào Blocknet qua một farm proxy của seine: đặt pool và địa chỉ nhận thanh toán ở một nơi, trỏ mọi dàn máy về đó và vẫn có thống kê từng dàn máy.'
+title: 'Quản lý cả trang trại đào Blocknet từ một nơi'
+seoTitle: 'Quản lý trang trại đào Blocknet từ một nơi'
+description: 'Quản lý mọi dàn máy trong trang trại đào Blocknet từ một farm proxy của seine: đổi pool cho cả trang trại cùng lúc, thêm dàn máy bằng một dòng và vẫn có thống kê từng dàn máy.'
 tags: ['Hướng dẫn đào coin', 'Farm proxy', 'seine', 'Máy chủ']
-sourceHash: '043973652634'
+sourceHash: '95a3a4db9574'
 translation: draft
 faq:
   - q: 'Farm proxy của seine là gì?'
-    a: 'Đây là một chế độ của seine chạy trên một máy trong mạng cục bộ và kết nối đến pool cho tất cả dàn máy của bạn. Mỗi dàn máy kết nối đến proxy thay vì pool và đào phần công việc của riêng nó. Pool chỉ thấy một kết nối, và bạn đặt pool cùng các pool dự phòng ở một nơi.'
+    a: 'Đây là một chế độ của seine chạy trên một máy trong mạng cục bộ và kết nối đến pool cho tất cả dàn máy của bạn. Mỗi dàn máy kết nối đến proxy thay vì pool và đào phần công việc của riêng nó. Bạn đặt pool và các pool dự phòng một lần, trên proxy, và mọi dàn máy đều dùng chúng.'
+  - q: 'Tôi có phải thay đổi các dàn máy để dùng farm proxy không?'
+    a: 'Chỉ địa chỉ pool. Trỏ mỗi dàn máy về proxy thay vì pool, giữ nguyên địa chỉ nhận thanh toán và tên dàn máy, và để nguyên số luồng, GPU và tinh chỉnh. Flight sheet HiveOS và profile mmpOS nhận địa chỉ proxy ở cùng trường pool URL.'
   - q: 'Farm proxy có cần máy mạnh không?'
     a: 'Không. Proxy không đào, nên chỉ cần ít CPU và bộ nhớ. Nó có thể chạy trên bất kỳ máy nào mà các dàn máy truy cập được trong mạng cục bộ, như một máy chủ nhỏ hoặc chính một dàn máy bên cạnh trình đào của nó.'
   - q: 'Dàn máy phía sau proxy có còn hiện riêng trên bntpool.com không?'
@@ -15,29 +18,34 @@ faq:
     a: 'Có. Mỗi dàn máy được trả về địa chỉ nó dùng để đăng nhập, nên các dàn máy đào về tối đa 16 địa chỉ khác nhau có thể dùng chung một proxy. Dàn máy đăng nhập không có địa chỉ hợp lệ được trả về địa chỉ bạn cung cấp cho proxy bằng --address.'
 ---
 
-Hướng dẫn này cho bạn biết cách vận hành trang trại đào Blocknet qua một farm proxy của seine. Bạn khởi động proxy trên một máy trong mạng, trỏ mọi dàn máy về đó, và proxy kết nối đến bntpool.com cho cả trang trại. Bạn đặt pool, địa chỉ nhận thanh toán và pool dự phòng ở một nơi và vẫn có thống kê từng dàn máy trên pool. Nội dung theo seine v0.3.1.
+Khi mỗi dàn máy tự kết nối đến pool, mỗi lần đổi pool là một việc phải làm trên từng dàn máy. Với farm proxy của seine, các dàn máy kết nối đến một máy trong mạng của bạn, và máy đó kết nối đến bntpool.com cho cả trang trại. Bạn đổi pool, pool dự phòng hoặc địa chỉ nhận thanh toán mặc định một lần, và mọi dàn máy đều làm theo. Mỗi dàn máy vẫn hiện trên bntpool.com với tên riêng. Nội dung theo seine v0.3.1.
 
-## Farm proxy làm gì?
-
-<Answer>
-Farm proxy là seine chạy như một pool cục bộ cho các dàn máy của bạn. Nó kết nối đến bntpool.com một lần cho cả trang trại và giao cho mỗi dàn máy phần công việc riêng. Pool chỉ thấy một kết nối, mỗi dàn máy vẫn đào và được ghi nhận riêng, và bạn đổi pool hoặc pool dự phòng cho mọi dàn máy ở một nơi.
-</Answer>
-
-Farm proxy phù hợp với bất kỳ ai chạy nhiều hơn vài dàn máy:
-
-- **Một nơi cho mọi cài đặt.** Đặt pool, pool dự phòng và địa chỉ nhận thanh toán mặc định trên proxy, và mọi dàn máy đều nhận theo.
-- **Một kết nối ra ngoài.** Các dàn máy giao tiếp với proxy qua mạng cục bộ, và proxy chỉ mở những kết nối pool mà trang trại cần, thường là một hoặc vài kết nối.
-- **Thống kê từng dàn máy trên pool.** bntpool.com ghi nhận share theo từng dàn máy, nên mỗi dàn máy vẫn hiện với tên worker riêng trên [trang thống kê](https://bntpool.com/stats).
-
-Bản thân proxy không đào. Nó cần ít CPU và bộ nhớ, nên có thể chạy trên bất kỳ máy nào các dàn máy truy cập được, kể cả một trong các dàn máy.
-
-## Khởi động proxy thế nào?
+## Farm proxy giúp gì cho bạn?
 
 <Answer>
-Khởi động seine với --proxy-listen cùng địa chỉ và cổng mà các dàn máy sẽ kết nối, cộng các tùy chọn pool, địa chỉ nhận thanh toán và tên dàn máy như thường lệ. Ví dụ: ./seine --proxy-listen 0.0.0.0:3333 --pool-url stratum+tcp://bntpool.com:3333 --address YOUR_ADDRESS --pool-worker farm-1. Proxy sau đó chờ các dàn máy ở cổng 3333.
+Farm proxy là seine chạy như một pool cục bộ cho các dàn máy của bạn. Nó kết nối đến bntpool.com cho cả trang trại và giao cho mỗi dàn máy phần công việc riêng. Bạn quản lý pool, pool dự phòng và địa chỉ nhận thanh toán mặc định ở một nơi, trong khi mỗi dàn máy vẫn đào và được ghi nhận riêng.
 </Answer>
 
-Trên máy sẽ chạy proxy:
+Đây là những gì thay đổi khi trang trại chạy qua một proxy:
+
+- **Đổi pool cho cả trang trại chỉ với một lần khởi động lại.** Pool và pool dự phòng nằm trên proxy, nên bạn sửa một dòng lệnh thay vì từng dàn máy, flight sheet hay profile.
+- **Chuyển dự phòng cho mọi dàn máy cùng lúc.** Liệt kê pool dự phòng trên proxy, và cả trang trại cùng chuyển sang pool kế tiếp, rồi quay lại pool đầu tiên khi pool đó phản hồi trở lại.
+- **Thêm dàn máy bằng một dòng.** Dàn máy mới chỉ cần địa chỉ của proxy làm pool. Không có gì khác trong trang trại phải thay đổi.
+- **Chỉ một máy giao tiếp với internet.** Các dàn máy giao tiếp với proxy qua mạng cục bộ, và chỉ proxy cần kết nối đến pool. Một quy tắc tường lửa là đủ cho cả trang trại, và proxy SOCKS5 cho các mạng chặn cổng đào chỉ cần đặt trên proxy.
+- **Mỗi dàn máy vẫn có thống kê riêng.** bntpool.com ghi nhận share theo từng dàn máy, nên mỗi dàn máy hiện trên [trang thống kê](https://bntpool.com/stats) với tên worker riêng, kèm hashrate và share riêng.
+- **Nhiều ví trên một proxy.** Mỗi dàn máy được trả về địa chỉ nó dùng để đăng nhập, nên một proxy có thể phục vụ dàn máy cho tối đa 16 ví khác nhau, chẳng hạn các dàn máy bạn chạy cho bạn bè hoặc đối tác.
+
+Bản thân proxy không đào. Nó cần ít CPU và bộ nhớ, nên có thể chạy trên một máy chủ nhỏ hoặc trên một trong các dàn máy, bên cạnh trình đào của chính dàn máy đó.
+
+## Thiết lập farm proxy thế nào?
+
+<Answer>
+Khởi động seine với --proxy-listen cùng địa chỉ và cổng mà các dàn máy sẽ kết nối, cộng các tùy chọn pool, địa chỉ nhận thanh toán và tên dàn máy như thường lệ. Ví dụ: ./seine --proxy-listen 0.0.0.0:3333 --pool-url stratum+tcp://bntpool.com:3333 --address YOUR_ADDRESS --pool-worker farm-1. Sau đó trỏ pool URL của mỗi dàn máy về proxy.
+</Answer>
+
+Thiết lập gồm hai bước: khởi động proxy, rồi trỏ các dàn máy về đó.
+
+**1. Khởi động proxy** trên máy sẽ chạy nó:
 
 ```bash
 ./seine --proxy-listen 0.0.0.0:3333 \
@@ -45,38 +53,39 @@ Trên máy sẽ chạy proxy:
         --address YOUR_ADDRESS --pool-worker farm-1
 ```
 
-`--proxy-listen` đặt nơi proxy nhận dàn máy; `0.0.0.0:3333` lắng nghe trên mọi giao diện mạng ở cổng 3333. `--address` là địa chỉ nhận thanh toán mặc định, dùng cho mọi dàn máy đăng nhập không có địa chỉ hợp lệ. Mọi tùy chọn pool đều dùng được trên proxy, kể cả pool dự phòng: liệt kê theo thứ tự, phân cách bằng dấu phẩy, và proxy quay lại pool đầu tiên khi pool đó hoạt động lại. [Hướng dẫn cấu hình seine](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/configuration.md) trình bày các tùy chọn pool.
+`--proxy-listen` đặt nơi proxy nhận dàn máy; `0.0.0.0:3333` lắng nghe trên mọi giao diện mạng ở cổng 3333. `--address` là địa chỉ nhận thanh toán mặc định, dùng cho mọi dàn máy đăng nhập không có địa chỉ hợp lệ. Mọi tùy chọn pool đều dùng được trên proxy. Với pool dự phòng, liệt kê theo thứ tự, phân cách bằng dấu phẩy, và thêm `--pool-proxy socks5://host:port` nếu mạng của bạn cần proxy SOCKS5 để kết nối đến pool. [Hướng dẫn cấu hình seine](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/configuration.md) trình bày các tùy chọn pool.
 
-Hãy gắn proxy với mạng cục bộ. Bất kỳ ai truy cập được cổng của nó đều có thể đào qua nó, nên hãy dùng địa chỉ LAN trong `--proxy-listen`, hoặc chặn cổng bằng tường lửa, thay vì mở ra internet.
+Giữ proxy trong mạng cục bộ: dùng địa chỉ LAN trong `--proxy-listen`, hoặc chặn cổng bằng tường lửa, để chỉ các dàn máy của chính bạn đào qua nó và trả về địa chỉ của bạn.
 
-## Trỏ dàn máy về proxy thế nào?
-
-Trên mỗi dàn máy, dùng địa chỉ cục bộ của proxy làm pool và đặt tên riêng cho dàn máy:
+**2. Trỏ mỗi dàn máy về proxy**, dùng địa chỉ cục bộ của proxy làm pool và đặt tên riêng cho dàn máy:
 
 ```bash
 ./seine --pool-url 192.168.1.10:3333 --address YOUR_ADDRESS --pool-worker rig-07
 ```
 
-Thay `192.168.1.10` bằng địa chỉ của máy chạy proxy trong mạng của bạn. Dàn máy chạy hệ điều hành đào cũng làm tương tự: đặt địa chỉ proxy vào trường pool URL của flight sheet HiveOS hoặc profile mmpOS, như [hướng dẫn HiveOS và mmpOS](/vi/blog/mine-blocknet-hiveos-mmpos/) trình bày. seine lưu pool cùng cài đặt của dàn máy, nên các lần khởi động sau tự kết nối đến proxy.
+Thay `192.168.1.10` bằng địa chỉ của máy chạy proxy trong mạng của bạn. Trên hệ điều hành đào, đặt địa chỉ proxy vào trường pool URL của flight sheet HiveOS hoặc profile mmpOS, như [hướng dẫn HiveOS và mmpOS](/vi/blog/mine-blocknet-hiveos-mmpos/) trình bày. seine lưu pool cùng cài đặt của dàn máy, nên các lần khởi động sau tự kết nối đến proxy, và từ đó bạn quản lý pool trên proxy.
 
 ## Dàn máy phía sau proxy được trả thế nào?
 
-Mỗi dàn máy được trả về địa chỉ Blocknet đầy đủ mà nó dùng để đăng nhập. Các dàn máy đào về các ví khác nhau có thể dùng chung một proxy, tối đa 16 địa chỉ cùng lúc. Dàn máy đăng nhập không có địa chỉ, hoặc với địa chỉ không hợp lệ, được trả về `--address` của proxy.
+Mỗi dàn máy được trả về địa chỉ Blocknet đầy đủ mà nó dùng để đăng nhập, đúng như khi kết nối trực tiếp. Các dàn máy đào về các ví khác nhau có thể dùng chung một proxy, tối đa 16 địa chỉ cùng lúc. Dàn máy đăng nhập không có địa chỉ, hoặc với địa chỉ không hợp lệ, được trả về `--address` của proxy, nên hashrate của nó vẫn về bạn.
 
 Khi đã dùng 16 địa chỉ, dàn máy có địa chỉ thứ 17 sẽ chờ đến khi một trong các địa chỉ kia không còn dàn máy nào trong 10 phút. Nếu pool từ chối địa chỉ của một dàn máy, proxy chuyển tiếp lý do của pool để bạn sửa trên dàn máy đó.
 
-Dàn máy phía sau proxy cũng có thể đào solo trên bntpool.com: thêm `solo:` vào trước địa chỉ của dàn máy, và pool trả cho dàn máy đó toàn bộ phần thưởng của mỗi khối nó tìm được. [Đào solo trên bntpool.com](https://bntpool.com/blog/vi/solo-mine-blocknet-on-bntpool/) giải thích phần thưởng solo. Thanh toán vào sàn giao dịch cần memo nạp tiền, mà proxy không chuyển, nên hãy kết nối dàn máy đào vào sàn trực tiếp đến pool.
+Dàn máy phía sau proxy cũng có thể đào solo trên bntpool.com: thêm `solo:` vào trước địa chỉ của dàn máy, và pool trả cho dàn máy đó toàn bộ phần thưởng của mỗi khối nó tìm được. [Đào solo trên bntpool.com](https://bntpool.com/blog/vi/solo-mine-blocknet-on-bntpool/) giải thích phần thưởng solo. Thanh toán vào sàn giao dịch dùng memo nạp tiền, mà proxy không chuyển, nên hãy kết nối các dàn máy trả về sàn trực tiếp đến pool.
 
 ## Theo dõi trang trại thế nào?
 
 Trên bntpool.com, tra từng địa chỉ nhận thanh toán trên [trang thống kê](https://bntpool.com/stats). Mỗi dàn máy phía sau proxy hiện trong bảng Workers với tên dàn máy riêng, kèm hashrate, share và thời gian share cuối, đúng như khi kết nối trực tiếp. [Hướng dẫn theo dõi trình đào](https://bntpool.com/blog/vi/track-your-miner-on-bntpool/) giải thích trang này.
 
-Proxy cũng ghi bản tóm tắt riêng mỗi phút: các dàn máy đang kết nối, share được chấp nhận và bị từ chối, hashrate ước tính và các kết nối pool. Nó ghi lại từng dàn máy khi kết nối và ngắt kết nối, nên bạn thấy ngay khi một dàn máy rớt ra. Bảng điều khiển seine trên mỗi dàn máy vẫn hiển thị hashrate và share cục bộ, như [hướng dẫn bảng điều khiển](/vi/blog/seine-dashboard-explained/) giải thích.
+Proxy bổ sung một góc nhìn toàn trang trại của riêng nó. Mỗi phút nó ghi một bản tóm tắt: các dàn máy đang kết nối, share được chấp nhận và bị từ chối, hashrate ước tính của trang trại và các kết nối pool. Nó cũng ghi lại từng dàn máy khi kết nối và ngắt kết nối, nên một nhật ký cho thấy khi nào một dàn máy rớt ra. Bảng điều khiển seine trên mỗi dàn máy vẫn hiển thị hashrate và share cục bộ, như [hướng dẫn bảng điều khiển](/vi/blog/seine-dashboard-explained/) giải thích.
 
-## Cần biết thêm gì?
+## Proxy có theo kịp khi trang trại lớn lên không?
 
-- **Kết nối pool tăng theo trang trại.** Proxy mở số kết nối pool mà trang trại cần để mọi dàn máy đều nhận được công việc ở mỗi khối mới. Với đa số trang trại đó là một hoặc vài kết nối, và trang trại rất lớn có tới 64 kết nối cho mỗi địa chỉ nhận thanh toán.
-- **Mỗi dàn máy giữ cài đặt riêng.** Số luồng, lựa chọn GPU và tinh chỉnh vẫn nằm trên dàn máy. [Hướng dẫn cài đặt](/vi/blog/configure-seine-miner/) trình bày các mục này, và [hướng dẫn đào trên máy chủ](/vi/blog/mine-blocknet-on-servers/) trình bày máy chủ CPU lớn.
+Có. Proxy mở số kết nối pool mà trang trại cần để mọi dàn máy đều nhận được công việc ở mỗi khối mới. Với đa số trang trại đó là một hoặc vài kết nối, và trang trại rất lớn có tới 64 kết nối cho mỗi địa chỉ nhận thanh toán. Bạn không cần đặt giá trị này; proxy tự thêm kết nối khi có dàn máy tham gia.
+
+Một vài điều khác vẫn giữ nguyên như khi đào trực tiếp:
+
+- **Mỗi dàn máy giữ tinh chỉnh riêng.** Số luồng, lựa chọn GPU và tinh chỉnh vẫn nằm trên dàn máy. [Hướng dẫn cài đặt](/vi/blog/configure-seine-miner/) trình bày các mục này, và [hướng dẫn đào trên máy chủ](/vi/blog/mine-blocknet-on-servers/) trình bày máy chủ CPU lớn.
 - **Nâng cấp mạng.** Khi nâng cấp mạng Faraday, proxy yêu cầu các dàn máy đang chạy bản seine chưa hỗ trợ nâng cấp đó cập nhật, giống như pool.
 
-<CTA target="seine" title="Tải seine cho trang trại của bạn" text="Chạy một seine làm farm proxy và trỏ mọi dàn máy về đó: một nơi cho cài đặt pool, thống kê từng dàn máy trên bntpool.com." />
+<CTA target="seine" title="Quản lý trang trại từ một nơi" text="Tải seine, khởi động một farm proxy và trỏ các dàn máy về đó. Đổi pool cho mọi dàn máy cùng lúc, và giữ thống kê từng dàn máy trên bntpool.com." />

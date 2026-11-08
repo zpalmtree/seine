@@ -1,12 +1,15 @@
 ---
-title: 'Gérer une ferme de minage Blocknet avec un seul proxy'
-description: 'Faites passer toute votre ferme de minage Blocknet par un proxy de ferme seine : réglez pool et adresse de paiement en un seul endroit, pointez chaque rig dessus et gardez des stats par rig.'
+title: 'Gérer toute votre ferme de minage Blocknet depuis un seul endroit'
+seoTitle: 'Gérer une ferme de minage Blocknet depuis un seul endroit'
+description: 'Gérez chaque rig de votre ferme Blocknet depuis un proxy de ferme seine : changez de pool pour toute la ferme d’un coup, ajoutez un rig en une ligne et gardez des stats par rig.'
 tags: ['Guide de minage', 'Proxy de ferme', 'seine', 'Serveurs']
-sourceHash: '043973652634'
+sourceHash: '95a3a4db9574'
 translation: draft
 faq:
   - q: 'Qu’est-ce que le proxy de ferme de seine ?'
-    a: 'C’est un mode de seine qui tourne sur une machine de votre réseau local et se connecte au pool pour tous vos rigs. Chaque rig se connecte au proxy plutôt qu’au pool et mine sa propre part du travail. Le pool voit une seule connexion, et vous réglez le pool et les pools de secours en un seul endroit.'
+    a: 'C’est un mode de seine qui tourne sur une machine de votre réseau local et se connecte au pool pour tous vos rigs. Chaque rig se connecte au proxy plutôt qu’au pool et mine sa propre part du travail. Vous réglez le pool et les pools de secours une seule fois, sur le proxy, et tous les rigs les utilisent.'
+  - q: 'Dois-je modifier mes rigs pour utiliser le proxy de ferme ?'
+    a: 'Seulement l’adresse du pool. Pointez chaque rig vers le proxy plutôt que vers le pool, gardez son adresse de paiement et son nom de rig, et laissez ses threads, ses GPU et ses réglages tels quels. Les flight sheets HiveOS et les profils mmpOS acceptent l’adresse du proxy dans le même champ d’URL du pool.'
   - q: 'Le proxy de ferme a-t-il besoin d’une machine puissante ?'
     a: 'Non. Le proxy ne mine pas : il lui faut donc peu de CPU et peu de mémoire. Il peut tourner sur n’importe quelle machine que vos rigs peuvent joindre sur le réseau local, comme un petit serveur ou l’un des rigs eux-mêmes, à côté de son propre mineur.'
   - q: 'Les rigs derrière le proxy apparaissent-ils toujours séparément sur bntpool.com ?'
@@ -15,29 +18,34 @@ faq:
     a: 'Oui. Chaque rig est payé à l’adresse avec laquelle il se connecte : des rigs qui minent vers 16 adresses différentes au maximum peuvent donc partager un proxy. Un rig qui se connecte sans adresse valide est payé à l’adresse donnée au proxy avec --address.'
 ---
 
-Ce guide vous montre comment faire passer une ferme de minage Blocknet par un seul proxy de ferme seine. Vous lancez le proxy sur une machine de votre réseau, pointez chaque rig dessus, et le proxy se connecte à bntpool.com pour toute la ferme. Vous réglez le pool, l’adresse de paiement et les pools de secours en un seul endroit et gardez des statistiques par rig sur le pool. Il suit seine v0.3.1.
+Quand chaque rig se connecte seul au pool, chaque changement de pool devient une tâche à refaire sur chaque rig. Avec le proxy de ferme seine, vos rigs se connectent à une machine de votre réseau, et cette machine se connecte à bntpool.com pour toute la ferme. Vous changez le pool, les pools de secours ou l’adresse de paiement par défaut une seule fois, et tous les rigs suivent. Chaque rig reste visible sur bntpool.com sous son propre nom. Ce guide suit seine v0.3.1.
 
-## Que fait le proxy de ferme ?
-
-<Answer>
-Le proxy de ferme, c’est seine qui joue le rôle de pool local pour vos rigs. Il se connecte une fois à bntpool.com pour toute la ferme et donne à chaque rig sa propre part du travail. Le pool voit une seule connexion, chaque rig continue de miner et d’être crédité séparément, et vous changez le pool ou les pools de secours de tous les rigs en un seul endroit.
-</Answer>
-
-Un proxy de ferme convient à tous ceux qui font tourner plus d’une poignée de rigs :
-
-- **Un seul endroit pour les réglages.** Réglez le pool, les pools de secours et l’adresse de paiement par défaut sur le proxy, et chaque rig les reprend.
-- **Une seule connexion sortante.** Les rigs communiquent avec le proxy sur votre réseau local, et le proxy n’ouvre que les connexions au pool dont la ferme a besoin, en général une ou quelques-unes.
-- **Des statistiques par rig sur le pool.** bntpool.com crédite les shares par rig : chaque rig reste donc visible sous son propre nom de worker sur la [page des statistiques](https://bntpool.com/stats).
-
-Le proxy lui-même ne mine pas. Il lui faut peu de CPU et peu de mémoire : il peut donc tourner sur n’importe quelle machine que les rigs peuvent joindre, y compris l’un d’eux.
-
-## Comment lancer le proxy ?
+## Qu’apporte le proxy de ferme ?
 
 <Answer>
-Lancez seine avec --proxy-listen suivi de l’adresse et du port auxquels les rigs se connecteront, ainsi que les options habituelles de pool, d’adresse de paiement et de nom de rig. Par exemple : ./seine --proxy-listen 0.0.0.0:3333 --pool-url stratum+tcp://bntpool.com:3333 --address YOUR_ADDRESS --pool-worker farm-1. Le proxy attend alors les rigs sur le port 3333.
+Le proxy de ferme, c’est seine qui joue le rôle de pool local pour vos rigs. Il se connecte à bntpool.com pour toute la ferme et donne à chaque rig sa propre part du travail. Vous gérez les pools, les pools de secours et l’adresse de paiement par défaut en un seul endroit, tandis que chaque rig continue de miner et d’être crédité séparément.
 </Answer>
 
-Sur la machine qui fera tourner le proxy :
+Voici ce qui change une fois que la ferme passe par un proxy :
+
+- **Changez de pool pour toute la ferme en un seul redémarrage.** Le pool et les pools de secours sont réglés sur le proxy : vous modifiez donc une seule ligne de commande au lieu de chaque rig, flight sheet ou profil.
+- **Le basculement pour tous les rigs à la fois.** Indiquez des pools de secours sur le proxy, et toute la ferme passe ensemble au pool suivant, puis revient au premier dès qu’il répond de nouveau.
+- **Ajoutez un rig en une ligne.** Un nouveau rig n’a besoin que de l’adresse du proxy comme pool. Rien d’autre ne change dans la ferme.
+- **Une seule machine parle à internet.** Les rigs communiquent avec le proxy sur votre réseau local, et seul le proxy doit joindre le pool. Une seule règle de pare-feu couvre la ferme, et un proxy SOCKS5 pour les réseaux qui bloquent les ports de minage se règle uniquement sur le proxy.
+- **Chaque rig garde ses propres statistiques.** bntpool.com crédite les shares par rig : chaque rig apparaît donc sur la [page des statistiques](https://bntpool.com/stats) sous son propre nom de worker, avec son hashrate et ses shares.
+- **Plusieurs portefeuilles sur un même proxy.** Chaque rig est payé à l’adresse avec laquelle il se connecte : un proxy peut donc servir des rigs pour 16 portefeuilles différents au maximum, comme des rigs que vous faites tourner pour des amis ou des partenaires.
+
+Le proxy lui-même ne mine pas. Il lui faut peu de CPU et peu de mémoire : il peut donc tourner sur un petit serveur ou sur l’un des rigs, à côté du mineur de ce rig.
+
+## Comment configurer le proxy de ferme ?
+
+<Answer>
+Lancez seine avec --proxy-listen suivi de l’adresse et du port auxquels les rigs se connecteront, ainsi que les options habituelles de pool, d’adresse de paiement et de nom de rig. Par exemple : ./seine --proxy-listen 0.0.0.0:3333 --pool-url stratum+tcp://bntpool.com:3333 --address YOUR_ADDRESS --pool-worker farm-1. Pointez ensuite l’URL du pool de chaque rig vers le proxy.
+</Answer>
+
+La configuration se fait en deux étapes : lancer le proxy, puis pointer les rigs vers lui.
+
+**1. Lancez le proxy** sur la machine qui le fera tourner :
 
 ```bash
 ./seine --proxy-listen 0.0.0.0:3333 \
@@ -45,38 +53,39 @@ Sur la machine qui fera tourner le proxy :
         --address YOUR_ADDRESS --pool-worker farm-1
 ```
 
-`--proxy-listen` indique où le proxy accepte les rigs ; `0.0.0.0:3333` écoute sur toutes les interfaces réseau, port 3333. `--address` est l’adresse de paiement par défaut, utilisée pour tout rig qui se connecte sans adresse valide. Toutes les options de pool fonctionnent sur le proxy, y compris les pools de secours : indiquez-les dans l’ordre, séparés par des virgules, et le proxy revient au premier dès qu’il est de nouveau disponible. Le [guide de configuration de seine](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/configuration.md) présente les options de pool.
+`--proxy-listen` indique où le proxy accepte les rigs ; `0.0.0.0:3333` écoute sur toutes les interfaces réseau, port 3333. `--address` est l’adresse de paiement par défaut, utilisée pour tout rig qui se connecte sans adresse valide. Toutes les options de pool fonctionnent sur le proxy. Pour les pools de secours, indiquez-les dans l’ordre, séparés par des virgules, et ajoutez `--pool-proxy socks5://host:port` si votre réseau a besoin d’un proxy SOCKS5 pour joindre le pool. Le [guide de configuration de seine](https://github.com/zpalmtree/seine/blob/v0.3.1/docs/guides/configuration.md) présente les options de pool.
 
-Liez le proxy à votre réseau local. Toute personne qui peut joindre son port peut miner à travers lui : utilisez donc une adresse du réseau local dans `--proxy-listen`, ou filtrez le port avec un pare-feu, plutôt que de l’exposer à internet.
+Gardez le proxy sur votre réseau local : utilisez une adresse du réseau local dans `--proxy-listen`, ou filtrez le port avec un pare-feu, pour que seuls vos propres rigs puissent miner à travers lui et payer votre adresse.
 
-## Comment pointer les rigs vers le proxy ?
-
-Sur chaque rig, utilisez l’adresse locale du proxy comme pool et donnez au rig son propre nom :
+**2. Pointez chaque rig vers le proxy**, en utilisant l’adresse locale du proxy comme pool et en donnant au rig son propre nom :
 
 ```bash
 ./seine --pool-url 192.168.1.10:3333 --address YOUR_ADDRESS --pool-worker rig-07
 ```
 
-Remplacez `192.168.1.10` par l’adresse de la machine du proxy sur votre réseau. Les rigs sous système de minage fonctionnent de la même façon : placez l’adresse du proxy dans le champ d’URL du pool du flight sheet HiveOS ou du profil mmpOS, comme le montre le [guide HiveOS et mmpOS](/fr/blog/mine-blocknet-hiveos-mmpos/). seine enregistre le pool avec les réglages du rig : les démarrages suivants se connectent donc d’eux-mêmes au proxy.
+Remplacez `192.168.1.10` par l’adresse de la machine du proxy sur votre réseau. Sur un système de minage, placez l’adresse du proxy dans le champ d’URL du pool du flight sheet HiveOS ou du profil mmpOS, comme le montre le [guide HiveOS et mmpOS](/fr/blog/mine-blocknet-hiveos-mmpos/). seine enregistre le pool avec les réglages du rig : les démarrages suivants se connectent donc d’eux-mêmes au proxy, et vous gérez désormais les pools sur le proxy.
 
 ## Comment les rigs derrière le proxy sont-ils payés ?
 
-Chaque rig est payé à l’adresse Blocknet complète avec laquelle il se connecte. Des rigs qui minent vers des portefeuilles différents peuvent partager un proxy, jusqu’à 16 adresses à la fois. Un rig qui se connecte sans adresse, ou avec une adresse invalide, est payé à l’`--address` du proxy.
+Chaque rig est payé à l’adresse Blocknet complète avec laquelle il se connecte, exactement comme avec une connexion directe. Des rigs qui minent vers des portefeuilles différents peuvent partager un proxy, jusqu’à 16 adresses à la fois. Un rig qui se connecte sans adresse, ou avec une adresse invalide, est payé à l’`--address` du proxy : son hashrate vous revient donc quand même.
 
 Quand 16 adresses sont utilisées, un rig avec une 17e adresse attend qu’une des autres soit restée 10 minutes sans rig. Si le pool refuse l’adresse d’un rig, le proxy transmet la raison donnée par le pool, pour que vous puissiez la corriger sur ce rig.
 
-Les rigs derrière le proxy peuvent aussi miner en solo sur bntpool.com : placez `solo:` devant l’adresse du rig, et le pool verse à ce rig la récompense entière de chaque bloc qu’il trouve. [Le minage solo sur bntpool.com](https://bntpool.com/blog/fr/solo-mine-blocknet-on-bntpool/) explique les récompenses solo. Les paiements vers une plateforme d’échange nécessitent un mémo de dépôt, que le proxy ne transmet pas : connectez donc ces rigs directement au pool.
+Les rigs derrière le proxy peuvent aussi miner en solo sur bntpool.com : placez `solo:` devant l’adresse du rig, et le pool verse à ce rig la récompense entière de chaque bloc qu’il trouve. [Le minage solo sur bntpool.com](https://bntpool.com/blog/fr/solo-mine-blocknet-on-bntpool/) explique les récompenses solo. Les paiements vers une plateforme d’échange utilisent un mémo de dépôt, que le proxy ne transmet pas : connectez donc directement au pool les rigs qui paient une plateforme d’échange.
 
 ## Comment suivre la ferme ?
 
 Sur bntpool.com, recherchez chaque adresse de paiement sur la [page des statistiques](https://bntpool.com/stats). Chaque rig derrière le proxy apparaît dans le tableau Workers sous son propre nom de rig, avec son hashrate, ses shares et l’heure de son dernier share, exactement comme avec des connexions directes. Le [guide de suivi du mineur](https://bntpool.com/blog/fr/track-your-miner-on-bntpool/) présente la page.
 
-Le proxy journalise aussi son propre résumé chaque minute : rigs connectés, shares acceptés et rejetés, hashrate estimé et connexions au pool. Il journalise chaque rig qui se connecte ou se déconnecte, ce qui vous permet de voir d’un coup d’œil quand un rig décroche. Le tableau de bord seine de chaque rig affiche toujours son hashrate et ses shares locaux, comme l’explique le [guide du tableau de bord](/fr/blog/seine-dashboard-explained/).
+Le proxy ajoute sa propre vue de toute la ferme. Chaque minute, il journalise un résumé : rigs connectés, shares acceptés et rejetés, hashrate estimé de la ferme et connexions au pool. Il journalise aussi chaque rig qui se connecte ou se déconnecte, si bien qu’un seul journal montre quand un rig décroche. Le tableau de bord seine de chaque rig affiche toujours son hashrate et ses shares locaux, comme l’explique le [guide du tableau de bord](/fr/blog/seine-dashboard-explained/).
 
-## Que faut-il savoir d’autre ?
+## Le proxy suit-il quand la ferme grandit ?
 
-- **Les connexions au pool augmentent avec la ferme.** Le proxy ouvre autant de connexions au pool que la ferme en a besoin pour que chaque rig reçoive du travail à chaque nouveau bloc. Pour la plupart des fermes, c’est une ou quelques-unes, et les très grandes fermes montent jusqu’à 64 par adresse de paiement.
+Oui. Le proxy ouvre autant de connexions au pool que la ferme en a besoin pour que chaque rig reçoive du travail à chaque nouveau bloc. Pour la plupart des fermes, c’est une ou quelques-unes, et les très grandes fermes montent jusqu’à 64 par adresse de paiement. Vous n’avez rien à régler : le proxy ajoute des connexions à mesure que des rigs arrivent.
+
+Quelques autres points restent identiques au minage direct :
+
 - **Chaque rig garde ses propres réglages.** Le nombre de threads, le choix des GPU et le réglage restent sur le rig. Le [guide des réglages](/fr/blog/configure-seine-miner/) les présente, et le [guide du minage sur serveur](/fr/blog/mine-blocknet-on-servers/) traite des gros serveurs CPU.
 - **Mises à niveau du réseau.** Lors de la mise à niveau réseau Faraday, le proxy demande aux rigs dont la version de seine ne la prend pas en charge de se mettre à jour, comme le fait le pool.
 
-<CTA target="seine" title="Téléchargez seine pour votre ferme" text="Faites tourner un seine en proxy de ferme et pointez chaque rig dessus : un seul endroit pour les réglages du pool, des statistiques par rig sur bntpool.com." />
+<CTA target="seine" title="Gérez votre ferme depuis un seul endroit" text="Téléchargez seine, lancez un proxy de ferme et pointez vos rigs dessus. Changez de pool pour tous les rigs d’un coup et gardez les statistiques de chaque rig sur bntpool.com." />
