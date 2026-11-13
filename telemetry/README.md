@@ -388,6 +388,33 @@ running a hashing workload. A fixed binary must reach users before their missing
 performance samples can recover; deploying the collector alone cannot recover
 hash counts from past inventory-only reports.
 
+### Derived report rows
+
+Scheduled checks and most of the agent briefing read `telemetry_report_facts`: one
+narrow row per report holding its version, report kind, cohort-key hashes, the
+median rate per backend settings and a few diagnostic flags. They no longer decode
+seven days of payloads on every run. An insert trigger writes the row with its
+report, and the row is deleted with it. `src/schema.sql` holds the table, the
+cohort-key functions and the one view that defines the row. The collector applies
+that file at startup; it can also be applied by hand to a running database, with no
+collector restart:
+
+```sh
+compose=(docker compose -f telemetry/deploy/compose.yaml --env-file telemetry/deploy/.env)
+"${compose[@]}" exec -T db psql -X -U telemetry -d telemetry -v ON_ERROR_STOP=1 -1 < telemetry/src/schema.sql
+"${compose[@]}" exec -T db psql -X -U telemetry -d telemetry -v ON_ERROR_STOP=1 < telemetry/rebuild_facts.sql
+```
+
+Run `rebuild_facts.sql` once after the table is first created, after any change to
+those functions or the view, and after a PostgreSQL major upgrade (the stored
+hashes come from `jsonb_hash_extended`). It works through stored reports one day
+at a time, leaves unchanged rows alone and is safe to repeat while reports arrive.
+Restoring a backup fills the table through the trigger. A row that cannot be
+derived never rejects its report: the trigger logs a warning, and `check.sh` fails
+while any report from the last hour has no row. Event clusters in
+`diagnostics.sql`, `release_health.sql` and the tuning report still read payloads,
+so their run time grows with the seven-day report count.
+
 ### Recovery backups
 
 For a checkout at `/opt/seine`, install the supplied daily backup timer:
@@ -520,6 +547,14 @@ minute are excluded. Exact source builds and pool/daemon modes form separate
 absolute-rate groups. Release-regression alerts match workload mode while
 allowing source identity to change between the compared releases. Results
 describe reporting installations and may not represent all miners.
+
+The paired screen in `alerts.sql` compares each installation's last 36 hours with
+its own earlier days in the window. When both sides ran the same version the
+alert is titled "Hashrate drop on an unchanged version": that is drift on those
+machines (host, environment, load), not a release change. Each cohort also
+carries `model_installations` and `model_median_ratio`, the same comparison over
+every paired installation of that CPU and device on that backend, so a small
+cohort that moved alone is visible in the alert text.
 
 ## Verification and showcase
 

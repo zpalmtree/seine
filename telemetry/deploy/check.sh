@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Check HTTPS, database, retention, disk and backup freshness without reporting IDs.
+# Check HTTPS, database, retention, derived rows, disk and backup freshness without reporting IDs.
 set -euo pipefail
 deploy_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 compose=(docker compose --project-directory "$deploy_dir" --env-file "$deploy_dir/.env" -f "$deploy_dir/compose.yaml")
@@ -9,6 +9,9 @@ code="$(curl --silent --show-error --max-time 10 --resolve "$TELEMETRY_HOST:443:
 [[ "$code" == 204 ]] || { echo "HTTPS health check failed: HTTP $code" >&2; exit 1; }
 expired="$("${compose[@]}" exec -T db psql -U telemetry -d telemetry -v ON_ERROR_STOP=1 -Atc "SELECT count(*) FROM telemetry_reports WHERE received_at < now() - interval '30 days 2 hours'")"
 [[ "$expired" == 0 ]] || { echo 'Telemetry retention cleanup is overdue.' >&2; exit 1; }
+# Scheduled checks read one derived row per report (src/schema.sql).
+underived="$("${compose[@]}" exec -T db psql -U telemetry -d telemetry -v ON_ERROR_STOP=1 -Atc "SELECT count(*) FROM telemetry_reports r WHERE r.received_at >= now() - interval '1 hour' AND NOT EXISTS (SELECT 1 FROM telemetry_report_facts f WHERE f.report_id = r.report_id)")"
+[[ "$underived" == 0 ]] || { echo 'Recent reports are missing derived rows; run telemetry/rebuild_facts.sql.' >&2; exit 1; }
 python3 - <<'PY'
 import os
 from pathlib import Path

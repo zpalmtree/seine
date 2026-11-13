@@ -1,21 +1,25 @@
 BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
 SET LOCAL statement_timeout = '15s';
 SET LOCAL lock_timeout = '2s';
+SET LOCAL jit = off;
+SET LOCAL work_mem = '64MB';
+SET LOCAL effective_io_concurrency = 32;
 
 -- What the tuner settled on, per CPU identity: the source for the built-in start table.
-WITH decoded AS MATERIALIZED (
-    SELECT installation_id, received_at, p.*
-    FROM telemetry_reports
-    CROSS JOIN LATERAL jsonb_to_record(payload) AS p(
-        debug_build boolean, miner_version text, hardware jsonb, tuning jsonb
-    )
-    WHERE received_at >= now() - interval '7 days' AND NOT p.debug_build
-      AND p.tuning -> 'settled' IS NOT NULL
-), latest AS (
-    SELECT DISTINCT ON (installation_id) installation_id, miner_version, hardware,
-           tuning -> 'settled' AS settled
-    FROM decoded
+-- The narrow derived rows (src/schema.sql) pick each installation's latest report
+-- carrying a settled record; only those payloads are read.
+WITH latest_reports AS (
+    SELECT DISTINCT ON (installation_id) installation_id, report_id
+    FROM telemetry_report_facts
+    WHERE received_at >= now() - interval '7 days' AND NOT debug_build AND settled
     ORDER BY installation_id, received_at DESC
+), latest AS (
+    SELECT t.installation_id, t.payload ->> 'miner_version' AS miner_version,
+           t.payload -> 'hardware' AS hardware,
+           t.payload #> '{tuning,settled}' AS settled
+    FROM telemetry_reports t
+    -- One list of keys, so the reports are fetched in storage order.
+    WHERE t.report_id = ANY (ARRAY(SELECT report_id FROM latest_reports))
 ), rows AS (
     SELECT hardware ->> 'cpu_vendor' AS vendor,
            (hardware ->> 'cpu_family')::int AS family,

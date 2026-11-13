@@ -103,7 +103,7 @@ class TuningSQLTests(unittest.TestCase):
         ]
         for mutation in mutations:
             with self.subTest(mutation=mutation):
-                self.query('TRUNCATE telemetry_reports')
+                self.query('TRUNCATE telemetry_report_facts, telemetry_reports')
                 self.seed(lambda p, i: mutation(p))
                 result = self.analysis()
                 self.assertEqual(result['unique_trials'], 5)
@@ -118,10 +118,10 @@ class TuningSQLTests(unittest.TestCase):
         result = self.analysis()
         self.assertEqual(result['outcomes'][0]['reason'], 'execution_failure')
         self.assertEqual(result['qualified_trials'], 0)
-        self.query('TRUNCATE telemetry_reports')
+        self.query('TRUNCATE telemetry_report_facts, telemetry_reports')
         self.seed(lambda p, i: p['tuning']['trials'][0]['outcome'].update(decision='inconclusive', reason='baseline_drift'))
         self.assertEqual(self.analysis()['outcomes'][0]['decision'], 'inconclusive')
-        self.query('TRUNCATE telemetry_reports')
+        self.query('TRUNCATE telemetry_report_facts, telemetry_reports')
         def small(p, i):
             t = p['tuning']['trials'][0]['outcome']
             t.update(decision='no_confirmed_gain', applied='baseline')
@@ -155,7 +155,7 @@ class TuningSQLTests(unittest.TestCase):
             lambda p: p['diagnostics'].update(mode='daemon'),
             lambda p: p['tuning']['trials'][0]['outcome']['policy'].update(revision=2),
         ]:
-            self.query('TRUNCATE telemetry_reports')
+            self.query('TRUNCATE telemetry_report_facts, telemetry_reports')
             self.seed(lambda p, i: mutation(p) if i < 2 else None)
             self.assertEqual(self.analysis()['ranked_hints'], [])
 
@@ -178,7 +178,7 @@ class TuningSQLTests(unittest.TestCase):
         self.assertFalse(hint['automatic_default_eligible'])
         for duration, hashes in [(10000, 32), (30000, 31), (5000, 500)]:
             with self.subTest(duration=duration, hashes=hashes):
-                self.query('TRUNCATE telemetry_reports')
+                self.query('TRUNCATE telemetry_report_facts, telemetry_reports')
                 def rejected(p, i):
                     mixed(p, i)
                     p['tuning']['trials'][0]['outcome']['samples'][1].update(
@@ -186,7 +186,7 @@ class TuningSQLTests(unittest.TestCase):
                 self.seed(rejected)
                 self.assertEqual(self.analysis()['qualified_trials'], 0)
         # Optional alternative thresholds are part of the exact policy cohort.
-        self.query('TRUNCATE telemetry_reports')
+        self.query('TRUNCATE telemetry_report_facts, telemetry_reports')
         def split(p, i):
             mixed(p, i)
             if i < 2:
@@ -199,7 +199,7 @@ class TuningSQLTests(unittest.TestCase):
     def test_failed_confirmation_cannot_hide_behind_positive_median(self):
         for decision in ['gain', 'no_confirmed_gain']:
             with self.subTest(decision=decision):
-                self.query('TRUNCATE telemetry_reports')
+                self.query('TRUNCATE telemetry_report_facts, telemetry_reports')
                 def split_cycles(p, _):
                     t = p['tuning']['trials'][0]['outcome']
                     t['samples'][1]['hashes'] = 3600  # First cycle +20%.
@@ -213,12 +213,12 @@ class TuningSQLTests(unittest.TestCase):
                 self.assertAlmostEqual(hint['median_ratio'], 1.1)
                 self.assertEqual(hint['installations_with_resolved_gain'], 0)
                 self.assertEqual(hint['confidence'], 'mixed_or_limited_evidence')
-        self.query('TRUNCATE telemetry_reports')
+        self.query('TRUNCATE telemetry_report_facts, telemetry_reports')
         self.seed(lambda p, _: p['tuning']['trials'][0]['outcome'].update(
             samples=p['tuning']['trials'][0]['outcome']['samples'][:3]))
         hint, = self.analysis()['ranked_hints']
         self.assertEqual(hint['installations_with_resolved_gain'], 0)
-        self.query('TRUNCATE telemetry_reports')
+        self.query('TRUNCATE telemetry_report_facts, telemetry_reports')
         def unacknowledged(p, _):
             t = p['tuning']['trials'][0]['outcome']
             t['applied'] = 'baseline'
@@ -263,12 +263,12 @@ class TuningSQLTests(unittest.TestCase):
         self.assertEqual(result['coverage_only_trials'], 5)
         self.assertEqual(result['missing_context_trials'], 5)
         self.assertEqual(result['ranked_hints'], [])
-        self.query('TRUNCATE telemetry_reports')
+        self.query('TRUNCATE telemetry_report_facts, telemetry_reports')
         self.seed(lambda p, _: p['tuning']['trials'][0]['outcome'].update(kind='cpu_joint'))
         result = self.analysis()
         self.assertEqual(result['staged_kind_trials'], 5)
         self.assertEqual(result['qualified_trials'], 0)
-        self.query('TRUNCATE telemetry_reports')
+        self.query('TRUNCATE telemetry_report_facts, telemetry_reports')
         for _ in range(5):
             self.insert(self.fixture(), hours=72)
         hint, = self.analysis()['ranked_hints']

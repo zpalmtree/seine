@@ -18,7 +18,7 @@ REMOTE_SQL = (
 def remote(host, command, data=None):
     return subprocess.run(
         ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '--', host, command],
-        input=data, text=True, capture_output=True, timeout=90,
+        input=data, text=True, capture_output=True, timeout=120,
     )
 
 

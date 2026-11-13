@@ -1,22 +1,31 @@
 BEGIN READ ONLY;
 SET LOCAL statement_timeout = '15s';
 SET LOCAL lock_timeout = '2s';
+-- Row estimates for the jsonb expansions are far too high, and the planner would
+-- keep a six-hour scan on one process; decode payloads in parallel.
+SET LOCAL parallel_tuple_cost = 0.01;
+SET LOCAL parallel_setup_cost = 0;
+SET LOCAL min_parallel_index_scan_size = 0;
+SET LOCAL min_parallel_table_scan_size = 0;
+SET LOCAL enable_memoize = off;
+SET LOCAL jit = off;
 WITH reports AS (
-    SELECT installation_id, received_at, payload->>'miner_version' AS version,
-           payload #>> '{hardware,cpu_model}' AS cpu,
-           payload #>> '{hardware,os}' AS os,
-           payload #>> '{diagnostics,phase}' AS phase,
-           EXISTS (SELECT 1 FROM jsonb_array_elements(payload #> '{diagnostics,events}') e
-                   WHERE e #>> '{detail,operation}' IN
-                       ('pool_resolve','pool_connect','pool_read','pool_write','pool_login')) AS connection_warning,
-           jsonb_array_length(payload->'backends') > 0 AS has_samples,
-           EXISTS (SELECT 1 FROM jsonb_array_elements(payload->'backends') b
-                   WHERE NOT (b->>'settings_changed')::boolean
-                     AND (b->>'observed_secs')::double precision >= 60) AS has_stable_samples
+    SELECT installation_id, received_at, p->>'miner_version' AS version,
+           p #>> '{hardware,cpu_model}' AS cpu,
+           p #>> '{hardware,os}' AS os,
+           p #>> '{diagnostics,phase}' AS phase,
+           -- Path queries are plain function calls and run in the parallel workers;
+           -- a sub-select per report would run on one process.
+           jsonb_path_exists(p, '$.diagnostics.events[*] ? (@.detail.operation == $operations[*])',
+               '{"operations": ["pool_resolve", "pool_connect", "pool_read", "pool_write", "pool_login"]}') AS connection_warning,
+           jsonb_array_length(p->'backends') > 0 AS has_samples,
+           jsonb_path_exists(p, '$.backends[*] ? (@.settings_changed == false && @.observed_secs >= 60)') AS has_stable_samples
     FROM telemetry_reports
+    -- Each payload reference would otherwise decompress the stored value again.
+    CROSS JOIN LATERAL unnest(ARRAY[payload || '{}'::jsonb]) p
     WHERE received_at >= now() - interval '6 hours'
-      AND NOT (payload->>'debug_build')::boolean
-      AND coalesce(payload #>> '{diagnostics,reason}', 'periodic') = 'periodic'
+      AND NOT (p->>'debug_build')::boolean
+      AND coalesce(p #>> '{diagnostics,reason}', 'periodic') = 'periodic'
 ), installations AS (
     SELECT installation_id, version, count(*) AS reports,
            bool_or(has_samples) AS has_samples,

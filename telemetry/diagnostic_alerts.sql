@@ -1,61 +1,86 @@
 BEGIN READ ONLY;
 SET LOCAL statement_timeout = '30s';
 SET LOCAL lock_timeout = '2s';
--- Row estimates for the jsonb expansions are far too high; keep the scan parallel.
+-- Row estimates for the jsonb expansions are far too high, and the planner would
+-- keep the shorter scans on one process; decode payloads in parallel.
 SET LOCAL parallel_tuple_cost = 0.01;
+SET LOCAL parallel_setup_cost = 0;
+SET LOCAL min_parallel_index_scan_size = 0;
+SET LOCAL min_parallel_table_scan_size = 0;
+SET LOCAL enable_memoize = off;
+SET LOCAL jit = off;
+SET LOCAL work_mem = '64MB';
 SET LOCAL TIME ZONE 'America/New_York';
 -- Alert evaluation needs counts, not the full seven-day hardware/event clusters.
-WITH covered AS (
-    -- Only the last 25 hours read diagnostics; older rows carry narrow columns.
+WITH installations AS MATERIALIZED (
+    -- Seven days of narrow derived rows (src/schema.sql), reduced to one row per
+    -- installation, version and build.
+    SELECT installation_id, version, build_commit,
+           min(received_at) AS first_seen, max(received_at) AS last_seen
+    FROM telemetry_report_facts
+    WHERE received_at >= now() - interval '7 days'
+      AND NOT debug_build AND has_diagnostics
+    GROUP BY 1, 2, 3
+), recent AS MATERIALIZED (
+    -- Only the last 25 hours read payloads, once each, into narrow columns.
     SELECT installation_id, received_at, p->>'miner_version' AS version,
-           p #>> '{diagnostics,build_commit}' AS build_commit,
-           CASE WHEN received_at >= now() - interval '25 hours' THEN p->'diagnostics' END AS diagnostics
+           (d->>'previous_run_unclean')::boolean AS previous_run_unclean,
+           (d->>'previous_run_rebooted')::boolean AS previous_run_rebooted,
+           d #>> '{previous_run,miner_version}' AS previous_miner_version,
+           d #>> '{previous_run,build_commit}' AS previous_build_commit,
+           (d #>> '{update,install_failures}')::bigint > 0 AS install_failures,
+           (d->>'unsupported_work_paused_secs')::bigint > 0 AS paused,
+           -- Path queries are plain function calls and run in the parallel workers;
+           -- a sub-select per report would run on one process.
+           jsonb_path_exists(d, '$.events[*] ? (@.code == $codes[*])',
+               '{"codes": ["error", "backend_error", "backend_quarantined", "run_failed", "rust_panic"]}') AS error,
+           jsonb_path_exists(d, '$.events[*] ? (@.detail.operation == $operations[*])',
+               '{"operations": ["pool_resolve", "pool_connect", "pool_read", "pool_write", "pool_login"]}') AS pool_warning,
+           jsonb_path_exists(d, '$.events[*] ? (@.detail.operation == $operations[*] && @.detail.reason == "pool_connection_limit")',
+               '{"operations": ["pool_resolve", "pool_connect", "pool_read", "pool_write", "pool_login"]}') AS refused_at_limit
     FROM telemetry_reports
     -- Each payload reference would otherwise decompress the stored value again.
     CROSS JOIN LATERAL unnest(ARRAY[payload || '{}'::jsonb]) p
-    WHERE received_at >= now() - interval '7 days'
+    CROSS JOIN LATERAL (SELECT p->'diagnostics' AS d) diagnostics
+    WHERE received_at >= now() - interval '25 hours'
       AND NOT (p->>'debug_build')::boolean
-      AND p->'diagnostics' IS NOT NULL
-      AND p->'diagnostics' <> 'null'::jsonb
+      AND d IS NOT NULL
+      AND d <> 'null'::jsonb
 ), build_versions AS (
     SELECT build_commit, min(version) AS version
-    FROM covered
+    FROM installations
     WHERE build_commit <> 'unknown'
     GROUP BY 1 HAVING count(DISTINCT version) = 1
 ), unclean AS (
     SELECT c.*,
-           coalesce(c.diagnostics #>> '{previous_run,miner_version}', b.version, 'unknown') AS previous_version
-    FROM covered c LEFT JOIN build_versions b
-      ON b.build_commit = c.diagnostics #>> '{previous_run,build_commit}'
+           coalesce(c.previous_miner_version, b.version, 'unknown') AS previous_version
+    FROM recent c LEFT JOIN build_versions b
+      ON b.build_commit = c.previous_build_commit
     WHERE c.received_at >= now() - interval '24 hours'
-      AND (c.diagnostics->>'previous_run_unclean')::boolean
+      AND c.previous_run_unclean
 ), unclean_installations AS (
     -- Same rule as diagnostics.sql: a reboot, or one restart of an installation first
     -- seen in the last day, is listed but not counted toward attention.
     SELECT u.installation_id, u.restarts, f.first_seen >= now() - interval '24 hours' AS new_installation
     FROM (SELECT installation_id, count(*) AS restarts FROM unclean GROUP BY 1) u
-    JOIN (SELECT installation_id, min(received_at) AS first_seen FROM covered
+    JOIN (SELECT installation_id, min(first_seen) AS first_seen FROM installations
           WHERE installation_id IN (SELECT installation_id FROM unclean) GROUP BY 1) f USING (installation_id)
 ), recent_unclean AS (
     SELECT u.previous_version AS version, count(DISTINCT u.installation_id) AS affected_installations,
            count(DISTINCT u.installation_id) FILTER (
-             WHERE (u.diagnostics->>'previous_run_rebooted')::boolean) AS rebooted_installations,
+             WHERE u.previous_run_rebooted) AS rebooted_installations,
            count(DISTINCT u.installation_id) FILTER (
              WHERE i.new_installation AND i.restarts = 1
-               AND (u.diagnostics->>'previous_run_rebooted')::boolean IS NOT TRUE) AS new_installation_single_restarts,
+               AND u.previous_run_rebooted IS NOT TRUE) AS new_installation_single_restarts,
            count(DISTINCT u.installation_id) FILTER (
-             WHERE (u.diagnostics->>'previous_run_rebooted')::boolean IS NOT TRUE
+             WHERE u.previous_run_rebooted IS NOT TRUE
                AND NOT (i.new_installation AND i.restarts = 1)) AS counted_installations,
            jsonb_agg(DISTINCT u.version ORDER BY u.version) AS reporting_versions
     FROM unclean u JOIN unclean_installations i USING (installation_id)
     GROUP BY 1
-), recent_events AS (
-    SELECT installation_id, received_at, version, event
-    FROM covered CROSS JOIN LATERAL jsonb_array_elements(diagnostics->'events') event
-    WHERE received_at >= now() - interval '25 hours'
 ), recent_installations AS (
     SELECT version, count(DISTINCT installation_id) AS installations
-    FROM covered WHERE received_at >= now() - interval '24 hours'
+    FROM installations WHERE last_seen >= now() - interval '24 hours'
     GROUP BY 1
 ), release_lines AS (
     -- Same release-line rule as data_quality.sql: the newest major.minor among
@@ -73,26 +98,21 @@ WITH covered AS (
     WHERE l.major IS NOT NULL AND (l.major, l.minor) < (n.major, n.minor)
 ), recent_errors AS (
     SELECT version, count(DISTINCT installation_id) AS affected_installations
-    FROM recent_events WHERE received_at >= now() - interval '24 hours'
-      AND event->>'code' IN ('error','backend_error','backend_quarantined','run_failed','rust_panic')
+    FROM recent WHERE received_at >= now() - interval '24 hours' AND error
     GROUP BY 1
 ), recent_install_failures AS (
     SELECT version, count(DISTINCT installation_id) AS affected_installations
-    FROM covered
-    WHERE received_at >= now() - interval '24 hours'
-      AND (diagnostics #>> '{update,install_failures}')::bigint > 0
+    FROM recent
+    WHERE received_at >= now() - interval '24 hours' AND install_failures
     GROUP BY 1
 ), recent_paused AS (
     SELECT version, count(DISTINCT installation_id) AS affected_installations
-    FROM covered
-    WHERE received_at >= now() - interval '24 hours'
-      AND (diagnostics->>'unsupported_work_paused_secs')::bigint > 0
+    FROM recent
+    WHERE received_at >= now() - interval '24 hours' AND paused
     GROUP BY 1
 ), pool_connection AS (
-    SELECT installation_id, received_at,
-           event #>> '{detail,reason}' = 'pool_connection_limit' AS refused_at_limit
-    FROM recent_events
-    WHERE event #>> '{detail,operation}' IN ('pool_resolve','pool_connect','pool_read','pool_write','pool_login')
+    SELECT installation_id, received_at, refused_at_limit
+    FROM recent WHERE pool_warning
 ), pool_connection_hours AS (
     SELECT date_trunc('hour', received_at) AS hour, count(DISTINCT installation_id) AS installations
     FROM pool_connection WHERE received_at < now() - interval '1 hour'
@@ -134,6 +154,6 @@ SELECT jsonb_build_object(
                     OR EXISTS (SELECT 1 FROM recent_unclean_rated WHERE needs_attention)
                     OR EXISTS (SELECT 1 FROM recent_install_failures WHERE affected_installations >= 3)
                     OR EXISTS (SELECT 1 FROM recent_paused WHERE affected_installations >= 3) THEN 'attention'
-                   WHEN NOT EXISTS (SELECT 1 FROM covered) THEN 'unavailable' ELSE 'ok' END
+                   WHEN NOT EXISTS (SELECT 1 FROM installations) THEN 'unavailable' ELSE 'ok' END
 );
 ROLLBACK;

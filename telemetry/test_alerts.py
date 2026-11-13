@@ -251,6 +251,37 @@ class AlertsTests(unittest.TestCase):
         cohort['median_ratio'] = .81
         self.assertEqual(alerts.evaluate(results)[0], [])
 
+    def test_unchanged_version_drop_is_not_called_a_regression(self):
+        cohort = dict(version='v2', baseline_version='v1', hardware={'cpu_model': 'CPU'},
+                      build=[], settings={'backend': 'cpu'}, installations=5,
+                      affected_installations=3, median_ratio=.79)
+        results = {'performance': {'minutes_since_last_report': 0, 'performance_cohorts': [cohort]}}
+        release, = alerts.evaluate(results)[0]
+        self.assertNotIn('title', release)
+        self.assertIn('fell 21% across 5 installations versus v1.', release['summary'])
+        self.assertNotIn('of this hardware', release['summary'])
+        self.assertIn('Possible hashrate regression', alerts.format_message('FIRING', release, 1000)['embeds'][0]['title'])
+        cohort.update(model_installations=469, model_median_ratio=.993)
+        self.assertIn('versus v1. All 469 paired installations of this hardware: median down 1%. Observational',
+                      alerts.evaluate(results)[0][0]['summary'])
+        # Adding the wider figures or the same-version wording keeps the incident.
+        self.assertEqual(alerts.evaluate(results)[0][0]['key'], release['key'])
+        cohort['baseline_version'] = 'v2'
+        same, = alerts.evaluate(results)[0]
+        self.assertEqual(same['category'], 'performance')
+        self.assertIn('across 5 installations with no version change. All 469 paired installations of this '
+                      'hardware: median down 1%. The miner is the same', same['summary'])
+        self.assertNotIn('versus', same['summary'])
+        embed = alerts.format_message('FIRING', same, 1000)['embeds'][0]
+        self.assertEqual(embed['title'], '[Active] Hashrate drop on an unchanged version')
+        self.assertNotIn('regression', json.dumps(embed).lower())
+        for ratio, text in ((1.004, 'median unchanged.'), (1.06, 'median up 6%.')):
+            cohort['model_median_ratio'] = ratio
+            self.assertIn(text, alerts.evaluate(results)[0][0]['summary'])
+        # A cohort that is the whole model has nothing wider to report.
+        cohort.update(model_installations=5, model_median_ratio=.79)
+        self.assertNotIn('of this hardware', alerts.evaluate(results)[0][0]['summary'])
+
     def test_transport_sends_embed_without_mentions(self):
         class Response:
             status = 200

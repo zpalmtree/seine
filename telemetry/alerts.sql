@@ -2,44 +2,23 @@
 BEGIN READ ONLY;
 SET LOCAL statement_timeout = '30s';
 SET LOCAL lock_timeout = '2s';
--- Row estimates for the jsonb expansions are far too high; keep the scan parallel.
-SET LOCAL parallel_tuple_cost = 0.01;
--- One parallel pass keeps only narrow columns: cohorts compare hashes of their
--- jsonb keys, and the keys of the few reported cohorts are read back at the end.
-WITH samples AS MATERIALIZED (
-    SELECT installation_id, received_at, p->>'miner_version' AS version,
-           CASE WHEN received_at >= now() - interval '36 hours' THEN 'recent' ELSE 'baseline' END AS period,
-           ARRAY[jsonb_hash_extended(cohort.hardware, 0), jsonb_hash_extended(cohort.build, 0),
-                 jsonb_hash_extended(cohort.settings, 0)] AS cohort,
-           (sample->>'hashes')::double precision /
-             NULLIF((sample->>'observed_secs')::double precision, 0) AS hps
-    FROM telemetry_reports
-    -- Each payload reference would otherwise decompress the stored value again.
-    CROSS JOIN LATERAL unnest(ARRAY[payload || '{}'::jsonb]) p
-    CROSS JOIN LATERAL jsonb_array_elements(p->'backends') sample
-    CROSS JOIN LATERAL (
-        -- Keep in step with the read-back in cohorts below.
-        SELECT (p->'hardware') #- '{resources,available_memory_gib}' AS hardware,
-               -- Compare releases within one workload mode. Exact source identity
-               -- intentionally differs across releases, unlike absolute-rate cohorts.
-               jsonb_build_array(p->'build_target', p->'build_features',
-                                 p #> '{diagnostics,mode}') AS build,
-               -- Schema-14 GPU context stays out of cohorts: the kernel source differs
-               -- between otherwise identical runs (a first build, then its cache).
-               (sample->'settings') - 'gpu_arch' - 'gpu_kernel_source' - 'amd_perf_level' AS settings) cohort
-    WHERE received_at >= now() - interval '7 days'
-      AND NOT (p->>'debug_build')::boolean
-      AND coalesce(p #>> '{diagnostics,reason}', 'periodic') = 'periodic'
-      AND NOT (sample->>'settings_changed')::boolean
-      AND (sample->>'observed_secs')::double precision >= 60
-), per_report AS (
-    SELECT installation_id, received_at, version, period, cohort,
-           percentile_cont(0.5) WITHIN GROUP (ORDER BY hps) AS hps
-    FROM samples GROUP BY 1,2,3,4,5
+SET LOCAL jit = off;
+SET LOCAL work_mem = '64MB';
+-- Reads the narrow derived rows (src/schema.sql): cohorts compare hashes of their
+-- jsonb keys, and the keys are read back from one member report at the end.
+WITH samples AS (
+    SELECT f.installation_id, f.received_at, f.version,
+           CASE WHEN f.received_at >= now() - interval '36 hours' THEN 'recent' ELSE 'baseline' END AS period,
+           ARRAY[f.hardware_hash, f.build_hash, s.settings_hash] AS cohort, s.hps
+    FROM telemetry_report_facts f
+    -- One entry per report and settings: identical devices are one observation.
+    CROSS JOIN LATERAL unnest(f.settings_hashes, f.hps) AS s(settings_hash, hps)
+    WHERE f.received_at >= now() - interval '7 days'
+      AND NOT f.debug_build AND f.periodic
 ), per_installation AS (
     SELECT installation_id, version, period, cohort, max(received_at) AS last_report,
            percentile_cont(0.5) WITHIN GROUP (ORDER BY hps) AS hps
-    FROM per_report GROUP BY 1,2,3,4
+    FROM samples GROUP BY 1,2,3,4
     HAVING count(*) >= 3 AND max(received_at)-min(received_at) >= interval '24 hours'
 ), pairs AS (
     SELECT r.installation_id, r.last_report, r.version, b.version AS baseline_version,
@@ -55,31 +34,50 @@ WITH samples AS MATERIALIZED (
            -- Any member report carries the cohort's keys.
            (array_agg(installation_id ORDER BY installation_id))[1] AS example_installation,
            (array_agg(last_report ORDER BY installation_id))[1] AS example_report
-    FROM pairs GROUP BY 1,2,3 HAVING count(*) >= 5
-), cohorts AS (
-    SELECT s.version, s.baseline_version, k.hardware, k.build, k.settings,
-           s.installations, s.affected_installations, s.median_ratio
+    FROM pairs GROUP BY 1,2,3
+), keyed AS (
+    -- Small cohorts are read back too: they count toward their model below.
+    SELECT s.*, k.hardware, k.build, k.settings
     FROM cohort_stats s
     CROSS JOIN LATERAL (
-        SELECT c.* FROM telemetry_reports t
+        SELECT telemetry_alert_hardware(t.payload) AS hardware,
+               telemetry_alert_build(t.payload) AS build,
+               telemetry_cohort_settings(sample->'settings') AS settings
+        FROM telemetry_reports t
         CROSS JOIN LATERAL jsonb_array_elements(t.payload->'backends') sample
-        CROSS JOIN LATERAL (
-        -- Same keys as samples above.
-        SELECT (t.payload->'hardware') #- '{resources,available_memory_gib}' AS hardware,
-               jsonb_build_array(t.payload->'build_target', t.payload->'build_features',
-                                 t.payload #> '{diagnostics,mode}') AS build,
-               (sample->'settings') - 'gpu_arch' - 'gpu_kernel_source' - 'amd_perf_level' AS settings) c
         WHERE t.installation_id = s.example_installation AND t.received_at = s.example_report
-          AND ARRAY[jsonb_hash_extended(c.hardware, 0), jsonb_hash_extended(c.build, 0),
-                    jsonb_hash_extended(c.settings, 0)] = s.cohort
+          AND ARRAY[jsonb_hash_extended(telemetry_alert_hardware(t.payload), 0),
+                    jsonb_hash_extended(telemetry_alert_build(t.payload), 0),
+                    jsonb_hash_extended(telemetry_cohort_settings(sample->'settings'), 0)] = s.cohort
         LIMIT 1) k
+), models AS (
+    -- Every paired installation of the same CPU and device on the same backend,
+    -- whatever its resources or settings: a small cohort can drift on its own.
+    SELECT p.version, p.baseline_version, k.hardware->>'cpu_model' AS cpu_model,
+           k.settings->>'backend' AS backend, k.settings->>'device_model' AS device_model,
+           count(DISTINCT p.installation_id) AS installations,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY p.ratio) AS median_ratio
+    FROM pairs p JOIN keyed k
+      ON k.version IS NOT DISTINCT FROM p.version
+     AND k.baseline_version IS NOT DISTINCT FROM p.baseline_version AND k.cohort = p.cohort
+    GROUP BY 1,2,3,4,5
+), cohorts AS (
+    SELECT k.version, k.baseline_version, k.hardware, k.build, k.settings,
+           k.installations, k.affected_installations, k.median_ratio,
+           m.installations AS model_installations, m.median_ratio AS model_median_ratio
+    FROM keyed k JOIN models m
+      ON m.version IS NOT DISTINCT FROM k.version
+     AND m.baseline_version IS NOT DISTINCT FROM k.baseline_version
+     AND m.cpu_model IS NOT DISTINCT FROM k.hardware->>'cpu_model'
+     AND m.backend IS NOT DISTINCT FROM k.settings->>'backend'
+     AND m.device_model IS NOT DISTINCT FROM k.settings->>'device_model'
+    WHERE k.installations >= 5
 )
 SELECT jsonb_build_object(
     'minutes_since_last_report', (
-        SELECT floor(extract(epoch FROM now()-max(received_at))/60) FROM telemetry_reports
+        SELECT floor(extract(epoch FROM now()-max(received_at))/60) FROM telemetry_report_facts
         WHERE received_at >= now() - interval '7 days'
-          AND NOT (payload->>'debug_build')::boolean
-          AND coalesce(payload #>> '{diagnostics,reason}', 'periodic') = 'periodic'),
+          AND NOT debug_build AND periodic),
     'performance_cohorts', coalesce((SELECT jsonb_agg(cohorts) FROM cohorts), '[]'::jsonb)
 );
 ROLLBACK;

@@ -38,7 +38,7 @@ class AlertSQLTests(unittest.TestCase):
                                         '-X', '-qAt', '-v', 'ON_ERROR_STOP=1'], input=sql, text=True)
 
     def setUp(self):
-        self.query('TRUNCATE telemetry_reports;')
+        self.query('TRUNCATE telemetry_report_facts, telemetry_reports;')
 
     def seed(self, installations=5, mutate=None, sparse=False):
         fixture = json.loads((ROOT / 'fixture.json').read_text())
@@ -70,11 +70,30 @@ class AlertSQLTests(unittest.TestCase):
         self.assertEqual(cohort['installations'], 5)
         self.assertEqual(cohort['affected_installations'], 5)
         self.assertEqual(cohort['median_ratio'], .5)
+        self.assertEqual(cohort['model_installations'], 5)
+        self.assertEqual(cohort['model_median_ratio'], .5)
+
+    def test_model_figures_span_cohorts_of_the_same_hardware(self):
+        # Five installations at four lanes halve; twelve at other lane counts,
+        # each too few for a cohort of their own, stay level.
+        def mutate(payload, index, hour):
+            if index < 5:
+                payload['backends'][0]['settings'].update(lanes=4)
+            else:
+                payload['backends'][0]['settings'].update(lanes=6 + index % 4)
+                payload['backends'][0]['hashes'] = 36000
+        self.seed(17, mutate=mutate)
+        cohort, = self.analysis()['performance_cohorts']
+        self.assertEqual(cohort['settings']['lanes'], 4)
+        self.assertEqual(cohort['installations'], 5)
+        self.assertEqual(cohort['median_ratio'], .5)
+        self.assertEqual(cohort['model_installations'], 17)
+        self.assertEqual(cohort['model_median_ratio'], 1)
 
     def test_sparse_and_small_populations_do_not_qualify(self):
         self.seed(4)
         self.assertEqual(self.analysis()['performance_cohorts'], [])
-        self.query('TRUNCATE telemetry_reports;')
+        self.query('TRUNCATE telemetry_report_facts, telemetry_reports;')
         self.seed(sparse=True)
         self.assertEqual(self.analysis()['performance_cohorts'], [])
 
@@ -91,7 +110,7 @@ class AlertSQLTests(unittest.TestCase):
         ]
         for mutation in mutations:
             with self.subTest(mutation=mutation):
-                self.query('TRUNCATE telemetry_reports;')
+                self.query('TRUNCATE telemetry_report_facts, telemetry_reports;')
                 self.seed(mutate=lambda p, i, h: mutation(p) if h < 36 else None)
                 self.assertEqual(self.analysis()['performance_cohorts'], [])
 

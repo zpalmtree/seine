@@ -43,7 +43,7 @@ class PerformanceSQLTests(unittest.TestCase):
              '-X', '-qAt', '-v', 'ON_ERROR_STOP=1'], input=sql, text=True)
 
     def setUp(self):
-        self.query('TRUNCATE telemetry_reports;')
+        self.query('TRUNCATE telemetry_report_facts, telemetry_reports;')
 
     def seed(self, diagnostics=None, rate=20, hours=(26, 13, 1), identities=None):
         fixture = json.loads((ROOT / 'fixture.json').read_text())
@@ -102,7 +102,7 @@ class PerformanceSQLTests(unittest.TestCase):
     def test_final_windows_remain_inventory_but_cannot_establish_performance(self):
         for reason in ['shutdown', 'failure']:
             with self.subTest(reason=reason):
-                self.query('TRUNCATE telemetry_reports;')
+                self.query('TRUNCATE telemetry_report_facts, telemetry_reports;')
                 self.seed(self.diagnostics(reason=reason))
                 report = self.report()
                 self.assertEqual(report['installations'], 5)

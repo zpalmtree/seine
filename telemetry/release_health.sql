@@ -1,6 +1,16 @@
 BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
-SET LOCAL statement_timeout = '45s';
+SET LOCAL statement_timeout = '90s';
 SET LOCAL lock_timeout = '2s';
+-- Row estimates for the jsonb expansions are far too high; keep the scan parallel.
+SET LOCAL parallel_tuple_cost = 0.01;
+SET LOCAL parallel_setup_cost = 0;
+SET LOCAL max_parallel_workers_per_gather = 3;
+SET LOCAL enable_memoize = off;
+-- Group estimates are far too high for hashing to look cheaper; it is.
+SET LOCAL enable_sort = off;
+SET LOCAL enable_incremental_sort = off;
+SET LOCAL jit = off;
+SET LOCAL work_mem = '64MB';
 SET LOCAL TIME ZONE 'America/New_York';
 -- Schema-14 operational fields: self-update, fork readiness, AMD detection,
 -- GPU kernel sources and pool churn. Aggregates only; never installation IDs.
@@ -9,45 +19,68 @@ SET LOCAL TIME ZONE 'America/New_York';
 -- are summed over every report in the seven days.
 WITH reports AS MATERIALIZED (
     SELECT installation_id, received_at,
-           payload->>'miner_version' AS version,
-           payload #>> '{hardware,os}' AS os,
-           payload #>> '{hardware,cpu_vendor}' AS cpu_vendor,
-           payload #>> '{hardware,cpu_model}' AS cpu_model,
-           (payload #>> '{hardware,cpu_family}')::int AS cpu_family,
-           (payload #>> '{hardware,cpu_model_id}')::int AS cpu_model_id,
-           (payload->>'schema_version')::int AS schema_version,
-           NULLIF(payload->'diagnostics', 'null'::jsonb) AS d,
-           payload->'backends' AS backends
+           p->>'miner_version' AS version,
+           p #>> '{hardware,os}' AS os,
+           p #>> '{hardware,cpu_vendor}' AS cpu_vendor,
+           p #>> '{hardware,cpu_model}' AS cpu_model,
+           (p #>> '{hardware,cpu_family}')::int AS cpu_family,
+           (p #>> '{hardware,cpu_model_id}')::int AS cpu_model_id,
+           (p->>'schema_version')::int AS schema_version,
+           -- Events and previous-run records are most of a report. No section below
+           -- reads these keys, and every pass would carry them.
+           NULLIF(p->'diagnostics', 'null'::jsonb) - '{events,previous_run,nvidia_software,requested_backends,build_commit,source_fingerprint,phase,reason,cpu_affinity,cpu_autotune,cpu_page_mode,requested_cpu_threads,dropped_events,dropped_backend_samples,previous_run_unclean,previous_run_rebooted,shutdown_request,cleanup_stage}'::text[] AS d,
+           -- Path queries are plain function calls and run in the parallel workers;
+           -- a sub-select per report would run on one process.
+           jsonb_path_query_array(p, '$.diagnostics.events[*] ? (@.detail.reason == "unsupported_work" || @.detail.operation == "receive_work")') AS unsupported_events,
+           -- GPU samples with schema-14 settings; CPU samples are not read here.
+           jsonb_path_query_array(p, '$.backends[*] ? ((@.settings.backend == "nvidia" || @.settings.backend == "amd") && (@.settings.gpu_arch != null || @.settings.gpu_kernel_source != null || @.settings.amd_perf_level != null))') AS gpu_backends,
+           jsonb_path_exists(p, '$.backends[*] ? (@.settings.pow == "blake2b")') AS mined_blake2b
     FROM telemetry_reports
+    -- Each payload reference would otherwise decompress the stored value again.
+    CROSS JOIN LATERAL unnest(ARRAY[payload || '{}'::jsonb]) p
     WHERE received_at >= now() - interval '7 days'
-      AND NOT (payload->>'debug_build')::boolean
+      AND NOT (p->>'debug_build')::boolean
 ), coverage AS (
-    SELECT version, count(DISTINCT installation_id) AS installations,
-           count(DISTINCT installation_id) FILTER (WHERE schema_version >= 14) AS schema14_installations
-    FROM reports GROUP BY 1
+    SELECT version, count(*) AS installations,
+           count(*) FILTER (WHERE schema14) AS schema14_installations
+    FROM (SELECT version, installation_id, coalesce(bool_or(schema_version >= 14), false) AS schema14
+          FROM reports GROUP BY 1, 2) installation
+    GROUP BY 1
 ),
 -- Self-update.
-updates AS (
+updates AS NOT MATERIALIZED (
     SELECT installation_id, received_at, version, d->'update' AS u
     FROM reports WHERE d->'update' IS NOT NULL
-), latest_update AS (
-    SELECT DISTINCT ON (installation_id, version) installation_id, version, (u->>'auto_install')::boolean AS auto_install
-    FROM updates ORDER BY installation_id, version, received_at DESC
-), update_versions AS (
-    SELECT version,
-           count(DISTINCT installation_id) AS installations,
-           (SELECT count(*) FROM latest_update l WHERE l.version = u.version AND l.auto_install) AS auto_install_installations,
+), update_installations AS (
+    -- One row per installation and version; installation counts follow from its flags.
+    SELECT version, installation_id,
+           -- On only when the newest report carrying the setting has it on.
+           max(received_at) FILTER (WHERE (u->>'auto_install')::boolean) = max(received_at) AS auto_install,
            sum((u->>'checks_api')::bigint) AS checks_api,
            sum((u->>'checks_web')::bigint) AS checks_web,
            sum((u->>'checks_failed')::bigint) AS checks_failed,
-           count(DISTINCT installation_id) FILTER (WHERE (u->>'checks_failed')::bigint > 0) AS installations_with_failed_checks,
            sum((u->>'installs')::bigint) AS installs,
-           count(DISTINCT installation_id) FILTER (WHERE (u->>'installs')::bigint > 0) AS installations_installing,
            sum((u->>'install_failures')::bigint) AS install_failures,
-           count(DISTINCT installation_id) FILTER (WHERE (u->>'install_failures')::bigint > 0) AS installations_with_install_failures,
-           count(DISTINCT installation_id) FILTER (WHERE (u->>'install_failures')::bigint > 0
-                                                     AND received_at >= now() - interval '24 hours') AS installations_with_install_failures_24h
-    FROM updates u GROUP BY 1
+           coalesce(bool_or((u->>'checks_failed')::bigint > 0), false) AS failed_checks,
+           coalesce(bool_or((u->>'installs')::bigint > 0), false) AS installing,
+           coalesce(bool_or((u->>'install_failures')::bigint > 0), false) AS failed_installs,
+           coalesce(bool_or((u->>'install_failures')::bigint > 0
+                            AND received_at >= now() - interval '24 hours'), false) AS failed_installs_24h
+    FROM updates GROUP BY 1, 2
+), update_versions AS (
+    SELECT version,
+           count(*) AS installations,
+           count(*) FILTER (WHERE auto_install) AS auto_install_installations,
+           sum(checks_api) AS checks_api,
+           sum(checks_web) AS checks_web,
+           sum(checks_failed) AS checks_failed,
+           count(*) FILTER (WHERE failed_checks) AS installations_with_failed_checks,
+           sum(installs) AS installs,
+           count(*) FILTER (WHERE installing) AS installations_installing,
+           sum(install_failures) AS install_failures,
+           count(*) FILTER (WHERE failed_installs) AS installations_with_install_failures,
+           count(*) FILTER (WHERE failed_installs_24h) AS installations_with_install_failures_24h
+    FROM update_installations GROUP BY 1
 ), update_failure_stages AS (
     -- Only the most recent failed stage per report window is recorded.
     SELECT version, u->>'last_install_failure' AS stage,
@@ -58,8 +91,8 @@ updates AS (
 -- Fork readiness: work this build cannot mine.
 unsupported_events AS (
     SELECT r.installation_id, r.received_at, r.version, (e->>'count')::bigint AS occurrences
-    FROM reports r CROSS JOIN LATERAL jsonb_array_elements(coalesce(r.d->'events', '[]'::jsonb)) e
-    WHERE e #>> '{detail,reason}' = 'unsupported_work' OR e #>> '{detail,operation}' = 'receive_work'
+    FROM reports r CROSS JOIN LATERAL jsonb_array_elements(r.unsupported_events) e
+    WHERE r.unsupported_events <> '[]'::jsonb
 ), paused AS (
     SELECT installation_id, received_at, version, d->>'mode' AS mode,
            (d->>'unsupported_work_paused_secs')::bigint AS secs
@@ -86,16 +119,21 @@ unsupported_events AS (
 -- string, Ryzen 7000 desktops at family 25 model 97 and Ryzen 9000 desktops
 -- at family 26 model 68).
 amd_latest AS (
-    SELECT DISTINCT ON (installation_id) installation_id, version, os, schema_version,
-           cpu_vendor, cpu_model, cpu_family, cpu_model_id,
-           (d #>> '{amd_detection,hip_unavailable}')::boolean AS hip_unavailable,
-           (d #>> '{amd_detection,found}')::int AS found,
-           (d #>> '{amd_detection,selected}')::int AS selected,
-           (d #>> '{amd_detection,integrated_skipped}')::int AS integrated_skipped,
-           (d #>> '{amd_detection,unsupported_skipped}')::int AS unsupported_skipped,
-           (d #>> '{amd_detection,pci_devices}')::int AS pci_devices
-    FROM reports WHERE d->'amd_detection' IS NOT NULL
-    ORDER BY installation_id, received_at DESC
+    SELECT DISTINCT ON (r.installation_id) r.installation_id, r.version, r.os, r.schema_version,
+           r.cpu_vendor, r.cpu_model, r.cpu_family, r.cpu_model_id,
+           (r.d #>> '{amd_detection,hip_unavailable}')::boolean AS hip_unavailable,
+           (r.d #>> '{amd_detection,found}')::int AS found,
+           (r.d #>> '{amd_detection,selected}')::int AS selected,
+           (r.d #>> '{amd_detection,integrated_skipped}')::int AS integrated_skipped,
+           (r.d #>> '{amd_detection,unsupported_skipped}')::int AS unsupported_skipped,
+           (r.d #>> '{amd_detection,pci_devices}')::int AS pci_devices
+    FROM reports r
+    -- The newest report carrying the detection, found without sorting every report.
+    JOIN (SELECT installation_id, max(received_at) AS received_at
+          FROM reports WHERE d->'amd_detection' IS NOT NULL GROUP BY 1) newest
+      USING (installation_id, received_at)
+    WHERE r.d->'amd_detection' IS NOT NULL
+    ORDER BY r.installation_id
 ), amd AS (
     SELECT installation_id, version, os, hip_unavailable, found, selected,
            integrated_skipped, unsupported_skipped,
@@ -135,10 +173,8 @@ gpu_samples AS (
     SELECT installation_id, received_at, version, os, s->'settings' AS st,
            (s->>'instance')::bigint AS instance,
            max(received_at) OVER (PARTITION BY installation_id) AS latest
-    FROM reports CROSS JOIN LATERAL jsonb_array_elements(backends) s
-    WHERE s #>> '{settings,backend}' IN ('nvidia', 'amd')
-      AND coalesce(s #>> '{settings,gpu_arch}', s #>> '{settings,gpu_kernel_source}',
-                   s #>> '{settings,amd_perf_level}') IS NOT NULL
+    FROM reports CROSS JOIN LATERAL jsonb_array_elements(gpu_backends) s
+    WHERE gpu_backends <> '[]'::jsonb
 ), latest_gpu AS (
     SELECT * FROM gpu_samples WHERE received_at = latest
 ), kernel_sources AS (
@@ -155,21 +191,22 @@ gpu_samples AS (
 -- Time to first hash. Every report of a run repeats its record, so DISTINCT
 -- counts each run once, and first runs (cold kernel builds) stay visible.
 -- first_hash_ms includes any wait for pool work; lag_behind_cpu_ms removes it.
-startup_reports AS (
+startup_reports AS NOT MATERIALIZED (
     SELECT installation_id, received_at, version, d->'backend_startup' AS b,
-           (d->>'uptime_secs')::bigint AS uptime_secs,
-           EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(backends, '[]'::jsonb)) x
-                   WHERE x #>> '{settings,pow}' = 'blake2b') AS mined_blake2b
+           (d->>'uptime_secs')::bigint AS uptime_secs, mined_blake2b
     FROM reports WHERE d->'backend_startup' IS NOT NULL
+), startup_records AS (
+    SELECT DISTINCT installation_id, version, b->'first_hashes' AS first_hashes
+    FROM startup_reports
 ), first_hash_runs AS (
     SELECT DISTINCT r.installation_id, r.version, f->>'backend' AS backend,
            (f->>'instance')::bigint AS instance, (f->>'first_hash_ms')::bigint AS ms,
            (f->>'first_hash_ms')::bigint - (
                SELECT min((c->>'first_hash_ms')::bigint)
-               FROM jsonb_array_elements(r.b->'first_hashes') c WHERE c->>'backend' = 'cpu'
+               FROM jsonb_array_elements(r.first_hashes) c WHERE c->>'backend' = 'cpu'
            ) AS lag_behind_cpu_ms
-    FROM startup_reports r
-    CROSS JOIN LATERAL jsonb_array_elements(coalesce(r.b->'first_hashes', '[]'::jsonb)) f
+    FROM startup_records r
+    CROSS JOIN LATERAL jsonb_array_elements(coalesce(r.first_hashes, '[]'::jsonb)) f
 ), first_hash_cohorts AS (
     SELECT r.version, r.backend, coalesce(a.gpu_arch, 'n/a') AS gpu_arch,
            count(DISTINCT r.installation_id) AS installations, count(*) AS runs,
@@ -179,18 +216,23 @@ startup_reports AS (
            percentile_cont(0.5) WITHIN GROUP (ORDER BY r.lag_behind_cpu_ms) AS lag_behind_cpu_ms_p50,
            percentile_cont(0.9) WITHIN GROUP (ORDER BY r.lag_behind_cpu_ms) AS lag_behind_cpu_ms_p90
     FROM first_hash_runs r
-    LEFT JOIN LATERAL (
-        SELECT g.st->>'gpu_arch' AS gpu_arch FROM latest_gpu g
-        WHERE g.installation_id = r.installation_id AND g.instance = r.instance LIMIT 1
-    ) a ON true
+    LEFT JOIN (
+        SELECT DISTINCT ON (installation_id, instance) installation_id, instance,
+               st->>'gpu_arch' AS gpu_arch
+        FROM latest_gpu ORDER BY installation_id, instance
+    ) a ON a.installation_id = r.installation_id AND a.instance = r.instance
     GROUP BY 1, 2, 3
 ), latest_startup AS (
     -- Long enough that a missing backend is stuck, not still starting. A run with
     -- no hashes at all had no work, which says nothing about its backends.
-    SELECT DISTINCT ON (installation_id) installation_id, version, b, mined_blake2b
-    FROM startup_reports
-    WHERE uptime_secs >= 600 AND jsonb_array_length(coalesce(b->'first_hashes', '[]'::jsonb)) > 0
-    ORDER BY installation_id, received_at DESC
+    SELECT DISTINCT ON (r.installation_id) r.installation_id, r.version, r.b, r.mined_blake2b
+    FROM startup_reports r
+    JOIN (SELECT installation_id, max(received_at) AS received_at
+          FROM startup_reports
+          WHERE uptime_secs >= 600 AND jsonb_array_length(coalesce(b->'first_hashes', '[]'::jsonb)) > 0
+          GROUP BY 1) newest USING (installation_id, received_at)
+    WHERE r.uptime_secs >= 600 AND jsonb_array_length(coalesce(r.b->'first_hashes', '[]'::jsonb)) > 0
+    ORDER BY r.installation_id
 ), expected_backends AS (
     SELECT l.installation_id, l.version, e.backend, e.expected, l.mined_blake2b,
            (SELECT count(*) FROM jsonb_array_elements(l.b->'first_hashes') f
@@ -215,36 +257,50 @@ startup_reports AS (
     FROM expected_backend_state GROUP BY 1, 2
 ),
 -- Pool connection setup and churn (pool mode only).
-pool_reports AS (
+pool_reports AS NOT MATERIALIZED (
     SELECT installation_id, received_at, version, d->'pool' AS p
     FROM reports WHERE d->'pool' IS NOT NULL
+), pool_activity AS MATERIALIZED (
+    -- One row per installation, version and day; the totals below add these up.
+    SELECT installation_id, version, received_at::date AS day, count(*) AS reports,
+           max(received_at) AS last_report,
+           sum((p->>'failovers')::bigint) AS failovers,
+           sum((p->>'reconnects')::bigint) AS reconnects,
+           sum((p->>'refills')::bigint) AS refills,
+           sum((p->>'secs_on_backup')::bigint) AS secs_on_backup,
+           coalesce(bool_or((p->>'failovers')::bigint > 0), false) AS failing_over,
+           coalesce(bool_or((p->>'reconnects')::bigint > 0), false) AS reconnecting
+    FROM pool_reports GROUP BY 1, 2, 3
 ), pool_latest AS (
-    SELECT DISTINCT ON (installation_id) installation_id, p
-    FROM pool_reports ORDER BY installation_id, received_at DESC
+    SELECT DISTINCT ON (r.installation_id) r.installation_id, r.p
+    FROM pool_reports r
+    JOIN (SELECT installation_id, max(last_report) AS received_at
+          FROM pool_activity GROUP BY 1) newest USING (installation_id, received_at)
+    ORDER BY r.installation_id
 ), pool_installation AS (
     SELECT installation_id,
-           sum((p->>'failovers')::bigint) AS failovers,
-           sum((p->>'reconnects')::bigint) AS reconnects,
-           sum((p->>'refills')::bigint) AS refills,
-           sum((p->>'secs_on_backup')::bigint) AS secs_on_backup
-    FROM pool_reports GROUP BY 1
+           sum(failovers) AS failovers,
+           sum(reconnects) AS reconnects,
+           sum(refills) AS refills,
+           sum(secs_on_backup) AS secs_on_backup
+    FROM pool_activity GROUP BY 1
 ), pool_daily AS (
-    SELECT received_at::date AS day, count(*) AS reports,
+    SELECT day, sum(reports)::bigint AS reports,
            count(DISTINCT installation_id) AS installations,
-           sum((p->>'failovers')::bigint) AS failovers,
-           sum((p->>'reconnects')::bigint) AS reconnects,
-           sum((p->>'refills')::bigint) AS refills,
-           sum((p->>'secs_on_backup')::bigint) AS secs_on_backup
-    FROM pool_reports GROUP BY 1
+           sum(failovers) AS failovers,
+           sum(reconnects) AS reconnects,
+           sum(refills) AS refills,
+           sum(secs_on_backup) AS secs_on_backup
+    FROM pool_activity GROUP BY 1
 ), pool_versions AS (
     SELECT version, count(DISTINCT installation_id) AS installations,
-           count(DISTINCT installation_id) FILTER (WHERE (p->>'failovers')::bigint > 0) AS installations_failing_over,
-           count(DISTINCT installation_id) FILTER (WHERE (p->>'reconnects')::bigint > 0) AS installations_reconnecting,
-           sum((p->>'failovers')::bigint) AS failovers,
-           sum((p->>'reconnects')::bigint) AS reconnects,
-           sum((p->>'refills')::bigint) AS refills,
-           sum((p->>'secs_on_backup')::bigint) AS secs_on_backup
-    FROM pool_reports GROUP BY 1
+           count(DISTINCT installation_id) FILTER (WHERE failing_over) AS installations_failing_over,
+           count(DISTINCT installation_id) FILTER (WHERE reconnecting) AS installations_reconnecting,
+           sum(failovers) AS failovers,
+           sum(reconnects) AS reconnects,
+           sum(refills) AS refills,
+           sum(secs_on_backup) AS secs_on_backup
+    FROM pool_activity GROUP BY 1
 ), recent_install_failures AS (
     SELECT version, installations_with_install_failures_24h AS affected_installations
     FROM update_versions WHERE installations_with_install_failures_24h > 0

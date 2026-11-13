@@ -17,7 +17,16 @@ def messages():
             {'version': 'v0.2.35', 'affected_installations': 3, 'reporting_versions': ['v0.2.36']},
             {'version': 'unknown', 'affected_installations': 3, 'reporting_versions': ['v0.2.26']},
         ]}})
+    drop = {'version': 'v0.3.1', 'baseline_version': 'v0.3.0',
+            'hardware': {'cpu_model': 'Example CPU (fixture)'}, 'build': [],
+            'settings': {'backend': 'cpu'}, 'installations': 5, 'affected_installations': 3,
+            'median_ratio': .79, 'model_installations': 469, 'model_median_ratio': .993}
+    performance, _ = evaluate({'performance': {'minutes_since_last_report': 0, 'performance_cohorts': [
+        drop, dict(drop, baseline_version='v0.3.1')]}})
     cases = {
+        'performance-release': ('FIRING', performance[0]),
+        'performance-unchanged': ('FIRING', performance[1]),
+        'performance-cleared': ('CLEARED', performance[1]),
         'legacy': ('FIRING', quality[0]),
         'warning': ('FIRING', quality[1]),
         'reminder': ('REMINDER', issue('infrastructure', 'fixture', 'Collector infrastructure check still failing.')),

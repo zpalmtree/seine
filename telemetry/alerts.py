@@ -107,7 +107,28 @@ def evaluate(results):
         for row in performance['performance_cohorts']:
             if row['median_ratio'] <= .8 and row['affected_installations'] >= max(3, .6 * row['installations']):
                 key = {k: row[k] for k in ('version', 'baseline_version', 'hardware', 'build', 'settings')}
-                active.append(issue('performance', key, f'{label(row["version"])} / {label(row["hardware"].get("cpu_model", "unknown CPU"))} / {label(row["settings"].get("backend"))}: paired median hashrate fell {100 * (1-row["median_ratio"]):.0f}% across {row["installations"]} installations versus {label(row["baseline_version"])}. Observational signal; verify with controlled benchmarks.'))
+                summary = (f'{label(row["version"])} / {label(row["hardware"].get("cpu_model", "unknown CPU"))} / '
+                           f'{label(row["settings"].get("backend"))}: paired median hashrate fell '
+                           f'{100 * (1-row["median_ratio"]):.0f}% across {row["installations"]} installations')
+                # The cohort is one exact resource and settings combination. The same
+                # hardware across every combination shows whether the drop is general.
+                model = ''
+                if row.get('model_median_ratio') is not None and row.get('model_installations', 0) > row['installations']:
+                    change = round(100 * (row['model_median_ratio'] - 1))
+                    change = 'unchanged' if change == 0 else f'{"down" if change < 0 else "up"} {abs(change)}%'
+                    model = f' All {row["model_installations"]} paired installations of this hardware: median {change}.'
+                if row['version'] == row['baseline_version']:
+                    # One release compared with itself is drift on those machines.
+                    active.append(issue(
+                        'performance', key,
+                        f'{summary} with no version change.{model} The miner is the same, so check '
+                        'the host or environment first.',
+                        title='Hashrate drop on an unchanged version'))
+                else:
+                    active.append(issue(
+                        'performance', key,
+                        f'{summary} versus {label(row["baseline_version"])}.{model} '
+                        'Observational signal; verify with controlled benchmarks.'))
     return active, known
 
 
@@ -271,7 +292,7 @@ def format_message(transition, record, now):
     stamp = datetime.fromtimestamp(now, ZoneInfo('America/New_York')).strftime('%Y-%m-%d %H:%M %Z')
     embed = {
         'author': {'name': 'Seine telemetry'},
-        'title': f'[{status}] {titles.get(category, label(category))}'[:256],
+        'title': f'[{status}] {label(record.get("title") or titles.get(category, label(category)))}'[:256],
         'description': (('Last observed: ' if cleared else '') + str(record['summary']))[:3000],
         'color': 0x2ECC71 if cleared else colors.get(severity, 0x3498DB),
         'fields': fields,

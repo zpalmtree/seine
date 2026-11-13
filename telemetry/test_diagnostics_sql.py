@@ -98,7 +98,7 @@ class DiagnosticSQLTests(unittest.TestCase):
         self.assertTrue(errors['v0.3.1']['needs_attention'])
         self.assertEqual(result['status'], 'attention')
         # 10% of the newest line interrupted is attention too.
-        self.query('TRUNCATE telemetry_reports')
+        self.query('TRUNCATE telemetry_report_facts, telemetry_reports')
         add('v0.3.1', 27)
         add('v0.3.1', 3, previous='v0.3.1')
         result = self.diagnostics()

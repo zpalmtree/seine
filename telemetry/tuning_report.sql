@@ -7,17 +7,24 @@ SET LOCAL lock_timeout = '2s';
 -- still uses nested loops. All settings end with this read-only transaction.
 SET LOCAL jit = off;
 SET LOCAL enable_nestloop = off;
+SET LOCAL parallel_tuple_cost = 0.01;
+SET LOCAL parallel_setup_cost = 0;
 SET LOCAL work_mem = '64MB';
 SET LOCAL TIME ZONE 'America/New_York';
 WITH reports AS MATERIALIZED (
-    SELECT installation_id, received_at, p.*
+    SELECT installation_id, received_at,
+           payload->>'miner_version' AS miner_version,
+           NULLIF(payload->'hardware', 'null'::jsonb) AS hardware,
+           NULLIF(payload->'diagnostics', 'null'::jsonb) AS diagnostics,
+           payload->>'build_target' AS build_target,
+           payload->>'build_features' AS build_features,
+           payload->'tuning' AS tuning
     FROM telemetry_reports
-    CROSS JOIN LATERAL jsonb_to_record(payload) AS p(
-        debug_build boolean, miner_version text, hardware jsonb, diagnostics jsonb,
-        build_target text, build_features text, tuning jsonb
-    )
-    WHERE received_at >= now() - interval '7 days' AND NOT p.debug_build
-      AND p.tuning IS NOT NULL AND p.tuning <> 'null'::jsonb
+    WHERE received_at >= now() - interval '7 days'
+      -- Few reports carry trials. Testing that first decodes the other payloads
+      -- once, without a lateral join, so the scan stays parallel.
+      AND payload->'tuning' <> 'null'::jsonb
+      AND NOT (payload->>'debug_build')::boolean
 ), raw AS (
     SELECT installation_id, received_at,
            jsonb_build_object('version', miner_version,
