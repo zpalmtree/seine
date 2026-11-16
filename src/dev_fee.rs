@@ -13,6 +13,7 @@ const GRACE_PERIOD: Duration = Duration::from_secs(10 * 60);
 /// Length of each dev fee accounting round in pool mining.
 pub const POOL_ROUND: Duration = Duration::from_secs(20);
 
+#[derive(Debug, Clone)]
 pub struct DevFeeTracker {
     fee_fraction: f64,
     total_elapsed: Duration,
@@ -65,6 +66,14 @@ impl DevFeeTracker {
         if self.is_dev_round {
             self.dev_elapsed += elapsed;
         }
+    }
+
+    /// Whether the round after the current one mines for dev, if the
+    /// current one ends after `round_elapsed`.
+    pub fn next_round_is_dev(&self, round_elapsed: Duration) -> bool {
+        let mut next = self.clone();
+        next.end_round(round_elapsed);
+        next.should_mine_dev()
     }
 
     pub fn is_dev_round(&self) -> bool {
@@ -226,5 +235,16 @@ mod tests {
             tracker.end_round(Duration::from_secs(1));
         }
         assert_eq!(tracker.dev_elapsed, Duration::from_secs(200));
+    }
+
+    #[test]
+    fn next_round_lookahead_matches_the_next_round() {
+        let mut tracker = DevFeeTracker::new();
+        for _ in 0..24 * 60 * 3 {
+            let predicted = tracker.next_round_is_dev(POOL_ROUND);
+            tracker.end_round(POOL_ROUND);
+            tracker.begin_round();
+            assert_eq!(predicted, tracker.is_dev_round());
+        }
     }
 }

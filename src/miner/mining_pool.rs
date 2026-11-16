@@ -50,6 +50,16 @@ const POOL_MAX_INFLIGHT_SUBMITS: usize = 16;
 // (stale_submit_grace); submit it under the replaced job id for 5 s, leaving margin.
 const REPLACED_JOB_SUBMIT_WINDOW: Duration = Duration::from_secs(5);
 const POOL_MAX_DEFERRED_SUBMITS: usize = 4096;
+/// The dev-fee session connects this long before its round starts.
+const DEV_SESSION_CONNECT_LEAD: Duration = Duration::from_secs(10);
+/// The round before a dev-fee round runs on for at most this long while the
+/// dev-fee session has no job yet.
+const DEV_ROUND_START_WAIT: Duration = Duration::from_secs(30);
+/// After a dev-fee round the session stays open at most this long for its
+/// submits to be answered.
+const DEV_SESSION_CLOSE_WAIT: Duration = Duration::from_secs(15);
+/// Shortest gap between attempts to open the dev-fee session.
+const DEV_SESSION_OPEN_RETRY: Duration = Duration::from_secs(30);
 const POOL_SUBMIT_ACK_TIMEOUT: Duration = Duration::from_secs(30);
 const POOL_SUBMIT_ACK_WARN_THRESHOLD: usize = 4;
 const POOL_SUBMIT_LOOKUP_RETENTION: Duration = Duration::from_secs(120);
@@ -168,6 +178,110 @@ struct PoolSession {
     recent_submit_lookup: RecentPendingSubmitLookup,
 }
 
+/// Dev-fee rounds in pool mode. The dev-fee session is open only around
+/// those rounds: it connects shortly before one, the round starts once that
+/// session has a job, and the session closes after the round once its
+/// submits are answered.
+struct PoolDevFeeSchedule {
+    tracker: DevFeeTracker,
+    round_started: Instant,
+    /// When the open dev-fee session stopped being needed.
+    released_at: Option<Instant>,
+}
+
+impl PoolDevFeeSchedule {
+    fn new(now: Instant) -> Self {
+        let mut tracker = DevFeeTracker::new();
+        tracker.begin_round();
+        Self {
+            tracker,
+            round_started: now,
+            released_at: None,
+        }
+    }
+
+    fn round_elapsed(&self, now: Instant) -> Duration {
+        now.saturating_duration_since(self.round_started)
+    }
+
+    /// Ends the round once it has run for `POOL_ROUND`. The round before a
+    /// dev-fee round runs on, for up to `DEV_ROUND_START_WAIT`, until the
+    /// dev-fee session has a job.
+    fn advance(&mut self, now: Instant, dev_job_ready: bool) {
+        let elapsed = self.round_elapsed(now);
+        if elapsed < POOL_ROUND {
+            return;
+        }
+        let waiting_for_dev_job = !dev_job_ready
+            && !self.tracker.is_dev_round()
+            && elapsed < POOL_ROUND + DEV_ROUND_START_WAIT
+            && self.tracker.next_round_is_dev(elapsed);
+        if waiting_for_dev_job {
+            return;
+        }
+        self.tracker.end_round(elapsed);
+        self.round_started = now;
+        self.tracker.begin_round();
+    }
+
+    /// The dev-fee session is wanted during a dev-fee round and from
+    /// `DEV_SESSION_CONNECT_LEAD` before one.
+    fn wants_dev_session(&self, now: Instant) -> bool {
+        if self.tracker.is_dev_round() {
+            return true;
+        }
+        let elapsed = self.round_elapsed(now);
+        POOL_ROUND.saturating_sub(elapsed) <= DEV_SESSION_CONNECT_LEAD
+            && self.tracker.next_round_is_dev(elapsed.max(POOL_ROUND))
+    }
+
+    /// Mines for dev only during a dev-fee round with a dev job in hand;
+    /// otherwise the user's job keeps the miner busy.
+    fn mode(&self, dev_job_ready: bool) -> PoolConnectionMode {
+        if self.tracker.is_dev_round() && dev_job_ready {
+            PoolConnectionMode::Dev
+        } else {
+            PoolConnectionMode::User
+        }
+    }
+
+    /// Whether to close the open dev-fee session: it is no longer wanted or
+    /// mined on, shares from its round can no longer arrive, and its submits
+    /// are answered, or `DEV_SESSION_CLOSE_WAIT` has passed.
+    fn should_close_dev_session(
+        &mut self,
+        now: Instant,
+        mining_dev: bool,
+        submits_settled: bool,
+    ) -> bool {
+        if mining_dev || self.wants_dev_session(now) {
+            self.released_at = None;
+            return false;
+        }
+        let waited = now.saturating_duration_since(*self.released_at.get_or_insert(now));
+        let close = (submits_settled && waited >= REPLACED_JOB_SUBMIT_WINDOW)
+            || waited >= DEV_SESSION_CLOSE_WAIT;
+        if close {
+            self.released_at = None;
+        }
+        close
+    }
+}
+
+fn dev_job_ready(session: Option<&PoolSession>) -> bool {
+    session.is_some_and(|session| session.connected && session.latest_job.is_some())
+}
+
+/// True once every share submitted on the session has an answer and none is
+/// waiting to be sent.
+fn pool_session_submits_settled(session: &PoolSession) -> bool {
+    session.recent_submit_lookup.is_empty()
+        && session
+            .resume_job
+            .as_ref()
+            .is_none_or(|job| job.deferred_submits.is_empty())
+}
+
 struct ActivePoolJob {
     job: PoolJob,
     header_base: Arc<[u8]>,
@@ -242,6 +356,10 @@ impl RecentPendingSubmitLookup {
         self.entries.insert(key.clone(), pending_submit);
         self.order.push_back((key.0, key.1, submitted_at));
         self.prune(Instant::now());
+    }
+
+    fn is_empty(&self) -> bool {
+        self.entries.is_empty()
     }
 
     fn remove(&mut self, job_id: &str, nonce: u64) -> Option<PendingPoolSubmit> {
@@ -888,24 +1006,16 @@ pub(super) fn run_pool_mining_loop(
         }
     }
     let mut tui = init_tui_display(tui_state, Arc::clone(&shutdown), Arc::clone(&history));
-    let mut dev_fee_tracker = DevFeeTracker::new();
-    let mut dev_fee_round_started = Instant::now();
-    let _ = dev_fee_tracker.begin_round();
-    let mut active_mode = if dev_fee_tracker.is_dev_round() {
-        PoolConnectionMode::Dev
-    } else {
-        PoolConnectionMode::User
-    };
+    let mut dev_fee = PoolDevFeeSchedule::new(Instant::now());
+    let mut active_mode = PoolConnectionMode::User;
 
     if tui.is_some() {
         super::maybe_warn_linux_hugepages_setup(cfg, RuntimeMode::Mining);
-        set_tui_dev_fee_active(&mut tui, active_mode == PoolConnectionMode::Dev);
+        set_tui_dev_fee_active(&mut tui, false);
         set_tui_pool_balance_overview(&mut tui, &user_connection.address, "---", "---");
     }
     let (user_client, user_telemetry) =
         connect_pool_session(&user_connection, Arc::clone(&shutdown), &mut tui, false)?;
-    let (dev_client, dev_telemetry) =
-        connect_pool_session(&dev_connection, Arc::clone(&shutdown), &mut tui, false)?;
     let mut user_session = PoolSession {
         connection: user_connection,
         client: user_client,
@@ -915,15 +1025,9 @@ pub(super) fn run_pool_mining_loop(
         resume_job: None,
         recent_submit_lookup: RecentPendingSubmitLookup::default(),
     };
-    let mut dev_session = PoolSession {
-        connection: dev_connection,
-        client: dev_client,
-        telemetry: dev_telemetry,
-        latest_job: None,
-        connected: false,
-        resume_job: None,
-        recent_submit_lookup: RecentPendingSubmitLookup::default(),
-    };
+    // Open only around dev-fee rounds; see `PoolDevFeeSchedule`.
+    let mut dev_session: Option<PoolSession> = None;
+    let mut next_dev_session_open = Instant::now();
 
     let mut active_job: Option<ActivePoolJob> = None;
     let mut pending_gpus_logged = false;
@@ -943,170 +1047,187 @@ pub(super) fn run_pool_mining_loop(
             bail!("all mining backends are unavailable");
         }
 
-        if dev_fee_round_started.elapsed() >= POOL_ROUND {
-            dev_fee_tracker.end_round(dev_fee_round_started.elapsed());
-            dev_fee_round_started = Instant::now();
-
-            let mode_changed = dev_fee_tracker.begin_round();
-            let next_is_dev_round = dev_fee_tracker.is_dev_round();
-            if mode_changed {
-                notify_dev_fee_mode(next_is_dev_round);
-                set_tui_dev_fee_active(&mut tui, next_is_dev_round);
-
-                let next_mode = if next_is_dev_round {
-                    PoolConnectionMode::Dev
-                } else {
-                    PoolConnectionMode::User
-                };
-                if next_mode != active_mode {
-                    if next_mode == PoolConnectionMode::Dev {
-                        for event in dev_session.client.drain_events() {
-                            handle_inactive_pool_event(
-                                event,
-                                PoolConnectionMode::Dev,
-                                &dev_session.client,
-                                &mut dev_session.latest_job,
-                                &mut dev_session.connected,
-                                &mut dev_session.resume_job,
-                                &mut dev_session.recent_submit_lookup,
-                                &stats,
-                                &mut tui,
-                            );
-                        }
-                    } else {
-                        for event in user_session.client.drain_events() {
-                            update_user_pool_telemetry(&event, &mut user_session, &mut tui);
-                            handle_inactive_pool_event(
-                                event,
-                                PoolConnectionMode::User,
-                                &user_session.client,
-                                &mut user_session.latest_job,
-                                &mut user_session.connected,
-                                &mut user_session.resume_job,
-                                &mut user_session.recent_submit_lookup,
-                                &stats,
-                                &mut tui,
-                            );
-                        }
-                    }
-                    let mut parked = active_job.take();
-                    if let Some(job) = parked.as_mut() {
-                        job.retired_at = Some(Instant::now());
-                    }
-                    if active_mode == PoolConnectionMode::Dev {
-                        dev_session.resume_job = parked;
-                    } else {
-                        user_session.resume_job = parked;
-                    }
-                    if let Err(err) =
-                        super::cancel_backend_slots(backends, RuntimeMode::Mining, backend_executor)
-                    {
-                        warn(
-                            "BACKEND",
-                            format!("pool cancel failed during switch: {err:#}"),
-                        );
-                    }
-                    let _ = super::quiesce_backend_slots(
-                        backends,
-                        RuntimeMode::Mining,
-                        backend_executor,
+        let now = Instant::now();
+        dev_fee.advance(now, dev_job_ready(dev_session.as_ref()));
+        if dev_session.is_none()
+            && dev_fee.wants_dev_session(now)
+            && now >= next_dev_session_open
+            && !shutdown.load(Ordering::Relaxed)
+        {
+            next_dev_session_open = now + DEV_SESSION_OPEN_RETRY;
+            match connect_pool_session(&dev_connection, Arc::clone(&shutdown), &mut tui, false) {
+                Ok((client, telemetry)) => {
+                    dev_session = Some(PoolSession {
+                        connection: dev_connection.clone(),
+                        client,
+                        telemetry,
+                        latest_job: None,
+                        connected: false,
+                        resume_job: None,
+                        recent_submit_lookup: RecentPendingSubmitLookup::default(),
+                    });
+                }
+                Err(err) => {
+                    super::ui::detail(
+                        "DEV FEE",
+                        format!("could not open the dev-fee session: {err:#}"),
                     );
-                    active_mode = next_mode;
-
-                    let (cached_job, mut resumed_job) = if active_mode == PoolConnectionMode::Dev {
-                        (
-                            if dev_session.connected {
-                                dev_session.latest_job.clone()
-                            } else {
-                                None
-                            },
-                            if dev_session.connected {
-                                dev_session.resume_job.take()
-                            } else {
-                                None
-                            },
-                        )
-                    } else {
-                        (
-                            if user_session.connected {
-                                user_session.latest_job.clone()
-                            } else {
-                                None
-                            },
-                            if user_session.connected {
-                                user_session.resume_job.take()
-                            } else {
-                                None
-                            },
-                        )
-                    };
-
-                    if let Some(mut resume) = resumed_job.take() {
-                        resume.retired_at = None;
-                        if cached_job.as_ref().is_some_and(|cached| {
-                            rebind_parked_pool_job(active_mode, &mut resume, cached)
-                        }) {
-                            active_job = Some(resume);
-                            if let Some(job) = active_job.as_mut() {
-                                let assign_started = Instant::now();
-                                restart_pool_assignment(
-                                    cfg,
-                                    &mut work_id_cursor,
-                                    &mut epoch,
-                                    backends,
-                                    backend_executor,
-                                    &mut backend_weights,
-                                    job,
-                                )?;
-                                record_pool_assignment_timing(
-                                    job,
-                                    "resume",
-                                    None,
-                                    assign_started.elapsed(),
-                                );
-                            }
-                            set_tui_state_label(&mut tui, "working");
-                            render_tui_now(&mut tui);
-                        }
-                    }
-
-                    if active_job.is_none() {
-                        if let Some(job) = cached_job {
-                            let active_client = if active_mode == PoolConnectionMode::Dev {
-                                &dev_session.client
-                            } else {
-                                &user_session.client
-                            };
-                            assign_pool_job(
-                                active_mode,
-                                cfg,
-                                active_client,
-                                job,
-                                false,
-                                &mut work_id_cursor,
-                                &mut epoch,
-                                backends,
-                                backend_executor,
-                                &mut backend_weights,
-                                &mut active_job,
-                                &stats,
-                                &mut tui,
-                            )?;
-                        } else {
-                            set_tui_state_label(&mut tui, "waiting-pool-job");
-                            render_tui_now(&mut tui);
-                        }
-                    }
-
-                    pool_network_hashrate = "unknown".to_string();
-                    // Dev-fee switches keep the statistics warning state: it
-                    // belongs to the user's pool, which has not changed. The
-                    // hashrate is fetched again at once; a request still in
-                    // flight is superseded and its result ignored.
-                    next_pool_telemetry_refresh = Instant::now();
-                    telemetry_inflight_request_id = None;
                 }
             }
+        }
+
+        let next_mode = dev_fee.mode(dev_job_ready(dev_session.as_ref()));
+        if next_mode != active_mode {
+            notify_dev_fee_mode(next_mode == PoolConnectionMode::Dev);
+            set_tui_dev_fee_active(&mut tui, next_mode == PoolConnectionMode::Dev);
+            if next_mode == PoolConnectionMode::Dev {
+                if let Some(dev_session) = dev_session.as_mut() {
+                    for event in dev_session.client.drain_events() {
+                        handle_inactive_pool_event(
+                            event,
+                            PoolConnectionMode::Dev,
+                            &dev_session.client,
+                            &mut dev_session.latest_job,
+                            &mut dev_session.connected,
+                            &mut dev_session.resume_job,
+                            &mut dev_session.recent_submit_lookup,
+                            &stats,
+                            &mut tui,
+                        );
+                    }
+                }
+            } else {
+                for event in user_session.client.drain_events() {
+                    update_user_pool_telemetry(&event, &mut user_session, &mut tui);
+                    handle_inactive_pool_event(
+                        event,
+                        PoolConnectionMode::User,
+                        &user_session.client,
+                        &mut user_session.latest_job,
+                        &mut user_session.connected,
+                        &mut user_session.resume_job,
+                        &mut user_session.recent_submit_lookup,
+                        &stats,
+                        &mut tui,
+                    );
+                }
+            }
+            let mut parked = active_job.take();
+            if let Some(job) = parked.as_mut() {
+                job.retired_at = Some(Instant::now());
+            }
+            if active_mode == PoolConnectionMode::Dev {
+                if let Some(dev_session) = dev_session.as_mut() {
+                    dev_session.resume_job = parked;
+                }
+            } else {
+                user_session.resume_job = parked;
+            }
+            if let Err(err) =
+                super::cancel_backend_slots(backends, RuntimeMode::Mining, backend_executor)
+            {
+                warn(
+                    "BACKEND",
+                    format!("pool cancel failed during switch: {err:#}"),
+                );
+            }
+            let _ = super::quiesce_backend_slots(backends, RuntimeMode::Mining, backend_executor);
+            active_mode = next_mode;
+
+            let (cached_job, mut resumed_job) = if active_mode == PoolConnectionMode::Dev {
+                match dev_session.as_mut().filter(|session| session.connected) {
+                    Some(session) => (session.latest_job.clone(), session.resume_job.take()),
+                    None => (None, None),
+                }
+            } else {
+                (
+                    if user_session.connected {
+                        user_session.latest_job.clone()
+                    } else {
+                        None
+                    },
+                    if user_session.connected {
+                        user_session.resume_job.take()
+                    } else {
+                        None
+                    },
+                )
+            };
+
+            if let Some(mut resume) = resumed_job.take() {
+                resume.retired_at = None;
+                if cached_job
+                    .as_ref()
+                    .is_some_and(|cached| rebind_parked_pool_job(active_mode, &mut resume, cached))
+                {
+                    active_job = Some(resume);
+                    if let Some(job) = active_job.as_mut() {
+                        let assign_started = Instant::now();
+                        restart_pool_assignment(
+                            cfg,
+                            &mut work_id_cursor,
+                            &mut epoch,
+                            backends,
+                            backend_executor,
+                            &mut backend_weights,
+                            job,
+                        )?;
+                        record_pool_assignment_timing(
+                            job,
+                            "resume",
+                            None,
+                            assign_started.elapsed(),
+                        );
+                    }
+                    set_tui_state_label(&mut tui, "working");
+                    render_tui_now(&mut tui);
+                }
+            }
+
+            if active_job.is_none() {
+                if let Some(job) = cached_job {
+                    let active_client = match (active_mode, dev_session.as_ref()) {
+                        (PoolConnectionMode::Dev, Some(session)) => &session.client,
+                        _ => &user_session.client,
+                    };
+                    assign_pool_job(
+                        active_mode,
+                        cfg,
+                        active_client,
+                        job,
+                        false,
+                        &mut work_id_cursor,
+                        &mut epoch,
+                        backends,
+                        backend_executor,
+                        &mut backend_weights,
+                        &mut active_job,
+                        &stats,
+                        &mut tui,
+                    )?;
+                } else {
+                    set_tui_state_label(&mut tui, "waiting-pool-job");
+                    render_tui_now(&mut tui);
+                }
+            }
+
+            pool_network_hashrate = "unknown".to_string();
+            // Dev-fee switches keep the statistics warning state: it
+            // belongs to the user's pool, which has not changed. The
+            // hashrate is fetched again at once; a request still in
+            // flight is superseded and its result ignored.
+            next_pool_telemetry_refresh = Instant::now();
+            telemetry_inflight_request_id = None;
+        }
+
+        if dev_session.as_ref().is_some_and(|session| {
+            dev_fee.should_close_dev_session(
+                now,
+                active_mode == PoolConnectionMode::Dev,
+                pool_session_submits_settled(session),
+            )
+        }) {
+            dev_session = None;
         }
 
         let user_address = user_session.connection.address.as_str();
@@ -1366,38 +1487,40 @@ pub(super) fn run_pool_mining_loop(
                 );
             }
         }
-        for event in dev_session.client.drain_events() {
-            if active_mode == PoolConnectionMode::Dev {
-                processed_pool_event = true;
-                handle_active_pool_event(
-                    event,
-                    PoolConnectionMode::Dev,
-                    cfg,
-                    &dev_session.client,
-                    &mut work_id_cursor,
-                    &mut epoch,
-                    backends,
-                    backend_executor,
-                    &mut backend_weights,
-                    &mut active_job,
-                    &mut dev_session.recent_submit_lookup,
-                    &mut dev_session.latest_job,
-                    &mut dev_session.connected,
-                    &stats,
-                    &mut tui,
-                )?;
-            } else {
-                handle_inactive_pool_event(
-                    event,
-                    PoolConnectionMode::Dev,
-                    &dev_session.client,
-                    &mut dev_session.latest_job,
-                    &mut dev_session.connected,
-                    &mut dev_session.resume_job,
-                    &mut dev_session.recent_submit_lookup,
-                    &stats,
-                    &mut tui,
-                );
+        if let Some(dev_session) = dev_session.as_mut() {
+            for event in dev_session.client.drain_events() {
+                if active_mode == PoolConnectionMode::Dev {
+                    processed_pool_event = true;
+                    handle_active_pool_event(
+                        event,
+                        PoolConnectionMode::Dev,
+                        cfg,
+                        &dev_session.client,
+                        &mut work_id_cursor,
+                        &mut epoch,
+                        backends,
+                        backend_executor,
+                        &mut backend_weights,
+                        &mut active_job,
+                        &mut dev_session.recent_submit_lookup,
+                        &mut dev_session.latest_job,
+                        &mut dev_session.connected,
+                        &stats,
+                        &mut tui,
+                    )?;
+                } else {
+                    handle_inactive_pool_event(
+                        event,
+                        PoolConnectionMode::Dev,
+                        &dev_session.client,
+                        &mut dev_session.latest_job,
+                        &mut dev_session.connected,
+                        &mut dev_session.resume_job,
+                        &mut dev_session.recent_submit_lookup,
+                        &stats,
+                        &mut tui,
+                    );
+                }
             }
         }
 
@@ -1426,25 +1549,27 @@ pub(super) fn run_pool_mining_loop(
                     )?;
                     continue;
                 }
-            } else if let Some(event) = dev_session.client.recv_event_timeout(POOL_WAIT_POLL) {
-                handle_active_pool_event(
-                    event,
-                    PoolConnectionMode::Dev,
-                    cfg,
-                    &dev_session.client,
-                    &mut work_id_cursor,
-                    &mut epoch,
-                    backends,
-                    backend_executor,
-                    &mut backend_weights,
-                    &mut active_job,
-                    &mut dev_session.recent_submit_lookup,
-                    &mut dev_session.latest_job,
-                    &mut dev_session.connected,
-                    &stats,
-                    &mut tui,
-                )?;
-                continue;
+            } else if let Some(dev_session) = dev_session.as_mut() {
+                if let Some(event) = dev_session.client.recv_event_timeout(POOL_WAIT_POLL) {
+                    handle_active_pool_event(
+                        event,
+                        PoolConnectionMode::Dev,
+                        cfg,
+                        &dev_session.client,
+                        &mut work_id_cursor,
+                        &mut epoch,
+                        backends,
+                        backend_executor,
+                        &mut backend_weights,
+                        &mut active_job,
+                        &mut dev_session.recent_submit_lookup,
+                        &mut dev_session.latest_job,
+                        &mut dev_session.connected,
+                        &stats,
+                        &mut tui,
+                    )?;
+                    continue;
+                }
             }
         }
 
@@ -1465,33 +1590,29 @@ pub(super) fn run_pool_mining_loop(
                     }
                     if let Some(solution) = maybe_solution {
                         let backend_label = solution_backend_label(backends, &solution);
-                        let submit_outcome = match active_mode {
-                            PoolConnectionMode::Dev => submit_pool_solution(
-                                active_mode,
-                                &dev_session.client,
-                                &mut active_job,
-                                &solution,
-                                &backend_label,
-                                &mut dev_session.recent_submit_lookup,
-                                &stats,
-                            ),
-                            PoolConnectionMode::User => submit_pool_solution(
-                                active_mode,
-                                &user_session.client,
-                                &mut active_job,
-                                &solution,
-                                &backend_label,
-                                &mut user_session.recent_submit_lookup,
-                                &stats,
-                            ),
+                        let active_session = match (active_mode, dev_session.as_mut()) {
+                            (PoolConnectionMode::Dev, Some(session)) => session,
+                            _ => &mut user_session,
                         };
+                        let submit_outcome = submit_pool_solution(
+                            active_mode,
+                            &active_session.client,
+                            &mut active_job,
+                            &solution,
+                            &backend_label,
+                            &mut active_session.recent_submit_lookup,
+                            &stats,
+                        );
                         if matches!(submit_outcome, PoolShareSubmitOutcome::StaleEpoch) {
                             // A hash in flight across a fee-round switch belongs to the
                             // parked session's job.
                             for (mode, session) in [
-                                (PoolConnectionMode::User, &mut user_session),
-                                (PoolConnectionMode::Dev, &mut dev_session),
+                                (PoolConnectionMode::User, Some(&mut user_session)),
+                                (PoolConnectionMode::Dev, dev_session.as_mut()),
                             ] {
+                                let Some(session) = session else {
+                                    continue;
+                                };
                                 if session
                                     .resume_job
                                     .as_ref()
@@ -1519,22 +1640,17 @@ pub(super) fn run_pool_mining_loop(
         }
 
         if let Some(job) = active_job.as_mut() {
-            match active_mode {
-                PoolConnectionMode::Dev => service_pool_submit_backlog(
-                    active_mode,
-                    &dev_session.client,
-                    job,
-                    &mut dev_session.recent_submit_lookup,
-                    &stats,
-                ),
-                PoolConnectionMode::User => service_pool_submit_backlog(
-                    active_mode,
-                    &user_session.client,
-                    job,
-                    &mut user_session.recent_submit_lookup,
-                    &stats,
-                ),
-            }
+            let active_session = match (active_mode, dev_session.as_mut()) {
+                (PoolConnectionMode::Dev, Some(session)) => session,
+                _ => &mut user_session,
+            };
+            service_pool_submit_backlog(
+                active_mode,
+                &active_session.client,
+                job,
+                &mut active_session.recent_submit_lookup,
+                &stats,
+            );
         }
         if let Some(job) = user_session.resume_job.as_mut() {
             service_pool_submit_backlog(
@@ -1545,14 +1661,16 @@ pub(super) fn run_pool_mining_loop(
                 &stats,
             );
         }
-        if let Some(job) = dev_session.resume_job.as_mut() {
-            service_pool_submit_backlog(
-                PoolConnectionMode::Dev,
-                &dev_session.client,
-                job,
-                &mut dev_session.recent_submit_lookup,
-                &stats,
-            );
+        if let Some(dev_session) = dev_session.as_mut() {
+            if let Some(job) = dev_session.resume_job.as_mut() {
+                service_pool_submit_backlog(
+                    PoolConnectionMode::Dev,
+                    &dev_session.client,
+                    job,
+                    &mut dev_session.recent_submit_lookup,
+                    &stats,
+                );
+            }
         }
 
         if topology_changed {
@@ -1579,14 +1697,11 @@ pub(super) fn run_pool_mining_loop(
                     events_empty && should_resume_pool_assignment(active_job, has_pending_work);
                 if should_refill_pool_job(active_job) {
                     active_job.refill_requested = true;
-                    match active_mode {
-                        PoolConnectionMode::Dev => dev_session
-                            .client
-                            .request_nonce_refill(&active_job.job.job_id),
-                        PoolConnectionMode::User => user_session
-                            .client
-                            .request_nonce_refill(&active_job.job.job_id),
+                    match (active_mode, dev_session.as_ref()) {
+                        (PoolConnectionMode::Dev, Some(session)) => &session.client,
+                        _ => &user_session.client,
                     }
+                    .request_nonce_refill(&active_job.job.job_id);
                     if active_mode.is_user() {
                         super::ui::detail("JOB", "nonce range finished; requesting fresh work");
                     }
@@ -1642,7 +1757,9 @@ pub(super) fn run_pool_mining_loop(
             let mut inputs = crossbeam_channel::Select::new();
             inputs.recv(backend_events);
             inputs.recv(user_session.client.event_receiver());
-            inputs.recv(dev_session.client.event_receiver());
+            if let Some(session) = dev_session.as_ref() {
+                inputs.recv(session.client.event_receiver());
+            }
             inputs.recv(&telemetry_result_rx);
             if let Some(deferred) = deferred_rx
                 .as_ref()
@@ -1653,7 +1770,9 @@ pub(super) fn run_pool_mining_loop(
             wait_for_pool_loop_input(inputs, POOL_EVENT_IDLE_SLEEP, || {
                 backend_events.is_empty()
                     && user_session.client.event_receiver().is_empty()
-                    && dev_session.client.event_receiver().is_empty()
+                    && dev_session
+                        .as_ref()
+                        .is_none_or(|session| session.client.event_receiver().is_empty())
                     && telemetry_result_rx.is_empty()
                     && deferred_rx.as_ref().is_none_or(Receiver::is_empty)
             });
@@ -3678,6 +3797,11 @@ mod tests {
         POOL_SUBMIT_ACK_TIMEOUT,
     };
     use super::{
+        pool_session_submits_settled, submit_pool_solution, PoolConnectionConfig,
+        PoolDevFeeSchedule, PoolSession, DEV_ADDRESS, DEV_ROUND_START_WAIT, DEV_SESSION_CLOSE_WAIT,
+        DEV_SESSION_CONNECT_LEAD, POOL_ROUND, REPLACED_JOB_SUBMIT_WINDOW,
+    };
+    use super::{
         pool_telemetry_failure_backoff, telemetry_failure_reason, FailureReason,
         PoolTelemetryFailures, POOL_TELEMETRY_MAX_BACKOFF,
     };
@@ -4034,6 +4158,272 @@ mod tests {
             );
             assert_eq!(parked.job.job_id, "job-1");
         }
+    }
+
+    /// Steps a pool dev-fee schedule one second at a time. The dev-fee
+    /// session has a job `dev_job_delay` after it opens (never when `None`).
+    /// Returns (seconds mining for dev, seconds with the session open, dev
+    /// rounds started) over `run`.
+    fn simulate_dev_fee(run: Duration, dev_job_delay: Option<Duration>) -> (u64, u64, u64) {
+        let start = Instant::now();
+        let mut schedule = PoolDevFeeSchedule::new(start);
+        let mut opened_at: Option<Instant> = None;
+        let (mut dev_secs, mut open_secs, mut dev_rounds) = (0u64, 0u64, 0u64);
+        let mut was_dev_round = false;
+        let mut mode = PoolConnectionMode::User;
+        let step = Duration::from_secs(1);
+        let mut now = start;
+        while now < start + run {
+            let ready = |opened_at: Option<Instant>| {
+                opened_at.is_some_and(|at| {
+                    dev_job_delay.is_some_and(|delay| now.duration_since(at) >= delay)
+                })
+            };
+            schedule.advance(now, ready(opened_at));
+            if schedule.tracker.is_dev_round() && !was_dev_round {
+                dev_rounds += 1;
+            }
+            was_dev_round = schedule.tracker.is_dev_round();
+            if opened_at.is_none() && schedule.wants_dev_session(now) {
+                opened_at = Some(now);
+            }
+            mode = schedule.mode(ready(opened_at));
+            if opened_at.is_some()
+                && schedule.should_close_dev_session(now, mode == PoolConnectionMode::Dev, true)
+            {
+                opened_at = None;
+            }
+            if mode == PoolConnectionMode::Dev {
+                dev_secs += 1;
+            }
+            if opened_at.is_some() {
+                open_secs += 1;
+            }
+            now += step;
+        }
+        let _ = mode;
+        (dev_secs, open_secs, dev_rounds)
+    }
+
+    #[test]
+    fn dev_fee_session_stays_closed_until_shortly_before_the_first_dev_round() {
+        let start = Instant::now();
+        let mut schedule = PoolDevFeeSchedule::new(start);
+        let mut first_wanted = None;
+        let mut first_dev_round = None;
+        for secs in 0..20 * 60 {
+            let now = start + Duration::from_secs(secs);
+            schedule.advance(now, first_wanted.is_some());
+            if first_wanted.is_none() && schedule.wants_dev_session(now) {
+                first_wanted = Some(secs);
+            }
+            if schedule.tracker.is_dev_round() {
+                first_dev_round = Some(secs);
+                break;
+            }
+        }
+        let wanted = first_wanted.expect("the session opens before the first dev round");
+        let round = first_dev_round.expect("a dev round starts after the grace period");
+        assert!(wanted >= 10 * 60, "no dev session during the grace period");
+        assert!(round - wanted <= DEV_SESSION_CONNECT_LEAD.as_secs());
+        assert!(round > wanted);
+    }
+
+    #[test]
+    fn dev_round_waits_for_the_dev_job_while_the_user_job_keeps_mining() {
+        let start = Instant::now();
+        let mut schedule = PoolDevFeeSchedule::new(start);
+        // Run up to the round boundary before the first dev round.
+        let mut now = start;
+        while !schedule.wants_dev_session(now) {
+            now += Duration::from_secs(1);
+            schedule.advance(now, false);
+        }
+        let opened = now;
+        let job_after = Duration::from_secs(25);
+        while now < opened + job_after {
+            schedule.advance(now, false);
+            assert!(
+                !schedule.tracker.is_dev_round(),
+                "no dev round before its job"
+            );
+            assert_eq!(schedule.mode(false), PoolConnectionMode::User);
+            assert!(schedule.wants_dev_session(now));
+            now += Duration::from_secs(1);
+        }
+        schedule.advance(now, true);
+        assert!(schedule.tracker.is_dev_round());
+        assert_eq!(schedule.mode(true), PoolConnectionMode::Dev);
+        assert_eq!(
+            schedule.round_started, now,
+            "the dev round starts with its job"
+        );
+        // It mines the full round for dev.
+        for secs in 1..POOL_ROUND.as_secs() {
+            schedule.advance(now + Duration::from_secs(secs), true);
+            assert_eq!(schedule.mode(true), PoolConnectionMode::Dev);
+        }
+        schedule.advance(now + POOL_ROUND, true);
+        assert_eq!(schedule.mode(true), PoolConnectionMode::User);
+    }
+
+    #[test]
+    fn dev_round_without_a_dev_job_never_idles_the_miner() {
+        let start = Instant::now();
+        let mut schedule = PoolDevFeeSchedule::new(start);
+        let mut now = start;
+        while !schedule.tracker.is_dev_round() {
+            now += Duration::from_secs(1);
+            schedule.advance(now, false);
+            assert_eq!(schedule.mode(false), PoolConnectionMode::User);
+        }
+        // The wait is bounded: the dev round starts without its job...
+        let elapsed_rounds = now.duration_since(start).as_secs();
+        assert!(
+            elapsed_rounds <= 10 * 60 + POOL_ROUND.as_secs() + DEV_ROUND_START_WAIT.as_secs() + 1
+        );
+        // ...and the user's job keeps the miner busy until one arrives.
+        assert_eq!(schedule.mode(false), PoolConnectionMode::User);
+        assert_eq!(schedule.mode(true), PoolConnectionMode::Dev);
+    }
+
+    #[test]
+    fn dev_session_closes_only_after_its_submits_settle() {
+        let start = Instant::now();
+        let mut schedule = PoolDevFeeSchedule::new(start);
+        let mut now = start;
+        while !schedule.tracker.is_dev_round() {
+            now += Duration::from_secs(1);
+            schedule.advance(now, true);
+        }
+        assert!(!schedule.should_close_dev_session(now, true, true));
+        now += POOL_ROUND;
+        schedule.advance(now, true);
+        assert!(!schedule.tracker.is_dev_round());
+        // Never while it is still mined on.
+        assert!(!schedule.should_close_dev_session(now, true, true));
+        // Late shares from the round can still arrive.
+        assert!(!schedule.should_close_dev_session(now, false, true));
+        assert!(!schedule.should_close_dev_session(
+            now + REPLACED_JOB_SUBMIT_WINDOW - Duration::from_millis(1),
+            false,
+            true
+        ));
+        // A submit still waiting for its answer keeps it open...
+        assert!(!schedule.should_close_dev_session(now + REPLACED_JOB_SUBMIT_WINDOW, false, false));
+        assert!(!schedule.should_close_dev_session(
+            now + DEV_SESSION_CLOSE_WAIT - Duration::from_millis(1),
+            false,
+            false
+        ));
+        // ...but only for so long.
+        assert!(schedule.should_close_dev_session(now + DEV_SESSION_CLOSE_WAIT, false, false));
+        // Settled submits close it once the late-share window is over.
+        let mut schedule2 = PoolDevFeeSchedule::new(start);
+        schedule2.tracker = schedule.tracker.clone();
+        schedule2.round_started = now;
+        assert!(!schedule2.should_close_dev_session(now, false, true));
+        assert!(schedule2.should_close_dev_session(now + REPLACED_JOB_SUBMIT_WINDOW, false, true));
+    }
+
+    #[test]
+    fn dev_fee_share_matches_the_fee_with_slow_dev_jobs() {
+        let run = Duration::from_secs(24 * 60 * 60);
+        let billable = (run - Duration::from_secs(10 * 60)).as_secs() as f64;
+        for delay in [
+            Duration::ZERO,
+            Duration::from_secs(5),
+            Duration::from_secs(25),
+        ] {
+            let (dev, open, rounds) = simulate_dev_fee(run, Some(delay));
+            let share = dev as f64 / billable * 100.0;
+            assert!(
+                (share - crate::dev_fee::DEV_FEE_PERCENT).abs() < 0.1,
+                "dev job after {delay:?}: share {share}%"
+            );
+            // Open about one round plus the lead and close per dev round.
+            assert!(open <= rounds * 60, "open {open}s over {rounds} rounds");
+            assert!((open as f64) < run.as_secs() as f64 * 0.05);
+        }
+        // An unreachable dev pool never takes mining time from the user.
+        let (dev, _, rounds) = simulate_dev_fee(run, None);
+        assert_eq!(dev, 0);
+        assert!(rounds > 0);
+    }
+
+    #[test]
+    fn late_dev_shares_keep_the_session_open_until_answered() {
+        let shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let client = crate::pool::PoolClient::connect(
+            "127.0.0.1:1",
+            DEV_ADDRESS.to_string(),
+            "seine-devfee-test".to_string(),
+            Arc::clone(&shutdown),
+        )
+        .expect("pool client should start");
+        let mut parked = test_active_job(9);
+        parked.retired_at = Some(Instant::now());
+        let binding = parked.dynamic_share_target.snapshot().share_binding_id;
+        let mut session = PoolSession {
+            connection: PoolConnectionConfig {
+                payout_memo: None,
+                mode: PoolConnectionMode::Dev,
+                pool_url: "stratum+tcp://127.0.0.1:1".into(),
+                proxy: None,
+                address: DEV_ADDRESS.into(),
+                solo: false,
+                worker: "seine-devfee-test".into(),
+            },
+            client,
+            telemetry: None,
+            latest_job: None,
+            connected: true,
+            resume_job: Some(parked),
+            recent_submit_lookup: RecentPendingSubmitLookup::default(),
+        };
+        assert!(pool_session_submits_settled(&session));
+
+        // A share found just before the switch reaches the parked dev job.
+        let mut solution = test_solution(9, 77);
+        solution.share_binding_id = binding;
+        let stats = Stats::new();
+        assert!(session
+            .resume_job
+            .as_ref()
+            .is_some_and(|job| job.accepts_late_solution(solution.epoch)));
+        let outcome = submit_pool_solution(
+            PoolConnectionMode::Dev,
+            &session.client,
+            &mut session.resume_job,
+            &solution,
+            "cpu#1",
+            &mut session.recent_submit_lookup,
+            &stats,
+        );
+        assert!(matches!(outcome, PoolShareSubmitOutcome::Submitted));
+        assert!(!pool_session_submits_settled(&session));
+
+        let job_id = session.resume_job.as_ref().unwrap().job.job_id.clone();
+        handle_inactive_pool_event(
+            crate::pool::PoolEvent::SubmitAck(crate::pool::PoolSubmitAck {
+                job_id,
+                nonce: 77,
+                accepted: true,
+                difficulty: None,
+                error: None,
+                retries: 0,
+            }),
+            PoolConnectionMode::Dev,
+            &session.client,
+            &mut session.latest_job,
+            &mut session.connected,
+            &mut session.resume_job,
+            &mut session.recent_submit_lookup,
+            &stats,
+            &mut None,
+        );
+        assert!(pool_session_submits_settled(&session));
+        shutdown.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     #[test]
