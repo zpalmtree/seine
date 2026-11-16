@@ -71,6 +71,13 @@ algorithms never share a cohort. Deploy the schema-11 collector before
 releasing schema-11 miners; schemas 1-10 remain accepted, with no SQL storage
 migration.
 
+Schema 17 adds `diagnostics.pool.block_solutions`: counts of shares on the
+miner's own pool session whose hash also met the job's network target, as found
+by a backend, written to the pool, and answered as accepted or rejected. Dev-fee
+sessions are not counted. The release-health report sums them by version and
+day under `pool.block_solutions`. Deploy the schema-17 collector before releasing
+schema-17 miners; schemas 1-16 remain accepted, with no SQL storage migration.
+
 Schema 16 adds `diagnostics.previous_run_rebooted`: whether the machine booted
 again between the previous run's last checkpoint and the restart. Linux miners
 compare the kernel's boot ID, which stays in the data directory and is never
@@ -206,12 +213,14 @@ The strict upload schema is in [src/lib.rs](src/lib.rs), with an example in
   selected, skipped and listed by the OS; seconds paused on unsupported work;
   expected backends and time to first hash; and GPU architecture, kernel source and
   AMD performance level.
+- Schema 17 block-level share counts on the miner's own pool session: found,
+  sent, accepted and rejected.
 
 ### Reliability reporting
 
 The [reliability fixture](reliability-fixture.json) demonstrates schema 5; the
 [diagnostic fixture](diagnostics-fixture.json) retains schema-4 compatibility coverage.
-The collector accepts schemas 1–16. Deploy schema-16 support before schema-16 miners.
+The collector accepts schemas 1–17. Deploy schema-17 support before schema-17 miners.
 The recorder starts after configuration parsing, before address resolution,
 backend initialization and tuning. UI warnings/errors identify their original
 call site through `track_caller`; backend error and quarantine paths also report

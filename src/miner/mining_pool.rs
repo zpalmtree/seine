@@ -16,11 +16,12 @@ use crate::backend::{DynamicShareTarget, MiningSolution, ShareBindingId};
 use crate::config::{Config, WorkAllocation};
 use crate::daemon_api::{is_unauthorized_error, ApiClient};
 use crate::dev_fee::{DevFeeTracker, DEV_ADDRESS, POOL_ROUND};
+use crate::diagnostics::BlockSolutionStep;
 use crate::pool::{
     PoolClient, PoolEvent, PoolJob, PoolSubmitAck, PoolSubmitRetry, SubmitTiming,
     POOL_NOTIFICATION_MINER_BLOCK_FOUND, POOL_NOTIFICATION_POOL_BLOCK_SOLVED,
 };
-use crate::types::{decode_hex, difficulty_to_target, parse_target};
+use crate::types::{decode_hex, difficulty_to_target, hash_meets_target, parse_target};
 
 use super::auth::{refresh_api_token_from_cookie, TokenRefreshOutcome};
 use super::block_latency;
@@ -215,6 +216,8 @@ struct DeferredPoolSubmit {
     claimed_hash: Option<[u8; 32]>,
     found_at: Instant,
     backend_label: String,
+    /// Counted as a block-level share on the miner's own session.
+    block: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -222,6 +225,8 @@ struct PendingPoolSubmit {
     found_at: Instant,
     submitted_at: Instant,
     backend_label: String,
+    /// Counted as a block-level share on the miner's own session.
+    block: bool,
 }
 
 #[derive(Default)]
@@ -1857,6 +1862,7 @@ fn handle_active_pool_event(
             );
             let mut desync_reason = None::<String>;
             let retry_suffix = record_retried_share_outcome(stats, &ack);
+            note_block_solution_ack(submit_timing.as_ref(), ack.accepted);
             if ack.accepted {
                 stats.bump_accepted();
                 let backend_suffix = submit_timing
@@ -2165,6 +2171,7 @@ fn handle_inactive_pool_event(
                 recent_submit_lookup,
             );
             let retry_suffix = record_retried_share_outcome(stats, &ack);
+            note_block_solution_ack(submit_timing.as_ref(), ack.accepted);
             if ack.accepted {
                 stats.bump_accepted();
                 let backend_suffix = submit_timing
@@ -2681,6 +2688,29 @@ fn reap_timed_out_pending_submits(job: &mut ActivePoolJob, now: Instant) -> usiz
     timed_out.len()
 }
 
+/// Whether a share on the miner's own session also meets the job's network
+/// target. Dev-fee sessions are not counted.
+fn is_own_block_solution(
+    mode: PoolConnectionMode,
+    job: &ActivePoolJob,
+    hash: Option<&[u8; 32]>,
+) -> bool {
+    mode.is_user()
+        && hash
+            .zip(job.network_target.as_ref())
+            .is_some_and(|(hash, network_target)| hash_meets_target(hash, network_target))
+}
+
+fn note_block_solution_ack(pending: Option<&PendingPoolSubmit>, accepted: bool) {
+    if pending.is_some_and(|pending| pending.block) {
+        crate::diagnostics::block_solution(if accepted {
+            BlockSolutionStep::Accepted
+        } else {
+            BlockSolutionStep::Rejected
+        });
+    }
+}
+
 fn enqueue_deferred_pool_submit(
     mode: PoolConnectionMode,
     job: &mut ActivePoolJob,
@@ -2705,12 +2735,14 @@ fn enqueue_deferred_pool_submit(
         return false;
     }
 
+    let block = is_own_block_solution(mode, job, claimed_hash.as_ref());
     job.deferred_submits.push_back(DeferredPoolSubmit {
         share_binding_id,
         nonce,
         claimed_hash,
         found_at,
         backend_label: backend_label.to_string(),
+        block,
     });
     stats.add_deferred(1);
     true
@@ -2747,12 +2779,16 @@ where
             timing,
         ) {
             Ok(()) => {
+                if deferred.block {
+                    crate::diagnostics::block_solution(BlockSolutionStep::Sent);
+                }
                 job.pending_submit_nonces.insert(
                     (binding.job_id.clone(), deferred.nonce),
                     PendingPoolSubmit {
                         found_at: deferred.found_at,
                         submitted_at: Instant::now(),
                         backend_label: deferred.backend_label,
+                        block: deferred.block,
                     },
                 );
                 if let Some(pending_submit) = job
@@ -2849,6 +2885,10 @@ where
     if !job.submitted_nonces.insert(solution.nonce) {
         return PoolShareSubmitOutcome::Duplicate;
     }
+    let block = is_own_block_solution(mode, job, solution.hash.as_ref());
+    if block {
+        crate::diagnostics::block_solution(BlockSolutionStep::Found);
+    }
 
     // Late hashes from a replaced job are at most one per lane; never defer them,
     // since only the current job's backlog is serviced.
@@ -2882,6 +2922,9 @@ where
     .is_ok()
     {
         stats.bump_submitted();
+        if block {
+            crate::diagnostics::block_solution(BlockSolutionStep::Sent);
+        }
         if mode.is_user() {
             super::ui::detail("SHARE", format!("submitted (backend={backend_label})"));
         }
@@ -2891,6 +2934,7 @@ where
                 found_at,
                 submitted_at: Instant::now(),
                 backend_label: backend_label.to_string(),
+                block,
             },
         );
         if let Some(pending_submit) = job
@@ -3622,7 +3666,8 @@ mod tests {
 
     use super::{
         advance_pool_nonce_cursor, compact_pool_address_for_log,
-        fetch_local_daemon_wallet_snapshot, handle_inactive_pool_event,
+        fetch_local_daemon_wallet_snapshot, flush_deferred_pool_submits,
+        handle_inactive_pool_event, note_block_solution_ack,
         note_current_job_stale_submit_rejection, parse_pool_stale_for,
         pool_api_base_urls_from_pool_url, rebind_parked_pool_job,
         service_pool_submit_backlog_with_submitter, should_apply_submit_ack_difficulty_immediately,
@@ -3905,6 +3950,7 @@ mod tests {
                     found_at: Instant::now(),
                     submitted_at: Instant::now(),
                     backend_label: "cpu#1".to_string(),
+                    block: false,
                 },
             );
         }
@@ -4608,6 +4654,7 @@ mod tests {
                 found_at: Instant::now(),
                 submitted_at: Instant::now(),
                 backend_label: "cpu".into(),
+                block: false,
             },
         );
         assert!(!super::should_refill_pool_job(&job));
@@ -4667,6 +4714,7 @@ mod tests {
                         found_at: now,
                         submitted_at: now,
                         backend_label: "cpu#1".to_string(),
+                        block: false,
                     },
                 );
             }
@@ -4764,6 +4812,65 @@ mod tests {
     }
 
     #[test]
+    fn block_level_shares_are_marked_on_the_users_session_only() {
+        let stats = Stats::new();
+        let mut lookup = RecentPendingSubmitLookup::default();
+        let submit = |mode, job: &mut Option<ActivePoolJob>, nonce, lookup: &mut _| {
+            submit_pool_solution_with_submitter(
+                mode,
+                job,
+                &test_solution(9, nonce),
+                "cpu#1",
+                &stats,
+                |_job_id, _nonce, _hash, _backend, _timing| Ok(()),
+                lookup,
+            )
+        };
+        let pending_block = |job: &Option<ActivePoolJob>, nonce| {
+            job.as_ref().unwrap().pending_submit_nonces[&("job-1".to_string(), nonce)].block
+        };
+
+        // The test job's network target admits every hash.
+        let mut job = Some(test_active_job(9));
+        assert!(matches!(
+            submit(PoolConnectionMode::User, &mut job, 1, &mut lookup),
+            PoolShareSubmitOutcome::Submitted
+        ));
+        assert!(pending_block(&job, 1));
+        submit(PoolConnectionMode::Dev, &mut job, 2, &mut lookup);
+        assert!(!pending_block(&job, 2), "dev-fee sessions are not counted");
+
+        // 0xAA.. is above a 0x10.. network target: an ordinary share.
+        job.as_mut().unwrap().network_target = Some([0x10; 32]);
+        submit(PoolConnectionMode::User, &mut job, 3, &mut lookup);
+        assert!(!pending_block(&job, 3));
+
+        // A block-level share deferred behind full in-flight slots keeps its
+        // mark when the backlog sends it.
+        let mut job = Some(test_active_job(9));
+        for nonce in 10..10 + POOL_MAX_INFLIGHT_SUBMITS as u64 {
+            submit(PoolConnectionMode::User, &mut job, nonce, &mut lookup);
+        }
+        assert!(matches!(
+            submit(PoolConnectionMode::User, &mut job, 500, &mut lookup),
+            PoolShareSubmitOutcome::Deferred
+        ));
+        let active = job.as_mut().unwrap();
+        assert!(active.deferred_submits.back().unwrap().block);
+        active.pending_submit_nonces.clear();
+        let (flushed, failed) =
+            flush_deferred_pool_submits(active, &stats, |_, _, _, _, _| Ok(()), &mut lookup);
+        assert_eq!((flushed, failed), (1, false));
+        assert!(pending_block(&job, 500));
+
+        // Acks for marked shares are counted; others are not.
+        let pending =
+            job.as_ref().unwrap().pending_submit_nonces[&("job-1".to_string(), 500)].clone();
+        note_block_solution_ack(Some(&pending), true);
+        note_block_solution_ack(None, false);
+    }
+
+    #[test]
     fn timed_out_pending_submit_releases_slot_without_clearing_dedupe() {
         let stats = Stats::new();
         let mut job = test_active_job(11);
@@ -4782,6 +4889,7 @@ mod tests {
                 found_at: now - (POOL_SUBMIT_ACK_TIMEOUT + Duration::from_secs(2)),
                 submitted_at: now - (POOL_SUBMIT_ACK_TIMEOUT + Duration::from_secs(1)),
                 backend_label: "cpu#1".to_string(),
+                block: false,
             },
         );
         job.pending_submit_nonces.insert(
@@ -4790,6 +4898,7 @@ mod tests {
                 found_at: now,
                 submitted_at: now,
                 backend_label: "cpu#2".to_string(),
+                block: false,
             },
         );
         job.deferred_submits.push_back(super::DeferredPoolSubmit {
@@ -4798,6 +4907,7 @@ mod tests {
             claimed_hash: Some([0xAB; 32]),
             found_at: now,
             backend_label: "cpu#3".to_string(),
+            block: false,
         });
 
         let mut submitted = Vec::new();
@@ -4850,6 +4960,7 @@ mod tests {
                 found_at: now,
                 submitted_at: now,
                 backend_label: "nvidia#1".to_string(),
+                block: false,
             },
         );
         let mut current_pending_submit_nonces = HashMap::new();
@@ -4882,6 +4993,7 @@ mod tests {
                 found_at: now,
                 submitted_at: now,
                 backend_label: "cpu#1".to_string(),
+                block: false,
             },
         );
         let mut current_pending_submit_nonces = HashMap::new();

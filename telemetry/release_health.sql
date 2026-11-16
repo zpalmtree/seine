@@ -268,6 +268,12 @@ pool_reports AS NOT MATERIALIZED (
            sum((p->>'reconnects')::bigint) AS reconnects,
            sum((p->>'refills')::bigint) AS refills,
            sum((p->>'secs_on_backup')::bigint) AS secs_on_backup,
+           -- Block-level shares (schema 17); null for older reports.
+           count(*) FILTER (WHERE p ? 'block_solutions') AS block_reports,
+           sum((p->'block_solutions'->>'found')::bigint) AS blocks_found,
+           sum((p->'block_solutions'->>'sent')::bigint) AS blocks_sent,
+           sum((p->'block_solutions'->>'accepted')::bigint) AS blocks_accepted,
+           sum((p->'block_solutions'->>'rejected')::bigint) AS blocks_rejected,
            coalesce(bool_or((p->>'failovers')::bigint > 0), false) AS failing_over,
            coalesce(bool_or((p->>'reconnects')::bigint > 0), false) AS reconnecting
     FROM pool_reports GROUP BY 1, 2, 3
@@ -290,7 +296,11 @@ pool_reports AS NOT MATERIALIZED (
            sum(failovers) AS failovers,
            sum(reconnects) AS reconnects,
            sum(refills) AS refills,
-           sum(secs_on_backup) AS secs_on_backup
+           sum(secs_on_backup) AS secs_on_backup,
+           coalesce(sum(blocks_found), 0) AS blocks_found,
+           coalesce(sum(blocks_sent), 0) AS blocks_sent,
+           coalesce(sum(blocks_accepted), 0) AS blocks_accepted,
+           coalesce(sum(blocks_rejected), 0) AS blocks_rejected
     FROM pool_activity GROUP BY 1
 ), pool_versions AS (
     SELECT version, count(DISTINCT installation_id) AS installations,
@@ -299,7 +309,11 @@ pool_reports AS NOT MATERIALIZED (
            sum(failovers) AS failovers,
            sum(reconnects) AS reconnects,
            sum(refills) AS refills,
-           sum(secs_on_backup) AS secs_on_backup
+           sum(secs_on_backup) AS secs_on_backup,
+           coalesce(sum(blocks_found), 0) AS blocks_found,
+           coalesce(sum(blocks_sent), 0) AS blocks_sent,
+           coalesce(sum(blocks_accepted), 0) AS blocks_accepted,
+           coalesce(sum(blocks_rejected), 0) AS blocks_rejected
     FROM pool_activity GROUP BY 1
 ), recent_install_failures AS (
     SELECT version, installations_with_install_failures_24h AS affected_installations
@@ -341,6 +355,15 @@ SELECT jsonb_build_object(
         'secs_on_backup', (SELECT coalesce(sum(secs_on_backup), 0) FROM pool_installation),
         'installations_failing_over', (SELECT count(*) FROM pool_installation WHERE failovers > 0),
         'installations_on_backup', (SELECT count(*) FROM pool_installation WHERE secs_on_backup > 0),
+        -- Block-level shares on the miners' own sessions: found by a backend,
+        -- written to the pool, then answered.
+        'block_solutions', (SELECT jsonb_build_object(
+            'installations', count(DISTINCT installation_id) FILTER (WHERE block_reports > 0),
+            'found', coalesce(sum(blocks_found), 0),
+            'sent', coalesce(sum(blocks_sent), 0),
+            'accepted', coalesce(sum(blocks_accepted), 0),
+            'rejected', coalesce(sum(blocks_rejected), 0)
+        ) FROM pool_activity),
         -- Per-installation seven-day totals; quantiles describe the distribution,
         -- not any one installation.
         'per_installation', (SELECT jsonb_build_object(

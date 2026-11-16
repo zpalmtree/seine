@@ -2,7 +2,7 @@
 use serde::{Deserialize, Serialize};
 pub mod tuning;
 
-pub const SCHEMA_VERSION: u32 = 16;
+pub const SCHEMA_VERSION: u32 = 17;
 pub const MAX_BODY_BYTES: usize = 32 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -520,6 +520,25 @@ pub struct PoolStatus {
     pub reconnects: u32,
     /// Nonce-range refills received.
     pub refills: u32,
+    /// Shares whose hash also met the network target, through each step to
+    /// the pool (schema 17).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block_solutions: Option<BlockSolutions>,
+}
+
+/// Block-level shares on the miner's own pool session in this window: hashes
+/// under the job's network target as well as the share target.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BlockSolutions {
+    /// Found by a backend on a job still held for submitting.
+    pub found: u32,
+    /// Written to the pool connection, including from the deferred queue.
+    pub sent: u32,
+    /// Answered as accepted.
+    pub accepted: u32,
+    /// Answered as rejected, after any retries.
+    pub rejected: u32,
 }
 
 /// AMD GPUs seen at startup. Counts, never device identifiers.
@@ -599,6 +618,11 @@ impl PoolStatus {
                 .all(|&n| n <= 1_000_000)
             && self.refills <= 100_000_000
             && u64::from(self.secs_on_backup) <= uptime_secs.max(1)
+            && self.block_solutions.as_ref().is_none_or(|b| {
+                [b.found, b.sent, b.accepted, b.rejected]
+                    .iter()
+                    .all(|&n| n <= 1_000_000)
+            })
     }
 }
 
@@ -934,6 +958,8 @@ impl Report {
                                     .all(DiagnosticEvent::schema14_compatible)
                             })))
                     && (self.schema_version >= 16 || d.previous_run_rebooted.is_none())
+                    && (self.schema_version >= 17
+                        || d.pool.as_ref().is_none_or(|p| p.block_solutions.is_none()))
                     && (self.schema_version >= 14 || d.schema13_compatible())
                     && (self.schema_version >= 13
                         || (d.events.iter().all(DiagnosticEvent::schema12_compatible)
@@ -1312,6 +1338,52 @@ mod tests {
         assert!(!final_report.validate());
         final_report.diagnostics.as_mut().unwrap().reason = "failure".into();
         assert!(final_report.validate());
+    }
+
+    #[test]
+    fn block_solutions_need_schema_17_and_stay_bounded() {
+        let mut report: Report =
+            serde_json::from_str(include_str!("../schema14-fixture.json")).unwrap();
+        let counts = BlockSolutions {
+            found: 3,
+            sent: 3,
+            accepted: 2,
+            rejected: 1,
+        };
+        report
+            .diagnostics
+            .as_mut()
+            .unwrap()
+            .pool
+            .as_mut()
+            .unwrap()
+            .block_solutions = Some(counts.clone());
+        report.schema_version = 17;
+        assert!(report.validate());
+        let json = serde_json::to_value(&report).unwrap();
+        assert_eq!(json["diagnostics"]["pool"]["block_solutions"]["found"], 3);
+        report.schema_version = 16;
+        assert!(
+            !report.validate(),
+            "block_solutions must advertise schema 17"
+        );
+        report.schema_version = 17;
+        report
+            .diagnostics
+            .as_mut()
+            .unwrap()
+            .pool
+            .as_mut()
+            .unwrap()
+            .block_solutions = Some(BlockSolutions {
+            found: 1_000_001,
+            ..counts
+        });
+        assert!(!report.validate());
+        // Unknown fields inside the counts are refused.
+        let mut value = serde_json::to_value(&report).unwrap();
+        value["diagnostics"]["pool"]["block_solutions"]["hosts"] = 1.into();
+        assert!(serde_json::from_value::<Report>(value).is_err());
     }
 
     #[test]

@@ -97,7 +97,8 @@ In pool mode, reports describe the pool connection with flags and counts only:
 whether the primary pool uses TLS, whether pools are reached through a SOCKS5
 proxy, whether a payout memo is set, how many backup pools are configured, and how
 many failovers, reconnects and nonce-range refills happened and how long was spent
-on a backup pool. Update status covers whether the miner installs new releases by
+on a backup pool. They also count the shares that met the network's block target:
+how many were found, sent to the pool, and accepted or rejected. Update status covers whether the miner installs new releases by
 itself, how many release checks succeeded or failed, how many installs succeeded or
 failed, and the stage at which the latest install failed.
 

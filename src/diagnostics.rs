@@ -255,6 +255,11 @@ fn take_update_status() -> Option<seine_telemetry::UpdateStatus> {
 static POOL_FAILOVERS: AtomicU32 = AtomicU32::new(0);
 static POOL_RECONNECTS: AtomicU32 = AtomicU32::new(0);
 static POOL_REFILLS: AtomicU32 = AtomicU32::new(0);
+// Block-level shares on the miner's own pool session (schema 17).
+static BLOCK_SOLUTIONS_FOUND: AtomicU32 = AtomicU32::new(0);
+static BLOCK_SOLUTIONS_SENT: AtomicU32 = AtomicU32::new(0);
+static BLOCK_SOLUTIONS_ACCEPTED: AtomicU32 = AtomicU32::new(0);
+static BLOCK_SOLUTIONS_REJECTED: AtomicU32 = AtomicU32::new(0);
 
 /// Sessions currently on a backup pool, when that started, and backup time
 /// accumulated in this window.
@@ -282,6 +287,25 @@ pub(crate) fn pool_refill() {
     POOL_REFILLS.fetch_add(1, Ordering::Relaxed);
 }
 
+/// Steps a block-level share takes on the miner's own pool session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BlockSolutionStep {
+    Found,
+    Sent,
+    Accepted,
+    Rejected,
+}
+
+pub(crate) fn block_solution(step: BlockSolutionStep) {
+    let counter = match step {
+        BlockSolutionStep::Found => &BLOCK_SOLUTIONS_FOUND,
+        BlockSolutionStep::Sent => &BLOCK_SOLUTIONS_SENT,
+        BlockSolutionStep::Accepted => &BLOCK_SOLUTIONS_ACCEPTED,
+        BlockSolutionStep::Rejected => &BLOCK_SOLUTIONS_REJECTED,
+    };
+    counter.fetch_add(1, Ordering::Relaxed);
+}
+
 /// A pool session moved onto (`true`) or off (`false`) a backup pool.
 pub(crate) fn pool_on_backup(on_backup: bool) {
     let mut clock = POOL_BACKUP.lock().unwrap_or_else(|e| e.into_inner());
@@ -304,6 +328,13 @@ fn take_pool_counts(status: &mut seine_telemetry::PoolStatus, uptime_secs: u64) 
     status.failovers = POOL_FAILOVERS.swap(0, Ordering::Relaxed).min(1_000_000);
     status.reconnects = POOL_RECONNECTS.swap(0, Ordering::Relaxed).min(1_000_000);
     status.refills = POOL_REFILLS.swap(0, Ordering::Relaxed).min(100_000_000);
+    let take = |counter: &AtomicU32| counter.swap(0, Ordering::Relaxed).min(1_000_000);
+    status.block_solutions = Some(seine_telemetry::BlockSolutions {
+        found: take(&BLOCK_SOLUTIONS_FOUND),
+        sent: take(&BLOCK_SOLUTIONS_SENT),
+        accepted: take(&BLOCK_SOLUTIONS_ACCEPTED),
+        rejected: take(&BLOCK_SOLUTIONS_REJECTED),
+    });
     let mut clock = POOL_BACKUP.lock().unwrap_or_else(|e| e.into_inner());
     let mut on_backup = std::mem::take(&mut clock.accumulated);
     if let Some(since) = clock.since.as_mut() {
@@ -1319,6 +1350,10 @@ mod tests {
         pool_reconnect();
         pool_reconnect();
         pool_refill();
+        block_solution(BlockSolutionStep::Found);
+        block_solution(BlockSolutionStep::Found);
+        block_solution(BlockSolutionStep::Sent);
+        block_solution(BlockSolutionStep::Accepted);
         pool_on_backup(true);
         unsupported_work(true);
 
@@ -1338,6 +1373,9 @@ mod tests {
         assert!(pool.tls);
         assert_eq!(pool.backup_pools, 1);
         assert_eq!((pool.failovers, pool.reconnects, pool.refills), (1, 2, 1));
+        // Pool tests running in parallel may add to the process-wide counts.
+        let blocks = pool.block_solutions.as_ref().unwrap();
+        assert!(blocks.found >= 2 && blocks.sent >= 1 && blocks.accepted >= 1);
         assert!(first.unsupported_work_paused_secs.is_some());
 
         // Counters reset each window, while a pause in progress keeps reporting.
@@ -1346,6 +1384,7 @@ mod tests {
         assert_eq!((update.checks_api, update.install_failures), (0, 0));
         assert_eq!(update.last_install_failure, None);
         assert_eq!(second.pool.as_ref().unwrap().reconnects, 0);
+        assert!(second.pool.as_ref().unwrap().block_solutions.is_some());
         assert!(second.unsupported_work_paused_secs.is_some());
 
         // An ended pause reports once more, then the field goes away.

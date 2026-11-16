@@ -259,6 +259,26 @@ class ReleaseHealthSQLTests(unittest.TestCase):
         self.assertEqual(sum(d['reports'] for d in pool['daily']), 3)
         version, = pool['versions']
         self.assertEqual(version['installations_reconnecting'], 1)
+        # Reports before schema 17 carry no block-level counts.
+        self.assertEqual(pool['block_solutions'], {'installations': 0, 'found': 0, 'sent': 0,
+                                                   'accepted': 0, 'rejected': 0})
+
+    def test_block_solution_counts_add_up_by_version_and_day(self):
+        base = self.fixture()
+        base['schema_version'] = 17
+        base['diagnostics']['pool']['block_solutions'] = {'found': 3, 'sent': 2, 'accepted': 1, 'rejected': 1}
+        identity = uuid.uuid4().hex
+        self.insert(base, identity, hours=2)
+        self.insert(base, identity, hours=1)
+        older = self.fixture()
+        self.insert(older)
+        pool = self.report()['pool']
+        self.assertEqual(pool['block_solutions'], {'installations': 1, 'found': 6, 'sent': 4,
+                                                   'accepted': 2, 'rejected': 2})
+        version, = pool['versions']
+        self.assertEqual((version['blocks_found'], version['blocks_sent'], version['blocks_accepted'],
+                          version['blocks_rejected']), (6, 4, 2, 2))
+        self.assertEqual(sum(d['blocks_found'] for d in pool['daily']), 6)
 
     def test_fleet_install_failures_need_three_recent_installations(self):
         base = self.fixture()
